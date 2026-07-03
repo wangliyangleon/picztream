@@ -119,4 +119,8 @@ Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string&
   return exporting::export_tag(db, tag_id, output_folder, link_mode);
 }
 
+Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {
+  return decode::decode_jpeg_file(path);
+}
+
 }  // namespace pzt::core

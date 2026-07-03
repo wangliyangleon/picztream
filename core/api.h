@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/browse/browse.h"
+#include "core/decode/decode.h"
 #include "core/export/export.h"
 #include "core/project/project.h"
 #include "core/result.h"
@@ -40,6 +41,9 @@ using LinkMode = exporting::LinkMode;
 using ExportSkipped = exporting::ExportSkipped;
 using ExportResult = exporting::ExportResult;
 using ExportTagError = exporting::ExportTagError;
+
+using DecodedImage = decode::DecodedImage;
+using DecodeError = decode::DecodeError;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it
@@ -93,5 +97,8 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
                                                  LinkMode link_mode = LinkMode::Copy);
+
+// 纯粹的"字节 -> 像素"操作,不碰数据库。见 core/decode/decode.h。
+Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 
 }  // namespace pzt::core

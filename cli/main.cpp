@@ -20,6 +20,8 @@ void print_usage() {
                "  pzt delete <project_name>\n"
                "  pzt rescan <project_name>\n"
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
+               "  pzt decode <jpeg_path>  (临时调试命令,验证 core/decode 的解码管线通,"
+               "increment 6 后续步骤会接入真正的浏览渲染循环)\n"
                "  pzt tag create|list|add|remove|replace ...  "
                "(临时调试命令,increment 6 会被全键盘交互替换,pzt tag 查看用法)\n"
                "  pzt browse next|prev|next-untagged|prev-untagged|filter ...  "
@@ -537,6 +539,32 @@ int cmd_browse(const std::vector<std::string>& args) {
   return 1;
 }
 
+// 临时调试命令:解码一张 JPEG,打印尺寸和像素字节数就退出,用来验证
+// core/decode 管线本身是通的。increment 6.2/6.4 会把解码结果接到 Kitty
+// 渲染器和全键盘循环里，届时这条命令就可以退休了。
+int cmd_decode(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr, "pzt decode: missing <jpeg_path>\n");
+    print_usage();
+    return 1;
+  }
+  auto result = pzt::core::decode_jpeg_file(args[0]);
+  if (!result.ok()) {
+    switch (result.error()) {
+      case pzt::core::DecodeError::FileNotFound:
+        std::fprintf(stderr, "pzt decode: 找不到文件 '%s'\n", args[0].c_str());
+        break;
+      case pzt::core::DecodeError::DecodeFailed:
+        std::fprintf(stderr, "pzt decode: '%s' 不是可解码的图像\n", args[0].c_str());
+        break;
+    }
+    return 1;
+  }
+  const auto& img = result.value();
+  std::printf("解码成功: %dx%d,%zu 字节 RGBA\n", img.width, img.height, img.rgba.size());
+  return 0;
+}
+
 int cmd_tag(const std::vector<std::string>& args) {
   if (args.empty()) {
     print_tag_usage();
@@ -574,6 +602,7 @@ int main(int argc, char** argv) {
   if (subcommand == "delete") return cmd_delete(args);
   if (subcommand == "rescan") return cmd_rescan(args);
   if (subcommand == "export") return cmd_export(args);
+  if (subcommand == "decode") return cmd_decode(args);
   if (subcommand == "tag") return cmd_tag(args);
   if (subcommand == "browse") return cmd_browse(args);
 
