@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
+#include "cli/kitty/kitty.h"
 #include "core/api.h"
 
 namespace {
@@ -22,6 +25,8 @@ void print_usage() {
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
                "  pzt decode <jpeg_path>  (临时调试命令,验证 core/decode 的解码管线通,"
                "increment 6 后续步骤会接入真正的浏览渲染循环)\n"
+               "  pzt render <jpeg_path>  (临时调试命令,验证 cli/kitty 渲染管线通,"
+               "需要在真实 Ghostty 终端里跑才能看到画面)\n"
                "  pzt tag create|list|add|remove|replace ...  "
                "(临时调试命令,increment 6 会被全键盘交互替换,pzt tag 查看用法)\n"
                "  pzt browse next|prev|next-untagged|prev-untagged|filter ...  "
@@ -565,6 +570,63 @@ int cmd_decode(const std::vector<std::string>& args) {
   return 0;
 }
 
+// 临时调试命令:解码一张 JPEG 并用 Kitty 图形协议渲染到终端就退出,用来验证
+// cli/kitty 渲染管线本身是通的(t=t 传输介质 + Tmux DCS passthrough 检
+// 测)。increment 6.4 全键盘循环接上真正的浏览渲染路径之后,这条命令就可以
+// 退休了。人类可读的状态信息全部打到 stderr,stdout 只承载真正发给终端的
+// Kitty 协议字节,不能与状态信息混流(与 spikes/kitty_latency_probe/ 的约
+// 定一致)。
+int cmd_render(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr, "pzt render: missing <jpeg_path>\n");
+    print_usage();
+    return 1;
+  }
+
+  auto decoded = pzt::core::decode_jpeg_file(args[0]);
+  if (!decoded.ok()) {
+    switch (decoded.error()) {
+      case pzt::core::DecodeError::FileNotFound:
+        std::fprintf(stderr, "pzt render: 找不到文件 '%s'\n", args[0].c_str());
+        break;
+      case pzt::core::DecodeError::DecodeFailed:
+        std::fprintf(stderr, "pzt render: '%s' 不是可解码的图像\n", args[0].c_str());
+        break;
+    }
+    return 1;
+  }
+
+  auto mode = pzt::cli::kitty::detect_terminal_mode();
+  if (mode.inside_tmux) {
+    std::fprintf(stderr, "[pzt render] 运行在 Tmux 窗格内,allow-passthrough=%s\n",
+                 mode.passthrough_ok ? "on" : "off");
+  } else {
+    std::fprintf(stderr, "[pzt render] 运行在独立 Ghostty 窗口(不在 Tmux 内)\n");
+  }
+
+  std::string tmp_path = "/tmp/pzt_render_" + std::to_string(getpid()) + ".rgba";
+  auto result = pzt::cli::kitty::render_rgba_via_tmpfile(STDOUT_FILENO, mode, decoded.value(),
+                                                          /*image_id=*/1, tmp_path);
+  if (!result.ok()) {
+    switch (result.error()) {
+      case pzt::cli::kitty::RenderError::PassthroughDisabled:
+        std::fprintf(stderr,
+                     "pzt render: 当前 Tmux 会话未开启 allow-passthrough,Kitty 图形协议无法穿透"
+                     "到 Ghostty。请在 tmux.conf 里加 `set -g allow-passthrough on` 后重启会话,"
+                     "或在独立 Ghostty 窗口(不经过 Tmux)里直接运行\n");
+        break;
+      case pzt::cli::kitty::RenderError::WriteFailed:
+        std::fprintf(stderr, "pzt render: 写入终端失败\n");
+        break;
+    }
+    return 1;
+  }
+
+  std::fprintf(stderr, "[pzt render] 已发送 %dx%d 像素到终端(image_id=1,tmp_path=%s)\n",
+               decoded.value().width, decoded.value().height, tmp_path.c_str());
+  return 0;
+}
+
 int cmd_tag(const std::vector<std::string>& args) {
   if (args.empty()) {
     print_tag_usage();
@@ -603,6 +665,7 @@ int main(int argc, char** argv) {
   if (subcommand == "rescan") return cmd_rescan(args);
   if (subcommand == "export") return cmd_export(args);
   if (subcommand == "decode") return cmd_decode(args);
+  if (subcommand == "render") return cmd_render(args);
   if (subcommand == "tag") return cmd_tag(args);
   if (subcommand == "browse") return cmd_browse(args);
 
