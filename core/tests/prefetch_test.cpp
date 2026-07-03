@@ -1,0 +1,197 @@
+#include <doctest.h>
+
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+
+#include "core/browse/prefetch.h"
+
+using namespace pzt::core::browse;
+using pzt::core::Result;
+using pzt::core::decode::DecodedImage;
+using pzt::core::decode::DecodeError;
+
+namespace {
+
+std::vector<ImageRef> make_images(int n) {
+  std::vector<ImageRef> images;
+  for (int i = 0; i < n; ++i) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "%c.jpg", 'a' + i);
+    images.push_back(ImageRef{static_cast<ImageId>(i + 1), name, name});
+  }
+  return images;
+}
+
+// path 是 root_path + "/" + file_path 拼出来的绝对路径，用文件名 substring
+// 匹配即可，不需要真实文件。widths 里没有的文件名会被当成解码失败
+// (FileNotFound)，用来模拟"文件缺失/损坏"这一路径。
+DecodeFn make_fake_decode(std::unordered_map<std::string, int> widths,
+                          std::atomic<int>* call_count = nullptr) {
+  return [widths = std::move(widths), call_count](
+             const std::string& path) -> Result<DecodedImage, DecodeError> {
+    if (call_count) call_count->fetch_add(1);
+    for (const auto& [name, width] : widths) {
+      if (path.find(name) != std::string::npos) {
+        DecodedImage img;
+        img.width = width;
+        img.height = 1;
+        img.rgba = {1, 2, 3, 4};
+        return Result<DecodedImage, DecodeError>::Ok(img);
+      }
+    }
+    return Result<DecodedImage, DecodeError>::Err(DecodeError::FileNotFound);
+  };
+}
+
+}  // namespace
+
+TEST_CASE("PrefetchCache decodes the window around current and get() returns matching image") {
+  auto images = make_images(5);  // a..e, ids 1..5
+  std::unordered_map<std::string, int> widths = {
+      {"a.jpg", 10}, {"b.jpg", 20}, {"c.jpg", 30}, {"d.jpg", 40}, {"e.jpg", 50}};
+  PrefetchCache cache("/root", /*window=*/1, make_fake_decode(widths));
+
+  cache.set_current(images, images[2].id);  // current = c, window = b,c,d
+
+  auto c = cache.get(images[2].id);
+  REQUIRE(c.ok());
+  CHECK(c.value().width == 30);
+
+  auto b = cache.get(images[1].id);
+  REQUIRE(b.ok());
+  CHECK(b.value().width == 20);
+
+  auto d = cache.get(images[3].id);
+  REQUIRE(d.ok());
+  CHECK(d.value().width == 40);
+}
+
+TEST_CASE("PrefetchCache reports NotInWindow for images outside the window") {
+  auto images = make_images(5);
+  std::unordered_map<std::string, int> widths = {
+      {"a.jpg", 10}, {"b.jpg", 20}, {"c.jpg", 30}, {"d.jpg", 40}, {"e.jpg", 50}};
+  PrefetchCache cache("/root", /*window=*/1, make_fake_decode(widths));
+
+  cache.set_current(images, images[2].id);  // window = b,c,d
+
+  auto a = cache.get(images[0].id);
+  REQUIRE(!a.ok());
+  CHECK(a.error() == FetchError::NotInWindow);
+
+  auto e = cache.get(images[4].id);
+  REQUIRE(!e.ok());
+  CHECK(e.error() == FetchError::NotInWindow);
+}
+
+TEST_CASE("PrefetchCache propagates decode failures as DecodeFailed") {
+  auto images = make_images(3);  // a,b,c
+  // b.jpg 故意不在 widths 里，制造解码失败。
+  std::unordered_map<std::string, int> widths = {{"a.jpg", 10}, {"c.jpg", 30}};
+  PrefetchCache cache("/root", /*window=*/1, make_fake_decode(widths));
+
+  cache.set_current(images, images[1].id);  // current = b
+
+  auto b = cache.get(images[1].id);
+  REQUIRE(!b.ok());
+  CHECK(b.error() == FetchError::DecodeFailed);
+}
+
+TEST_CASE("PrefetchCache window wraps around when window exceeds list size") {
+  auto images = make_images(3);  // a,b,c
+  std::unordered_map<std::string, int> widths = {{"a.jpg", 10}, {"b.jpg", 20}, {"c.jpg", 30}};
+  PrefetchCache cache("/root", /*window=*/5, make_fake_decode(widths));
+
+  cache.set_current(images, images[0].id);  // 窗口环绕整圈，覆盖全部 3 张
+  for (const auto& img : images) {
+    auto r = cache.get(img.id);
+    REQUIRE(r.ok());
+  }
+}
+
+TEST_CASE("PrefetchCache clears the window when current_id is nullopt or not in the list") {
+  auto images = make_images(3);
+  std::unordered_map<std::string, int> widths = {{"a.jpg", 10}, {"b.jpg", 20}, {"c.jpg", 30}};
+  PrefetchCache cache("/root", /*window=*/1, make_fake_decode(widths));
+
+  cache.set_current(images, images[1].id);
+  REQUIRE(cache.get(images[1].id).ok());
+
+  cache.set_current(images, std::nullopt);
+  auto after_nullopt = cache.get(images[1].id);
+  REQUIRE(!after_nullopt.ok());
+  CHECK(after_nullopt.error() == FetchError::NotInWindow);
+
+  cache.set_current(images, images[1].id);
+  REQUIRE(cache.get(images[1].id).ok());
+
+  cache.set_current(images, images[1].id + 999);  // 不在列表里，等同 nullopt
+  auto after_stale = cache.get(images[1].id);
+  REQUIRE(!after_stale.ok());
+  CHECK(after_stale.error() == FetchError::NotInWindow);
+}
+
+TEST_CASE("PrefetchCache re-decodes an entry after it's evicted and re-enters the window") {
+  auto images = make_images(5);  // a..e, ids 1..5
+  std::unordered_map<std::string, int> widths = {
+      {"a.jpg", 10}, {"b.jpg", 20}, {"c.jpg", 30}, {"d.jpg", 40}, {"e.jpg", 50}};
+  std::atomic<int> calls{0};
+  PrefetchCache cache("/root", /*window=*/1, make_fake_decode(widths, &calls));
+
+  cache.set_current(images, images[0].id);  // window = {a,b,e}
+  REQUIRE(cache.get(images[0].id).ok());
+  int after_first = calls.load();
+  CHECK(after_first > 0);
+
+  cache.set_current(images, images[3].id);  // window = {c,d,e}，a/b 被驱逐
+  auto evicted = cache.get(images[0].id);
+  REQUIRE(!evicted.ok());
+  CHECK(evicted.error() == FetchError::NotInWindow);
+
+  cache.set_current(images, images[0].id);  // a 重新进窗口，应该重新调度解码
+  auto a = cache.get(images[0].id);
+  REQUIRE(a.ok());
+  CHECK(calls.load() > after_first);
+}
+
+TEST_CASE("PrefetchCache::get blocks until the background decode completes") {
+  std::mutex gate_mu;
+  std::condition_variable gate_cv;
+  bool unblock = false;
+
+  DecodeFn slow_decode = [&](const std::string&) -> Result<DecodedImage, DecodeError> {
+    std::unique_lock<std::mutex> lock(gate_mu);
+    gate_cv.wait(lock, [&] { return unblock; });
+    DecodedImage img;
+    img.width = 99;
+    img.height = 1;
+    img.rgba = {0, 0, 0, 0};
+    return Result<DecodedImage, DecodeError>::Ok(img);
+  };
+
+  auto images = make_images(1);
+  PrefetchCache cache("/root", /*window=*/0, slow_decode);
+  cache.set_current(images, images[0].id);
+
+  std::atomic<bool> got_result{false};
+  std::thread getter([&] {
+    auto r = cache.get(images[0].id);
+    CHECK(r.ok());
+    got_result = true;
+  });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  CHECK(!got_result.load());  // 解码还没放行，get() 应该仍在阻塞等待
+
+  {
+    std::lock_guard<std::mutex> lock(gate_mu);
+    unblock = true;
+  }
+  gate_cv.notify_all();
+  getter.join();
+  CHECK(got_result.load());
+}

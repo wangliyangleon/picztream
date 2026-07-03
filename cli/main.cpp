@@ -27,6 +27,9 @@ void print_usage() {
                "increment 6 后续步骤会接入真正的浏览渲染循环)\n"
                "  pzt render <jpeg_path>  (临时调试命令,验证 cli/kitty 渲染管线通,"
                "需要在真实 Ghostty 终端里跑才能看到画面)\n"
+               "  pzt prefetch <project_name> [window]  (临时调试命令,验证 core/browse 的"
+               "预取环形缓冲区随导航移动、后台解码线程确实把像素准备好,"
+               "increment 6.4 会把它接进真正的全键盘循环)\n"
                "  pzt tag create|list|add|remove|replace ...  "
                "(临时调试命令,increment 6 会被全键盘交互替换,pzt tag 查看用法)\n"
                "  pzt browse next|prev|next-untagged|prev-untagged|filter ...  "
@@ -627,6 +630,60 @@ int cmd_render(const std::vector<std::string>& args) {
   return 0;
 }
 
+// 临时调试命令:沿浏览顺序走一遍项目里的全部图片,每一步都调用 core/browse
+// 的预取缓存 set_current() + get(),验证预取窗口能跟着导航移动、后台解码线
+// 程确实在被 get() 阻塞等待之前就把像素准备好。真正接入全键盘循环是
+// increment 6.4 的事,这里只验证 core/browse 预取模块本身是通的,人类可读
+// 的每步结果打到 stdout,延迟日志(hit/miss/decode 耗时)由 core/browse 自
+// 己打到 stderr。
+int cmd_prefetch(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr, "pzt prefetch: missing <project_name>\n");
+    print_usage();
+    return 1;
+  }
+  auto project_id = resolve_project("pzt prefetch", args[0]);
+  if (!project_id) return 1;
+
+  std::size_t window = 2;
+  if (args.size() >= 2) window = static_cast<std::size_t>(std::atoll(args[1].c_str()));
+
+  auto proj = pzt::core::open_project(*project_id);
+  if (!proj.ok()) {
+    std::fprintf(stderr, "pzt prefetch: 找不到项目 '%s'\n", args[0].c_str());
+    return 1;
+  }
+
+  auto images = pzt::core::list_images(*project_id);
+  if (images.empty()) {
+    std::printf("(项目内没有图片)\n");
+    return 0;
+  }
+
+  std::printf("预取窗口 window=%zu,项目共 %zu 张图片\n", window, images.size());
+  pzt::core::PrefetchCache cache(proj.value().root_path, window);
+
+  std::optional<pzt::core::ImageId> current = images.front().id;
+  for (std::size_t step = 0; step < images.size(); ++step) {
+    cache.set_current(images, current);
+    const auto* ref = find_ref(images, *current);
+    auto fetched = cache.get(*current);
+    if (fetched.ok()) {
+      std::printf("[%zu/%zu] %s -> %dx%d,%zu 字节 RGBA\n", step + 1, images.size(),
+                  ref->file_path.c_str(), fetched.value().width, fetched.value().height,
+                  fetched.value().rgba.size());
+    } else {
+      const char* reason = fetched.error() == pzt::core::FetchError::NotInWindow
+                                ? "not_in_window"
+                                : "decode_failed";
+      std::printf("[%zu/%zu] %s -> 预取失败(%s)\n", step + 1, images.size(),
+                  ref->file_path.c_str(), reason);
+    }
+    current = pzt::core::next_image(images, current);
+  }
+  return 0;
+}
+
 int cmd_tag(const std::vector<std::string>& args) {
   if (args.empty()) {
     print_tag_usage();
@@ -666,6 +723,7 @@ int main(int argc, char** argv) {
   if (subcommand == "export") return cmd_export(args);
   if (subcommand == "decode") return cmd_decode(args);
   if (subcommand == "render") return cmd_render(args);
+  if (subcommand == "prefetch") return cmd_prefetch(args);
   if (subcommand == "tag") return cmd_tag(args);
   if (subcommand == "browse") return cmd_browse(args);
 

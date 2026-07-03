@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/browse/browse.h"
+#include "core/browse/prefetch.h"
 #include "core/decode/decode.h"
 #include "core/export/export.h"
 #include "core/project/project.h"
@@ -36,6 +37,13 @@ using ReplaceTagError = tagging::ReplaceTagError;
 using RescanSummary = project::RescanSummary;
 using ImageRef = browse::ImageRef;
 using BrowseTagError = browse::BrowseTagError;
+
+// 预取/缓存环形缓冲区,见 core/browse/prefetch.h increment 6.3。跟
+// ProjectSummary/ImageRef 这些纯数据类型不同,这是一个单次进程运行内持有
+// 后台 jthread 的有状态组件——调用方(cli 的全键盘循环,increment 6.4)构造
+// 一个实例、每次导航后调用 set_current()、渲染前调用 get()。
+using PrefetchCache = browse::PrefetchCache;
+using FetchError = browse::FetchError;
 
 using LinkMode = exporting::LinkMode;
 using ExportSkipped = exporting::ExportSkipped;

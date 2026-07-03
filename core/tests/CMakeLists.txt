@@ -5,6 +5,7 @@ add_executable(core_tests
   project_test.cpp
   tagging_test.cpp
   browse_test.cpp
+  prefetch_test.cpp
   export_test.cpp
   decode_test.cpp
 )

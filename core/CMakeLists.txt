@@ -11,6 +11,7 @@ add_library(core STATIC
   project/project.cpp
   tagging/tagging.cpp
   browse/browse.cpp
+  browse/prefetch.cpp
   export/export.cpp
   decode/decode.cpp
 )
