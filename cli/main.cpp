@@ -117,6 +117,47 @@ std::string format_size(std::int64_t bytes) {
   return buf;
 }
 
+// 截断/补空格到固定的显示宽度——按边框内容区写字的地方都要用这个,而不是
+// 裸写字符串,否则这一帧内容比上一帧短的时候,会在文字和右边框之间留下
+// 上一帧的残留字符。跟 truncate_text 一样按字节数近似显示宽度,中文字符
+// 会被算窄了(UTF-8 里占 3 字节但终端里占 2 列),这是继承自 6.4.2 就有的
+// 简化,这次没有额外解决。
+std::string pad_to(const std::string& s, std::size_t width) {
+  std::string t = truncate_text(s, width);
+  if (t.size() < width) t += std::string(width - t.size(), ' ');
+  return t;
+}
+
+// 画一条横线(边框顶/底/分隔线用):起止两端用 left_char/right_char,如果
+// mid_offset >= 0,在这一列(相对 start_col 的偏移,0 是最左边框那一列)插
+// 入 mid_char(跟竖直分隔线交汇的地方),其余位置用 "─" 填满。宽度按显示列
+// 数算,不是字节数——box-drawing 字符在 UTF-8 里是多字节,这里始终整存整
+// 取一个字符,不做字节级切片。
+void draw_hline(int row, int start_col, int width, const std::string& left_char,
+                 const std::string& right_char, int mid_offset = -1,
+                 const std::string& mid_char = "") {
+  move_cursor(row, start_col);
+  std::string line = left_char;
+  for (int i = 1; i < width - 1; ++i) {
+    line += (i == mid_offset) ? mid_char : "─";  // ─
+  }
+  line += right_char;
+  write_stdout(line);
+}
+
+// 画一行内容左右两侧的边框竖线;mid_offset >= 0 时额外在中间(图片区/信息
+// 栏分隔处)也画一条。内容本身仍然由调用方单独 move_cursor+write_stdout。
+void draw_vlines(int row, int start_col, int width, int mid_offset = -1) {
+  move_cursor(row, start_col);
+  write_stdout("│");  // │
+  if (mid_offset >= 0) {
+    move_cursor(row, start_col + mid_offset);
+    write_stdout("│");
+  }
+  move_cursor(row, start_col + width - 1);
+  write_stdout("│");
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "pzt new: missing <project_name>\n");
@@ -263,11 +304,43 @@ int cmd_open(const std::vector<std::string>& args) {
       int cell_px_w = term_size.valid ? std::max(1, term_size.pixel_width / term_size.cols) : 8;
       int cell_px_h = term_size.valid ? std::max(1, term_size.pixel_height / term_size.rows) : 16;
 
-      int reserved_rows = kBannerRows + (debug_mode ? kDebugRows : 0);
-      int top_rows = std::max(1, total_rows - reserved_rows);
-      int image_cols = std::max(1, static_cast<int>(total_cols * 0.8));
-      int info_col = image_cols + 2;  // 信息栏起始列,跟图片区之间留一列空隙
-      int info_cols = std::max(1, total_cols - info_col + 1);
+      // 整个界面默认只占终端宽度的 70%、居中显示,不铺满整个窗口——以后加
+      // 了冒号命令再考虑让这个比例可调。
+      const double kWidthRatio = 0.7;
+      int ui_cols = std::max(20, static_cast<int>(total_cols * kWidthRatio));
+      int start_col = std::max(1, (total_cols - ui_cols) / 2 + 1);
+
+      int content_cols = std::max(1, ui_cols - 2);  // 减去左右各一列边框
+      int image_cols = std::max(1, static_cast<int>(content_cols * 0.8));
+      int mid_offset = 1 + image_cols;  // 中间竖线相对 start_col 的偏移
+      int info_cols = std::max(1, content_cols - image_cols - 2);  // -1: 中间竖线,-1: 留一列空隙
+      int info_col = start_col + mid_offset + 2;  // 信息栏内容起始列,跳过竖线和一列空隙
+
+      int border_rows = 2;  // 顶部 + 底部
+      int divider_rows = 1 + (debug_mode ? 1 : 0);
+      int fixed_rows = border_rows + divider_rows + kBannerRows + (debug_mode ? kDebugRows : 0);
+      int top_rows = std::max(1, total_rows - fixed_rows);
+
+      // 画边框:单个外框 + 图片/信息栏之间的竖线分隔,风格照抄设计阶段讨论
+      // 过的 ASCII 示意图,不是四个各自独立的小方框。
+      {
+        int row = 1;
+        draw_hline(row++, start_col, ui_cols, "┌", "┐", mid_offset, "┬");
+        for (int i = 0; i < top_rows; ++i) draw_vlines(row + i, start_col, ui_cols, mid_offset);
+        row += top_rows;
+        draw_hline(row++, start_col, ui_cols, "├", "┤", mid_offset, "┴");
+        if (debug_mode) {
+          for (int i = 0; i < kDebugRows; ++i) draw_vlines(row + i, start_col, ui_cols);
+          row += kDebugRows;
+          draw_hline(row++, start_col, ui_cols, "├", "┤");
+        }
+        draw_vlines(row, start_col, ui_cols);
+        row++;
+        draw_hline(row, start_col, ui_cols, "└", "┘");
+      }
+      int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
+      int debug_top_row = 2 + top_rows + 1;  // 图片区 + 分隔线之后
+      int banner_row = debug_top_row + (debug_mode ? kDebugRows + 1 : 0);
 
       // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的关键
       // 一步,没有它,旧 placement 不会自动消失。
@@ -288,7 +361,7 @@ int cmd_open(const std::vector<std::string>& args) {
         auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
         const auto& to_render = resized.ok() ? resized.value() : img;
 
-        move_cursor(1, 1);
+        move_cursor(image_top_row, start_col + 1);
         std::string tmp_path = pzt::cli::kitty::make_tmp_path(
             std::to_string(getpid()) + "_" + std::to_string(frame++));
         auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
@@ -302,25 +375,27 @@ int cmd_open(const std::vector<std::string>& args) {
 
       // 信息栏:编号、文件名、标签、文件大小,固定在图片区右侧。
       {
-        int row = 1;
+        int row = image_top_row;
         move_cursor(row++, info_col);
-        write_stdout("[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]");
+        write_stdout(pad_to("[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) +
+                                 "]",
+                             info_cols));
 
         move_cursor(row++, info_col);
-        write_stdout(current_ref ? truncate_text(current_ref->file_name, info_cols) : "?");
+        write_stdout(pad_to(current_ref ? current_ref->file_name : "?", info_cols));
 
         row++;  // 空一行
         move_cursor(row++, info_col);
-        write_stdout("标签:");
+        write_stdout(pad_to("标签:", info_cols));
         auto tags = current_ref ? pzt::core::tags_for_image(current_ref->id)
                                  : std::vector<pzt::core::TagSummary>{};
         if (tags.empty()) {
           move_cursor(row++, info_col);
-          write_stdout("(无)");
+          write_stdout(pad_to("(无)", info_cols));
         } else {
           for (const auto& t : tags) {
             move_cursor(row++, info_col);
-            write_stdout(truncate_text(t.name, info_cols));
+            write_stdout(pad_to(t.name, info_cols));
           }
         }
 
@@ -328,7 +403,7 @@ int cmd_open(const std::vector<std::string>& args) {
         auto info = current_ref ? pzt::core::get_image(current_ref->id) : std::nullopt;
         if (info) {
           move_cursor(row++, info_col);
-          write_stdout("大小: " + format_size(info->file_size));
+          write_stdout(pad_to("大小: " + format_size(info->file_size), info_cols));
         }
       }
 
@@ -342,16 +417,15 @@ int cmd_open(const std::vector<std::string>& args) {
                 ? lines.size() - static_cast<std::size_t>(kDebugRows)
                 : 0;
         for (int i = 0; i < kDebugRows; ++i) {
-          move_cursor(top_rows + 1 + i, 1);
-          write_stdout("\x1b[K");  // 清掉这一行的旧内容,避免短行盖不住长行的残留
+          move_cursor(debug_top_row + i, start_col + 1);
           std::size_t idx = begin + static_cast<std::size_t>(i);
-          if (idx < lines.size()) write_stdout(truncate_text(lines[idx], total_cols));
+          write_stdout(pad_to(idx < lines.size() ? lines[idx] : "", content_cols));
         }
       }
 
-      // Banner:固定在最后一行,全宽。
-      move_cursor(total_rows, 1);
-      write_stdout(kBannerText);
+      // Banner:固定在图片/信息栏下方最后一行,边框内全宽。
+      move_cursor(banner_row, start_col + 1);
+      write_stdout(pad_to(kBannerText, content_cols));
 
       double key_to_render_ms =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
