@@ -19,6 +19,15 @@ namespace pzt::cli::kitty {
 
 bool is_inside_tmux();
 
+// 生成一个符合 Kitty 协议 t=t(临时文件)传输介质要求的路径。协议规定:
+// 路径必须在系统真实临时目录内(不能想当然假设是 `/tmp`——macOS 的
+// `$TMPDIR` 通常是 `/var/folders/.../T/`,不是 `/tmp`),文件名必须包含协
+// 议要求的 "tty-graphics-protocol" 标记字符串,否则终端会以"不在临时目录
+// 内"为由拒绝读取(实测过:Ghostty 返回 `EINVAL: temporary file not in
+// temp dir`)。`tag` 由调用方提供,用来保证多次调用之间路径不冲突(比如
+// pid、帧号)。
+std::string make_tmp_path(const std::string& tag);
+
 // Tmux DCS passthrough 包装规则:整体包一层 `\x1bPtmux;...\x1b\\`,内部每个
 // ESC 字节需要再多写一次(tmux passthrough 协议本身的转义要求)。只应该在
 // is_inside_tmux() 时对最终发送的转义序列调用。
@@ -49,10 +58,15 @@ enum class RenderError {
 };
 
 // 用 t=t(临时文件)传输介质把一张已解码的 RGBA 图片发送到 fd 对应的终端。
-// tmp_path 由调用方选择——不同调用场景(一次性调试命令 vs increment 6.3
-// 的预取环形缓冲区)对临时文件的生命周期管理需求不同,渲染组件本身不做假
-// 设。协议约定终端读完 `t=t` 介质的文件后会自己删除,调用方不需要额外
-// unlink(与 spikes/kitty_latency_probe/probe.cpp 的处理方式一致)。
+// tmp_path 由调用方选择(用 make_tmp_path() 生成,不要手写)——不同调用场
+// 景(一次性调试命令 vs 全键盘循环里每帧都要渲染)对临时文件的生命周期管
+// 理需求不同,渲染组件本身不做假设。协议约定终端读完 `t=t` 介质的文件后
+// 会自己删除,调用方不需要额外 unlink(与
+// spikes/kitty_latency_probe/probe.cpp 的处理方式一致)。控制序列带
+// `q=2`,让终端永远不通过 stdin 回发协议响应——调用方(全键盘循环)从 stdin
+// 读的是用户按键,没有能力也不需要分辨"这是真按键"还是"这是终端在回话",
+// 混在一起处理曾经导致过一次真实的死循环(终端因为渲染失败不断回发错误
+// 文本,被当成按键消费,又触发下一次同样失败的渲染)。
 pzt::core::Result<void, RenderError> render_rgba_via_tmpfile(
     int fd, const TerminalMode& mode, const pzt::core::decode::DecodedImage& img, int image_id,
     const std::string& tmp_path);

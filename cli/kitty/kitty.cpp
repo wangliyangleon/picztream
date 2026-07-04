@@ -12,6 +12,13 @@ namespace pzt::cli::kitty {
 
 bool is_inside_tmux() { return std::getenv("TMUX") != nullptr; }
 
+std::string make_tmp_path(const std::string& tag) {
+  const char* tmpdir = std::getenv("TMPDIR");
+  std::string dir = (tmpdir && *tmpdir) ? tmpdir : "/tmp";
+  if (!dir.empty() && dir.back() == '/') dir.pop_back();
+  return dir + "/pzt-tty-graphics-protocol-" + tag + ".rgba";
+}
+
 std::string tmux_wrap(const std::string& raw) {
   std::string escaped;
   escaped.reserve(raw.size() + 16);
@@ -101,7 +108,7 @@ pzt::core::Result<void, RenderError> render_rgba_via_tmpfile(
   std::string path_b64 = base64_encode(reinterpret_cast<const unsigned char*>(tmp_path.data()),
                                         tmp_path.size());
   std::ostringstream ctrl;
-  ctrl << "a=T,f=32,t=t,s=" << img.width << ",v=" << img.height << ",i=" << image_id;
+  ctrl << "a=T,f=32,t=t,q=2,s=" << img.width << ",v=" << img.height << ",i=" << image_id;
   std::string seq = "\x1b_G" + ctrl.str() + ";" + path_b64 + "\x1b\\";
   std::string out = mode.inside_tmux ? tmux_wrap(seq) : seq;
 

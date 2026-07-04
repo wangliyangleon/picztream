@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -9,6 +10,7 @@
 #include <unistd.h>
 
 #include "cli/kitty/kitty.h"
+#include "cli/term/cbreak_mode.h"
 #include "core/api.h"
 
 namespace {
@@ -18,7 +20,8 @@ void print_usage() {
                "usage:\n"
                "  pzt new <project_name> [folder_path]\n"
                "  pzt list\n"
-               "  pzt open [project_name]\n"
+               "  pzt open [project_name]  (h/l 上一张/下一张,q 退出;"
+               "increment 6.4 后续步骤会加 j/k/space/x/g+数字)\n"
                "  pzt archive <project_name>\n"
                "  pzt delete <project_name>\n"
                "  pzt rescan <project_name>\n"
@@ -132,6 +135,10 @@ int cmd_list(const std::vector<std::string>& args) {
   return 0;
 }
 
+// increment 6.4.1:最简单的全屏版浏览循环,只验证"读键 -> 挪位置 -> 渲染"
+// 这条链路在真实终端里能跑通。固定布局(图片/信息栏/banner 三分区、备用屏
+// 幕缓冲区)是 6.4.2 的工作,这里还没有——所以翻页时终端会正常滚动,不是
+// 原地刷新,这是预期中的过渡状态,不是 bug。
 int cmd_open(const std::vector<std::string>& args) {
   std::optional<pzt::core::ProjectId> id =
       args.empty() ? pzt::core::find_project_by_root_path(std::filesystem::current_path().string())
@@ -141,18 +148,90 @@ int cmd_open(const std::vector<std::string>& args) {
     return 1;
   }
 
-  auto result = pzt::core::open_project(*id);
-  if (!result.ok()) {
-    // id came from a lookup that just succeeded, so this shouldn't normally
-    // happen - handle it rather than assume it can't.
+  auto opened = pzt::core::open_project(*id);
+  if (!opened.ok()) {
+    // id 来自刚成功的查找,理论上不该走到这里,但还是按"不假设它不会发生"
+    // 的原则处理,而不是直接解引用。
     std::fprintf(stderr, "pzt open: 找不到项目,用 pzt list 查看可用项目及其路径\n");
     return 1;
   }
+  const auto& project = opened.value();
 
-  const auto& p = result.value();
-  std::printf("已打开项目 '%s'(%s),共 %lld 张 JPEG%s\n", p.name.c_str(), p.root_path.c_str(),
-              static_cast<long long>(p.image_count), p.archived ? "  [已归档]" : "");
-  std::printf("(全键盘浏览界面还没实现,这是项目生命周期 increment 的桩)\n");
+  auto images = pzt::core::list_images(*id);
+  if (images.empty()) {
+    std::fprintf(stderr, "pzt open: 项目 '%s' 里没有图片\n", project.name.c_str());
+    return 1;
+  }
+
+  auto mode = pzt::cli::kitty::detect_terminal_mode();
+  if (mode.inside_tmux && !mode.passthrough_ok) {
+    std::fprintf(stderr,
+                 "pzt open: 当前 Tmux 会话未开启 allow-passthrough,Kitty 图形协议无法穿透"
+                 "到 Ghostty。请在 tmux.conf 里加 `set -g allow-passthrough on` 后重启会话,"
+                 "或在独立 Ghostty 窗口(不经过 Tmux)里直接运行\n");
+    return 1;
+  }
+
+  // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
+  // 受这次影响,调优留给以后有真实使用数据再说。
+  pzt::core::PrefetchCache prefetch(project.root_path, /*window=*/3, pzt::core::decode_jpeg_file);
+  pzt::core::ImageId current_id = images.front().id;
+  prefetch.set_current(images, current_id);
+
+  std::size_t frame = 0;
+  {
+    pzt::cli::term::CbreakMode cbreak;
+
+    while (true) {
+      auto key_time = std::chrono::steady_clock::now();
+
+      std::size_t index = 0;
+      const pzt::core::ImageRef* current_ref = nullptr;
+      for (std::size_t i = 0; i < images.size(); ++i) {
+        if (images[i].id == current_id) {
+          index = i;
+          current_ref = &images[i];
+          break;
+        }
+      }
+
+      auto decoded = prefetch.get(current_id);
+      if (decoded.ok()) {
+        std::string tmp_path = pzt::cli::kitty::make_tmp_path(
+            std::to_string(getpid()) + "_" + std::to_string(frame++));
+        auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(STDOUT_FILENO, mode,
+                                                                  decoded.value(),
+                                                                  /*image_id=*/1, tmp_path);
+        if (!rendered.ok()) {
+          std::fprintf(stderr, "pzt open: 渲染失败\n");
+        }
+      } else {
+        std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
+      }
+
+      double key_to_render_ms =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
+              .count();
+      std::fprintf(stderr, "[pzt open] key-to-render %.2fms\n", key_to_render_ms);
+      std::fprintf(stderr, "[%zu/%zu] %s  (h/l 上一张/下一张  q 退出)\n", index + 1, images.size(),
+                   current_ref ? current_ref->file_name.c_str() : "?");
+
+      char c = 0;
+      ssize_t n = read(STDIN_FILENO, &c, 1);
+      if (n <= 0 || c == 'q') break;
+
+      if (c == 'h') {
+        current_id = pzt::core::prev_image(images, current_id).value_or(current_id);
+      } else if (c == 'l') {
+        current_id = pzt::core::next_image(images, current_id).value_or(current_id);
+      } else {
+        continue;  // 未知按键,忽略,不重新 set_current
+      }
+      prefetch.set_current(images, current_id);
+    }
+  }  // CbreakMode 析构,自动还原终端设置
+
+  std::fprintf(stderr, "已退出浏览\n");
   return 0;
 }
 
@@ -607,7 +686,7 @@ int cmd_render(const std::vector<std::string>& args) {
     std::fprintf(stderr, "[pzt render] 运行在独立 Ghostty 窗口(不在 Tmux 内)\n");
   }
 
-  std::string tmp_path = "/tmp/pzt_render_" + std::to_string(getpid()) + ".rgba";
+  std::string tmp_path = pzt::cli::kitty::make_tmp_path(std::to_string(getpid()));
   auto result = pzt::cli::kitty::render_rgba_via_tmpfile(STDOUT_FILENO, mode, decoded.value(),
                                                           /*image_id=*/1, tmp_path);
   if (!result.ok()) {
