@@ -144,6 +144,14 @@ void PrefetchCache::worker_loop(std::stop_token stop) {
     std::unique_lock<std::mutex> lock(mu_);
     bool have_work = cv_.wait(lock, stop, [&] { return !pending_queue_.empty(); });
     if (!have_work) return;  // stop 已请求，且队列一直是空的
+    // 上面这个 wait 的谓词只看队列是否非空——如果 stop 请求到达时队列里还
+    // 排着好几张图，谓词早就是 true 了，不会因为 stop 被请求而提前返回。
+    // 不额外检查的话，worker 会把队列剩下的每一张图都解码完才注意到
+    // stop，退出的项目里全靠这个循环，之前真机测试量到过退出要卡 1-2
+    // 秒。这里补一个显式检查：stop 一旦被请求，哪怕队列还有活，也不再捡
+    // 新任务——最多完成"已经弹出、正在解码"的这一张（下面这个 continue
+    // 判断之前的那几行还没执行到，不会有半解码状态）。
+    if (stop.stop_requested()) return;
 
     ImageId id = pending_queue_.front();
     pending_queue_.erase(pending_queue_.begin());

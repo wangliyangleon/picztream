@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -194,4 +195,36 @@ TEST_CASE("PrefetchCache::get blocks until the background decode completes") {
   gate_cv.notify_all();
   getter.join();
   CHECK(got_result.load());
+}
+
+TEST_CASE("PrefetchCache destructor only waits out the in-flight decode, not the whole backlog") {
+  constexpr auto kDecodeTime = std::chrono::milliseconds(50);
+  auto slow_decode = [kDecodeTime](const std::string&) -> Result<DecodedImage, DecodeError> {
+    std::this_thread::sleep_for(kDecodeTime);
+    DecodedImage img;
+    img.width = 1;
+    img.height = 1;
+    img.rgba = {0, 0, 0, 0};
+    return Result<DecodedImage, DecodeError>::Ok(img);
+  };
+
+  // window=4 -> 最多 9 张排队,每张都要 50ms 解码,不修复的话析构等它们全部
+  // 解码完要接近 450ms。
+  auto images = make_images(9);
+  auto cache = std::make_unique<PrefetchCache>("/root", /*window=*/4, slow_decode);
+  cache->set_current(images, images[4].id);
+
+  // 让 worker 真正开始解码第一张,此时队列里还应该排着好几张没解码的。
+  std::this_thread::sleep_for(kDecodeTime / 2);
+
+  auto t0 = std::chrono::steady_clock::now();
+  cache.reset();  // 触发析构:request_stop + join
+  double elapsed_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+  // 修复前:析构要等剩下最多 8 张都解码完,接近 8*50ms=400ms;修复后只需要
+  // 等"当前正在解码"这一张剩下的部分(约 25ms),不会再去捡队列里剩下的新
+  // 任务。留够宽松的余量避免测试本身不稳定,但要严格小于"drain 剩余全
+  // 部"的量级。
+  CHECK(elapsed_ms < kDecodeTime.count() * 3);
 }
