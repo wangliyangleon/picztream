@@ -432,16 +432,24 @@ int cmd_open(const std::vector<std::string>& args) {
               .count();
       std::fprintf(stderr, "[pzt open] key-to-render %.2fms\n", key_to_render_ms);
 
+      // 不支持的键直接在这个内层循环里吃掉,继续读下一个字节——不 continue
+      // 回外层 while,那样会导致整个画面(边框、图片、信息栏、banner)重新
+      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。
       char c = 0;
-      ssize_t n = read(STDIN_FILENO, &c, 1);
-      if (n <= 0 || c == 'q') break;
+      while (true) {
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n <= 0) {
+          c = 'q';
+          break;
+        }
+        if (c == 'q' || c == 'h' || c == 'l') break;
+      }
+      if (c == 'q') break;
 
       if (c == 'h') {
         current_id = pzt::core::prev_image(images, current_id).value_or(current_id);
-      } else if (c == 'l') {
-        current_id = pzt::core::next_image(images, current_id).value_or(current_id);
       } else {
-        continue;  // 未知按键,忽略,不重新 set_current
+        current_id = pzt::core::next_image(images, current_id).value_or(current_id);
       }
       prefetch.set_current(images, current_id);
     }
