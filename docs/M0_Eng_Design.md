@@ -104,6 +104,15 @@ image_tags(
 - `replace_tag_entry(tag_id, remove_image_id, add_image_id)`
 - `remove_tag(image_id, tag_id)`
 
+increment 6.4 阶段决定不保留独立的 `pzt tag create`/`add`/`remove`/`replace` 命令,标签的新建、删除(标签本身)、从单张图片摘掉标签,全部收进 `pzt open` 里的 `space` 菜单(见 M0_PRD.md 快捷键设计一节),cli 侧统一入口:
+
+- `space` + 数字:打标签,已实现(increment 6.4.4),对应 `add_tag`/`replace_tag_entry`,数字键映射按 `TagSummary.id` 升序固定(不是 `list_tags` 默认的字母序),客户端(cli)排序,不改 `list_tags` 本身
+- `space 0` + 数字:从当前图片摘掉该标签,对应现有的 `remove_tag`——幂等,图片本来就没这个标签也是成功,不需要额外校验
+- `space c`:新建标签,对应现有的 `create_tag`
+- `space d` + 数字:删除标签本身(连带清掉所有图片与它的关联,是项目级操作,影响的不只是当前图片)——**目前 core 层没有对应函数**,`create_tag`/`add_tag`/`remove_tag`/`replace_tag_entry` 都是针对已存在的标签操作或新建,没有"删除一个标签定义"这个接口,增量实现时需要补一个类似 `delete_tag(tag_id)` 的函数,依赖 schema 里 `image_tags.tag_id REFERENCES tags(id) ON DELETE CASCADE` 做级联清除(跟 `delete_project` 依赖的是同一个级联机制)
+
+以上四个子命令共用同一套"space 打开菜单 -> 读一个键 -> 按结果分支"的交互模式(`cli/main.cpp` 的 `handle_space_key`),`0`/`c`/`d` 都是在原有"读一个数字选标签"基础上新增的、和数字互斥的入口键,不需要状态机。
+
 **导出**
 
 行为流程:解析标签下所有图片(有序标签按 `image_tags.position` 升序,无序标签按 `image_tags.tagged_at` 升序,后者只是为了让多次导出行为确定、顺序本身无语义)→ 目标文件夹不存在时自动创建 → 逐张计算目标文件名、遇冲突自动消歧、按 `link_mode` 复制或软链 → 源文件在磁盘上缺失时跳过该张并记录原因,不中断其余图片的导出 → 返回汇总结果供 cli 渲染成一行状态提示。
