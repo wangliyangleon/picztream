@@ -147,6 +147,21 @@ TEST_CASE("add_tag reports CapExceeded with correctly ordered existing entries")
   CHECK(third.error().cap_info->existing_entries[1].file_name == "001.jpg");
 }
 
+TEST_CASE("add_tag on an already-tagged image is idempotent even when the tag is at cap") {
+  // 幂等检查在 cap 检查之前——已经打过的图片再选一次同一个标签,不管这个
+  // 标签是否已经满,都应该直接幂等成功,不会触发 CapExceeded。这是
+  // increment 6.4.4 的 space 菜单依赖的行为,之前"幂等"和"cap 超限"分开测
+  // 过,没测过两者同时满足的组合。
+  auto fx = make_fixture("idempotent_at_cap", 2);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", 1, false);
+  REQUIRE(tag.ok());
+
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());  // 打满 cap=1
+  auto again = add_tag(fx.db, fx.images[0], tag.value());   // 同一张图再打一次
+  REQUIRE(again.ok());
+  CHECK(list_tags(fx.db, fx.project_id)[0].tagged_count == 1);  // 没有重复插入
+}
+
 TEST_CASE("add_tag reports TagNotFound/ImageNotFound/ProjectMismatch") {
   auto fx = make_fixture("add_errors", 1);
   auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);

@@ -24,8 +24,8 @@ void print_usage() {
                "  pzt new <project_name> [folder_path]\n"
                "  pzt list\n"
                "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
-               "j/k 下一张/上一张未打标签,q 退出;increment 6.4 后续步骤会加"
-               "space/x/g+数字;--debug 时在图片下方"
+               "j/k 下一张/上一张未打标签,space 打标签,q 退出;increment 6.4 "
+               "后续步骤会加 x/g+数字;--debug 时在图片下方"
                "开一块区域滚动显示内部日志,默认不显示也不产生这些日志)\n"
                "  pzt archive <project_name>\n"
                "  pzt delete <project_name>\n"
@@ -225,6 +225,95 @@ void draw_vlines(int row, int start_col, int width, int mid_offset = -1) {
   write_stdout("│");
 }
 
+// increment 6.4.4:space 快速标签菜单。见 docs/M0_Eng_Design.md 对应小节。
+
+// `list_tags` 是按名字字母序排的(给 `pzt tag list` 这类展示用)——数字键
+// 要按标签创建顺序(tag id 升序)固定,不然新建一个名字靠前的标签会让所有
+// 已有标签的数字悄悄错位。不改 `list_tags` 本身,这里对结果客户端重排序。
+// 只有 1-9 有数字键,超过的这次不处理。
+std::vector<pzt::core::TagSummary> tags_for_menu(pzt::core::ProjectId project_id) {
+  auto tags = pzt::core::list_tags(project_id);
+  std::sort(tags.begin(), tags.end(),
+            [](const auto& a, const auto& b) { return a.id < b.id; });
+  if (tags.size() > 9) tags.resize(9);
+  return tags;
+}
+
+// 两层菜单(选标签、cap 超限选替换对象)都只需要读一个字节就能得出最终结
+// 果,不需要为"取消"单独过滤——EOF/出错和 Esc(0x1B)一样当取消处理。
+char read_one_byte() {
+  char c = 0;
+  ssize_t n = read(STDIN_FILENO, &c, 1);
+  return n <= 0 ? 0x1B : c;
+}
+
+// cap 超限时,在 banner 那一行显示已有条目、读一个键选替换对象或取消。
+std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::ImageId new_image_id,
+                                        const pzt::core::CapExceededInfo& cap_info, int banner_row,
+                                        int start_col, int content_cols) {
+  if (cap_info.existing_entries.empty()) {
+    return " 标签上限为 0,无法添加 ";  // cap=0 的极端配置,没有可替换的条目
+  }
+  std::size_t shown = std::min<std::size_t>(cap_info.existing_entries.size(), 9);
+
+  std::string line = " 已满(" + std::to_string(cap_info.cap) + "):";
+  for (std::size_t i = 0; i < shown; ++i) {
+    if (i > 0) line += "  ";
+    line += std::to_string(i + 1) + ":" + cap_info.existing_entries[i].file_name;
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c < '1' || c > static_cast<char>('0' + shown)) return "";  // 取消,静默
+
+  const auto& old_entry = cap_info.existing_entries[static_cast<std::size_t>(c - '1')];
+  auto result = pzt::core::replace_tag_entry(tag_id, old_entry.image_id, new_image_id);
+  if (!result.ok()) return " 替换失败,请重试 ";  // 防御性,理论上不应该发生
+  return " 已替换 '" + old_entry.file_name + "' ";
+}
+
+// space 键的入口:在 banner 那一行显示可选标签、读一个键选标签或取消,
+// cap 超限时转入 handle_cap_replace_submenu。
+std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
+                              int banner_row, int start_col, int content_cols) {
+  auto tags = tags_for_menu(project_id);
+  if (tags.empty()) {
+    // 不阻塞读键——如果在这也等一次按键,会把用户下一次真正的导航键当成
+    // 这个(其实不存在的)菜单的选择吃掉。
+    return " 还没有创建任何标签,先用 pzt tag create 创建 ";
+  }
+
+  std::string line;
+  for (std::size_t i = 0; i < tags.size(); ++i) {
+    if (i > 0) line += "  ";
+    line += std::to_string(i + 1) + ":" + tags[i].name;
+    if (tags[i].cap) {
+      line += "(" + std::to_string(tags[i].tagged_count) + "/" + std::to_string(*tags[i].cap) + ")";
+    }
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c < '1' || c > static_cast<char>('0' + tags.size())) return "";  // 取消,静默
+
+  const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
+  auto result = pzt::core::add_tag(image_id, chosen.id);
+  if (result.ok()) return "";  // 静默成功,信息栏下一帧自然显示新标签
+
+  const auto& err = result.error();
+  if (err.kind == pzt::core::AddTagFailureKind::CapExceeded) {
+    return handle_cap_replace_submenu(chosen.id, image_id, *err.cap_info, banner_row, start_col,
+                                       content_cols);
+  }
+  // TagNotFound/ImageNotFound/ProjectMismatch:tag_id/image_id 都来自刚查
+  // 出来的数据,理论上不会发生,防御性处理而不是假设不可能。
+  return " 打标签失败,请重试 ";
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "pzt new: missing <project_name>\n");
@@ -341,7 +430,8 @@ int cmd_open(const std::vector<std::string>& args) {
   std::size_t frame = 0;
   const int kImageId = 1;
   const int kBannerRows = 1;
-  const char* kBannerText = " h/l 上一张/下一张   j/k 下一张/上一张未打标签   q 退出 ";
+  const char* kBannerText =
+      " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   q 退出 ";
   // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
   // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
   // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
@@ -354,6 +444,10 @@ int cmd_open(const std::vector<std::string>& args) {
     // 又切不回来。
     pzt::cli::term::AltScreen alt_screen;
     pzt::cli::term::CbreakMode cbreak;
+
+    // 上一帧实际渲染的是哪张图——打标签这类不改 current_id 的操作不需要
+    // 重新拉取/传输图片本身,只有 current_id 真的变了才需要。
+    std::optional<pzt::core::ImageId> last_rendered_id;
 
     while (true) {
       auto key_time = std::chrono::steady_clock::now();
@@ -414,39 +508,55 @@ int cmd_open(const std::vector<std::string>& args) {
       int debug_top_row = 2 + top_rows + 1;  // 图片区 + 分隔线之后
       int banner_row = debug_top_row + (debug_mode ? kDebugRows + 1 : 0);
 
-      // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的关键
-      // 一步,没有它,旧 placement 不会自动消失。
-      pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+      // 打标签这类操作不会改 current_id,不需要重新清除/传输同一张图——
+      // 真机测试发现,不加这个判断的话,打个标签也会因为整帧重画而卡顿一
+      // 下,尽管图片内容根本没变。只有 current_id 真的变了才重新走一遍
+      // "清掉上一帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。
+      if (last_rendered_id != current_id) {
+        // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
+        // 关键一步,没有它,旧 placement 不会自动消失。
+        pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
 
-      auto decoded = prefetch.get(current_id);
-      if (decoded.ok()) {
-        const auto& img = decoded.value();
-        auto fit = pzt::cli::kitty::fit_within(img.width, img.height, image_cols * cell_px_w,
-                                                top_rows * cell_px_h);
-        int target_cols = std::max(1, fit.width / cell_px_w);
-        int target_rows = std::max(1, fit.height / cell_px_h);
+        auto decoded = prefetch.get(current_id);
+        if (decoded.ok()) {
+          const auto& img = decoded.value();
+          auto fit = pzt::cli::kitty::fit_within(img.width, img.height, image_cols * cell_px_w,
+                                                  top_rows * cell_px_h);
+          int target_cols = std::max(1, fit.width / cell_px_w);
+          int target_rows = std::max(1, fit.height / cell_px_h);
 
-        // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)整
-        // 个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的实际
-        // 来源——即便我们这边 prefetch 已经命中、解码耗时为 0。先在这边缩
-        // 小到面板大致能显示的尺寸,大幅减少终端侧要处理的数据量。
-        auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
-        const auto& to_render = resized.ok() ? resized.value() : img;
+          // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)
+          // 整个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的
+          // 实际来源——即便我们这边 prefetch 已经命中、解码耗时为 0。先
+          // 在这边缩小到面板大致能显示的尺寸,大幅减少终端侧要处理的数
+          // 据量。
+          auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
+          const auto& to_render = resized.ok() ? resized.value() : img;
 
-        move_cursor(image_top_row, start_col + 1);
-        std::string tmp_path = pzt::cli::kitty::make_tmp_path(
-            std::to_string(getpid()) + "_" + std::to_string(frame++));
-        auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
-            STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
-        if (!rendered.ok()) {
-          std::fprintf(stderr, "pzt open: 渲染失败\n");
+          move_cursor(image_top_row, start_col + 1);
+          std::string tmp_path = pzt::cli::kitty::make_tmp_path(
+              std::to_string(getpid()) + "_" + std::to_string(frame++));
+          auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
+              STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
+          if (!rendered.ok()) {
+            std::fprintf(stderr, "pzt open: 渲染失败\n");
+          }
+        } else {
+          std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
         }
-      } else {
-        std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
+        last_rendered_id = current_id;
       }
 
-      // 信息栏:编号、文件名、标签、文件大小,固定在图片区右侧。
+      // 信息栏:编号、文件名、标签、文件大小,固定在图片区右侧。内容行数
+      // 随标签数量变化(标签越多占的行越多)——真机测试发现,标签数变少之
+      // 后,上一帧比较靠下的内容(比如"大小:"那一行)不会被这一帧覆盖到,
+      // 会一直重影在那。先把整个信息栏区域清空,再画这一帧实际用到的内
+      // 容,不管行数怎么变都不会留下上一帧的残留。
       {
+        for (int r = 0; r < top_rows; ++r) {
+          move_cursor(image_top_row + r, info_col);
+          write_stdout(pad_to("", info_cols));
+        }
         int row = image_top_row;
         move_cursor(row++, info_col);
         write_stdout(pad_to("[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) +
@@ -515,7 +625,7 @@ int cmd_open(const std::vector<std::string>& args) {
           c = 'q';
           break;
         }
-        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k') break;
+        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ') break;
       }
       if (c == 'q') break;
 
@@ -530,13 +640,20 @@ int cmd_open(const std::vector<std::string>& args) {
         } else {
           status_override = " 所有图片都已打过标签 ";
         }
-      } else {
+      } else if (c == 'k') {
         auto prev = pzt::core::prev_untagged(images, current_id);
         if (prev) {
           current_id = *prev;
         } else {
           status_override = " 所有图片都已打过标签 ";
         }
+      } else if (c == ' ') {
+        if (current_ref) {
+          status_override =
+              handle_space_key(*id, current_ref->id, banner_row, start_col, content_cols);
+        }
+        // current_id 不变,跟其它分支一样落到下面的 set_current + 循环顶部
+        // 整屏重绘,信息栏会自然显示打标签之后的结果。
       }
       prefetch.set_current(images, current_id);
     }
