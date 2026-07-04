@@ -180,6 +180,16 @@ ExportResult export_tag(TagId tag_id, string output_folder,
    - 逐条核对 M0_PRD.md 的六条验收标准
    - 用真实素材(而非合成测试图)试用一轮
 
+### tmux 焦点切换时清理图片残留(6.4 阶段真机测试发现并修复)
+
+真机测试发现:在 tmux 里打开 `pzt open` 之后切到另一个 tmux 窗口,图片会一直挡在那个窗口里,不会消失。根因:Kitty 协议的图片 placement 是叠加在文字网格之上的独立合成层,tmux 本身不理解这一层——即便开了 passthrough 转发字节,tmux 切换窗口时只会重绘新窗口的文字内容,不会主动清掉上一个窗口留下的图片;而我们的进程这时候还在跑,只是阻塞在 `read()` 等键,不知道自己被切走了。之前"退出时清一次 placement"的修复只覆盖了正常按 `q` 退出这条路径,对这种情况没用。
+
+第一版实现用的是 tmux 的 `pane-focus-out`/`pane-focus-in` hook,真机测试确认没用,而且找到了明确原因:这两个 hook 依赖真实终端级别的焦点事件——`focus-events` 选项打开后,tmux 向外层终端请求转发的是"这个 OS 窗口有没有失去焦点"这个真实终端事件,不是 tmux 自己内部"当前显示哪个 window"这个状态;在同一个 Ghostty 窗口里切 tmux 窗口(`next-window`/`previous-window`,或者任何自定义前缀键绑定的等效操作)根本不会产生真实的终端焦点事件,自然不会触发这两个 hook。进一步查证发现 `after-next-window`/`after-previous-window` 这类命令级 hook 在实测的 tmux 3.7 上也不是有效的 hook 名字(只有 `after-select-window` 被接受,但 `next-window`/`previous-window` 并不会触发它,说明这两个命令内部并不是走 `select-window` 实现的)。
+
+最终改用轮询:`cli/term/tmux_focus.h` 的 `TmuxFocusWatcher` 起一个 `std::jthread` 后台线程,每隔约 300ms(拆成 50ms 一段的短睡眠,保证 `request_stop` 后能很快退出,不重蹈 increment 6.3 那次 worker 关闭延迟的覆辙)用 `tmux display-message -p -t <pane> '#{window_active}'` 查一次"我这个 pane 所在的 window 现在是不是正在显示给客户端"——`fork`+`execlp` 直接调用,不经过 `/bin/sh`,读子进程 stdout 判断是不是 `"1"`。状态从 1 变 0 时给自己发 `SIGUSR1`(失焦),从 0 变 1 时发 `SIGUSR2`(重新获焦)。这两个信号本来就是为了打断主线程阻塞中的 `read()`(信号处理函数只做异步信号安全的事——设置一个 `std::atomic<bool>` 标记;注册信号时特意不设 `SA_RESTART`,保证 `read()` 真的会被打断返回 `EINTR`),真正的清理/重绘逻辑放在主循环里:`read()` 因为信号被打断时,检查这两个标记——失焦清一次 placement,重新获焦时不等下一次真实按键就跳回外层循环补一次全量重绘。用 `TMUX_PANE` 环境变量(tmux 给 pane 内进程自动设置)确定"当前是哪个 pane",不需要另外查询。
+
+用 `tmux pipe-pane`(捕获指定 pane 自己的原始输出,不受客户端当前在看哪个窗口影响)在一个隔离的真实 tmux 会话里验证过完整链路:切走后能看到多出来的一次 `a=d`(清除),切回来后能看到多出来的一次 `a=T`(补画),都不需要真实按键触发。
+
 ## 待确认问题
 
 - 技术选型一节的三个选择(SQLite C API、手写参数解析、doctest)需要在开始脚手架搭建前明确签字,而不是隐式默认
