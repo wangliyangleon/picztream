@@ -104,14 +104,15 @@ image_tags(
 - `replace_tag_entry(tag_id, remove_image_id, add_image_id)`
 - `remove_tag(image_id, tag_id)`
 
-increment 6.4 阶段决定不保留独立的 `pzt tag create`/`add`/`remove`/`replace` 命令,标签的新建、删除(标签本身)、从单张图片摘掉标签,全部收进 `pzt open` 里的 `space` 菜单(见 M0_PRD.md 快捷键设计一节),cli 侧统一入口:
+increment 6.4 阶段决定不保留独立的 `pzt tag create`/`add`/`remove`/`replace` 命令,标签的新建、删除(标签本身)、从单张图片摘掉标签,全部收进 `pzt open` 里的 `space` 菜单(见 M0_PRD.md 快捷键设计一节),cli 侧统一入口。设计过程中确认了几处跟"废片"这个内置系统标签相关的细节(这几条会在 increment 6.4.5 落地"废片"本身时一并生效,不是 6.4.4.5 单独的事):"废片"固定占数字键 0,不参与其它标签按 `id` 升序动态分配编号的规则(这样不管什么时候创建了新标签,`0` 永远稳定指向废片,不会被挤占);系统标签(目前只有废片,以后可能有更多)不能被删除。
 
-- `space` + 数字:打标签,已实现(increment 6.4.4),对应 `add_tag`/`replace_tag_entry`,数字键映射按 `TagSummary.id` 升序固定(不是 `list_tags` 默认的字母序),客户端(cli)排序,不改 `list_tags` 本身
-- `space 0` + 数字:从当前图片摘掉该标签,对应现有的 `remove_tag`——幂等,图片本来就没这个标签也是成功,不需要额外校验
-- `space c`:新建标签,对应现有的 `create_tag`
-- `space d` + 数字:删除标签本身(连带清掉所有图片与它的关联,是项目级操作,影响的不只是当前图片)——**目前 core 层没有对应函数**,`create_tag`/`add_tag`/`remove_tag`/`replace_tag_entry` 都是针对已存在的标签操作或新建,没有"删除一个标签定义"这个接口,增量实现时需要补一个类似 `delete_tag(tag_id)` 的函数,依赖 schema 里 `image_tags.tag_id REFERENCES tags(id) ON DELETE CASCADE` 做级联清除(跟 `delete_project` 依赖的是同一个级联机制)
+- `space` + 数字:打标签,已实现(increment 6.4.4),对应 `add_tag`/`replace_tag_entry`,数字键映射按 `TagSummary.id` 升序固定(不是 `list_tags` 默认的字母序),客户端(cli)排序,不改 `list_tags` 本身;"废片"固定映射到 `0`,不占用这个升序序列
+- `space -` + 数字:从当前图片摘掉该标签,对应现有的 `remove_tag`——幂等,图片本来就没这个标签也是成功,不需要额外校验。(设计过程中一度考虑用 `space 0` + 数字表示这个操作,但 `0` 已经被"废片"的固定编号占用,两者会冲突,改用 `-` 避免歧义)
+- `space c`:新建标签——这个子命令比其它几个复杂:其它几个菜单都是"渲染提示 -> 读一个字节 -> 得出最终结果",这个需要读入一个完整的标签名(多字符文本),不是单字节交互,需要单独设计(比如是否允许中途退格、以什么结束输入),增量实现时不能照抄现成的 `handle_space_key`/`handle_cap_replace_submenu` 单字节读取模式
+- `space d` + 数字:删除标签本身(连带清掉所有图片与它的关联,是项目级操作,影响的不只是当前图片);系统标签不出现在这个菜单的可选列表里,不是"选了之后拒绝",而是从一开始就不给选。**目前 core 层没有对应函数**,`create_tag`/`add_tag`/`remove_tag`/`replace_tag_entry` 都是针对已存在的标签操作或新建,没有"删除一个标签定义"这个接口,增量实现时需要补一个类似 `delete_tag(tag_id)` 的函数,依赖 schema 里 `image_tags.tag_id REFERENCES tags(id) ON DELETE CASCADE` 做级联清除(跟 `delete_project` 依赖的是同一个级联机制)
+- `x`:"标记为废片"的专用快捷键,等价于 `space` + `0`,但不需要先打开菜单,是最高频操作("废片"预期是使用频率最高的标签)的直达路径
 
-以上四个子命令共用同一套"space 打开菜单 -> 读一个键 -> 按结果分支"的交互模式(`cli/main.cpp` 的 `handle_space_key`),`0`/`c`/`d` 都是在原有"读一个数字选标签"基础上新增的、和数字互斥的入口键,不需要状态机。
+`g` + 数字(切换到指定标签的筛选视图)复用同一套编号规则(`0` = 废片,1-9 按创建顺序对应用户标签);`g` + `g` 清除筛选、回到完整项目视图——`g` 本身还没有任何实现(increment 6.4.6),这里先把编号规则和 `space` 菜单对齐,避免后续实现时两套编号不一致。
 
 **导出**
 
