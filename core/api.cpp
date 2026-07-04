@@ -86,6 +86,11 @@ Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image,
   return tagging::replace_tag_entry(db, tag_id, old_image, new_image);
 }
 
+Result<void, DeleteTagError> delete_tag(TagId tag_id) {
+  db::Database db = db::Database::open_default();
+  return tagging::delete_tag(db, tag_id);
+}
+
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune) {
   db::Database db = db::Database::open_default();
   return project::rescan_project(db, project_id, prune);

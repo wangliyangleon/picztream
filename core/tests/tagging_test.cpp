@@ -276,3 +276,75 @@ TEST_CASE("tags_for_image returns an empty list for an untagged or unknown image
   CHECK(tags_for_image(fx.db, fx.images[0]).empty());
   CHECK(tags_for_image(fx.db, fx.images[0] + 999).empty());
 }
+
+TEST_CASE("delete_tag cascades image_tags rows for every image that had it") {
+  auto fx = make_fixture("delete_tag_cascade", 2);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+  REQUIRE(add_tag(fx.db, fx.images[1], tag.value()).ok());
+
+  auto result = delete_tag(fx.db, tag.value());
+  REQUIRE(result.ok());
+
+  CHECK(tags_for_image(fx.db, fx.images[0]).empty());
+  CHECK(tags_for_image(fx.db, fx.images[1]).empty());
+
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(fx.db.handle(), "SELECT COUNT(*) FROM image_tags WHERE tag_id = ?;", -1,
+                      &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, tag.value());
+  REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+  CHECK(sqlite3_column_int64(stmt, 0) == 0);
+  sqlite3_finalize(stmt);
+}
+
+TEST_CASE("delete_tag reports TagNotFound for a missing tag_id") {
+  auto fx = make_fixture("delete_tag_missing", 1);
+  auto result = delete_tag(fx.db, 999);
+  REQUIRE(!result.ok());
+  CHECK(result.error() == DeleteTagError::TagNotFound);
+}
+
+TEST_CASE("delete_tag is not idempotent - deleting an already-deleted tag_id errors") {
+  auto fx = make_fixture("delete_tag_not_idempotent", 1);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+
+  REQUIRE(delete_tag(fx.db, tag.value()).ok());
+  auto second = delete_tag(fx.db, tag.value());
+  REQUIRE(!second.ok());
+  CHECK(second.error() == DeleteTagError::TagNotFound);
+}
+
+TEST_CASE("delete_tag refuses a system tag and leaves it and its associations intact") {
+  auto fx = make_fixture("delete_tag_system", 1);
+  auto tag = create_tag(fx.db, fx.project_id, "废片", std::nullopt, false, /*is_system=*/true);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  auto result = delete_tag(fx.db, tag.value());
+  REQUIRE(!result.ok());
+  CHECK(result.error() == DeleteTagError::SystemTagProtected);
+
+  auto tags = list_tags(fx.db, fx.project_id);
+  REQUIRE(tags.size() == 1);
+  CHECK(tags[0].id == tag.value());
+  CHECK(tags[0].tagged_count == 1);
+}
+
+TEST_CASE("delete_tag only affects the targeted tag, not other tags on the same image") {
+  auto fx = make_fixture("delete_tag_only_target", 1);
+  auto keep = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  auto drop = create_tag(fx.db, fx.project_id, "朋友圈", std::nullopt, false);
+  REQUIRE(keep.ok());
+  REQUIRE(drop.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], keep.value()).ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], drop.value()).ok());
+
+  REQUIRE(delete_tag(fx.db, drop.value()).ok());
+
+  auto tags = tags_for_image(fx.db, fx.images[0]);
+  REQUIRE(tags.size() == 1);
+  CHECK(tags[0].id == keep.value());
+}

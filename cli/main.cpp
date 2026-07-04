@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include <poll.h>
 #include <unistd.h>
 
 #include "cli/kitty/kitty.h"
@@ -247,6 +248,78 @@ char read_one_byte() {
   return n <= 0 ? 0x1B : c;
 }
 
+// --debug 模式下,debug 面板的内容来自后台 prefetch 线程往 stderr 打的日
+// 志,不依附于任何按键——主循环原本完全阻塞在 read() 上,刚 open 一个项目
+// 时,当前这张图的解码日志还没写出来就已经画完这一帧,debug 面板要等用户
+// 真的按下一个键触发下一次整屏重绘才会显示最新内容。这里用 poll() 代替阻
+// 塞 read() 定期超时,超时就让外层循环重画一帧(不当成任何按键处理),debug
+// 面板就能在没有导航操作的情况下也跟上后台日志。只在 debug_mode 时启用,
+// 不开 --debug 时没有这个刷新的必要,阻塞 read 不多余地占用 CPU。
+bool stdin_ready(int timeout_ms) {
+  struct pollfd pfd{STDIN_FILENO, POLLIN, 0};
+  int ret = poll(&pfd, 1, timeout_ms);
+  return ret > 0;
+}
+
+// 给定一个 UTF-8 码点的起始字节,返回后面还需要几个续字节才能凑成一个完
+// 整码点(0-3)。非法起始字节按 0 处理,当成单字节字符,不阻塞输入。
+int utf8_continuation_bytes(unsigned char lead) {
+  if (lead < 0x80) return 0;
+  if ((lead & 0xE0) == 0xC0) return 1;
+  if ((lead & 0xF0) == 0xE0) return 2;
+  if ((lead & 0xF8) == 0xF0) return 3;
+  return 0;
+}
+
+// increment 6.4.4.5:从 banner 那一行读一整行 UTF-8 文本(新建标签要输入
+// 名称,这是这个项目第一次需要真正的多字节文本输入,其它菜单都只读一个字
+// 节)。ECHO 在 cbreak 模式下是关的,要手动重画"提示 + 已输入内容"才能让
+// 用户看到自己打了什么——但不是每个字节都重画,攒够一个完整的 UTF-8 码点
+// 才画,避免把不完整的多字节序列写到终端上:这样不用赌终端自己的 UTF-8
+// 解码器能不能扛住半个字符,也不用赌一个按键的几个字节到达得够快、人眼
+// 看不出中间状态,多写这几行代码换来不用赌。Esc/EOF 返回 nullopt(整个流
+// 程取消);Enter(`\r` 或 `\n`,两个都接受——cbreak 模式没动 `ICRNL`,具体
+// 哪个字节真正到达不能只看代码确定)返回目前的缓冲区内容(可能是空字符
+// 串,调用方决定空值是否合法)。退格(DEL `0x7F` 或 BS `0x08`,两个都处
+// 理)整个删掉最后一个 UTF-8 码点,不是只删一个字节——因为 `ICANON` 关了,
+// 内核不会自动处理退格。
+std::optional<std::string> read_text_line(const std::string& prompt, int banner_row,
+                                           int start_col, int content_cols) {
+  std::string buffer;
+  int pending_needed = 0;  // 还差几个续字节才能凑成当前码点
+
+  auto redraw = [&] {
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(prompt + buffer, content_cols));
+  };
+  redraw();
+
+  while (true) {
+    char c = read_one_byte();
+    if (c == 0x1B) return std::nullopt;
+    if (c == '\r' || c == '\n') return buffer;
+    if (c == 0x7F || c == 0x08) {
+      if (!buffer.empty()) {
+        std::size_t pos = buffer.size() - 1;
+        while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
+        buffer.erase(pos);
+      }
+      pending_needed = 0;
+      redraw();
+      continue;
+    }
+    if (static_cast<unsigned char>(c) < 0x20) continue;  // 其它控制字节,忽略
+
+    buffer += c;
+    if (pending_needed > 0) {
+      --pending_needed;
+    } else {
+      pending_needed = utf8_continuation_bytes(static_cast<unsigned char>(c));
+    }
+    if (pending_needed == 0) redraw();
+  }
+}
+
 // cap 超限时,在 banner 那一行显示已有条目、读一个键选替换对象或取消。
 std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::ImageId new_image_id,
                                         const pzt::core::CapExceededInfo& cap_info, int banner_row,
@@ -274,30 +347,158 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
   return " 已替换 '" + old_entry.file_name + "' ";
 }
 
-// space 键的入口:在 banner 那一行显示可选标签、读一个键选标签或取消,
-// cap 超限时转入 handle_cap_replace_submenu。
-std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
-                              int banner_row, int start_col, int content_cols) {
-  auto tags = tags_for_menu(project_id);
-  if (tags.empty()) {
-    // 不阻塞读键——如果在这也等一次按键,会把用户下一次真正的导航键当成
-    // 这个(其实不存在的)菜单的选择吃掉。
-    return " 还没有创建任何标签,先用 pzt tag create 创建 ";
-  }
-
-  std::string line;
+// increment 6.4.4.5:space - 摘除标签。复用跟"加标签"完全相同的列表/编
+// 号(id 升序,不是"只显示当前图片有的标签")——`tags_for_menu` 客户端重
+// 排序就是为了让"数字 N 永远对应同一个标签"这条肌肉记忆成立,摘除菜单换
+// 一套编号的话,同一个数字在两个菜单里意味着不同标签,反而更容易按错。选
+// 中一个当前图片本来就没有的标签,`remove_tag` 本来就是幂等的,不需要额
+// 外校验或过滤。菜单文案前缀"摘除:"跟加标签菜单区分开,给一个明确的视觉
+// 提示"现在是摘除模式"。
+std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& tags,
+                                       pzt::core::ImageId image_id, int banner_row, int start_col,
+                                       int content_cols) {
+  std::string line = " 摘除:";
   for (std::size_t i = 0; i < tags.size(); ++i) {
     if (i > 0) line += "  ";
     line += std::to_string(i + 1) + ":" + tags[i].name;
-    if (tags[i].cap) {
-      line += "(" + std::to_string(tags[i].tagged_count) + "/" + std::to_string(*tags[i].cap) + ")";
-    }
   }
   line += "  Esc 取消";
   move_cursor(banner_row, start_col + 1);
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
+  if (c < '1' || c > static_cast<char>('0' + tags.size())) return "";  // 取消,静默
+
+  const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
+  auto result = pzt::core::remove_tag(image_id, chosen.id);
+  if (!result.ok()) return " 摘标签失败,请重试 ";  // 防御性,理论上不应该发生
+  return "";  // 静默成功,信息栏下一帧自然显示摘除后的结果
+}
+
+// increment 6.4.4.5:space c 新建标签。跟其它菜单不同,这里需要读入一个
+// 完整的标签名(多字符文本),用 read_text_line;上限和是否排序两个后续问
+// 题分别用文本输入/单字节是否处理。
+std::string handle_create_tag_flow(pzt::core::ProjectId project_id, int banner_row, int start_col,
+                                    int content_cols) {
+  auto name = read_text_line(" 新标签名称: ", banner_row, start_col, content_cols);
+  if (!name) return "";  // Esc,静默取消
+  if (name->empty()) {
+    // 空回车不是 Esc——用户确实按了键,不能像 Esc 一样什么反馈都没有。
+    return " 标签名不能为空,已取消 ";
+  }
+
+  auto cap_text =
+      read_text_line(" 上限数量(直接 Enter = 不限): ", banner_row, start_col, content_cols);
+  if (!cap_text) return "";  // Esc 中止整个流程,即便名字已经输完了
+  std::optional<std::int64_t> cap;
+  if (!cap_text->empty()) {
+    // 尝试整体解析成正整数;解析不完整/非数字/<=0 都当"不限"处理,不重新
+    // 提示、不阻塞重试——cap 是低风险的元数据(填错了大不了删掉重建),这
+    // 个菜单一贯的风格是不做校验重试循环。
+    try {
+      std::size_t consumed = 0;
+      long long parsed = std::stoll(*cap_text, &consumed);
+      if (consumed == cap_text->size() && parsed > 0) {
+        cap = parsed;
+      }
+    } catch (const std::exception&) {
+      // 解析失败,cap 保持 nullopt(不限)
+    }
+  }
+
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(" 是否需要按顺序排列(用于朋友圈九宫格等,直接 Enter = 否): "
+                      "y 是 / 其它键 = 否 ",
+                      content_cols));
+  char c = read_one_byte();
+  if (c == 0x1B) return "";  // Esc 在这一步依然中止整个流程
+  bool is_ordered = (c == 'y' || c == 'Y');  // 其它任何键(包括裸回车)都算"否"
+
+  auto result = pzt::core::create_tag(project_id, *name, cap, is_ordered);
+  if (!result.ok()) return " 标签名 '" + *name + "' 已存在,未创建 ";
+  return " 已创建标签 '" + *name + "' ";
+}
+
+// increment 6.4.4.5:space d 删除标签定义本身(项目级、级联清除所有图片
+// 与它的关联),不是"摘掉当前图片的标签"。只列非系统标签——系统标签(目
+// 前只有还没落地的"废片")不能删除,从一开始就不给选,而不是选了之后再拒
+// 绝。比菜单里其它操作多一次按键确认("y" 才执行),因为这是这个菜单里破
+// 坏性最强、唯一项目级且不可逆的操作,但没有重到 `pzt delete` 那种"重新打
+// 一遍项目名"的程度——那种量级的确认是给独立执行的破坏性命令用的,跟这
+// 个强调"不打断心流"的菜单体系不搭。
+std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& tags,
+                                       int banner_row, int start_col, int content_cols) {
+  std::vector<pzt::core::TagSummary> deletable;
+  for (const auto& t : tags) {
+    if (!t.is_system) deletable.push_back(t);
+  }
+  if (deletable.empty()) {
+    return " 没有可删除的标签 ";  // 不阻塞读键,跟"项目没有标签"同样的理由
+  }
+
+  std::string line = " 删除:";
+  for (std::size_t i = 0; i < deletable.size(); ++i) {
+    if (i > 0) line += "  ";
+    line += std::to_string(i + 1) + ":" + deletable[i].name + "(" +
+            std::to_string(deletable[i].tagged_count) + "张)";
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c < '1' || c > static_cast<char>('0' + deletable.size())) return "";  // 取消,静默
+  const auto& chosen = deletable[static_cast<std::size_t>(c - '1')];
+
+  std::string confirm = " 确定删除标签 '" + chosen.name + "'(" +
+                         std::to_string(chosen.tagged_count) + " 张关联)?此操作不可撤销。"
+                         "y 确认 / 其它键取消 ";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(confirm, content_cols));
+  char yn = read_one_byte();
+  if (yn != 'y' && yn != 'Y') return "";  // 取消,静默
+
+  auto result = pzt::core::delete_tag(chosen.id);
+  if (!result.ok()) return " 删除失败,请重试 ";  // 防御性,理论上不应该发生
+  return " 已删除标签 '" + chosen.name + "' ";
+}
+
+// space 键的入口:在 banner 那一行显示可选标签、读一个键选标签或取消,
+// cap 超限时转入 handle_cap_replace_submenu;`-`/`c`/`d` 分别转入摘除/新
+// 建/删除标签定义。
+std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
+                              int banner_row, int start_col, int content_cols) {
+  auto tags = tags_for_menu(project_id);  // 只查一次,加/摘/删三个分支共用
+
+  std::string line;
+  if (tags.empty()) {
+    // increment 6.4.4.5:这里从"不阻塞读键"改成阻塞读一个键——项目没有任
+    // 何标签时,原来的做法是直接返回提示、不读键,避免把用户下一次真正的
+    // 导航键当成菜单选择吃掉。但现在按 space 之后总归有 "c 新建" 这个真选
+    // 项可选,不再是"其实没有菜单"的情况,原来"不读键"的理由不再成立;
+    // 不改的话,一个全新项目(还没落地废片自动创建的 6.4.5 之前)永远没
+    // 法通过交互界面建出第一个标签。
+    line = " 还没有标签,c 新建  Esc 取消 ";
+  } else {
+    for (std::size_t i = 0; i < tags.size(); ++i) {
+      if (i > 0) line += "  ";
+      line += std::to_string(i + 1) + ":" + tags[i].name;
+      if (tags[i].cap) {
+        line +=
+            "(" + std::to_string(tags[i].tagged_count) + "/" + std::to_string(*tags[i].cap) + ")";
+      }
+    }
+    line += "  c:新建  d:删除  -:摘除  Esc 取消";
+  }
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c == 'c') return handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
+  if (c == '-') {
+    return handle_remove_tag_submenu(tags, image_id, banner_row, start_col, content_cols);
+  }
+  if (c == 'd') return handle_delete_tag_submenu(tags, banner_row, start_col, content_cols);
   if (c < '1' || c > static_cast<char>('0' + tags.size())) return "";  // 取消,静默
 
   const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
@@ -449,6 +650,22 @@ int cmd_open(const std::vector<std::string>& args) {
     // 重新拉取/传输图片本身,只有 current_id 真的变了才需要。
     std::optional<pzt::core::ImageId> last_rendered_id;
 
+    // 上一帧是不是刚显示过 status_override 这种一次性提示——刚显示过的
+    // 话,下一次读键不管读到什么都只用来"消除提示",不当成 h/l/j/k/space
+    // 的具体动作处理,呼应提示文案里"按任意键继续"这句话:既然说了任意
+    // 键,就不应该因为按的不是那几个认识的键就什么反应都没有,也不应该让
+    // 这一次按键同时"消除提示"又"顺便导航/打开菜单",那样反而让人搞不清
+    // 这次按键到底生效了没有。
+    bool showing_status = false;
+
+    // 上一轮是不是 --debug 模式下 poll 超时(没有真实按键)触发的重画——是
+    // 的话,这一轮渲染完不打 key-to-render 延迟日志:这条日志的本意是"从
+    // 按键到渲染完成"的延迟,超时触发的重画根本没有对应的按键,量出来的
+    // 只是这一帧本身的渲染耗时(而且图片这步大概率被跳过,数字会很小),
+    // 跟这条日志真正想回答的问题("切图快不快")没关系,混在一起只会让
+    // debug 面板看起来像是在不停后台重复干活。
+    bool suppress_latency_log = false;
+
     while (true) {
       auto key_time = std::chrono::steady_clock::now();
 
@@ -507,45 +724,6 @@ int cmd_open(const std::vector<std::string>& args) {
       int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
       int debug_top_row = 2 + top_rows + 1;  // 图片区 + 分隔线之后
       int banner_row = debug_top_row + (debug_mode ? kDebugRows + 1 : 0);
-
-      // 打标签这类操作不会改 current_id,不需要重新清除/传输同一张图——
-      // 真机测试发现,不加这个判断的话,打个标签也会因为整帧重画而卡顿一
-      // 下,尽管图片内容根本没变。只有 current_id 真的变了才重新走一遍
-      // "清掉上一帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。
-      if (last_rendered_id != current_id) {
-        // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
-        // 关键一步,没有它,旧 placement 不会自动消失。
-        pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
-
-        auto decoded = prefetch.get(current_id);
-        if (decoded.ok()) {
-          const auto& img = decoded.value();
-          auto fit = pzt::cli::kitty::fit_within(img.width, img.height, image_cols * cell_px_w,
-                                                  top_rows * cell_px_h);
-          int target_cols = std::max(1, fit.width / cell_px_w);
-          int target_rows = std::max(1, fit.height / cell_px_h);
-
-          // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)
-          // 整个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的
-          // 实际来源——即便我们这边 prefetch 已经命中、解码耗时为 0。先
-          // 在这边缩小到面板大致能显示的尺寸,大幅减少终端侧要处理的数
-          // 据量。
-          auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
-          const auto& to_render = resized.ok() ? resized.value() : img;
-
-          move_cursor(image_top_row, start_col + 1);
-          std::string tmp_path = pzt::cli::kitty::make_tmp_path(
-              std::to_string(getpid()) + "_" + std::to_string(frame++));
-          auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
-              STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
-          if (!rendered.ok()) {
-            std::fprintf(stderr, "pzt open: 渲染失败\n");
-          }
-        } else {
-          std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
-        }
-        last_rendered_id = current_id;
-      }
 
       // 信息栏:编号、文件名、标签、文件大小,固定在图片区右侧。内容行数
       // 随标签数量变化(标签越多占的行越多)——真机测试发现,标签数变少之
@@ -607,19 +785,94 @@ int cmd_open(const std::vector<std::string>& args) {
 
       // Banner:固定在图片/信息栏下方最后一行,边框内全宽。
       move_cursor(banner_row, start_col + 1);
-      write_stdout(pad_to(status_override.empty() ? kBannerText : status_override, content_cols));
+      showing_status = !status_override.empty();
+      if (showing_status) {
+        write_stdout(pad_to(status_override + "  按任意键继续", content_cols));
+      } else {
+        write_stdout(pad_to(kBannerText, content_cols));
+      }
       status_override.clear();  // 只显示这一帧,不管接下来按了什么键都恢复正常提示
 
-      double key_to_render_ms =
-          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
-              .count();
-      std::fprintf(stderr, "[pzt open] key-to-render %.2fms\n", key_to_render_ms);
+      // 图片放在信息栏/banner 之后画:真机测试反馈图片显示出来之后,右边
+      // 信息栏和底部 banner 的文字有明显的滞后才跟上,怀疑是 Ghostty 处理
+      // Kitty 图片协议命令(读临时文件、解码、合成)这一步在它自己的主循环
+      // 里是同步/阻塞的,会顺带卡住紧跟在图片命令后面的文字——即便我们这
+      // 边是几乎同时把所有这些控制序列写出去的。这几行文字本身很小、写
+      // 出去的成本可以忽略,调整顺序让文字先于图片写出去,这样即便终端处
+      // 理图片这一步确实慢,文字至少能立刻显示,不用跟着一起卡住。打标签
+      // 这类操作不会改 current_id,不需要重新清除/传输同一张图——真机测试
+      // 发现,不加这个判断的话,打个标签也会因为整帧重画而卡顿一下,尽管
+      // 图片内容根本没变。只有 current_id 真的变了才重新走一遍"清掉上一
+      // 帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。
+      if (last_rendered_id != current_id) {
+        // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
+        // 关键一步,没有它,旧 placement 不会自动消失。
+        pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+
+        auto decoded = prefetch.get(current_id);
+        if (decoded.ok()) {
+          const auto& img = decoded.value();
+          auto fit = pzt::cli::kitty::fit_within(img.width, img.height, image_cols * cell_px_w,
+                                                  top_rows * cell_px_h);
+          int target_cols = std::max(1, fit.width / cell_px_w);
+          int target_rows = std::max(1, fit.height / cell_px_h);
+
+          // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)
+          // 整个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的
+          // 实际来源——即便我们这边 prefetch 已经命中、解码耗时为 0。先
+          // 在这边缩小到面板大致能显示的尺寸,大幅减少终端侧要处理的数
+          // 据量。
+          auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
+          const auto& to_render = resized.ok() ? resized.value() : img;
+
+          move_cursor(image_top_row, start_col + 1);
+          std::string tmp_path = pzt::cli::kitty::make_tmp_path(
+              std::to_string(getpid()) + "_" + std::to_string(frame++));
+          auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
+              STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
+          if (!rendered.ok()) {
+            std::fprintf(stderr, "pzt open: 渲染失败\n");
+          }
+        } else {
+          std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
+        }
+        last_rendered_id = current_id;
+      }
+
+      if (!suppress_latency_log) {
+        double key_to_render_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
+                .count();
+        std::fprintf(stderr, "[pzt open] key-to-render %.2fms\n", key_to_render_ms);
+      }
+
+      char c = 0;
+      if (showing_status) {
+        // 刚显示过一次性提示("按任意键继续"),这一次读键不管读到什么字
+        // 节都只用来消除提示、跳回外层循环重画一次正常画面,不当成
+        // h/l/j/k/space 的具体动作执行——否则这一次按键会同时"消除提示"
+        // 又"顺便导航/打开菜单",容易让人搞不清这次按键到底生效了没有。
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        showing_status = false;
+        suppress_latency_log = false;  // 这一轮读到了真实按键(用来消除提示)
+        if (n <= 0) break;  // 真正的 EOF/出错,当退出处理
+        continue;
+      }
 
       // 不支持的键直接在这个内层循环里吃掉,继续读下一个字节——不 continue
       // 回外层 while,那样会导致整个画面(边框、图片、信息栏、banner)重新
-      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。
-      char c = 0;
+      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。--debug 模式下例
+      // 外:每一轮先 poll 一次,超时(没有任何按键)就直接 continue 回外层
+      // 重画,刷新 debug 面板;不开 --debug 时维持原来单纯阻塞 read 的写
+      // 法,不引入 poll 的额外开销。
+      bool timed_out = false;
       while (true) {
+        if (debug_mode) {
+          if (!stdin_ready(300)) {
+            timed_out = true;
+            break;
+          }
+        }
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n <= 0) {
           c = 'q';
@@ -627,6 +880,11 @@ int cmd_open(const std::vector<std::string>& args) {
         }
         if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ') break;
       }
+      if (timed_out) {
+        suppress_latency_log = true;  // 没有按键,只是刷新 debug 面板,不处理导航
+        continue;
+      }
+      suppress_latency_log = false;  // 这一轮确实读到了真实按键
       if (c == 'q') break;
 
       if (c == 'h') {

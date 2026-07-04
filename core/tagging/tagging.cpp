@@ -301,4 +301,28 @@ Result<void, ReplaceTagError> replace_tag_entry(db::Database& db, TagId tag_id, 
   return Result<void, ReplaceTagError>::Ok();
 }
 
+Result<void, DeleteTagError> delete_tag(db::Database& db, TagId tag_id) {
+  sqlite3* conn = db.handle();
+
+  bool is_system = false;
+  {
+    Stmt stmt(conn, "SELECT is_system FROM tags WHERE id = ?;");
+    sqlite3_bind_int64(stmt.get(), 1, tag_id);
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW) {
+      return Result<void, DeleteTagError>::Err(DeleteTagError::TagNotFound);
+    }
+    is_system = sqlite3_column_int64(stmt.get(), 0) != 0;
+  }
+  if (is_system) {
+    return Result<void, DeleteTagError>::Err(DeleteTagError::SystemTagProtected);
+  }
+
+  Stmt del(conn, "DELETE FROM tags WHERE id = ?;");
+  sqlite3_bind_int64(del.get(), 1, tag_id);
+  if (sqlite3_step(del.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("delete tag failed: ") + sqlite3_errmsg(conn));
+  }
+  return Result<void, DeleteTagError>::Ok();
+}
+
 }  // namespace pzt::core::tagging

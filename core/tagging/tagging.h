@@ -94,4 +94,23 @@ enum class ReplaceTagError {
 Result<void, ReplaceTagError> replace_tag_entry(db::Database& db, TagId tag_id, ImageId old_image,
                                                  ImageId new_image);
 
+enum class DeleteTagError {
+  TagNotFound,
+  SystemTagProtected,
+};
+
+// 删除标签定义本身（不是某一张图片的关联），级联清掉所有图片与它的
+// image_tags 关联——靠 schema 里 image_tags.tag_id REFERENCES tags(id) ON
+// DELETE CASCADE，跟 delete_project 依赖的是同一套级联机制。
+//
+// 跟 remove_tag 的幂等语义不同：remove_tag 删的是"一张图和一个标签的关联"
+// 这一行，不存在也不算错；delete_tag 删的是标签这个实体本身，tag_id 不存
+// 在是错误（TagNotFound），跟 delete_project/archive_project 现有的"实体
+// 级删除，找不到就报错"约定一致，不是新规则，不是幂等操作。
+//
+// 系统标签在这一层也拒绝删除（SystemTagProtected），不指望"cli 的 space d
+// 菜单不会把系统标签列出来"这个 UI 层面的过滤就足够安全——其它调用方不受
+// 这层 UI 过滤保护。
+Result<void, DeleteTagError> delete_tag(db::Database& db, TagId tag_id);
+
 }  // namespace pzt::core::tagging
