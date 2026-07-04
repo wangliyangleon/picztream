@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -15,7 +14,6 @@
 #include "cli/term/cbreak_mode.h"
 #include "cli/term/debug_log.h"
 #include "cli/term/screen.h"
-#include "cli/term/tmux_focus.h"
 #include "core/api.h"
 
 namespace {
@@ -281,12 +279,9 @@ int cmd_open(const std::vector<std::string>& args) {
   {
     // AltScreen 在 CbreakMode 前构造、后析构:退出时先把输入模式还原、再离
     // 开备用缓冲区,这样即便中途出异常,用户的主屏幕内容也不会被半途切走
-    // 又切不回来。TmuxFocusWatcher 不区分构造顺序(只是注册/注销 tmux
-    // hook,跟终端模式无关),放在最后构造、最先析构,尽量缩短 hook 注册
-    // 生效的窗口。
+    // 又切不回来。
     pzt::cli::term::AltScreen alt_screen;
     pzt::cli::term::CbreakMode cbreak;
-    pzt::cli::term::TmuxFocusWatcher focus_watcher(mode.inside_tmux);
 
     while (true) {
       auto key_time = std::chrono::steady_clock::now();
@@ -439,35 +434,16 @@ int cmd_open(const std::vector<std::string>& args) {
 
       // 不支持的键直接在这个内层循环里吃掉,继续读下一个字节——不 continue
       // 回外层 while,那样会导致整个画面(边框、图片、信息栏、banner)重新
-      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。tmux 焦点变化会通
-      // 过信号打断这个阻塞的 read()(EINTR),不是真的按键,也不是真的
-      // EOF/出错。
+      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。
       char c = 0;
-      bool force_redraw = false;
       while (true) {
         ssize_t n = read(STDIN_FILENO, &c, 1);
-        if (n > 0) {
-          if (c == 'q' || c == 'h' || c == 'l') break;
-          continue;  // 不支持的键,继续读
+        if (n <= 0) {
+          c = 'q';
+          break;
         }
-        if (n < 0 && errno == EINTR) {
-          if (pzt::cli::term::TmuxFocusWatcher::consume_focus_out()) {
-            // 切走了:图片是叠加在文字网格之上的独立合成层,tmux 重绘新窗
-            // 口的文字内容并不会连带清掉它,得自己显式删一次。
-            pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
-          }
-          if (pzt::cli::term::TmuxFocusWatcher::consume_focus_in()) {
-            // 切回来了:上面那次删除让屏幕缺了一块,不等下一次真实按键,
-            // 直接跳回外层循环补一次全量重绘(current_id 不变,不算导航)。
-            force_redraw = true;
-            break;
-          }
-          continue;  // 其它信号打断,继续等键
-        }
-        c = 'q';  // 真正的 EOF/读取出错,当成退出处理
-        break;
+        if (c == 'q' || c == 'h' || c == 'l') break;
       }
-      if (force_redraw) continue;
       if (c == 'q') break;
 
       if (c == 'h') {
