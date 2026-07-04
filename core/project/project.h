@@ -75,12 +75,18 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id);
 
 struct RescanSummary {
   std::int64_t added_count;
+  std::int64_t removed_count;
   std::int64_t total_count;
 };
 
-// 复用 create_project 内部的扫描逻辑，只把磁盘上有、但 images 表里还没有
-// 的文件插进去；不删除、不处理磁盘上已经消失的文件（那样做有可能悄悄丢失
-// 已经打好的标签，风险比"新照片暂时看不到"大得多，不在这个函数的范围内）。
-Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id);
+// 复用 create_project 内部的扫描逻辑，把磁盘上有、但 images 表里还没有的
+// 文件插进去。prune（默认 true）时还会清掉 images 表里有、但磁盘上已经找
+// 不到对应文件的记录——级联清掉这些图片打过的标签（ON DELETE CASCADE）。
+// 这条清理默认打开是刻意的决定：早期版本"只增不减"是为了防止外置硬盘没
+// 挂载时把整个项目的标签悄悄清空，但实际使用中发现"删了照片、标签却清不
+// 掉"更让人困惑。prune=false 保留旧行为，留给明确知道自己在对一个可能暂
+// 时不完整的存储位置跑 rescan 的场景用。
+Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
+                                                             bool prune = true);
 
 }  // namespace pzt::core::project

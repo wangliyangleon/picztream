@@ -13,6 +13,7 @@ using pzt::core::project::archive_project;
 using pzt::core::project::create_project;
 using pzt::core::project::CreateProjectError;
 using pzt::core::project::delete_project;
+using pzt::core::project::find_image_by_path;
 using pzt::core::project::find_project_by_name;
 using pzt::core::project::find_project_by_root_path;
 using pzt::core::project::list_projects;
@@ -248,4 +249,74 @@ TEST_CASE("rescan_project reports NotFound for a missing project id") {
   auto missing = rescan_project(db, 999);
   REQUIRE(!missing.ok());
   CHECK(missing.error() == ProjectNotFoundError::NotFound);
+}
+
+TEST_CASE("rescan_project prunes files missing from disk by default, cascading their tags") {
+  auto db = Database::open_at(fresh_db_path("rescan_prune"));
+  auto photos = fresh_photo_dir("rescan_prune");
+  touch(photos / "a.jpg");
+  touch(photos / "b.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto b_id = find_image_by_path(db, created.value(), "b.jpg");
+  REQUIRE(b_id.has_value());
+
+  // 给 b.jpg 打一个标签,直接写 SQL,不引入 core/tagging 依赖。
+  sqlite3_stmt* insert_tag = nullptr;
+  sqlite3_prepare_v2(db.handle(),
+                      "INSERT INTO tags (project_id, name, is_ordered, is_system) "
+                      "VALUES (?, '精选', 0, 0);",
+                      -1, &insert_tag, nullptr);
+  sqlite3_bind_int64(insert_tag, 1, created.value());
+  REQUIRE(sqlite3_step(insert_tag) == SQLITE_DONE);
+  sqlite3_finalize(insert_tag);
+  std::int64_t tag_id = sqlite3_last_insert_rowid(db.handle());
+
+  sqlite3_stmt* insert_image_tag = nullptr;
+  sqlite3_prepare_v2(db.handle(),
+                      "INSERT INTO image_tags (image_id, tag_id, tagged_at) VALUES (?, ?, 0);",
+                      -1, &insert_image_tag, nullptr);
+  sqlite3_bind_int64(insert_image_tag, 1, *b_id);
+  sqlite3_bind_int64(insert_image_tag, 2, tag_id);
+  REQUIRE(sqlite3_step(insert_image_tag) == SQLITE_DONE);
+  sqlite3_finalize(insert_image_tag);
+
+  fs::remove(photos / "b.jpg");  // 模拟用户手动删掉了这张照片
+  touch(photos / "c.jpg");       // 顺便加一张新的,验证增删同一次 rescan 里都生效
+
+  auto rescanned = rescan_project(db, created.value());
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().added_count == 1);
+  CHECK(rescanned.value().removed_count == 1);
+  CHECK(rescanned.value().total_count == 2);
+
+  CHECK(!find_image_by_path(db, created.value(), "b.jpg").has_value());
+
+  sqlite3_stmt* count_stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(), "SELECT COUNT(*) FROM image_tags WHERE tag_id = ?;", -1,
+                      &count_stmt, nullptr);
+  sqlite3_bind_int64(count_stmt, 1, tag_id);
+  REQUIRE(sqlite3_step(count_stmt) == SQLITE_ROW);
+  CHECK(sqlite3_column_int64(count_stmt, 0) == 0);  // 级联清掉了
+  sqlite3_finalize(count_stmt);
+}
+
+TEST_CASE("rescan_project with prune=false preserves the old add-only behavior") {
+  auto db = Database::open_at(fresh_db_path("rescan_no_prune"));
+  auto photos = fresh_photo_dir("rescan_no_prune");
+  touch(photos / "a.jpg");
+  touch(photos / "b.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  fs::remove(photos / "b.jpg");
+  touch(photos / "c.jpg");
+
+  auto rescanned = rescan_project(db, created.value(), /*prune=*/false);
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().added_count == 1);
+  CHECK(rescanned.value().removed_count == 0);
+  CHECK(rescanned.value().total_count == 3);
+  CHECK(find_image_by_path(db, created.value(), "b.jpg").has_value());
 }

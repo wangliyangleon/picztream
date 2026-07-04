@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 #include "core/db/stmt.h"
@@ -223,7 +224,8 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   return info;
 }
 
-Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id) {
+Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
+                                                             bool prune) {
   sqlite3* conn = db.handle();
   auto summary = get_project_summary(conn, id);
   if (!summary) {
@@ -233,7 +235,12 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
   std::vector<ScannedImage> scanned = scan_jpegs(fs::path(summary->root_path));
   const std::int64_t imported_at = now_unix();
 
+  std::unordered_set<std::string> scanned_paths;
+  scanned_paths.reserve(scanned.size());
+  for (const auto& img : scanned) scanned_paths.insert(img.relative_path);
+
   std::int64_t added = 0;
+  std::int64_t removed = 0;
   exec_simple(conn, "BEGIN;");
   try {
     Stmt exists_stmt(conn, "SELECT 1 FROM images WHERE project_id = ? AND file_path = ?;");
@@ -257,6 +264,34 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       }
       ++added;
     }
+
+    if (prune) {
+      // images 对 image_tags 是 ON DELETE CASCADE（core/db/schema.cpp 已经
+      // PRAGMA foreign_keys = ON，delete_project 依赖的是同一个级联行为），
+      // 删这一行就会把这张图打过的标签一并带走，不需要额外手写删
+      // image_tags 的语句。
+      std::vector<std::pair<std::int64_t, std::string>> existing;
+      Stmt list_stmt(conn, "SELECT id, file_path FROM images WHERE project_id = ?;");
+      sqlite3_bind_int64(list_stmt.get(), 1, id);
+      while (sqlite3_step(list_stmt.get()) == SQLITE_ROW) {
+        existing.emplace_back(
+            sqlite3_column_int64(list_stmt.get(), 0),
+            reinterpret_cast<const char*>(sqlite3_column_text(list_stmt.get(), 1)));
+      }
+
+      Stmt delete_stmt(conn, "DELETE FROM images WHERE id = ?;");
+      for (const auto& [image_id, file_path] : existing) {
+        if (scanned_paths.count(file_path) != 0) continue;  // 磁盘上还在
+        sqlite3_reset(delete_stmt.get());
+        sqlite3_bind_int64(delete_stmt.get(), 1, image_id);
+        if (sqlite3_step(delete_stmt.get()) != SQLITE_DONE) {
+          throw std::runtime_error(std::string("delete missing image failed: ") +
+                                    sqlite3_errmsg(conn));
+        }
+        ++removed;
+      }
+    }
+
     exec_simple(conn, "COMMIT;");
   } catch (...) {
     exec_simple(conn, "ROLLBACK;");
@@ -265,7 +300,8 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
 
   RescanSummary result;
   result.added_count = added;
-  result.total_count = summary->image_count + added;
+  result.removed_count = removed;
+  result.total_count = summary->image_count + added - removed;
   return Result<RescanSummary, ProjectNotFoundError>::Ok(result);
 }
 
