@@ -14,7 +14,9 @@
 
 namespace fs = std::filesystem;
 using pzt::core::decode::decode_jpeg_file;
+using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
+using pzt::core::decode::resize_rgba;
 
 namespace {
 
@@ -103,4 +105,57 @@ TEST_CASE("decode_jpeg_file reports DecodeFailed for a non-image file") {
   auto result = decode_jpeg_file(path.string());
   REQUIRE(!result.ok());
   CHECK(result.error() == DecodeError::DecodeFailed);
+}
+
+namespace {
+
+DecodedImage make_solid(int width, int height, unsigned char r, unsigned char g,
+                         unsigned char b) {
+  DecodedImage img;
+  img.width = width;
+  img.height = height;
+  img.rgba.resize(static_cast<std::size_t>(width) * height * 4);
+  for (std::size_t i = 0; i < img.rgba.size(); i += 4) {
+    img.rgba[i + 0] = r;
+    img.rgba[i + 1] = g;
+    img.rgba[i + 2] = b;
+    img.rgba[i + 3] = 255;
+  }
+  return img;
+}
+
+}  // namespace
+
+TEST_CASE("resize_rgba shrinks dimensions and preserves a solid color") {
+  auto src = make_solid(400, 300, 10, 200, 100);
+
+  auto result = resize_rgba(src, 40, 30);
+  REQUIRE(result.ok());
+  const auto& out = result.value();
+  CHECK(out.width == 40);
+  CHECK(out.height == 30);
+  REQUIRE(out.rgba.size() == static_cast<std::size_t>(40 * 30 * 4));
+
+  // 高质量插值缩放纯色图,理论上应该逐像素精确保留原色。
+  CHECK(out.rgba[0] == 10);
+  CHECK(out.rgba[1] == 200);
+  CHECK(out.rgba[2] == 100);
+  CHECK(out.rgba[3] == 255);
+}
+
+TEST_CASE("resize_rgba is a no-op copy when the target is already at least as big") {
+  auto src = make_solid(20, 10, 5, 6, 7);
+
+  auto result = resize_rgba(src, 100, 100);
+  REQUIRE(result.ok());
+  CHECK(result.value().width == 20);   // 尺寸没变
+  CHECK(result.value().height == 10);
+  CHECK(result.value().rgba == src.rgba);
+}
+
+TEST_CASE("resize_rgba reports DecodeFailed for non-positive dimensions") {
+  auto src = make_solid(10, 10, 1, 2, 3);
+  CHECK(!resize_rgba(src, 0, 10).ok());
+  CHECK(!resize_rgba(src, 10, 0).ok());
+  CHECK(!resize_rgba(src, -1, 10).ok());
 }

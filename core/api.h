@@ -94,9 +94,10 @@ Result<void, AddTagError> add_tag(ImageId image_id, TagId tag_id);
 Result<void, RemoveTagError> remove_tag(ImageId image_id, TagId tag_id);
 Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image, ImageId new_image);
 
-// 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；只增不减,见
+// 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
+// true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见
 // core/project/project.h 里 rescan_project 的说明。
-Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id);
+Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune = true);
 
 std::vector<ImageRef> list_images(ProjectId project_id);
 std::optional<ImageId> next_image(const std::vector<ImageRef>& images,
@@ -114,5 +115,7 @@ Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string&
 
 // 纯粹的"字节 -> 像素"操作,不碰数据库。见 core/decode/decode.h。
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
+Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
+                                               int target_height);
 
 }  // namespace pzt::core

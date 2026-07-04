@@ -31,4 +31,15 @@ enum class DecodeError {
 
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 
+// 把已经解码的图片缩放成正好 target_width x target_height(不保持长宽比——
+// 调用方负责用长宽比正确的目标尺寸调用这个函数,这里只管缩放本身)。目标
+// 尺寸已经不小于原图时直接返回原图的拷贝,不做无意义的重采样。
+//
+// 用途:全键盘浏览循环里,每次把解码出来的原始分辨率图片(可能几 MB 到近
+// 十 MB 的 RGBA)整个丢给终端,终端自己临时文件读取 + 解码 + 缩放显示,是
+// 真机测试确认过的实际卡顿来源之一——先在这里缩小到终端面板大致能显示的
+// 尺寸,再传给终端,大幅减少终端侧要处理的数据量。
+Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
+                                               int target_height);
+
 }  // namespace pzt::core::decode

@@ -86,9 +86,9 @@ Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image,
   return tagging::replace_tag_entry(db, tag_id, old_image, new_image);
 }
 
-Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id) {
+Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune) {
   db::Database db = db::Database::open_default();
-  return project::rescan_project(db, project_id);
+  return project::rescan_project(db, project_id, prune);
 }
 
 std::vector<ImageRef> list_images(ProjectId project_id) {
@@ -131,6 +131,11 @@ Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string&
 
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {
   return decode::decode_jpeg_file(path);
+}
+
+Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
+                                               int target_height) {
+  return decode::resize_rgba(src, target_width, target_height);
 }
 
 }  // namespace pzt::core

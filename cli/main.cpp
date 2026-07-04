@@ -12,6 +12,7 @@
 
 #include "cli/kitty/kitty.h"
 #include "cli/term/cbreak_mode.h"
+#include "cli/term/debug_log.h"
 #include "cli/term/screen.h"
 #include "core/api.h"
 
@@ -22,11 +23,14 @@ void print_usage() {
                "usage:\n"
                "  pzt new <project_name> [folder_path]\n"
                "  pzt list\n"
-               "  pzt open [project_name]  (h/l 上一张/下一张,q 退出;"
-               "increment 6.4 后续步骤会加 j/k/space/x/g+数字)\n"
+               "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,q 退出;"
+               "increment 6.4 后续步骤会加 j/k/space/x/g+数字;--debug 时在图片下方"
+               "开一块区域滚动显示内部日志,默认不显示也不产生这些日志)\n"
                "  pzt archive <project_name>\n"
                "  pzt delete <project_name>\n"
-               "  pzt rescan <project_name>\n"
+               "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
+               "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
+               "加 --no-prune 跳过清理)\n"
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
                "  pzt decode <jpeg_path>  (临时调试命令,验证 core/decode 的解码管线通,"
                "increment 6 后续步骤会接入真正的浏览渲染循环)\n"
@@ -170,9 +174,20 @@ int cmd_list(const std::vector<std::string>& args) {
 // banner 底部全宽),备用屏幕缓冲区 + 每帧清除上一帧 placement,修复
 // 6.4.1 真机测试时发现的图片重叠残留问题。
 int cmd_open(const std::vector<std::string>& args) {
+  bool debug_mode = false;
+  std::vector<std::string> positional;
+  for (const auto& a : args) {
+    if (a == "--debug") {
+      debug_mode = true;
+    } else {
+      positional.push_back(a);
+    }
+  }
+
   std::optional<pzt::core::ProjectId> id =
-      args.empty() ? pzt::core::find_project_by_root_path(std::filesystem::current_path().string())
-                   : pzt::core::find_project_by_name(args[0]);
+      positional.empty()
+          ? pzt::core::find_project_by_root_path(std::filesystem::current_path().string())
+          : pzt::core::find_project_by_name(positional[0]);
   if (!id) {
     std::fprintf(stderr, "pzt open: 找不到项目,用 pzt list 查看可用项目及其路径\n");
     return 1;
@@ -201,6 +216,13 @@ int cmd_open(const std::vector<std::string>& args) {
                  "或在独立 Ghostty 窗口(不经过 Tmux)里直接运行\n");
     return 1;
   }
+
+  // 默认把 stderr(core::PrefetchCache 等的延迟日志)整个丢掉,不跟图片画
+  // 到同一块屏幕上;--debug 时改成后台收集,画到屏幕底部专门的 debug 区
+  // 域。声明在 prefetch 之前、比它晚析构,这样 prefetch 关闭时可能打的最
+  // 后几行日志也能被收住。
+  const int kDebugRows = 8;
+  pzt::cli::term::DebugLogRedirect debug_log(debug_mode, static_cast<std::size_t>(kDebugRows));
 
   // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
   // 受这次影响,调优留给以后有真实使用数据再说。
@@ -241,7 +263,8 @@ int cmd_open(const std::vector<std::string>& args) {
       int cell_px_w = term_size.valid ? std::max(1, term_size.pixel_width / term_size.cols) : 8;
       int cell_px_h = term_size.valid ? std::max(1, term_size.pixel_height / term_size.rows) : 16;
 
-      int top_rows = std::max(1, total_rows - kBannerRows);
+      int reserved_rows = kBannerRows + (debug_mode ? kDebugRows : 0);
+      int top_rows = std::max(1, total_rows - reserved_rows);
       int image_cols = std::max(1, static_cast<int>(total_cols * 0.8));
       int info_col = image_cols + 2;  // 信息栏起始列,跟图片区之间留一列空隙
       int info_cols = std::max(1, total_cols - info_col + 1);
@@ -258,11 +281,18 @@ int cmd_open(const std::vector<std::string>& args) {
         int target_cols = std::max(1, fit.width / cell_px_w);
         int target_rows = std::max(1, fit.height / cell_px_h);
 
+        // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)整
+        // 个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的实际
+        // 来源——即便我们这边 prefetch 已经命中、解码耗时为 0。先在这边缩
+        // 小到面板大致能显示的尺寸,大幅减少终端侧要处理的数据量。
+        auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
+        const auto& to_render = resized.ok() ? resized.value() : img;
+
         move_cursor(1, 1);
         std::string tmp_path = pzt::cli::kitty::make_tmp_path(
             std::to_string(getpid()) + "_" + std::to_string(frame++));
         auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
-            STDOUT_FILENO, mode, img, kImageId, tmp_path, target_cols, target_rows);
+            STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
         if (!rendered.ok()) {
           std::fprintf(stderr, "pzt open: 渲染失败\n");
         }
@@ -302,13 +332,26 @@ int cmd_open(const std::vector<std::string>& args) {
         }
       }
 
+      // --debug 时,图片/信息栏下方专门留出来的滚动 debug 区——按帧重画最
+      // 新的 kDebugRows 行,不是真正的终端滚动区域,但对用户来说效果一样:
+      // 新日志进来,老的自然被挤出显示范围。
+      if (debug_mode) {
+        auto lines = debug_log.snapshot();
+        std::size_t begin =
+            lines.size() > static_cast<std::size_t>(kDebugRows)
+                ? lines.size() - static_cast<std::size_t>(kDebugRows)
+                : 0;
+        for (int i = 0; i < kDebugRows; ++i) {
+          move_cursor(top_rows + 1 + i, 1);
+          write_stdout("\x1b[K");  // 清掉这一行的旧内容,避免短行盖不住长行的残留
+          std::size_t idx = begin + static_cast<std::size_t>(i);
+          if (idx < lines.size()) write_stdout(truncate_text(lines[idx], total_cols));
+        }
+      }
+
       // Banner:固定在最后一行,全宽。
       move_cursor(total_rows, 1);
       write_stdout(kBannerText);
-
-      // 把光标挪到屏幕外的安全位置——之后 stderr 打的延迟日志不会盖到刚
-      // 画好的三个区域上。
-      move_cursor(total_rows + 1, 1);
 
       double key_to_render_ms =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
@@ -328,6 +371,11 @@ int cmd_open(const std::vector<std::string>& args) {
       }
       prefetch.set_current(images, current_id);
     }
+
+    // 退出前显式删掉最后一帧的 placement——AltScreen 切回主屏幕缓冲区、
+    // 甚至用户手动跑 `clear`,都清不掉 Kitty 协议画出来的图片,那是叠加在
+    // 文字网格之上的独立层,只有协议自己的 delete 命令能清。
+    pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
   }  // AltScreen/CbreakMode 析构,自动还原终端设置
 
   std::fprintf(stderr, "已退出浏览\n");
@@ -559,16 +607,28 @@ int cmd_rescan(const std::vector<std::string>& args) {
     return 1;
   }
   const std::string& name = args[0];
+  bool prune = true;
+  for (std::size_t i = 1; i < args.size(); ++i) {
+    if (args[i] == "--no-prune") {
+      prune = false;
+    } else {
+      std::fprintf(stderr, "pzt rescan: 未知参数 '%s'\n", args[i].c_str());
+      print_usage();
+      return 1;
+    }
+  }
+
   auto project_id = resolve_project("pzt rescan", name);
   if (!project_id) return 1;
 
-  auto result = pzt::core::rescan_project(*project_id);
+  auto result = pzt::core::rescan_project(*project_id, prune);
   if (!result.ok()) {
     std::fprintf(stderr, "pzt rescan: 找不到项目 '%s'\n", name.c_str());
     return 1;
   }
-  std::printf("新增 %lld 张,项目现在共 %lld 张\n",
+  std::printf("新增 %lld 张,清除 %lld 张磁盘上已消失的记录,项目现在共 %lld 张\n",
               static_cast<long long>(result.value().added_count),
+              static_cast<long long>(result.value().removed_count),
               static_cast<long long>(result.value().total_count));
   return 0;
 }
