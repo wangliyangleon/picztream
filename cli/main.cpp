@@ -23,8 +23,9 @@ void print_usage() {
                "usage:\n"
                "  pzt new <project_name> [folder_path]\n"
                "  pzt list\n"
-               "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,q 退出;"
-               "increment 6.4 后续步骤会加 j/k/space/x/g+数字;--debug 时在图片下方"
+               "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
+               "j/k 下一张/上一张未打标签,q 退出;increment 6.4 后续步骤会加"
+               "space/x/g+数字;--debug 时在图片下方"
                "开一块区域滚动显示内部日志,默认不显示也不产生这些日志)\n"
                "  pzt archive <project_name>\n"
                "  pzt delete <project_name>\n"
@@ -98,10 +99,66 @@ void move_cursor(int row, int col) {
   write_stdout("\x1b[" + std::to_string(row) + ";" + std::to_string(col) + "H");
 }
 
-std::string truncate_text(const std::string& s, std::size_t max_len) {
-  if (s.size() <= max_len) return s;
-  if (max_len <= 3) return s.substr(0, max_len);
-  return s.substr(0, max_len - 3) + "...";
+// 判断一个 Unicode 码点在终端里是否按"宽字符"(占 2 列)显示——覆盖这个
+// 项目实际会用到的范围(CJK 统一表意文字、全角标点、假名、谚文等),不追
+// 求覆盖 Unicode East Asian Width 规范的每一个区间。
+bool is_wide_codepoint(char32_t cp) {
+  return (cp >= 0x1100 && cp <= 0x115F) ||    // Hangul Jamo
+         (cp >= 0x2E80 && cp <= 0xA4CF) ||    // CJK 部首/符号/假名/统一表意文字等
+         (cp >= 0xAC00 && cp <= 0xD7A3) ||    // Hangul 音节
+         (cp >= 0xF900 && cp <= 0xFAFF) ||    // CJK 兼容表意文字
+         (cp >= 0xFF00 && cp <= 0xFF60) ||    // 全角字符
+         (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+         (cp >= 0x20000 && cp <= 0x3FFFD);    // CJK 扩展区(增补平面)
+}
+
+// 解码 s[pos] 起的一个 UTF-8 字符,返回(码点, 字节数)。非法/截断的字节序
+// 列当成 1 字节宽字符处理,不崩溃、不越界。
+std::pair<char32_t, int> decode_utf8_at(const std::string& s, std::size_t pos) {
+  unsigned char c0 = static_cast<unsigned char>(s[pos]);
+  if (c0 < 0x80) return {c0, 1};
+  int len;
+  char32_t cp;
+  if ((c0 & 0xE0) == 0xC0) {
+    len = 2;
+    cp = c0 & 0x1F;
+  } else if ((c0 & 0xF0) == 0xE0) {
+    len = 3;
+    cp = c0 & 0x0F;
+  } else if ((c0 & 0xF8) == 0xF0) {
+    len = 4;
+    cp = c0 & 0x07;
+  } else {
+    return {c0, 1};
+  }
+  if (pos + static_cast<std::size_t>(len) > s.size()) return {c0, 1};
+  for (int i = 1; i < len; ++i) {
+    unsigned char c = static_cast<unsigned char>(s[pos + static_cast<std::size_t>(i)]);
+    if ((c & 0xC0) != 0x80) return {c0, 1};
+    cp = (cp << 6) | (c & 0x3F);
+  }
+  return {cp, len};
+}
+
+// 按终端实际显示宽度截断到 max_width 列以内——中文等宽字符占 2 列,不是简
+// 单按字节数近似(6.4.2/6.4.3 早期版本的简化,extended 6.4.3 的 banner 文
+// 案变长后暴露出这个近似会把不该截断的文字截断掉,这次改成按码点正确计
+// 算)。放不下最后一个字符时就地停止,不做"半个宽字符"截断,也不强行拼
+// "..."(这里是终端 UI 元素,不是给人读的完整句子,截断了就是没画完,不需
+// 要额外标记)。
+std::string truncate_text(const std::string& s, std::size_t max_width) {
+  std::string out;
+  std::size_t display_w = 0;
+  std::size_t pos = 0;
+  while (pos < s.size()) {
+    auto [cp, len] = decode_utf8_at(s, pos);
+    std::size_t w = is_wide_codepoint(cp) ? 2 : 1;
+    if (display_w + w > max_width) break;
+    out += s.substr(pos, static_cast<std::size_t>(len));
+    display_w += w;
+    pos += static_cast<std::size_t>(len);
+  }
+  return out;
 }
 
 std::string format_size(std::int64_t bytes) {
@@ -117,14 +174,24 @@ std::string format_size(std::int64_t bytes) {
   return buf;
 }
 
+std::size_t display_width(const std::string& s) {
+  std::size_t w = 0;
+  std::size_t pos = 0;
+  while (pos < s.size()) {
+    auto [cp, len] = decode_utf8_at(s, pos);
+    w += is_wide_codepoint(cp) ? 2 : 1;
+    pos += static_cast<std::size_t>(len);
+  }
+  return w;
+}
+
 // 截断/补空格到固定的显示宽度——按边框内容区写字的地方都要用这个,而不是
 // 裸写字符串,否则这一帧内容比上一帧短的时候,会在文字和右边框之间留下
-// 上一帧的残留字符。跟 truncate_text 一样按字节数近似显示宽度,中文字符
-// 会被算窄了(UTF-8 里占 3 字节但终端里占 2 列),这是继承自 6.4.2 就有的
-// 简化,这次没有额外解决。
+// 上一帧的残留字符。
 std::string pad_to(const std::string& s, std::size_t width) {
   std::string t = truncate_text(s, width);
-  if (t.size() < width) t += std::string(width - t.size(), ' ');
+  std::size_t w = display_width(t);
+  if (w < width) t += std::string(width - w, ' ');
   return t;
 }
 
@@ -274,7 +341,12 @@ int cmd_open(const std::vector<std::string>& args) {
   std::size_t frame = 0;
   const int kImageId = 1;
   const int kBannerRows = 1;
-  const char* kBannerText = " h/l 上一张/下一张   q 退出 ";
+  const char* kBannerText = " h/l 上一张/下一张   j/k 下一张/上一张未打标签   q 退出 ";
+  // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
+  // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
+  // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
+  // 的状态机或定时器。
+  std::string status_override;
 
   {
     // AltScreen 在 CbreakMode 前构造、后析构:退出时先把输入模式还原、再离
@@ -425,7 +497,8 @@ int cmd_open(const std::vector<std::string>& args) {
 
       // Banner:固定在图片/信息栏下方最后一行,边框内全宽。
       move_cursor(banner_row, start_col + 1);
-      write_stdout(pad_to(kBannerText, content_cols));
+      write_stdout(pad_to(status_override.empty() ? kBannerText : status_override, content_cols));
+      status_override.clear();  // 只显示这一帧,不管接下来按了什么键都恢复正常提示
 
       double key_to_render_ms =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
@@ -442,14 +515,28 @@ int cmd_open(const std::vector<std::string>& args) {
           c = 'q';
           break;
         }
-        if (c == 'q' || c == 'h' || c == 'l') break;
+        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k') break;
       }
       if (c == 'q') break;
 
       if (c == 'h') {
         current_id = pzt::core::prev_image(images, current_id).value_or(current_id);
-      } else {
+      } else if (c == 'l') {
         current_id = pzt::core::next_image(images, current_id).value_or(current_id);
+      } else if (c == 'j') {
+        auto next = pzt::core::next_untagged(images, current_id);
+        if (next) {
+          current_id = *next;
+        } else {
+          status_override = " 所有图片都已打过标签 ";
+        }
+      } else {
+        auto prev = pzt::core::prev_untagged(images, current_id);
+        if (prev) {
+          current_id = *prev;
+        } else {
+          status_override = " 所有图片都已打过标签 ";
+        }
       }
       prefetch.set_current(images, current_id);
     }
