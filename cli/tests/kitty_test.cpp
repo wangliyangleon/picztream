@@ -14,11 +14,46 @@
 #include "cli/kitty/kitty.h"
 
 using pzt::cli::kitty::base64_encode;
+using pzt::cli::kitty::fit_within;
 using pzt::cli::kitty::parse_allow_passthrough;
 using pzt::cli::kitty::RenderError;
 using pzt::cli::kitty::render_rgba_via_tmpfile;
 using pzt::cli::kitty::TerminalMode;
 using pzt::cli::kitty::tmux_wrap;
+
+TEST_CASE("fit_within scales a landscape image down to fit a box, preserving aspect ratio") {
+  // 2000x1000(2:1)塞进 800x800 的框:宽先撞到边界,800x400。
+  auto r = fit_within(2000, 1000, 800, 800);
+  CHECK(r.width == 800);
+  CHECK(r.height == 400);
+}
+
+TEST_CASE("fit_within scales a portrait image down to fit a box, preserving aspect ratio") {
+  // 1000x2000(1:2)塞进 800x800 的框:高先撞到边界,400x800。
+  auto r = fit_within(1000, 2000, 800, 800);
+  CHECK(r.width == 400);
+  CHECK(r.height == 800);
+}
+
+TEST_CASE("fit_within leaves an image that already fits exactly unchanged") {
+  auto r = fit_within(400, 300, 400, 300);
+  CHECK(r.width == 400);
+  CHECK(r.height == 300);
+}
+
+TEST_CASE("fit_within handles extreme aspect ratios without distortion") {
+  // 一张极端的全景图(10000x100)塞进一个矮框,不应该被拉伸变形。
+  auto r = fit_within(10000, 100, 1000, 500);
+  CHECK(r.width == 1000);
+  CHECK(r.height == 10);  // 保持 100:1 的原始比例
+}
+
+TEST_CASE("fit_within returns {0,0} for non-positive inputs") {
+  CHECK(fit_within(0, 100, 800, 800).width == 0);
+  CHECK(fit_within(100, 0, 800, 800).width == 0);
+  CHECK(fit_within(100, 100, 0, 800).width == 0);
+  CHECK(fit_within(100, 100, 800, 0).width == 0);
+}
 
 TEST_CASE("tmux_wrap wraps in DCS passthrough and doubles embedded ESC bytes") {
   std::string raw = "\x1b_Gfoo\x1b\\";

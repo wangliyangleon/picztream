@@ -235,3 +235,29 @@ TEST_CASE("replace_tag_entry reports OldImageNotTagged / NewImageNotFound") {
   REQUIRE(!bad_new.ok());
   CHECK(bad_new.error() == ReplaceTagError::NewImageNotFound);
 }
+
+TEST_CASE("tags_for_image returns only the tags actually applied to that image, sorted by name") {
+  auto fx = make_fixture("tags_for_image", 2);
+  auto selected = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  auto friends = create_tag(fx.db, fx.project_id, "朋友圈", std::nullopt, true);
+  auto reject = create_tag(fx.db, fx.project_id, "废片", std::nullopt, false);
+  REQUIRE(selected.ok());
+  REQUIRE(friends.ok());
+  REQUIRE(reject.ok());
+
+  REQUIRE(add_tag(fx.db, fx.images[0], friends.value()).ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], selected.value()).ok());
+  // images[1] 只打了"废片"，不应该出现在 images[0] 的结果里。
+  REQUIRE(add_tag(fx.db, fx.images[1], reject.value()).ok());
+
+  auto tags = tags_for_image(fx.db, fx.images[0]);
+  REQUIRE(tags.size() == 2);
+  CHECK(tags[0].name == "朋友圈");  // 按名字排序
+  CHECK(tags[1].name == "精选");
+}
+
+TEST_CASE("tags_for_image returns an empty list for an untagged or unknown image") {
+  auto fx = make_fixture("tags_for_image_empty", 1);
+  CHECK(tags_for_image(fx.db, fx.images[0]).empty());
+  CHECK(tags_for_image(fx.db, fx.images[0] + 999).empty());
+}

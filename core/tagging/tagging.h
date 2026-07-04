@@ -42,6 +42,12 @@ std::vector<TagSummary> list_tags(db::Database& db, ProjectId project_id);
 std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
                                        const std::string& name);
 
+// 反方向查询："这张图当前打了哪些标签"（list_tags 是"这个项目有哪些标
+// 签"，filter_by_tag/ordered_entries 内部是"这个标签下有哪些图"）。increment
+// 6.4.2 的信息栏要用它显示当前图片的标签列表。按名字排序，不存在的
+// image_id 直接返回空列表，不当错误处理——跟"这张图没有标签"是同一回事。
+std::vector<TagSummary> tags_for_image(db::Database& db, ImageId image_id);
+
 struct TaggedImageRef {
   ImageId image_id;
   std::string file_name;

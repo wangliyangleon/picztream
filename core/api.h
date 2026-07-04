@@ -23,6 +23,7 @@ using CreateProjectError = project::CreateProjectError;
 using ProjectSummary = project::ProjectSummary;
 using ProjectNotFoundError = project::ProjectNotFoundError;
 using ImageId = project::ImageId;
+using ImageInfo = project::ImageInfo;
 
 using TagId = tagging::TagId;
 using CreateTagError = tagging::CreateTagError;
@@ -79,10 +80,15 @@ Result<void, ProjectNotFoundError> delete_project(ProjectId id);
 // 给 cli 调试标签命令把"图片相对路径"翻译成内部 id 用。
 std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::string& relative_path);
 
+// 按 id 取一张图片的完整信息(含 file_size),供 increment 6.4.2 的信息栏
+// 渲染当前图片的 metadata 用。
+std::optional<ImageInfo> get_image(ImageId image_id);
+
 Result<TagId, CreateTagError> create_tag(ProjectId project_id, const std::string& name,
                                           std::optional<std::int64_t> cap, bool is_ordered);
 std::vector<TagSummary> list_tags(ProjectId project_id);
 std::optional<TagId> find_tag_by_name(ProjectId project_id, const std::string& name);
+std::vector<TagSummary> tags_for_image(ImageId image_id);
 
 Result<void, AddTagError> add_tag(ImageId image_id, TagId tag_id);
 Result<void, RemoveTagError> remove_tag(ImageId image_id, TagId tag_id);

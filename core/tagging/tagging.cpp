@@ -139,6 +139,31 @@ std::vector<TagSummary> list_tags(db::Database& db, ProjectId project_id) {
   return out;
 }
 
+std::vector<TagSummary> tags_for_image(db::Database& db, ImageId image_id) {
+  Stmt stmt(db.handle(),
+            "SELECT t.id, t.name, t.cap, t.is_ordered, t.is_system, "
+            "(SELECT COUNT(*) FROM image_tags WHERE tag_id = t.id) "
+            "FROM tags t JOIN image_tags it ON it.tag_id = t.id "
+            "WHERE it.image_id = ? "
+            "ORDER BY t.name ASC;");
+  sqlite3_bind_int64(stmt.get(), 1, image_id);
+
+  std::vector<TagSummary> out;
+  while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+    TagSummary s;
+    s.id = sqlite3_column_int64(stmt.get(), 0);
+    s.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+    if (sqlite3_column_type(stmt.get(), 2) != SQLITE_NULL) {
+      s.cap = sqlite3_column_int64(stmt.get(), 2);
+    }
+    s.is_ordered = sqlite3_column_int64(stmt.get(), 3) != 0;
+    s.is_system = sqlite3_column_int64(stmt.get(), 4) != 0;
+    s.tagged_count = sqlite3_column_int64(stmt.get(), 5);
+    out.push_back(std::move(s));
+  }
+  return out;
+}
+
 std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
                                        const std::string& name) {
   Stmt stmt(db.handle(), "SELECT id FROM tags WHERE project_id = ? AND name = ?;");

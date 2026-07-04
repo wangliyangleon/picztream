@@ -63,6 +63,7 @@ struct ImageInfo {
   ProjectId project_id;
   std::string file_path;
   std::string file_name;
+  std::int64_t file_size;
 };
 
 // 给 cli 调试命令把"图片相对路径"翻译成内部 id 用。

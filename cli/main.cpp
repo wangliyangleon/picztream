@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 
 #include "cli/kitty/kitty.h"
 #include "cli/term/cbreak_mode.h"
+#include "cli/term/screen.h"
 #include "core/api.h"
 
 namespace {
@@ -82,6 +84,35 @@ std::optional<pzt::core::ImageId> resolve_image(const std::string& cmd,
   return id;
 }
 
+// 三面板布局(increment 6.4.2)用的一组小工具。全部走 write(fd, ...) 而不是
+// fprintf/std::cout——render_rgba_via_tmpfile/clear_placement 内部也是直接
+// write() 到同一个 fd,如果光标定位这些文字改用带缓冲的 stdio 输出,两条路
+// 径谁先真正落地到终端就不可控了,布局又会跟 6.4.1 那次一样错位。
+void write_stdout(const std::string& s) { write(STDOUT_FILENO, s.data(), s.size()); }
+
+void move_cursor(int row, int col) {
+  write_stdout("\x1b[" + std::to_string(row) + ";" + std::to_string(col) + "H");
+}
+
+std::string truncate_text(const std::string& s, std::size_t max_len) {
+  if (s.size() <= max_len) return s;
+  if (max_len <= 3) return s.substr(0, max_len);
+  return s.substr(0, max_len - 3) + "...";
+}
+
+std::string format_size(std::int64_t bytes) {
+  double v = static_cast<double>(bytes);
+  const char* units[] = {"B", "KB", "MB", "GB"};
+  int i = 0;
+  while (v >= 1024.0 && i < 3) {
+    v /= 1024.0;
+    ++i;
+  }
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%.1f%s", v, units[i]);
+  return buf;
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "pzt new: missing <project_name>\n");
@@ -135,10 +166,9 @@ int cmd_list(const std::vector<std::string>& args) {
   return 0;
 }
 
-// increment 6.4.1:最简单的全屏版浏览循环,只验证"读键 -> 挪位置 -> 渲染"
-// 这条链路在真实终端里能跑通。固定布局(图片/信息栏/banner 三分区、备用屏
-// 幕缓冲区)是 6.4.2 的工作,这里还没有——所以翻页时终端会正常滚动,不是
-// 原地刷新,这是预期中的过渡状态,不是 bug。
+// increment 6.4.2:三面板固定布局(图片区左上约 80% 宽、信息栏右上、
+// banner 底部全宽),备用屏幕缓冲区 + 每帧清除上一帧 placement,修复
+// 6.4.1 真机测试时发现的图片重叠残留问题。
 int cmd_open(const std::vector<std::string>& args) {
   std::optional<pzt::core::ProjectId> id =
       args.empty() ? pzt::core::find_project_by_root_path(std::filesystem::current_path().string())
@@ -179,7 +209,15 @@ int cmd_open(const std::vector<std::string>& args) {
   prefetch.set_current(images, current_id);
 
   std::size_t frame = 0;
+  const int kImageId = 1;
+  const int kBannerRows = 1;
+  const char* kBannerText = " h/l 上一张/下一张   q 退出 ";
+
   {
+    // AltScreen 在 CbreakMode 前构造、后析构:退出时先把输入模式还原、再离
+    // 开备用缓冲区,这样即便中途出异常,用户的主屏幕内容也不会被半途切走
+    // 又切不回来。
+    pzt::cli::term::AltScreen alt_screen;
     pzt::cli::term::CbreakMode cbreak;
 
     while (true) {
@@ -195,13 +233,36 @@ int cmd_open(const std::vector<std::string>& args) {
         }
       }
 
+      auto term_size = pzt::cli::term::get_terminal_size();
+      // 拿不到真实尺寸(非 tty、或者终端没上报像素尺寸)时给一组保守的兜
+      // 底值,不让布局计算除零或者算出负数区域。
+      int total_cols = term_size.valid ? term_size.cols : 80;
+      int total_rows = term_size.valid ? term_size.rows : 24;
+      int cell_px_w = term_size.valid ? std::max(1, term_size.pixel_width / term_size.cols) : 8;
+      int cell_px_h = term_size.valid ? std::max(1, term_size.pixel_height / term_size.rows) : 16;
+
+      int top_rows = std::max(1, total_rows - kBannerRows);
+      int image_cols = std::max(1, static_cast<int>(total_cols * 0.8));
+      int info_col = image_cols + 2;  // 信息栏起始列,跟图片区之间留一列空隙
+      int info_cols = std::max(1, total_cols - info_col + 1);
+
+      // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的关键
+      // 一步,没有它,旧 placement 不会自动消失。
+      pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+
       auto decoded = prefetch.get(current_id);
       if (decoded.ok()) {
+        const auto& img = decoded.value();
+        auto fit = pzt::cli::kitty::fit_within(img.width, img.height, image_cols * cell_px_w,
+                                                top_rows * cell_px_h);
+        int target_cols = std::max(1, fit.width / cell_px_w);
+        int target_rows = std::max(1, fit.height / cell_px_h);
+
+        move_cursor(1, 1);
         std::string tmp_path = pzt::cli::kitty::make_tmp_path(
             std::to_string(getpid()) + "_" + std::to_string(frame++));
-        auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(STDOUT_FILENO, mode,
-                                                                  decoded.value(),
-                                                                  /*image_id=*/1, tmp_path);
+        auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
+            STDOUT_FILENO, mode, img, kImageId, tmp_path, target_cols, target_rows);
         if (!rendered.ok()) {
           std::fprintf(stderr, "pzt open: 渲染失败\n");
         }
@@ -209,12 +270,50 @@ int cmd_open(const std::vector<std::string>& args) {
         std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
       }
 
+      // 信息栏:编号、文件名、标签、文件大小,固定在图片区右侧。
+      {
+        int row = 1;
+        move_cursor(row++, info_col);
+        write_stdout("[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]");
+
+        move_cursor(row++, info_col);
+        write_stdout(current_ref ? truncate_text(current_ref->file_name, info_cols) : "?");
+
+        row++;  // 空一行
+        move_cursor(row++, info_col);
+        write_stdout("标签:");
+        auto tags = current_ref ? pzt::core::tags_for_image(current_ref->id)
+                                 : std::vector<pzt::core::TagSummary>{};
+        if (tags.empty()) {
+          move_cursor(row++, info_col);
+          write_stdout("(无)");
+        } else {
+          for (const auto& t : tags) {
+            move_cursor(row++, info_col);
+            write_stdout(truncate_text(t.name, info_cols));
+          }
+        }
+
+        row++;  // 空一行
+        auto info = current_ref ? pzt::core::get_image(current_ref->id) : std::nullopt;
+        if (info) {
+          move_cursor(row++, info_col);
+          write_stdout("大小: " + format_size(info->file_size));
+        }
+      }
+
+      // Banner:固定在最后一行,全宽。
+      move_cursor(total_rows, 1);
+      write_stdout(kBannerText);
+
+      // 把光标挪到屏幕外的安全位置——之后 stderr 打的延迟日志不会盖到刚
+      // 画好的三个区域上。
+      move_cursor(total_rows + 1, 1);
+
       double key_to_render_ms =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
               .count();
       std::fprintf(stderr, "[pzt open] key-to-render %.2fms\n", key_to_render_ms);
-      std::fprintf(stderr, "[%zu/%zu] %s  (h/l 上一张/下一张  q 退出)\n", index + 1, images.size(),
-                   current_ref ? current_ref->file_name.c_str() : "?");
 
       char c = 0;
       ssize_t n = read(STDIN_FILENO, &c, 1);
@@ -229,7 +328,7 @@ int cmd_open(const std::vector<std::string>& args) {
       }
       prefetch.set_current(images, current_id);
     }
-  }  // CbreakMode 析构,自动还原终端设置
+  }  // AltScreen/CbreakMode 析构,自动还原终端设置
 
   std::fprintf(stderr, "已退出浏览\n");
   return 0;

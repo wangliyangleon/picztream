@@ -45,6 +45,11 @@ std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::strin
   return project::find_image_by_path(db, project_id, relative_path);
 }
 
+std::optional<ImageInfo> get_image(ImageId image_id) {
+  db::Database db = db::Database::open_default();
+  return project::get_image(db, image_id);
+}
+
 Result<TagId, CreateTagError> create_tag(ProjectId project_id, const std::string& name,
                                           std::optional<std::int64_t> cap, bool is_ordered) {
   db::Database db = db::Database::open_default();
@@ -59,6 +64,11 @@ std::vector<TagSummary> list_tags(ProjectId project_id) {
 std::optional<TagId> find_tag_by_name(ProjectId project_id, const std::string& name) {
   db::Database db = db::Database::open_default();
   return tagging::find_tag_by_name(db, project_id, name);
+}
+
+std::vector<TagSummary> tags_for_image(ImageId image_id) {
+  db::Database db = db::Database::open_default();
+  return tagging::tags_for_image(db, image_id);
 }
 
 Result<void, AddTagError> add_tag(ImageId image_id, TagId tag_id) {

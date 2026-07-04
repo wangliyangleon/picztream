@@ -67,8 +67,31 @@ enum class RenderError {
 // 读的是用户按键,没有能力也不需要分辨"这是真按键"还是"这是终端在回话",
 // 混在一起处理曾经导致过一次真实的死循环(终端因为渲染失败不断回发错误
 // 文本,被当成按键消费,又触发下一次同样失败的渲染)。
+//
+// target_cols/target_rows 大于 0 时,会作为 Kitty 协议的 c=/r= 参数传下
+// 去,让终端把图片缩放进正好这么多 cell 的区域——调用方(布局代码)应该先
+// 用 fit_within() 算出保持长宽比的目标像素尺寸,再换算成对应的 cell 数,
+// 而不是直接把面板的 cell 框硬套给 c=/r=,否则长宽比对不上时会被拉伸变
+// 形。都传 0(默认)表示不做缩放约束,按原始像素尺寸显示,一次性调试命令
+// (`pzt render`)用的就是这个默认路径。
 pzt::core::Result<void, RenderError> render_rgba_via_tmpfile(
     int fd, const TerminalMode& mode, const pzt::core::decode::DecodedImage& img, int image_id,
-    const std::string& tmp_path);
+    const std::string& tmp_path, int target_cols = 0, int target_rows = 0);
+
+// 删除指定 image_id 已经画到屏幕上的所有 placement。每帧画新图之前都应该
+// 先调用这个清掉上一帧,否则旧图不会自动消失(Kitty 协议里"更新一个 id 的
+// 图像数据"和"清除这个 id 已经画出来的 placement"是两件不同的事)。
+pzt::core::Result<void, RenderError> clear_placement(int fd, const TerminalMode& mode,
+                                                       int image_id);
+
+struct FitSize {
+  int width;
+  int height;
+};
+
+// 在不超出 box_w x box_h 的前提下,算出保持 image_w/image_h 原始长宽比的
+// 最大尺寸(不拉伸变形)。任何一个输入 <= 0 时返回 {0, 0}。纯函数,不依赖
+// 真实终端,可以直接写单元测试。
+FitSize fit_within(int image_w, int image_h, int box_w, int box_h);
 
 }  // namespace pzt::cli::kitty

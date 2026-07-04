@@ -1,5 +1,6 @@
 #include "cli/kitty/kitty.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -72,6 +73,25 @@ std::string trim(const std::string& s) {
 
 }  // namespace
 
+namespace {
+
+// 校验 passthrough、按需包 tmux DCS、写到 fd,三个函数共用的收尾步骤。
+pzt::core::Result<void, RenderError> send_sequence(int fd, const TerminalMode& mode,
+                                                    const std::string& raw_seq) {
+  using Result = pzt::core::Result<void, RenderError>;
+  if (mode.inside_tmux && !mode.passthrough_ok) {
+    return Result::Err(RenderError::PassthroughDisabled);
+  }
+  std::string out = mode.inside_tmux ? tmux_wrap(raw_seq) : raw_seq;
+  ssize_t written = write(fd, out.data(), out.size());
+  if (written < 0 || static_cast<std::size_t>(written) != out.size()) {
+    return Result::Err(RenderError::WriteFailed);
+  }
+  return Result::Ok();
+}
+
+}  // namespace
+
 TerminalMode detect_terminal_mode() {
   TerminalMode mode;
   mode.inside_tmux = is_inside_tmux();
@@ -92,11 +112,10 @@ TerminalMode detect_terminal_mode() {
 
 pzt::core::Result<void, RenderError> render_rgba_via_tmpfile(
     int fd, const TerminalMode& mode, const pzt::core::decode::DecodedImage& img, int image_id,
-    const std::string& tmp_path) {
-  using Result = pzt::core::Result<void, RenderError>;
-
+    const std::string& tmp_path, int target_cols, int target_rows) {
+  // passthrough 检查放前面,避免在明知发不出去的情况下还去写临时文件。
   if (mode.inside_tmux && !mode.passthrough_ok) {
-    return Result::Err(RenderError::PassthroughDisabled);
+    return pzt::core::Result<void, RenderError>::Err(RenderError::PassthroughDisabled);
   }
 
   {
@@ -109,14 +128,28 @@ pzt::core::Result<void, RenderError> render_rgba_via_tmpfile(
                                         tmp_path.size());
   std::ostringstream ctrl;
   ctrl << "a=T,f=32,t=t,q=2,s=" << img.width << ",v=" << img.height << ",i=" << image_id;
-  std::string seq = "\x1b_G" + ctrl.str() + ";" + path_b64 + "\x1b\\";
-  std::string out = mode.inside_tmux ? tmux_wrap(seq) : seq;
-
-  ssize_t written = write(fd, out.data(), out.size());
-  if (written < 0 || static_cast<std::size_t>(written) != out.size()) {
-    return Result::Err(RenderError::WriteFailed);
+  if (target_cols > 0 && target_rows > 0) {
+    ctrl << ",c=" << target_cols << ",r=" << target_rows;
   }
-  return Result::Ok();
+  std::string seq = "\x1b_G" + ctrl.str() + ";" + path_b64 + "\x1b\\";
+  return send_sequence(fd, mode, seq);
+}
+
+pzt::core::Result<void, RenderError> clear_placement(int fd, const TerminalMode& mode,
+                                                      int image_id) {
+  std::ostringstream ctrl;
+  ctrl << "a=d,d=i,q=2,i=" << image_id;
+  std::string seq = "\x1b_G" + ctrl.str() + "\x1b\\";
+  return send_sequence(fd, mode, seq);
+}
+
+FitSize fit_within(int image_w, int image_h, int box_w, int box_h) {
+  if (image_w <= 0 || image_h <= 0 || box_w <= 0 || box_h <= 0) return FitSize{0, 0};
+  double scale = std::min(static_cast<double>(box_w) / image_w,
+                           static_cast<double>(box_h) / image_h);
+  int w = std::max(1, static_cast<int>(image_w * scale));
+  int h = std::max(1, static_cast<int>(image_h * scale));
+  return FitSize{w, h};
 }
 
 }  // namespace pzt::cli::kitty
