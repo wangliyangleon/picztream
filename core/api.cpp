@@ -91,6 +91,11 @@ Result<void, DeleteTagError> delete_tag(TagId tag_id) {
   return tagging::delete_tag(db, tag_id);
 }
 
+TagId ensure_reject_tag(ProjectId project_id) {
+  db::Database db = db::Database::open_default();
+  return tagging::ensure_reject_tag(db, project_id);
+}
+
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune) {
   db::Database db = db::Database::open_default();
   return project::rescan_project(db, project_id, prune);

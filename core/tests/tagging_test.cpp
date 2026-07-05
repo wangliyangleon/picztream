@@ -348,3 +348,44 @@ TEST_CASE("delete_tag only affects the targeted tag, not other tags on the same 
   REQUIRE(tags.size() == 1);
   CHECK(tags[0].id == keep.value());
 }
+
+TEST_CASE("ensure_reject_tag creates a conformant system tag when none exists") {
+  auto fx = make_fixture("ensure_reject_fresh", 1);
+
+  auto tag_id = ensure_reject_tag(fx.db, fx.project_id);
+
+  auto tags = list_tags(fx.db, fx.project_id);
+  REQUIRE(tags.size() == 1);
+  CHECK(tags[0].id == tag_id);
+  CHECK(tags[0].name == kRejectTagName);
+  CHECK(tags[0].is_system);
+  CHECK(!tags[0].cap.has_value());
+  CHECK(!tags[0].is_ordered);
+  CHECK(tags[0].tagged_count == 0);
+}
+
+TEST_CASE("ensure_reject_tag is a no-op when the tag already exists") {
+  auto fx = make_fixture("ensure_reject_noop", 1);
+
+  auto first = ensure_reject_tag(fx.db, fx.project_id);
+  auto second = ensure_reject_tag(fx.db, fx.project_id);
+
+  CHECK(first == second);
+  CHECK(list_tags(fx.db, fx.project_id).size() == 1);
+}
+
+TEST_CASE("ensure_reject_tag is scoped to its own project") {
+  auto fx = make_fixture("ensure_reject_isolation", 1);
+
+  auto other_photos = fresh_photo_dir("ensure_reject_isolation_other_project");
+  touch(other_photos / "other.jpg");
+  auto other_project = create_project(fx.db, "other_proj", other_photos.string());
+  REQUIRE(other_project.ok());
+
+  auto tag_a = ensure_reject_tag(fx.db, fx.project_id);
+  auto tag_b = ensure_reject_tag(fx.db, other_project.value());
+
+  CHECK(tag_a != tag_b);
+  CHECK(list_tags(fx.db, fx.project_id).size() == 1);
+  CHECK(list_tags(fx.db, other_project.value()).size() == 1);
+}

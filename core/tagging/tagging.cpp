@@ -325,4 +325,16 @@ Result<void, DeleteTagError> delete_tag(db::Database& db, TagId tag_id) {
   return Result<void, DeleteTagError>::Ok();
 }
 
+TagId ensure_reject_tag(db::Database& db, ProjectId project_id) {
+  auto existing = find_tag_by_name(db, project_id, kRejectTagName);
+  if (existing) return *existing;
+
+  // find-then-create 之间理论上有 TOCTOU 窗口，但调用点（pzt new/pzt open
+  // 启动阶段）都是单线程、单进程的，不是并发场景，不需要额外加锁处理。
+  auto created =
+      create_tag(db, project_id, kRejectTagName, std::nullopt, /*is_ordered=*/false,
+                 /*is_system=*/true);
+  return created.value();
+}
+
 }  // namespace pzt::core::tagging

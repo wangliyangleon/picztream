@@ -113,4 +113,15 @@ enum class DeleteTagError {
 // 这层 UI 过滤保护。
 Result<void, DeleteTagError> delete_tag(db::Database& db, TagId tag_id);
 
+// increment 6.4.5:核心逻辑和 cli 菜单渲染共用同一个符号，不各自硬编码一遍。
+constexpr const char* kRejectTagName = "废片";
+
+// 确保这个项目里存在一个名字是"废片"的系统标签，不存在就创建。只在
+// pzt new 创建项目的那一刻调用一次——项目刚创建时保证没有任何标签，不需
+// 要处理"同名标签已经存在但不是系统标签"这种迁移场景。pzt open 也调用同
+// 一个函数（不是单独查 find_tag_by_name 再解引用），处理"项目不是通过更
+// 新后的 pzt new 建的"这种边界情况，find-or-create 本身是幂等、廉价的，
+// 不需要额外的迁移/归一化逻辑。
+TagId ensure_reject_tag(db::Database& db, ProjectId project_id);
+
 }  // namespace pzt::core::tagging

@@ -95,6 +95,7 @@ Result<void, AddTagError> add_tag(ImageId image_id, TagId tag_id);
 Result<void, RemoveTagError> remove_tag(ImageId image_id, TagId tag_id);
 Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image, ImageId new_image);
 Result<void, DeleteTagError> delete_tag(TagId tag_id);
+TagId ensure_reject_tag(ProjectId project_id);
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见

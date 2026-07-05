@@ -231,9 +231,12 @@ void draw_vlines(int row, int start_col, int width, int mid_offset = -1) {
 // `list_tags` 是按名字字母序排的(给 `pzt tag list` 这类展示用)——数字键
 // 要按标签创建顺序(tag id 升序)固定,不然新建一个名字靠前的标签会让所有
 // 已有标签的数字悄悄错位。不改 `list_tags` 本身,这里对结果客户端重排序。
-// 只有 1-9 有数字键,超过的这次不处理。
+// 只有 1-9 有数字键,超过的这次不处理。increment 6.4.5:系统标签("废片")
+// 固定占硬编码的 `0`,不参与这个动态的 1-9 序列,先过滤掉。
 std::vector<pzt::core::TagSummary> tags_for_menu(pzt::core::ProjectId project_id) {
   auto tags = pzt::core::list_tags(project_id);
+  tags.erase(std::remove_if(tags.begin(), tags.end(), [](const auto& t) { return t.is_system; }),
+             tags.end());
   std::sort(tags.begin(), tags.end(),
             [](const auto& a, const auto& b) { return a.id < b.id; });
   if (tags.size() > 9) tags.resize(9);
@@ -355,22 +358,27 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
 // 外校验或过滤。菜单文案前缀"摘除:"跟加标签菜单区分开,给一个明确的视觉
 // 提示"现在是摘除模式"。
 std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& tags,
-                                       pzt::core::ImageId image_id, int banner_row, int start_col,
-                                       int content_cols) {
-  std::string line = " 摘除:";
+                                       pzt::core::TagId reject_tag_id, pzt::core::ImageId image_id,
+                                       int banner_row, int start_col, int content_cols) {
+  std::string line = " 摘除:0:废片";
   for (std::size_t i = 0; i < tags.size(); ++i) {
-    if (i > 0) line += "  ";
-    line += std::to_string(i + 1) + ":" + tags[i].name;
+    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
   }
   line += "  Esc 取消";
   move_cursor(banner_row, start_col + 1);
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
-  if (c < '1' || c > static_cast<char>('0' + tags.size())) return "";  // 取消,静默
+  pzt::core::TagId tag_id;
+  if (c == '0') {
+    tag_id = reject_tag_id;
+  } else if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
+    tag_id = tags[static_cast<std::size_t>(c - '1')].id;
+  } else {
+    return "";  // 取消,静默
+  }
 
-  const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
-  auto result = pzt::core::remove_tag(image_id, chosen.id);
+  auto result = pzt::core::remove_tag(image_id, tag_id);
   if (!result.ok()) return " 摘标签失败,请重试 ";  // 防御性,理论上不应该发生
   return "";  // 静默成功,信息栏下一帧自然显示摘除后的结果
 }
@@ -463,56 +471,60 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
   return " 已删除标签 '" + chosen.name + "' ";
 }
 
+// increment 6.4.5:数字加标签的分支和 `x` 快捷键共用同一段结果处理逻
+// 辑,避免"处理 add_tag 结果、cap 超限转 handle_cap_replace_submenu"这
+// 段逻辑抄两遍。`x` 的 cap 超限分支结构上不可能被真正触发(`废片` 的 cap
+// 恒为空),复用这段逻辑单纯是不想把同一段代码写两份,不是专门防御性设计。
+std::string handle_add_tag_result(pzt::core::TagId tag_id, pzt::core::ImageId image_id,
+                                   int banner_row, int start_col, int content_cols) {
+  auto result = pzt::core::add_tag(image_id, tag_id);
+  if (result.ok()) return "";  // 静默成功,信息栏下一帧自然显示新标签
+
+  const auto& err = result.error();
+  if (err.kind == pzt::core::AddTagFailureKind::CapExceeded) {
+    return handle_cap_replace_submenu(tag_id, image_id, *err.cap_info, banner_row, start_col,
+                                       content_cols);
+  }
+  // TagNotFound/ImageNotFound/ProjectMismatch:tag_id/image_id 都来自刚查
+  // 出来的数据,理论上不会发生,防御性处理而不是假设不可能。
+  return " 打标签失败,请重试 ";
+}
+
 // space 键的入口:在 banner 那一行显示可选标签、读一个键选标签或取消,
 // cap 超限时转入 handle_cap_replace_submenu;`-`/`c`/`d` 分别转入摘除/新
-// 建/删除标签定义。
-std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
-                              int banner_row, int start_col, int content_cols) {
+// 建/删除标签定义。`0:废片` 是硬编码的固定选项,不占用 `tags_for_menu` 的
+// 动态 1-9 序列——`废片` 从 pzt new 起就保证存在,不再有"这次按 space 完
+// 全没有东西可选"的情况,不管动态列表是不是空都无条件阻塞读一个键。
+std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId reject_tag_id,
+                              pzt::core::ImageId image_id, int banner_row, int start_col,
+                              int content_cols) {
   auto tags = tags_for_menu(project_id);  // 只查一次,加/摘/删三个分支共用
 
-  std::string line;
-  if (tags.empty()) {
-    // increment 6.4.4.5:这里从"不阻塞读键"改成阻塞读一个键——项目没有任
-    // 何标签时,原来的做法是直接返回提示、不读键,避免把用户下一次真正的
-    // 导航键当成菜单选择吃掉。但现在按 space 之后总归有 "c 新建" 这个真选
-    // 项可选,不再是"其实没有菜单"的情况,原来"不读键"的理由不再成立;
-    // 不改的话,一个全新项目(还没落地废片自动创建的 6.4.5 之前)永远没
-    // 法通过交互界面建出第一个标签。
-    line = " 还没有标签,c 新建  Esc 取消 ";
-  } else {
-    for (std::size_t i = 0; i < tags.size(); ++i) {
-      if (i > 0) line += "  ";
-      line += std::to_string(i + 1) + ":" + tags[i].name;
-      if (tags[i].cap) {
-        line +=
-            "(" + std::to_string(tags[i].tagged_count) + "/" + std::to_string(*tags[i].cap) + ")";
-      }
+  std::string line = " 0:废片";
+  for (std::size_t i = 0; i < tags.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
+    if (tags[i].cap) {
+      line += "(" + std::to_string(tags[i].tagged_count) + "/" + std::to_string(*tags[i].cap) + ")";
     }
-    line += "  c:新建  d:删除  -:摘除  Esc 取消";
   }
+  line += "  c:新建  d:删除  -:摘除  Esc 取消";
   move_cursor(banner_row, start_col + 1);
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
   if (c == 'c') return handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
   if (c == '-') {
-    return handle_remove_tag_submenu(tags, image_id, banner_row, start_col, content_cols);
+    return handle_remove_tag_submenu(tags, reject_tag_id, image_id, banner_row, start_col,
+                                      content_cols);
   }
   if (c == 'd') return handle_delete_tag_submenu(tags, banner_row, start_col, content_cols);
+  if (c == '0') {
+    return handle_add_tag_result(reject_tag_id, image_id, banner_row, start_col, content_cols);
+  }
   if (c < '1' || c > static_cast<char>('0' + tags.size())) return "";  // 取消,静默
 
   const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
-  auto result = pzt::core::add_tag(image_id, chosen.id);
-  if (result.ok()) return "";  // 静默成功,信息栏下一帧自然显示新标签
-
-  const auto& err = result.error();
-  if (err.kind == pzt::core::AddTagFailureKind::CapExceeded) {
-    return handle_cap_replace_submenu(chosen.id, image_id, *err.cap_info, banner_row, start_col,
-                                       content_cols);
-  }
-  // TagNotFound/ImageNotFound/ProjectMismatch:tag_id/image_id 都来自刚查
-  // 出来的数据,理论上不会发生,防御性处理而不是假设不可能。
-  return " 打标签失败,请重试 ";
+  return handle_add_tag_result(chosen.id, image_id, banner_row, start_col, content_cols);
 }
 
 int cmd_new(const std::vector<std::string>& args) {
@@ -538,6 +550,11 @@ int cmd_new(const std::vector<std::string>& args) {
     }
     return 1;
   }
+
+  // increment 6.4.5:项目一创建就把"废片"系统标签建好——这时候项目刚建
+  // 出来,保证没有任何标签,不需要处理"同名标签已经存在但不是系统标签"
+  // 这种迁移场景,pzt open 不需要再管这件事。
+  pzt::core::ensure_reject_tag(result.value());
 
   // Look the freshly-created project back up to report its scanned image
   // count - a bit wasteful (re-queries all projects) but this is a one-shot
@@ -606,6 +623,11 @@ int cmd_open(const std::vector<std::string>& args) {
     return 1;
   }
 
+  // increment 6.4.5:废片系统标签正常应该在 pzt new 时就建好了,这里不是
+  // 为了处理迁移——只是同一个幂等、廉价的 find-or-create,顺带兜住"项目
+  // 不是通过更新后的 pzt new 建的"这种边界情况,避免后面用这个 id 时崩溃。
+  pzt::core::TagId reject_tag_id = pzt::core::ensure_reject_tag(*id);
+
   auto mode = pzt::cli::kitty::detect_terminal_mode();
   if (mode.inside_tmux && !mode.passthrough_ok) {
     std::fprintf(stderr,
@@ -632,7 +654,7 @@ int cmd_open(const std::vector<std::string>& args) {
   const int kImageId = 1;
   const int kBannerRows = 1;
   const char* kBannerText =
-      " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   q 退出 ";
+      " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   x 标记废片   q 退出 ";
   // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
   // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
   // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
@@ -787,7 +809,13 @@ int cmd_open(const std::vector<std::string>& args) {
       move_cursor(banner_row, start_col + 1);
       showing_status = !status_override.empty();
       if (showing_status) {
-        write_stdout(pad_to(status_override + "  按任意键继续", content_cols));
+        // status_override 里的消息大多自带一个尾随空格(跟 kBannerText 的
+        // 视觉留白风格一致),直接拼接"  按任意键继续"会在两者之间留出一大
+        // 段空白,看起来像隔得很远——先去掉消息自己的尾随空格,用逗号衔接
+        // 而不是额外的空格。
+        std::string trimmed = status_override;
+        while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+        write_stdout(pad_to(trimmed + ",按任意键继续 ", content_cols));
       } else {
         write_stdout(pad_to(kBannerText, content_cols));
       }
@@ -878,7 +906,9 @@ int cmd_open(const std::vector<std::string>& args) {
           c = 'q';
           break;
         }
-        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ') break;
+        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x') {
+          break;
+        }
       }
       if (timed_out) {
         suppress_latency_log = true;  // 没有按键,只是刷新 debug 面板,不处理导航
@@ -907,11 +937,29 @@ int cmd_open(const std::vector<std::string>& args) {
         }
       } else if (c == ' ') {
         if (current_ref) {
-          status_override =
-              handle_space_key(*id, current_ref->id, banner_row, start_col, content_cols);
+          status_override = handle_space_key(*id, reject_tag_id, current_ref->id, banner_row,
+                                              start_col, content_cols);
         }
         // current_id 不变,跟其它分支一样落到下面的 set_current + 循环顶部
         // 整屏重绘,信息栏会自然显示打标签之后的结果。
+      } else if (c == 'x') {
+        // 标记为废片的直达快捷键,等价于 space + 0/space - 0,但不用先开
+        // 菜单——废片预期是使用频率最高的标签,值得单独开一个键。做成开
+        // 关切换(已经标了就摘掉):误按一下能直接再按一次撤销,不需要先
+        // 开 space 菜单走摘除流程。
+        if (current_ref) {
+          auto current_tags = pzt::core::tags_for_image(current_ref->id);
+          bool already_tagged = std::any_of(
+              current_tags.begin(), current_tags.end(),
+              [&](const auto& t) { return t.id == reject_tag_id; });
+          if (already_tagged) {
+            auto result = pzt::core::remove_tag(current_ref->id, reject_tag_id);
+            status_override = result.ok() ? "" : " 摘标签失败,请重试 ";
+          } else {
+            status_override = handle_add_tag_result(reject_tag_id, current_ref->id, banner_row,
+                                                     start_col, content_cols);
+          }
+        }
       }
       prefetch.set_current(images, current_id);
     }
