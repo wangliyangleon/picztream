@@ -25,47 +25,22 @@ void print_usage() {
                "  pzt new <project_name> [folder_path]\n"
                "  pzt list\n"
                "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
-               "j/k 下一张/上一张未打标签,space 打标签,q 退出;increment 6.4 "
-               "后续步骤会加 x/g+数字;--debug 时在图片下方"
-               "开一块区域滚动显示内部日志,默认不显示也不产生这些日志)\n"
+               "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,g 筛选,"
+               "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
+               "不显示也不产生这些日志)\n"
                "  pzt archive <project_name>\n"
                "  pzt delete <project_name>\n"
                "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
                "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
                "加 --no-prune 跳过清理)\n"
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
-               "  pzt decode <jpeg_path>  (临时调试命令,验证 core/decode 的解码管线通,"
-               "increment 6 后续步骤会接入真正的浏览渲染循环)\n"
-               "  pzt render <jpeg_path>  (临时调试命令,验证 cli/kitty 渲染管线通,"
-               "需要在真实 Ghostty 终端里跑才能看到画面)\n"
-               "  pzt prefetch <project_name> [window]  (临时调试命令,验证 core/browse 的"
-               "预取环形缓冲区随导航移动、后台解码线程确实把像素准备好,"
-               "increment 6.4 会把它接进真正的全键盘循环)\n"
-               "  pzt tag create|list|add|remove|replace ...  "
-               "(临时调试命令,increment 6 会被全键盘交互替换,pzt tag 查看用法)\n"
-               "  pzt browse next|prev|next-untagged|prev-untagged|filter ...  "
-               "(同上,pzt browse 查看用法)\n");
-}
-
-void print_browse_usage() {
-  std::fprintf(stderr,
-               "usage (临时调试命令,后续会被全键盘交互替换):\n"
-               "  pzt browse next <project_name> [current_image_relative_path]\n"
-               "  pzt browse prev <project_name> [current_image_relative_path]\n"
-               "  pzt browse next-untagged <project_name> [current_image_relative_path]\n"
-               "  pzt browse prev-untagged <project_name> [current_image_relative_path]\n"
-               "  pzt browse filter <project_name> <tag_name>\n");
+               "  pzt tag list <project_name>\n");
 }
 
 void print_tag_usage() {
   std::fprintf(stderr,
-               "usage (临时调试命令,后续会被全键盘交互替换):\n"
-               "  pzt tag create <project_name> <tag_name> [--cap N] [--ordered]\n"
-               "  pzt tag list <project_name>\n"
-               "  pzt tag add <project_name> <image_relative_path> <tag_name>\n"
-               "  pzt tag remove <project_name> <image_relative_path> <tag_name>\n"
-               "  pzt tag replace <project_name> <tag_name> <old_image_relative_path> "
-               "<new_image_relative_path>\n");
+               "usage:\n"
+               "  pzt tag list <project_name>\n");
 }
 
 // 找不到项目时打印统一格式的错误提示。返回 nullopt 表示调用方应该直接
@@ -76,16 +51,6 @@ std::optional<pzt::core::ProjectId> resolve_project(const std::string& cmd,
   if (!id) {
     std::fprintf(stderr, "%s: 找不到项目 '%s',用 pzt list 查看可用项目\n", cmd.c_str(),
                  project_name.c_str());
-  }
-  return id;
-}
-
-std::optional<pzt::core::ImageId> resolve_image(const std::string& cmd,
-                                                 pzt::core::ProjectId project_id,
-                                                 const std::string& relative_path) {
-  auto id = pzt::core::find_image_by_path(project_id, relative_path);
-  if (!id) {
-    std::fprintf(stderr, "%s: 项目内找不到文件 '%s'\n", cmd.c_str(), relative_path.c_str());
   }
   return id;
 }
@@ -682,19 +647,7 @@ int cmd_open(const std::vector<std::string>& args) {
     return 1;
   }
 
-  // 默认把 stderr(core::PrefetchCache 等的延迟日志)整个丢掉,不跟图片画
-  // 到同一块屏幕上;--debug 时改成后台收集,画到屏幕底部专门的 debug 区
-  // 域。声明在 prefetch 之前、比它晚析构,这样 prefetch 关闭时可能打的最
-  // 后几行日志也能被收住。
   const int kDebugRows = 8;
-  pzt::cli::term::DebugLogRedirect debug_log(debug_mode, static_cast<std::size_t>(kDebugRows));
-
-  // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
-  // 受这次影响,调优留给以后有真实使用数据再说。
-  pzt::core::PrefetchCache prefetch(project.root_path, /*window=*/3, pzt::core::decode_jpeg_file);
-  pzt::core::ImageId current_id = images.front().id;
-  prefetch.set_current(images, current_id);
-
   std::size_t frame = 0;
   const int kImageId = 1;
   const int kBannerRows = 1;
@@ -707,7 +660,37 @@ int cmd_open(const std::vector<std::string>& args) {
   // 的状态机或定时器。
   std::string status_override;
 
+  // increment 6.4.7:退出时打一行 key-to-render 汇总(count/avg/p95/max)
+  // ——PRD 验收标准要求"简单的延迟日志"验证浏览大量图片全程无可感知卡
+  // 顿,盯着 debug 面板只保留最后 8 行的实时小窗口没法回头核对整个会话,
+  // 需要一份事后能看的汇总,不是新的 core 层能力,纯粹是这个函数自己按
+  // 键处理耗时的统计,声明在下面这个块外面,这样块结束(AltScreen/
+  // CbreakMode 析构、stderr 换回真实终端)之后还能在这打印。退出时打印一
+  // 次,不挂在 --debug 后面。
+  std::size_t latency_count = 0;
+  double latency_sum_ms = 0.0;
+  double latency_max_ms = 0.0;
+  std::vector<double> latency_samples;
+
   {
+    // 默认把 stderr(core::PrefetchCache 等的延迟日志)整个丢掉,不跟图片画
+    // 到同一块屏幕上;--debug 时改成后台收集,画到屏幕底部专门的 debug 区
+    // 域。声明在 prefetch 之前、比它晚析构,这样 prefetch 关闭时可能打的最
+    // 后几行日志也能被收住。跟 prefetch 一起放进这个块(而不是 cmd_open 的
+    // 外层作用域)是 6.4.7 修的一个问题:这两个如果活到 cmd_open 整个函数
+    // 返回才析构,块结束之后想打印的退出汇总/退出提示这些"应该在真实终端
+    // 上可见"的输出,实际上还是会被 debug_log 占着的重定向吞掉(不管
+    // --debug 开没开,DebugLogRedirect 的析构函数才是真正把 stderr 换回真
+    // 实终端的地方)——缩小到这个块的作用域,块结束时 debug_log 先析构、
+    // stderr 先换回来,后面的打印才真的能看见。
+    pzt::cli::term::DebugLogRedirect debug_log(debug_mode, static_cast<std::size_t>(kDebugRows));
+
+    // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
+    // 受这次影响,调优留给以后有真实使用数据再说。
+    pzt::core::PrefetchCache prefetch(project.root_path, /*window=*/3, pzt::core::decode_jpeg_file);
+    pzt::core::ImageId current_id = images.front().id;
+    prefetch.set_current(images, current_id);
+
     // AltScreen 在 CbreakMode 前构造、后析构:退出时先把输入模式还原、再离
     // 开备用缓冲区,这样即便中途出异常,用户的主屏幕内容也不会被半途切走
     // 又切不回来。
@@ -927,6 +910,10 @@ int cmd_open(const std::vector<std::string>& args) {
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - key_time)
                 .count();
         std::fprintf(stderr, "[pzt open] key-to-render %.2fms\n", key_to_render_ms);
+        ++latency_count;
+        latency_sum_ms += key_to_render_ms;
+        latency_max_ms = std::max(latency_max_ms, key_to_render_ms);
+        latency_samples.push_back(key_to_render_ms);
       }
 
       char c = 0;
@@ -1083,6 +1070,15 @@ int cmd_open(const std::vector<std::string>& args) {
     pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
   }  // AltScreen/CbreakMode 析构,自动还原终端设置
 
+  if (latency_count > 0) {
+    std::sort(latency_samples.begin(), latency_samples.end());
+    std::size_t p95_index = std::min(latency_samples.size() - 1,
+                                      static_cast<std::size_t>(latency_samples.size() * 0.95));
+    std::fprintf(stderr, "[pzt open] key-to-render summary: n=%zu avg=%.2fms p95=%.2fms max=%.2fms\n",
+                 latency_count, latency_sum_ms / static_cast<double>(latency_count),
+                 latency_samples[p95_index], latency_max_ms);
+  }
+
   std::fprintf(stderr, "已退出浏览\n");
   return 0;
 }
@@ -1139,37 +1135,6 @@ int cmd_delete(const std::vector<std::string>& args) {
   return 0;
 }
 
-int tag_create(const std::vector<std::string>& args) {
-  if (args.size() < 2) {
-    std::fprintf(stderr, "pzt tag create: 缺少 <project_name> <tag_name>\n");
-    print_tag_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt tag create", args[0]);
-  if (!project_id) return 1;
-  const std::string& tag_name = args[1];
-
-  std::optional<std::int64_t> cap;
-  bool is_ordered = false;
-  for (std::size_t i = 2; i < args.size(); ++i) {
-    if (args[i] == "--cap" && i + 1 < args.size()) {
-      cap = std::atoll(args[++i].c_str());
-    } else if (args[i] == "--ordered") {
-      is_ordered = true;
-    }
-  }
-
-  auto result = pzt::core::create_tag(*project_id, tag_name, cap, is_ordered);
-  if (!result.ok()) {
-    std::fprintf(stderr, "pzt tag create: 标签 '%s' 已存在\n", tag_name.c_str());
-    return 1;
-  }
-  std::printf("已创建标签 '%s'%s%s\n", tag_name.c_str(),
-              cap ? (" cap=" + std::to_string(*cap)).c_str() : "",
-              is_ordered ? " ordered" : "");
-  return 0;
-}
-
 int tag_list(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "pzt tag list: 缺少 <project_name>\n");
@@ -1190,118 +1155,6 @@ int tag_list(const std::vector<std::string>& args) {
                 t.cap ? ("  cap=" + std::to_string(*t.cap)).c_str() : "",
                 t.is_ordered ? "  ordered" : "", t.is_system ? "  system" : "");
   }
-  return 0;
-}
-
-void print_cap_exceeded(const pzt::core::CapExceededInfo& info) {
-  std::fprintf(stderr, "标签已满(上限 %lld 张),现有条目:\n", static_cast<long long>(info.cap));
-  int i = 1;
-  for (const auto& entry : info.existing_entries) {
-    std::fprintf(stderr, "  %d. %s\n", i++, entry.file_name.c_str());
-  }
-  std::fprintf(stderr, "用 pzt tag replace 指定要替换的文件\n");
-}
-
-int tag_add(const std::vector<std::string>& args) {
-  if (args.size() < 3) {
-    std::fprintf(stderr, "pzt tag add: 缺少 <project_name> <image_relative_path> <tag_name>\n");
-    print_tag_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt tag add", args[0]);
-  if (!project_id) return 1;
-  auto image_id = resolve_image("pzt tag add", *project_id, args[1]);
-  if (!image_id) return 1;
-  auto tag_id = pzt::core::find_tag_by_name(*project_id, args[2]);
-  if (!tag_id) {
-    std::fprintf(stderr, "pzt tag add: 找不到标签 '%s'\n", args[2].c_str());
-    return 1;
-  }
-
-  auto result = pzt::core::add_tag(*image_id, *tag_id);
-  if (!result.ok()) {
-    const auto& err = result.error();
-    switch (err.kind) {
-      case pzt::core::AddTagFailureKind::TagNotFound:
-        std::fprintf(stderr, "pzt tag add: 找不到标签\n");
-        break;
-      case pzt::core::AddTagFailureKind::ImageNotFound:
-        std::fprintf(stderr, "pzt tag add: 找不到图片\n");
-        break;
-      case pzt::core::AddTagFailureKind::ProjectMismatch:
-        std::fprintf(stderr, "pzt tag add: 图片和标签不属于同一个项目\n");
-        break;
-      case pzt::core::AddTagFailureKind::CapExceeded:
-        print_cap_exceeded(*err.cap_info);
-        break;
-    }
-    return 1;
-  }
-  std::printf("已给 '%s' 打上标签 '%s'\n", args[1].c_str(), args[2].c_str());
-  return 0;
-}
-
-int tag_remove(const std::vector<std::string>& args) {
-  if (args.size() < 3) {
-    std::fprintf(stderr, "pzt tag remove: 缺少 <project_name> <image_relative_path> <tag_name>\n");
-    print_tag_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt tag remove", args[0]);
-  if (!project_id) return 1;
-  auto image_id = resolve_image("pzt tag remove", *project_id, args[1]);
-  if (!image_id) return 1;
-  auto tag_id = pzt::core::find_tag_by_name(*project_id, args[2]);
-  if (!tag_id) {
-    std::fprintf(stderr, "pzt tag remove: 找不到标签 '%s'\n", args[2].c_str());
-    return 1;
-  }
-
-  if (!pzt::core::remove_tag(*image_id, *tag_id).ok()) {
-    std::fprintf(stderr, "pzt tag remove: 找不到标签或图片\n");
-    return 1;
-  }
-  std::printf("已移除 '%s' 的标签 '%s'\n", args[1].c_str(), args[2].c_str());
-  return 0;
-}
-
-int tag_replace(const std::vector<std::string>& args) {
-  if (args.size() < 4) {
-    std::fprintf(stderr,
-                 "pzt tag replace: 缺少 <project_name> <tag_name> "
-                 "<old_image_relative_path> <new_image_relative_path>\n");
-    print_tag_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt tag replace", args[0]);
-  if (!project_id) return 1;
-  auto tag_id = pzt::core::find_tag_by_name(*project_id, args[1]);
-  if (!tag_id) {
-    std::fprintf(stderr, "pzt tag replace: 找不到标签 '%s'\n", args[1].c_str());
-    return 1;
-  }
-  auto old_image_id = resolve_image("pzt tag replace", *project_id, args[2]);
-  if (!old_image_id) return 1;
-  auto new_image_id = resolve_image("pzt tag replace", *project_id, args[3]);
-  if (!new_image_id) return 1;
-
-  auto result = pzt::core::replace_tag_entry(*tag_id, *old_image_id, *new_image_id);
-  if (!result.ok()) {
-    switch (result.error()) {
-      case pzt::core::ReplaceTagError::TagNotFound:
-        std::fprintf(stderr, "pzt tag replace: 找不到标签\n");
-        break;
-      case pzt::core::ReplaceTagError::OldImageNotTagged:
-        std::fprintf(stderr, "pzt tag replace: '%s' 目前没有这个标签\n", args[2].c_str());
-        break;
-      case pzt::core::ReplaceTagError::NewImageNotFound:
-        std::fprintf(stderr, "pzt tag replace: 找不到新图片 '%s'\n", args[3].c_str());
-        break;
-    }
-    return 1;
-  }
-  std::printf("已用 '%s' 替换 '%s' 在标签 '%s' 下的位置\n", args[3].c_str(), args[2].c_str(),
-              args[1].c_str());
   return 0;
 }
 
@@ -1378,255 +1231,6 @@ int cmd_export(const std::vector<std::string>& args) {
   return 0;
 }
 
-// current_image_relative_path 参数省略时返回 nullopt (next/prev/next-
-// untagged/prev-untagged 各自对"没有当前图片"有明确定义的行为)。
-std::optional<pzt::core::ImageId> resolve_optional_current(pzt::core::ProjectId project_id,
-                                                            const std::vector<std::string>& args,
-                                                            std::size_t index) {
-  if (args.size() <= index) return std::nullopt;
-  return pzt::core::find_image_by_path(project_id, args[index]);
-}
-
-const pzt::core::ImageRef* find_ref(const std::vector<pzt::core::ImageRef>& images,
-                                     pzt::core::ImageId id) {
-  for (const auto& r : images) {
-    if (r.id == id) return &r;
-  }
-  return nullptr;
-}
-
-void print_nav_result(const std::vector<pzt::core::ImageRef>& images,
-                      std::optional<pzt::core::ImageId> result, const char* none_message) {
-  if (images.empty()) {
-    std::printf("项目内没有图片\n");
-    return;
-  }
-  if (!result) {
-    std::printf("%s\n", none_message);
-    return;
-  }
-  const auto* ref = find_ref(images, *result);
-  std::printf("%s\n", ref ? ref->file_path.c_str() : "(内部错误:找不到结果图片)");
-}
-
-int browse_next(const std::vector<std::string>& args, bool prev) {
-  if (args.empty()) {
-    std::fprintf(stderr, "pzt browse %s: 缺少 <project_name>\n", prev ? "prev" : "next");
-    print_browse_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt browse", args[0]);
-  if (!project_id) return 1;
-
-  auto images = pzt::core::list_images(*project_id);
-  auto current = resolve_optional_current(*project_id, args, 1);
-  auto result = prev ? pzt::core::prev_image(images, current) : pzt::core::next_image(images, current);
-  print_nav_result(images, result, "");
-  return 0;
-}
-
-int browse_untagged(const std::vector<std::string>& args, bool prev) {
-  if (args.empty()) {
-    std::fprintf(stderr, "pzt browse %s-untagged: 缺少 <project_name>\n", prev ? "prev" : "next");
-    print_browse_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt browse", args[0]);
-  if (!project_id) return 1;
-
-  auto images = pzt::core::list_images(*project_id);
-  auto current = resolve_optional_current(*project_id, args, 1);
-  auto result = prev ? pzt::core::prev_untagged(images, current)
-                      : pzt::core::next_untagged(images, current);
-  print_nav_result(images, result, "没有更多未打标签的图片了");
-  return 0;
-}
-
-int browse_filter(const std::vector<std::string>& args) {
-  if (args.size() < 2) {
-    std::fprintf(stderr, "pzt browse filter: 缺少 <project_name> <tag_name>\n");
-    print_browse_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt browse filter", args[0]);
-  if (!project_id) return 1;
-  auto tag_id = pzt::core::find_tag_by_name(*project_id, args[1]);
-  if (!tag_id) {
-    std::fprintf(stderr, "pzt browse filter: 找不到标签 '%s'\n", args[1].c_str());
-    return 1;
-  }
-
-  auto result = pzt::core::filter_by_tag(*tag_id);
-  if (!result.ok()) {
-    std::fprintf(stderr, "pzt browse filter: 找不到标签 '%s'\n", args[1].c_str());
-    return 1;
-  }
-  if (result.value().empty()) {
-    std::printf("(这个标签下还没有图片)\n");
-    return 0;
-  }
-  for (const auto& ref : result.value()) {
-    std::printf("%s\n", ref.file_path.c_str());
-  }
-  return 0;
-}
-
-int cmd_browse(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    print_browse_usage();
-    return 1;
-  }
-  const std::string& verb = args[0];
-  std::vector<std::string> rest(args.begin() + 1, args.end());
-
-  if (verb == "next") return browse_next(rest, false);
-  if (verb == "prev") return browse_next(rest, true);
-  if (verb == "next-untagged") return browse_untagged(rest, false);
-  if (verb == "prev-untagged") return browse_untagged(rest, true);
-  if (verb == "filter") return browse_filter(rest);
-
-  std::fprintf(stderr, "pzt browse: 未知子命令 '%s'\n", verb.c_str());
-  print_browse_usage();
-  return 1;
-}
-
-// 临时调试命令:解码一张 JPEG,打印尺寸和像素字节数就退出,用来验证
-// core/decode 管线本身是通的。increment 6.2/6.4 会把解码结果接到 Kitty
-// 渲染器和全键盘循环里，届时这条命令就可以退休了。
-int cmd_decode(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    std::fprintf(stderr, "pzt decode: missing <jpeg_path>\n");
-    print_usage();
-    return 1;
-  }
-  auto result = pzt::core::decode_jpeg_file(args[0]);
-  if (!result.ok()) {
-    switch (result.error()) {
-      case pzt::core::DecodeError::FileNotFound:
-        std::fprintf(stderr, "pzt decode: 找不到文件 '%s'\n", args[0].c_str());
-        break;
-      case pzt::core::DecodeError::DecodeFailed:
-        std::fprintf(stderr, "pzt decode: '%s' 不是可解码的图像\n", args[0].c_str());
-        break;
-    }
-    return 1;
-  }
-  const auto& img = result.value();
-  std::printf("解码成功: %dx%d,%zu 字节 RGBA\n", img.width, img.height, img.rgba.size());
-  return 0;
-}
-
-// 临时调试命令:解码一张 JPEG 并用 Kitty 图形协议渲染到终端就退出,用来验证
-// cli/kitty 渲染管线本身是通的(t=t 传输介质 + Tmux DCS passthrough 检
-// 测)。increment 6.4 全键盘循环接上真正的浏览渲染路径之后,这条命令就可以
-// 退休了。人类可读的状态信息全部打到 stderr,stdout 只承载真正发给终端的
-// Kitty 协议字节,不能与状态信息混流(与 spikes/kitty_latency_probe/ 的约
-// 定一致)。
-int cmd_render(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    std::fprintf(stderr, "pzt render: missing <jpeg_path>\n");
-    print_usage();
-    return 1;
-  }
-
-  auto decoded = pzt::core::decode_jpeg_file(args[0]);
-  if (!decoded.ok()) {
-    switch (decoded.error()) {
-      case pzt::core::DecodeError::FileNotFound:
-        std::fprintf(stderr, "pzt render: 找不到文件 '%s'\n", args[0].c_str());
-        break;
-      case pzt::core::DecodeError::DecodeFailed:
-        std::fprintf(stderr, "pzt render: '%s' 不是可解码的图像\n", args[0].c_str());
-        break;
-    }
-    return 1;
-  }
-
-  auto mode = pzt::cli::kitty::detect_terminal_mode();
-  if (mode.inside_tmux) {
-    std::fprintf(stderr, "[pzt render] 运行在 Tmux 窗格内,allow-passthrough=%s\n",
-                 mode.passthrough_ok ? "on" : "off");
-  } else {
-    std::fprintf(stderr, "[pzt render] 运行在独立 Ghostty 窗口(不在 Tmux 内)\n");
-  }
-
-  std::string tmp_path = pzt::cli::kitty::make_tmp_path(std::to_string(getpid()));
-  auto result = pzt::cli::kitty::render_rgba_via_tmpfile(STDOUT_FILENO, mode, decoded.value(),
-                                                          /*image_id=*/1, tmp_path);
-  if (!result.ok()) {
-    switch (result.error()) {
-      case pzt::cli::kitty::RenderError::PassthroughDisabled:
-        std::fprintf(stderr,
-                     "pzt render: 当前 Tmux 会话未开启 allow-passthrough,Kitty 图形协议无法穿透"
-                     "到 Ghostty。请在 tmux.conf 里加 `set -g allow-passthrough on` 后重启会话,"
-                     "或在独立 Ghostty 窗口(不经过 Tmux)里直接运行\n");
-        break;
-      case pzt::cli::kitty::RenderError::WriteFailed:
-        std::fprintf(stderr, "pzt render: 写入终端失败\n");
-        break;
-    }
-    return 1;
-  }
-
-  std::fprintf(stderr, "[pzt render] 已发送 %dx%d 像素到终端(image_id=1,tmp_path=%s)\n",
-               decoded.value().width, decoded.value().height, tmp_path.c_str());
-  return 0;
-}
-
-// 临时调试命令:沿浏览顺序走一遍项目里的全部图片,每一步都调用 core/browse
-// 的预取缓存 set_current() + get(),验证预取窗口能跟着导航移动、后台解码线
-// 程确实在被 get() 阻塞等待之前就把像素准备好。真正接入全键盘循环是
-// increment 6.4 的事,这里只验证 core/browse 预取模块本身是通的,人类可读
-// 的每步结果打到 stdout,延迟日志(hit/miss/decode 耗时)由 core/browse 自
-// 己打到 stderr。
-int cmd_prefetch(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    std::fprintf(stderr, "pzt prefetch: missing <project_name>\n");
-    print_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt prefetch", args[0]);
-  if (!project_id) return 1;
-
-  std::size_t window = 2;
-  if (args.size() >= 2) window = static_cast<std::size_t>(std::atoll(args[1].c_str()));
-
-  auto proj = pzt::core::open_project(*project_id);
-  if (!proj.ok()) {
-    std::fprintf(stderr, "pzt prefetch: 找不到项目 '%s'\n", args[0].c_str());
-    return 1;
-  }
-
-  auto images = pzt::core::list_images(*project_id);
-  if (images.empty()) {
-    std::printf("(项目内没有图片)\n");
-    return 0;
-  }
-
-  std::printf("预取窗口 window=%zu,项目共 %zu 张图片\n", window, images.size());
-  pzt::core::PrefetchCache cache(proj.value().root_path, window);
-
-  std::optional<pzt::core::ImageId> current = images.front().id;
-  for (std::size_t step = 0; step < images.size(); ++step) {
-    cache.set_current(images, current);
-    const auto* ref = find_ref(images, *current);
-    auto fetched = cache.get(*current);
-    if (fetched.ok()) {
-      std::printf("[%zu/%zu] %s -> %dx%d,%zu 字节 RGBA\n", step + 1, images.size(),
-                  ref->file_path.c_str(), fetched.value().width, fetched.value().height,
-                  fetched.value().rgba.size());
-    } else {
-      const char* reason = fetched.error() == pzt::core::FetchError::NotInWindow
-                                ? "not_in_window"
-                                : "decode_failed";
-      std::printf("[%zu/%zu] %s -> 预取失败(%s)\n", step + 1, images.size(),
-                  ref->file_path.c_str(), reason);
-    }
-    current = pzt::core::next_image(images, current);
-  }
-  return 0;
-}
-
 int cmd_tag(const std::vector<std::string>& args) {
   if (args.empty()) {
     print_tag_usage();
@@ -1635,11 +1239,7 @@ int cmd_tag(const std::vector<std::string>& args) {
   const std::string& verb = args[0];
   std::vector<std::string> rest(args.begin() + 1, args.end());
 
-  if (verb == "create") return tag_create(rest);
   if (verb == "list") return tag_list(rest);
-  if (verb == "add") return tag_add(rest);
-  if (verb == "remove") return tag_remove(rest);
-  if (verb == "replace") return tag_replace(rest);
 
   std::fprintf(stderr, "pzt tag: 未知子命令 '%s'\n", verb.c_str());
   print_tag_usage();
@@ -1664,11 +1264,7 @@ int main(int argc, char** argv) {
   if (subcommand == "delete") return cmd_delete(args);
   if (subcommand == "rescan") return cmd_rescan(args);
   if (subcommand == "export") return cmd_export(args);
-  if (subcommand == "decode") return cmd_decode(args);
-  if (subcommand == "render") return cmd_render(args);
-  if (subcommand == "prefetch") return cmd_prefetch(args);
   if (subcommand == "tag") return cmd_tag(args);
-  if (subcommand == "browse") return cmd_browse(args);
 
   std::fprintf(stderr, "pzt: 未知子命令 '%s'\n", subcommand.c_str());
   print_usage();
