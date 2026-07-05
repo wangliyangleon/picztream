@@ -527,6 +527,51 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
   return handle_add_tag_result(chosen.id, image_id, banner_row, start_col, content_cols);
 }
 
+// increment 6.4.6:g + 数字切换到只浏览某个标签下图片的筛选视图,g + g
+// 清除筛选。落地这个决定需要改 cmd_open 自己的 images/current_id/
+// prefetch——这几个是 cmd_open 函数作用域内的局部变量,不像其它 handle_*
+// 那样能靠传值参数完成整个动作,所以这里只返回"意图",不直接执行。
+enum class GKeyAction { Cancel, ClearFilter, ApplyFilter };
+
+struct GKeyDecision {
+  GKeyAction action = GKeyAction::Cancel;
+  pzt::core::TagId tag_id{};  // 只有 action == ApplyFilter 时有意义
+  std::string tag_name;       // 同上,顺便带出来给信息栏筛选提示用,不用每
+                               // 帧再查一次 tags_for_menu 只为了显示名字
+};
+
+GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
+                                  const std::vector<pzt::core::TagSummary>& tags, int banner_row,
+                                  int start_col, int content_cols) {
+  std::string line = " g:清除筛选  0:废片";
+  for (std::size_t i = 0; i < tags.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c == 'g') return {GKeyAction::ClearFilter, {}, ""};
+  if (c == '0') return {GKeyAction::ApplyFilter, reject_tag_id, "废片"};
+  if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
+    const auto& t = tags[static_cast<std::size_t>(c - '1')];
+    return {GKeyAction::ApplyFilter, t.id, t.name};
+  }
+  return {GKeyAction::Cancel, {}, ""};  // 取消,静默,跟其它菜单一致
+}
+
+// 切换浏览池子(应用筛选/清除筛选)后 current_id 该是谁:能留在原地就留在
+// 原地(原来那张图还在新池子里),留不住就退回列表头。两个方向复用同一条
+// 规则,不为"进筛选"和"出筛选"分别定义两套语义。
+pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::ImageRef>& new_images,
+                                                 pzt::core::ImageId desired) {
+  for (const auto& ref : new_images) {
+    if (ref.id == desired) return desired;
+  }
+  return new_images.front().id;
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "pzt new: missing <project_name>\n");
@@ -654,7 +699,8 @@ int cmd_open(const std::vector<std::string>& args) {
   const int kImageId = 1;
   const int kBannerRows = 1;
   const char* kBannerText =
-      " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   x 标记废片   q 退出 ";
+      " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   x 标记废片"
+      "   g 筛选   q 退出 ";
   // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
   // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
   // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
@@ -687,6 +733,11 @@ int cmd_open(const std::vector<std::string>& args) {
     // 跟这条日志真正想回答的问题("切图快不快")没关系,混在一起只会让
     // debug 面板看起来像是在不停后台重复干活。
     bool suppress_latency_log = false;
+
+    // increment 6.4.6:当前是否在 g + 数字切出来的筛选视图里,以及筛选到
+    // 了哪个标签——跟 current_id 一样是这个函数作用域内的纯局部状态。
+    std::optional<pzt::core::TagId> active_filter_tag_id;
+    std::string active_filter_tag_name;
 
     while (true) {
       auto key_time = std::chrono::steady_clock::now();
@@ -759,9 +810,13 @@ int cmd_open(const std::vector<std::string>& args) {
         }
         int row = image_top_row;
         move_cursor(row++, info_col);
-        write_stdout(pad_to("[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) +
-                                 "]",
-                             info_cols));
+        // increment 6.4.6:筛选状态拼在这一行后面,不新增一行——这样下面
+        // 每一行(文件名、标签、大小)不管是不是在筛选视图里都是完全一样
+        // 的行号计算,切换筛选状态时不会有内容跳动。
+        std::string index_line =
+            "[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]";
+        if (active_filter_tag_id) index_line += "  筛选: " + active_filter_tag_name;
+        write_stdout(pad_to(index_line, info_cols));
 
         move_cursor(row++, info_col);
         write_stdout(pad_to(current_ref ? current_ref->file_name : "?", info_cols));
@@ -906,7 +961,8 @@ int cmd_open(const std::vector<std::string>& args) {
           c = 'q';
           break;
         }
-        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x') {
+        if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x' ||
+            c == 'g') {
           break;
         }
       }
@@ -922,18 +978,29 @@ int cmd_open(const std::vector<std::string>& args) {
       } else if (c == 'l') {
         current_id = pzt::core::next_image(images, current_id).value_or(current_id);
       } else if (c == 'j') {
-        auto next = pzt::core::next_untagged(images, current_id);
-        if (next) {
-          current_id = *next;
+        // 筛选视图里每张图按定义都至少有筛选到的那个标签,"下一个未打标
+        // 签的" 在这个语境下没有意义,永远立刻报"全部打完"——不是 bug,但
+        // 体验上很尴尬,筛选生效时退化成跟 l 一样的普通下一张。
+        if (active_filter_tag_id) {
+          current_id = pzt::core::next_image(images, current_id).value_or(current_id);
         } else {
-          status_override = " 所有图片都已打过标签 ";
+          auto next = pzt::core::next_untagged(images, current_id);
+          if (next) {
+            current_id = *next;
+          } else {
+            status_override = " 所有图片都已打过标签 ";
+          }
         }
       } else if (c == 'k') {
-        auto prev = pzt::core::prev_untagged(images, current_id);
-        if (prev) {
-          current_id = *prev;
+        if (active_filter_tag_id) {
+          current_id = pzt::core::prev_image(images, current_id).value_or(current_id);
         } else {
-          status_override = " 所有图片都已打过标签 ";
+          auto prev = pzt::core::prev_untagged(images, current_id);
+          if (prev) {
+            current_id = *prev;
+          } else {
+            status_override = " 所有图片都已打过标签 ";
+          }
         }
       } else if (c == ' ') {
         if (current_ref) {
@@ -960,6 +1027,52 @@ int cmd_open(const std::vector<std::string>& args) {
                                                      start_col, content_cols);
           }
         }
+      } else if (c == 'g') {
+        // g + 数字切换到只浏览该标签下图片的筛选视图,g + g 清除筛选回到
+        // 完整项目——数字编号复用跟 space 菜单同一套 tags_for_menu。
+        auto tags = tags_for_menu(*id);
+        auto decision =
+            handle_g_key_prompt(reject_tag_id, tags, banner_row, start_col, content_cols);
+
+        if (decision.action == GKeyAction::ApplyFilter) {
+          // 真机测试反馈 g + 数字筛选有明显卡顿,查出来是 image_tags 按
+          // tag_id 过滤没有索引可用(见 core/db/schema.cpp 的说明,已经
+          // 补上索引)——这里打一下查询本身的耗时,debug 面板能直接看到
+          // 这一步占了多少,跟后面"切到新图片要重新解码"那部分区分开。
+          auto filter_t0 = std::chrono::steady_clock::now();
+          auto filtered = pzt::core::filter_by_tag(decision.tag_id);
+          double filter_query_ms = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - filter_t0)
+                                        .count();
+          std::fprintf(stderr, "[pzt open] filter_by_tag tag_id=%lld %.2fms\n",
+                       static_cast<long long>(decision.tag_id), filter_query_ms);
+          if (!filtered.ok()) {
+            status_override = " 筛选失败,请重试 ";  // 结构上不可能,防御性处理
+          } else if (filtered.value().empty()) {
+            status_override = " 该标签下暂无图片 ";  // 拒绝切换,images/current_id 不变
+          } else {
+            // 注意顺序:先用 filtered.value() 算出 new_current,再 move,
+            // 不然 move 之后 filtered.value() 已经是空壳。
+            pzt::core::ImageId new_current =
+                resolve_current_after_switch(filtered.value(), current_id);
+            images = std::move(filtered.value());
+            current_id = new_current;
+            active_filter_tag_id = decision.tag_id;
+            active_filter_tag_name = decision.tag_name;
+          }
+        } else if (decision.action == GKeyAction::ClearFilter) {
+          if (active_filter_tag_id) {
+            auto full = pzt::core::list_images(*id);
+            pzt::core::ImageId new_current = resolve_current_after_switch(full, current_id);
+            images = std::move(full);
+            current_id = new_current;
+            active_filter_tag_id.reset();
+            active_filter_tag_name.clear();
+          }
+          // 不在筛选中时 g+g 是空操作:不查库、不提示,静默——避免每次误
+          // 按 g+g 在未筛选状态下也触发一次不必要的 list_images 查询。
+        }
+        // Cancel:什么都不做,静默
       }
       prefetch.set_current(images, current_id);
     }

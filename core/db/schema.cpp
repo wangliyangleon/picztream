@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS image_tags (
 );
 )sql";
 
+// PRIMARY KEY (image_id, tag_id) 只对"先按 image_id 过滤"的查询(比如
+// tags_for_image)有索引可用——image_id 是这个复合键的第一列。反过来"按
+// tag_id 过滤"的查询(filter_by_tag、list_tags 算 tagged_count)没有任何
+// 索引可用,只能整表扫描 image_tags。increment 6.4.6 真机测试发现 g + 数
+// 字筛选有明显卡顿,查出来就是这个——项目标签关联多了之后每次筛选都要扫
+// 一遍全表。
+constexpr const char* kCreateImageTagsTagIdIndex = R"sql(
+CREATE INDEX IF NOT EXISTS idx_image_tags_tag_id ON image_tags(tag_id);
+)sql";
+
 }  // namespace
 
 void initialize_schema(sqlite3* conn) {
@@ -68,6 +78,7 @@ void initialize_schema(sqlite3* conn) {
   exec(conn, kCreateImages);
   exec(conn, kCreateTags);
   exec(conn, kCreateImageTags);
+  exec(conn, kCreateImageTagsTagIdIndex);
 }
 
 }  // namespace pzt::core::db
