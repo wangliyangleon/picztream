@@ -140,6 +140,20 @@ std::string format_size(std::int64_t bytes) {
   return buf;
 }
 
+// increment 6.6:导出路径展开 `~`/`~/...`。标准子命令的路径参数从 argv 来,
+// shell 早就在我们看到之前展开过 `~`(除非用户自己加引号);但 `g e` 走的
+// 是 read_text_line 直接读键盘字节,完全绕过 shell,不会有人替我们展开——
+// 真机验证发现不展开的话 `~` 会被字面创建成一个真的叫 `~` 的目录,"导出成
+// 功"但成功到了一个用户没想到的地方。两个入口(cmd_export 和
+// handle_g_export_flow)统一走这个函数,行为保持一致。只处理 `~` 和
+// `~/...` 这两种形式,不处理 `~user`——M0 单用户场景不需要。
+std::string expand_home_path(const std::string& path) {
+  if (path != "~" && path.rfind("~/", 0) != 0) return path;
+  const char* home = std::getenv("HOME");
+  if (!home || home[0] == '\0') return path;  // 环境异常,原样返回,不猜测
+  return path == "~" ? std::string(home) : std::string(home) + path.substr(1);
+}
+
 std::size_t display_width(const std::string& s) {
   std::size_t w = 0;
   std::size_t pos = 0;
@@ -496,19 +510,35 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
 // 清除筛选。落地这个决定需要改 cmd_open 自己的 images/current_id/
 // prefetch——这几个是 cmd_open 函数作用域内的局部变量,不像其它 handle_*
 // 那样能靠传值参数完成整个动作,所以这里只返回"意图",不直接执行。
-enum class GKeyAction { Cancel, ClearFilter, ApplyFilter };
+// increment 6.6:g + e 导出,跟前两者不同——它是个完全自包含的动作(选标
+// 签 + 读路径 + 调 export_tag),不需要 cmd_open 再回头改 images/
+// current_id,所以直接在这里(连同 handle_g_export_flow)把它执行完,用
+// `Handled` 携带结果文案返回,风格上更接近 handle_space_key 那种"直接返回
+// 状态提示"的做法,而不是 ApplyFilter/ClearFilter 那种"只返回意图"的做法。
+enum class GKeyAction { Cancel, ClearFilter, ApplyFilter, Handled };
 
 struct GKeyDecision {
   GKeyAction action = GKeyAction::Cancel;
   pzt::core::TagId tag_id{};  // 只有 action == ApplyFilter 时有意义
   std::string tag_name;       // 同上,顺便带出来给信息栏筛选提示用,不用每
                                // 帧再查一次 tags_for_menu 只为了显示名字
+  std::string status;         // 只有 action == Handled 时有意义
 };
 
-GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
-                                  const std::vector<pzt::core::TagSummary>& tags, int banner_row,
+// g + e 之后:选导出目标标签(数字编号同 g 菜单,或者当前处于筛选视图时按
+// `e` 表示"就导出这个筛选标签",省一次选择)、读目标路径、调用
+// export_tag。固定用 LinkMode::Copy——软链场景用独立的 `pzt export
+// --link`,这个快捷方式不做模式切换,见 docs/M0_Eng_Design.md increment
+// 6.6 的说明。空路径不是 Esc,得给个反馈而不是静默(跟 handle_create_tag_
+// flow 空标签名的处理一致);Esc 在任一步都中止整个流程,静默。
+std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
+                                  const std::vector<pzt::core::TagSummary>& tags,
+                                  std::optional<pzt::core::TagId> active_filter_tag_id,
+                                  const std::string& active_filter_tag_name, int banner_row,
                                   int start_col, int content_cols) {
-  std::string line = " g:清除筛选  0:废片";
+  std::string line = " 导出:";
+  if (active_filter_tag_id) line += "e:当前筛选(" + active_filter_tag_name + ")  ";
+  line += "0:废片";
   for (std::size_t i = 0; i < tags.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
   }
@@ -517,13 +547,76 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
-  if (c == 'g') return {GKeyAction::ClearFilter, {}, ""};
-  if (c == '0') return {GKeyAction::ApplyFilter, reject_tag_id, "废片"};
+  pzt::core::TagId target_id;
+  std::string target_name;
+  if (c == 'e' && active_filter_tag_id) {
+    target_id = *active_filter_tag_id;
+    target_name = active_filter_tag_name;
+  } else if (c == '0') {
+    target_id = reject_tag_id;
+    target_name = "废片";
+  } else if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
+    const auto& t = tags[static_cast<std::size_t>(c - '1')];
+    target_id = t.id;
+    target_name = t.name;
+  } else {
+    return "";  // 取消,静默(含 `e` 但没有筛选生效的情形)
+  }
+
+  auto path = read_text_line(" 导出到: ", banner_row, start_col, content_cols);
+  if (!path) return "";  // Esc,静默取消
+  if (path->empty()) return " 导出路径不能为空,已取消 ";
+  std::string resolved_path = expand_home_path(*path);
+
+  auto result = pzt::core::export_tag(target_id, resolved_path, pzt::core::LinkMode::Copy);
+  if (!result.ok()) {
+    if (result.error() == pzt::core::ExportTagError::IoError) {
+      return " 导出目标 '" + resolved_path + "' 无法写入(权限不足或路径被占用) ";
+    }
+    return " 导出失败,请重试 ";  // TagNotFound:防御性,理论上不应该发生
+  }
+
+  const auto& r = result.value();
+  if (r.exported_count == 0 && r.skipped.empty()) {
+    return " 标签 '" + target_name + "' 下没有图片,未导出 ";
+  }
+  std::string status = " 已导出 " + std::to_string(r.exported_count) + " 张 '" + target_name +
+                        "' 到 '" + resolved_path + "'";
+  if (r.created_output_folder) status += "(目录不存在,已新建)";
+  if (!r.skipped.empty()) {
+    status += "(跳过 " + std::to_string(r.skipped.size()) + " 张)";
+  }
+  status += " ";
+  return status;
+}
+
+GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
+                                  const std::vector<pzt::core::TagSummary>& tags,
+                                  std::optional<pzt::core::TagId> active_filter_tag_id,
+                                  const std::string& active_filter_tag_name, int banner_row,
+                                  int start_col, int content_cols) {
+  std::string line = " g:清除筛选  e:导出  0:废片";
+  for (std::size_t i = 0; i < tags.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c == 'g') return {GKeyAction::ClearFilter, {}, "", ""};
+  if (c == 'e') {
+    std::string status = handle_g_export_flow(reject_tag_id, tags, active_filter_tag_id,
+                                               active_filter_tag_name, banner_row, start_col,
+                                               content_cols);
+    return {GKeyAction::Handled, {}, "", status};
+  }
+  if (c == '0') return {GKeyAction::ApplyFilter, reject_tag_id, "废片", ""};
   if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
     const auto& t = tags[static_cast<std::size_t>(c - '1')];
-    return {GKeyAction::ApplyFilter, t.id, t.name};
+    return {GKeyAction::ApplyFilter, t.id, t.name, ""};
   }
-  return {GKeyAction::Cancel, {}, ""};  // 取消,静默,跟其它菜单一致
+  return {GKeyAction::Cancel, {}, "", ""};  // 取消,静默,跟其它菜单一致
 }
 
 // 切换浏览池子(应用筛选/清除筛选)后 current_id 该是谁:能留在原地就留在
@@ -1018,10 +1111,13 @@ int cmd_open(const std::vector<std::string>& args) {
         // g + 数字切换到只浏览该标签下图片的筛选视图,g + g 清除筛选回到
         // 完整项目——数字编号复用跟 space 菜单同一套 tags_for_menu。
         auto tags = tags_for_menu(*id);
-        auto decision =
-            handle_g_key_prompt(reject_tag_id, tags, banner_row, start_col, content_cols);
+        auto decision = handle_g_key_prompt(reject_tag_id, tags, active_filter_tag_id,
+                                             active_filter_tag_name, banner_row, start_col,
+                                             content_cols);
 
-        if (decision.action == GKeyAction::ApplyFilter) {
+        if (decision.action == GKeyAction::Handled) {
+          status_override = decision.status;
+        } else if (decision.action == GKeyAction::ApplyFilter) {
           // 真机测试反馈 g + 数字筛选有明显卡顿,查出来是 image_tags 按
           // tag_id 过滤没有索引可用(见 core/db/schema.cpp 的说明,已经
           // 补上索引)——这里打一下查询本身的耗时,debug 面板能直接看到
@@ -1205,7 +1301,7 @@ int cmd_export(const std::vector<std::string>& args) {
     std::fprintf(stderr, "pzt export: 找不到标签 '%s'\n", args[1].c_str());
     return 1;
   }
-  const std::string& output_folder = args[2];
+  std::string output_folder = expand_home_path(args[2]);
 
   auto link_mode = pzt::core::LinkMode::Copy;
   for (std::size_t i = 3; i < args.size(); ++i) {
@@ -1214,12 +1310,22 @@ int cmd_export(const std::vector<std::string>& args) {
 
   auto result = pzt::core::export_tag(*tag_id, output_folder, link_mode);
   if (!result.ok()) {
-    std::fprintf(stderr, "pzt export: 找不到标签 '%s'\n", args[1].c_str());
+    if (result.error() == pzt::core::ExportTagError::IoError) {
+      std::fprintf(stderr, "pzt export: 导出目标 '%s' 无法写入(权限不足或路径被占用)\n",
+                   output_folder.c_str());
+    } else {
+      std::fprintf(stderr, "pzt export: 找不到标签 '%s'\n", args[1].c_str());
+    }
     return 1;
   }
 
   const auto& r = result.value();
+  if (r.exported_count == 0 && r.skipped.empty()) {
+    std::printf("标签 '%s' 下没有图片,未导出\n", args[1].c_str());
+    return 0;
+  }
   std::printf("已导出 %d 张到 '%s'", r.exported_count, output_folder.c_str());
+  if (r.created_output_folder) std::printf("(目录不存在,已新建)");
   if (r.skipped.empty()) {
     std::printf("\n");
   } else {

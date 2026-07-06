@@ -27,10 +27,12 @@ struct ExportSkipped {
 struct ExportResult {
   int exported_count;
   std::vector<ExportSkipped> skipped;
+  bool created_output_folder;  // true 表示 output_folder 之前不存在，这次调用新建的
 };
 
 enum class ExportTagError {
   TagNotFound,
+  IoError,  // 目标文件夹无法创建/写入(权限不足、路径上某一段已经是个普通文件等)
 };
 
 // 有序标签用 {零填充序号}_{原文件名}(宽度取 max(2, 本次导出总数的位数)),

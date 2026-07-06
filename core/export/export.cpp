@@ -89,32 +89,46 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
 
   fs::path root_path = get_project_root_path(conn, tag_info->project_id);
   fs::path out_dir(output_folder);
-  fs::create_directories(out_dir);
 
   const int width = zero_pad_width(images.size());
 
   ExportResult result;
   result.exported_count = 0;
+  result.created_output_folder = false;
 
-  int index = 0;
-  for (const auto& img : images) {
-    ++index;
-    fs::path source = root_path / img.file_path;
-    if (!fs::exists(source)) {
-      result.skipped.push_back(ExportSkipped{img.id, img.file_name, "源文件缺失"});
-      continue;
+  // 目标文件夹无法创建/写入(权限不足、路径某一段已经是个普通文件、磁盘写
+  // 满等)时,std::filesystem 的抛异常重载会往外抛 filesystem_error——不
+  // 捕获的话会直接终止调用方(包括 cli 全键盘交互循环那个长时间运行的进
+  // 程),这里统一转成 IoError,让调用方能把它当成普通的 Result 错误处理。
+  try {
+    // 导出前先看一眼目标是否已存在,再调用 create_directories——用这个结
+    // 果告诉调用方"是不是新建的",不然用户拿到一句"已导出"完全看不出目标
+    // 文件夹是本来就有的、还是这次顺手建的,容易以为自己打错了路径。
+    result.created_output_folder = !fs::exists(out_dir);
+    fs::create_directories(out_dir);
+
+    int index = 0;
+    for (const auto& img : images) {
+      ++index;
+      fs::path source = root_path / img.file_path;
+      if (!fs::exists(source)) {
+        result.skipped.push_back(ExportSkipped{img.id, img.file_name, "源文件缺失"});
+        continue;
+      }
+
+      std::string base_name =
+          tag_info->is_ordered ? ordered_name(index, width, img.file_name) : img.file_name;
+      fs::path target = resolve_collision(out_dir, base_name);
+
+      if (link_mode == LinkMode::Copy) {
+        fs::copy_file(source, target);
+      } else {
+        fs::create_symlink(fs::absolute(source), target);
+      }
+      ++result.exported_count;
     }
-
-    std::string base_name =
-        tag_info->is_ordered ? ordered_name(index, width, img.file_name) : img.file_name;
-    fs::path target = resolve_collision(out_dir, base_name);
-
-    if (link_mode == LinkMode::Copy) {
-      fs::copy_file(source, target);
-    } else {
-      fs::create_symlink(fs::absolute(source), target);
-    }
-    ++result.exported_count;
+  } catch (const fs::filesystem_error&) {
+    return Result<ExportResult, ExportTagError>::Err(ExportTagError::IoError);
   }
 
   return Result<ExportResult, ExportTagError>::Ok(std::move(result));

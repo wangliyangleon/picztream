@@ -89,6 +89,7 @@ TEST_CASE("export_tag on an unordered tag uses the original file name") {
   REQUIRE(result.ok());
   CHECK(result.value().exported_count == 1);
   CHECK(result.value().skipped.empty());
+  CHECK(result.value().created_output_folder);  // fresh_output_dir 故意不预先创建
   CHECK(fs::exists(out_dir / "img_000.jpg"));
 }
 
@@ -139,6 +140,7 @@ TEST_CASE("export_tag disambiguates a filename collision in the output folder") 
   auto result = export_tag(fx.db, tag.value(), out_dir.string());
   REQUIRE(result.ok());
   CHECK(result.value().exported_count == 1);
+  CHECK_FALSE(result.value().created_output_folder);  // 目标文件夹这次是本来就有的
   CHECK(fs::exists(out_dir / "img_000.jpg"));    // 原来的文件没被覆盖
   CHECK(fs::exists(out_dir / "img_000_2.jpg"));  // 新导出的加了 _2
 }
@@ -180,4 +182,18 @@ TEST_CASE("export_tag reports TagNotFound") {
   auto result = export_tag(fx.db, 999, out_dir.string());
   REQUIRE(!result.ok());
   CHECK(result.error() == ExportTagError::TagNotFound);
+}
+
+TEST_CASE("export_tag reports IoError when the output path can't be created as a directory") {
+  auto fx = make_fixture("export_io_error", 1);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  auto out_dir = fresh_output_dir("export_io_error");
+  touch(out_dir);  // 路径上已经有个同名的普通文件，create_directories 建不了目录
+
+  auto result = export_tag(fx.db, tag.value(), out_dir.string());
+  REQUIRE(!result.ok());
+  CHECK(result.error() == ExportTagError::IoError);
 }
