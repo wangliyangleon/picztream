@@ -160,4 +160,21 @@ std::vector<VersionSummary> list_versions(RecipeId preset_id) {
   return recipe::list_versions(db, preset_id);
 }
 
+Result<RecipeId, CreateVersionError> create_version(RecipeId preset_id,
+                                                     std::optional<std::string> name,
+                                                     VersionParams params) {
+  db::Database db = db::Database::open_default();
+  return recipe::create_version(db, preset_id, std::move(name), params);
+}
+
+Result<void, RecipeOpError> rename_version(RecipeId version_id, const std::string& new_name) {
+  db::Database db = db::Database::open_default();
+  return recipe::rename_version(db, version_id, new_name);
+}
+
+Result<void, RecipeOpError> delete_version(RecipeId version_id) {
+  db::Database db = db::Database::open_default();
+  return recipe::delete_version(db, version_id);
+}
+
 }  // namespace pzt::core

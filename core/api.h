@@ -59,6 +59,9 @@ using DecodeError = decode::DecodeError;
 using RecipeId = recipe::RecipeId;
 using PresetSummary = recipe::PresetSummary;
 using VersionSummary = recipe::VersionSummary;
+using VersionParams = recipe::VersionParams;
+using CreateVersionError = recipe::CreateVersionError;
+using RecipeOpError = recipe::RecipeOpError;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it
@@ -131,5 +134,12 @@ Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int targe
 // 只读查询,version 的创建/改名/软删除留到 increment 2。
 std::vector<PresetSummary> list_presets();
 std::vector<VersionSummary> list_versions(RecipeId preset_id);
+
+// increment 2:version 的增删改，见 core/recipe/recipe.h 里错误取值的说明。
+Result<RecipeId, CreateVersionError> create_version(RecipeId preset_id,
+                                                     std::optional<std::string> name,
+                                                     VersionParams params);
+Result<void, RecipeOpError> rename_version(RecipeId version_id, const std::string& new_name);
+Result<void, RecipeOpError> delete_version(RecipeId version_id);
 
 }  // namespace pzt::core

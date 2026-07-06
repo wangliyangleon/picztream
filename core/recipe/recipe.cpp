@@ -75,6 +75,26 @@ void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
   sqlite3_step(stmt.get());
 }
 
+// increment 2 的三个写操作(create/rename/delete_version)都要先弄清楚一
+//个 id 到底是不是一个"活着的" version(存在、且不是预设、且没有被软删
+// 除),这个小结构体+查询是这三个函数共用的第一步。
+struct RecipeRow {
+  std::optional<RecipeId> parent_id;  // 空 = 这一行是预设
+  bool deleted;
+};
+
+std::optional<RecipeRow> get_recipe_row(sqlite3* conn, RecipeId id) {
+  Stmt stmt(conn, "SELECT parent_id, deleted_at FROM recipes WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, id);
+  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
+  RecipeRow row;
+  row.parent_id = sqlite3_column_type(stmt.get(), 0) == SQLITE_NULL
+                      ? std::nullopt
+                      : std::optional<RecipeId>(sqlite3_column_int64(stmt.get(), 0));
+  row.deleted = sqlite3_column_type(stmt.get(), 1) != SQLITE_NULL;
+  return row;
+}
+
 }  // namespace
 
 std::vector<PresetSummary> list_presets(db::Database& db) {
@@ -115,6 +135,65 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
 void ensure_default_presets(db::Database& db) {
   seed_preset(db.handle(), "Standard", 17, make_identity_lut(17));
   seed_preset(db.handle(), "Warm", 17, make_warm_lut(17));
+}
+
+Result<RecipeId, CreateVersionError> create_version(db::Database& db, RecipeId preset_id,
+                                                     std::optional<std::string> name,
+                                                     VersionParams params) {
+  sqlite3* conn = db.handle();
+  auto row = get_recipe_row(conn, preset_id);
+  if (!row || row->parent_id.has_value()) {
+    // 不存在，或者这个 id 本身是个 version(有 parent_id)——两种情况都不
+    // 是一个有效的预设 id，用同一个错误值，调用方不需要区分。
+    return Result<RecipeId, CreateVersionError>::Err(CreateVersionError::PresetNotFound);
+  }
+
+  Stmt stmt(conn, R"sql(
+    INSERT INTO recipes
+      (parent_id, name, is_system, highlights, shadows, wb_shift_r, wb_shift_b, created_at)
+    VALUES (?, ?, 0, ?, ?, ?, ?, ?);
+  )sql");
+  sqlite3_bind_int64(stmt.get(), 1, preset_id);
+  if (name) {
+    sqlite3_bind_text(stmt.get(), 2, name->c_str(), -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt.get(), 2);
+  }
+  sqlite3_bind_double(stmt.get(), 3, params.highlights);
+  sqlite3_bind_double(stmt.get(), 4, params.shadows);
+  sqlite3_bind_double(stmt.get(), 5, params.wb_shift_r);
+  sqlite3_bind_double(stmt.get(), 6, params.wb_shift_b);
+  sqlite3_bind_int64(stmt.get(), 7, now_unix());
+  sqlite3_step(stmt.get());
+
+  return Result<RecipeId, CreateVersionError>::Ok(sqlite3_last_insert_rowid(conn));
+}
+
+Result<void, RecipeOpError> rename_version(db::Database& db, RecipeId version_id,
+                                            const std::string& new_name) {
+  sqlite3* conn = db.handle();
+  auto row = get_recipe_row(conn, version_id);
+  if (!row || row->deleted) return Result<void, RecipeOpError>::Err(RecipeOpError::NotFound);
+  if (!row->parent_id.has_value()) return Result<void, RecipeOpError>::Err(RecipeOpError::IsPreset);
+
+  Stmt stmt(conn, "UPDATE recipes SET name = ? WHERE id = ?;");
+  sqlite3_bind_text(stmt.get(), 1, new_name.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt.get(), 2, version_id);
+  sqlite3_step(stmt.get());
+  return Result<void, RecipeOpError>::Ok();
+}
+
+Result<void, RecipeOpError> delete_version(db::Database& db, RecipeId version_id) {
+  sqlite3* conn = db.handle();
+  auto row = get_recipe_row(conn, version_id);
+  if (!row || row->deleted) return Result<void, RecipeOpError>::Err(RecipeOpError::NotFound);
+  if (!row->parent_id.has_value()) return Result<void, RecipeOpError>::Err(RecipeOpError::IsPreset);
+
+  Stmt stmt(conn, "UPDATE recipes SET deleted_at = ? WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, now_unix());
+  sqlite3_bind_int64(stmt.get(), 2, version_id);
+  sqlite3_step(stmt.get());
+  return Result<void, RecipeOpError>::Ok();
 }
 
 }  // namespace pzt::core::recipe

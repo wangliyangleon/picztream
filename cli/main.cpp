@@ -47,7 +47,11 @@ void print_tag_usage() {
 void print_recipe_usage() {
   std::fprintf(stderr,
                "usage:\n"
-               "  pzt recipe list\n");
+               "  pzt recipe list\n"
+               "  pzt recipe rename <preset>:<version_number> <new_name>\n"
+               "  pzt recipe delete <preset>:<version_number>\n"
+               "  pzt recipe create-debug <preset_name> [--highlights N] [--shadows N] "
+               "[--wb-r N] [--wb-b N] [--name NAME]  (临时调试用,increment 6 之后退休)\n");
 }
 
 // 找不到项目时打印统一格式的错误提示。返回 nullopt 表示调用方应该直接
@@ -1359,9 +1363,47 @@ int cmd_tag(const std::vector<std::string>& args) {
   return 1;
 }
 
-// increment 1:预设是全局的,不属于任何项目,不需要 <project_name> 参数,
-// 跟 tag_list 的写法不一样。这次只显示预设那一层,version 的展示(含软删
-// 除标注)是 increment 2 的事。
+// increment 2:`pzt recipe rename`/`delete` 用 "<preset_name>:<version_
+// number>" 这种地址寻址一个 version——预设用名字(固定、稳定),version 用
+// 该预设下的编号(排除已软删除的,按 id 升序排位,即 recipe_list 打印出来
+// 的那个编号)。这纯粹是 CLI 输入约定,不是业务概念,不下沉进 core。
+std::optional<std::pair<std::string, int>> parse_recipe_address(const std::string& address) {
+  auto colon = address.find(':');
+  if (colon == std::string::npos || colon == 0 || colon + 1 >= address.size()) return std::nullopt;
+  std::string preset_name = address.substr(0, colon);
+  std::string number_part = address.substr(colon + 1);
+  try {
+    std::size_t consumed = 0;
+    long long n = std::stoll(number_part, &consumed);
+    if (consumed != number_part.size() || n <= 0) return std::nullopt;
+    return std::make_pair(preset_name, static_cast<int>(n));
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& preset_name,
+                                                            int version_number) {
+  auto presets = pzt::core::list_presets();
+  auto it = std::find_if(presets.begin(), presets.end(),
+                          [&](const auto& p) { return p.name == preset_name; });
+  if (it == presets.end()) return std::nullopt;
+
+  auto versions = pzt::core::list_versions(it->id);
+  int v = 1;
+  for (const auto& ver : versions) {
+    if (ver.deleted) continue;
+    if (v == version_number) return ver.id;
+    ++v;
+  }
+  return std::nullopt;
+}
+
+// 预设是全局的,不属于任何项目,不需要 <project_name> 参数,跟 tag_list
+// 的写法不一样。increment 2:版本编号只发给未软删除的(按 id 升序排位,
+// 跟 `r` 菜单看到的编号一致,也是 pzt recipe rename/delete 寻址语法里
+// <version_number> 的定义);已删除的不给编号(不再是能被寻址的目标),
+// 单独标"[已删除]",直接复用 M0 pzt list 展示归档项目的既有模式。
 int recipe_list(const std::vector<std::string>& args) {
   if (!args.empty()) {
     std::fprintf(stderr, "pzt recipe list: 不接受参数\n");
@@ -1376,7 +1418,115 @@ int recipe_list(const std::vector<std::string>& args) {
   int i = 1;
   for (const auto& p : presets) {
     std::printf("%-3d %s\n", i++, p.name.c_str());
+    auto versions = pzt::core::list_versions(p.id);
+    int v = 1;
+    for (const auto& ver : versions) {
+      std::string name = ver.name.value_or("(未命名)");
+      if (ver.deleted) {
+        std::printf("      -   %-14s [已删除]\n", name.c_str());
+      } else {
+        std::printf("      %-3d %-14s highlights=%.1f shadows=%.1f wb_r=%.1f wb_b=%.1f\n", v++,
+                     name.c_str(), ver.highlights, ver.shadows, ver.wb_shift_r, ver.wb_shift_b);
+      }
+    }
   }
+  return 0;
+}
+
+int recipe_rename(const std::vector<std::string>& args) {
+  if (args.size() < 2) {
+    std::fprintf(stderr, "pzt recipe rename: 缺少 <preset>:<version_number> <new_name>\n");
+    print_recipe_usage();
+    return 1;
+  }
+  auto address = parse_recipe_address(args[0]);
+  if (!address) {
+    std::fprintf(stderr, "pzt recipe rename: 无法解析 '%s',格式应为 <preset>:<version_number>\n",
+                 args[0].c_str());
+    return 1;
+  }
+  auto id = resolve_recipe_address(address->first, address->second);
+  if (!id) {
+    std::fprintf(stderr, "pzt recipe rename: 找不到 '%s'\n", args[0].c_str());
+    return 1;
+  }
+  if (!pzt::core::rename_version(*id, args[1]).ok()) {
+    std::fprintf(stderr, "pzt recipe rename: 操作失败\n");
+    return 1;
+  }
+  std::printf("已重命名为 '%s'\n", args[1].c_str());
+  return 0;
+}
+
+int recipe_delete(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr, "pzt recipe delete: 缺少 <preset>:<version_number>\n");
+    print_recipe_usage();
+    return 1;
+  }
+  auto address = parse_recipe_address(args[0]);
+  if (!address) {
+    std::fprintf(stderr, "pzt recipe delete: 无法解析 '%s',格式应为 <preset>:<version_number>\n",
+                 args[0].c_str());
+    return 1;
+  }
+  auto id = resolve_recipe_address(address->first, address->second);
+  if (!id) {
+    std::fprintf(stderr, "pzt recipe delete: 找不到 '%s'\n", args[0].c_str());
+    return 1;
+  }
+  if (!pzt::core::delete_version(*id).ok()) {
+    std::fprintf(stderr, "pzt recipe delete: 操作失败\n");
+    return 1;
+  }
+  std::printf("已删除 '%s'(软删除,已经应用它的图片渲染不受影响)\n", args[0].c_str());
+  return 0;
+}
+
+// 临时调试用:正式的创建入口是全键盘循环里的 `r c`(increment 6),那之前
+// 需要一条非交互的路径先把 create_version 测起来,increment 6.4 风格的收
+// 尾阶段会退休这条命令。
+int recipe_create_debug(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr,
+                 "pzt recipe create-debug: 缺少 <preset_name> [--highlights N] [--shadows N] "
+                 "[--wb-r N] [--wb-b N] [--name NAME]\n");
+    return 1;
+  }
+  auto presets = pzt::core::list_presets();
+  auto it = std::find_if(presets.begin(), presets.end(),
+                          [&](const auto& p) { return p.name == args[0]; });
+  if (it == presets.end()) {
+    std::fprintf(stderr, "pzt recipe create-debug: 找不到预设 '%s'\n", args[0].c_str());
+    return 1;
+  }
+
+  pzt::core::VersionParams params;
+  std::optional<std::string> name;
+  for (std::size_t i = 1; i < args.size(); ++i) {
+    auto next_double = [&]() -> double { return std::stod(args.at(++i)); };
+    if (args[i] == "--highlights") {
+      params.highlights = next_double();
+    } else if (args[i] == "--shadows") {
+      params.shadows = next_double();
+    } else if (args[i] == "--wb-r") {
+      params.wb_shift_r = next_double();
+    } else if (args[i] == "--wb-b") {
+      params.wb_shift_b = next_double();
+    } else if (args[i] == "--name") {
+      name = args.at(++i);
+    } else {
+      std::fprintf(stderr, "pzt recipe create-debug: 未知参数 '%s'\n", args[i].c_str());
+      return 1;
+    }
+  }
+
+  auto result = pzt::core::create_version(it->id, name, params);
+  if (!result.ok()) {
+    std::fprintf(stderr, "pzt recipe create-debug: 找不到预设 '%s'\n", args[0].c_str());
+    return 1;
+  }
+  std::printf("已创建 version(id=%lld)\n", static_cast<long long>(result.value()));
   return 0;
 }
 
@@ -1389,6 +1539,9 @@ int cmd_recipe(const std::vector<std::string>& args) {
   std::vector<std::string> rest(args.begin() + 1, args.end());
 
   if (verb == "list") return recipe_list(rest);
+  if (verb == "rename") return recipe_rename(rest);
+  if (verb == "delete") return recipe_delete(rest);
+  if (verb == "create-debug") return recipe_create_debug(rest);
 
   std::fprintf(stderr, "pzt recipe: 未知子命令 '%s'\n", verb.c_str());
   print_recipe_usage();
