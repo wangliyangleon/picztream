@@ -19,24 +19,6 @@ std::int64_t now_unix() {
       .count();
 }
 
-// 恒等 LUT：输出 = 输入。验证"没有对颜色做任何事"这条路径的行为是正确
-// 的——真正落地渲染管线(increment 4)时,拿一张图跑这个预设,像素应该原样
-// 不变。
-std::vector<float> make_identity_lut(int n) {
-  std::vector<float> lut(static_cast<std::size_t>(n) * n * n * 3);
-  for (int r = 0; r < n; ++r) {
-    for (int g = 0; g < n; ++g) {
-      for (int b = 0; b < n; ++b) {
-        std::size_t idx = (static_cast<std::size_t>(r) * n + g) * n + b;
-        lut[idx * 3 + 0] = static_cast<float>(r) / (n - 1);
-        lut[idx * 3 + 1] = static_cast<float>(g) / (n - 1);
-        lut[idx * 3 + 2] = static_cast<float>(b) / (n - 1);
-      }
-    }
-  }
-  return lut;
-}
-
 // 随手调的暖色偏移，只用来验证"确实在处理颜色"这条路径，不追求调色质
 // 量——公式照抄 spikes/color_lut_probe/probe.cpp 的 make_lut()，真正的预
 // 设调色设计是后续可以随时补充的独立工作，不阻塞这次的机制验证。
@@ -73,6 +55,19 @@ void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
   sqlite3_bind_blob(stmt.get(), 3, lut.data(), static_cast<int>(lut.size() * sizeof(float)),
                      SQLITE_TRANSIENT);
   sqlite3_bind_int64(stmt.get(), 4, now_unix());
+  sqlite3_step(stmt.get());
+}
+
+// "Origin" 没有 base_lut——它代表"没有基础调色风格，只有亮度/白平衡这
+// 类细节可调"，固定用 id=0(照抄"废片"系统标签固定占 0 号位的先例)。跟
+// seed_preset 不共用一个函数,因为它的行相比其它预设少了 base_lut_size/
+// base_lut 两列,硬塞同一个函数签名反而要传一堆没意义的空值。
+void seed_origin_preset(sqlite3* conn) {
+  Stmt stmt(conn, R"sql(
+    INSERT OR IGNORE INTO recipes (id, parent_id, name, is_system, created_at)
+    VALUES (0, NULL, 'Origin', 1, ?);
+  )sql");
+  sqlite3_bind_int64(stmt.get(), 1, now_unix());
   sqlite3_step(stmt.get());
 }
 
@@ -134,7 +129,7 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
 }
 
 void ensure_default_presets(db::Database& db) {
-  seed_preset(db.handle(), "Standard", 17, make_identity_lut(17));
+  seed_origin_preset(db.handle());
   seed_preset(db.handle(), "Warm", 17, make_warm_lut(17));
 }
 
@@ -296,9 +291,10 @@ std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_i
     params.wb_shift_b = sqlite3_column_double(stmt.get(), 4);
   }
 
-  auto lut = load_lut(conn, preset_id);
-  if (!lut) return std::nullopt;  // 理论上不该发生(预设一定有 base_lut),防御性处理
-  return ResolvedRecipe{std::move(*lut), params};
+  // load_lut 返回空是合法状态(比如 Origin 这个预设本身就没有
+  // base_lut),不是错误——不在这里拒绝,直接把"没有 LUT"这个事实带出去,
+  // 交给 render 决定要不要跳过 apply_lut。
+  return ResolvedRecipe{load_lut(conn, preset_id), params};
 }
 
 Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
@@ -311,9 +307,19 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
   }
 
   decode::DecodedImage out = src;  // 拷贝一份工作缓冲区,不修改调用方传入的原图
-  color::apply_lut(out, resolved->lut, thread_count);
-  color::apply_adjustments(out, resolved->params.highlights, resolved->params.shadows,
-                            resolved->params.wb_shift_r, resolved->params.wb_shift_b, thread_count);
+  // 没有 LUT(比如 Origin)就跳过这一步,不做一次没有意义的恒等插值——省
+  // 掉的是真实的逐像素 8 次查表计算量,不只是省一次函数调用。
+  if (resolved->lut) {
+    color::apply_lut(out, *resolved->lut, thread_count);
+  }
+  // 同样的道理对调整参数也成立:四个参数全零(比如 Origin 预设本身)时,
+  // apply_adjustments 算出来的 delta 恒为 0、增益恒为 1,是个不折不扣的
+  // 无意义计算——之前漏掉了这一半的优化,只跳过了 LUT。
+  const auto& p = resolved->params;
+  bool has_adjustments = p.highlights != 0 || p.shadows != 0 || p.wb_shift_r != 0 || p.wb_shift_b != 0;
+  if (has_adjustments) {
+    color::apply_adjustments(out, p.highlights, p.shadows, p.wb_shift_r, p.wb_shift_b, thread_count);
+  }
   return Result<decode::DecodedImage, RenderRecipeError>::Ok(std::move(out));
 }
 

@@ -45,9 +45,23 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id);
 
 // 数据库第一次初始化、`recipes` 表刚建出来还没有任何内置预设时播种——用
 // INSERT OR IGNORE 配合 schema 里预设名字的局部唯一索引保证幂等，调用多
-// 次只有第一次真正插入。占位内容（"Standard"=恒等 LUT，"Warm"=一个随手
-// 调的暖色偏移）只用来验证整条机制通不通，真正的调色设计留到后面随时可
-// 以补充，不阻塞其它 increment。
+// 次只有第一次真正插入。占位内容("Origin"=没有 base_lut，只用来承载亮
+// 度/白平衡这类细节调整，不代表任何"风格"；"Warm"=一个随手调的暖色偏移
+// LUT)只用来验证整条机制通不通，真正的调色设计留到后面随时可以补充，不
+// 阻塞其它 increment。
+//
+// "Origin" 固定用 id=0 播种(照抄"废片"系统标签固定占 0 号位的先例)，其
+// 它预设(目前只有 Warm)照常让 SQLite 自动分配 id。**待确认**:未来
+// increment 6 落地真正的 `r` 菜单编号时，需要把 Origin 从"按创建顺序动
+// 态编号 1-9"的列表里过滤掉、固定映射到数字 0(类比 `tags_for_menu` 过滤
+// is_system 标签的做法)——目前所有预设都是 `is_system=1`，不能单靠这个
+// 字段区分"Origin"和其它预设，需要按固定 id=0 或者名字判断。另外，`r`+
+// `0`/`r`+`r`(快捷清除)继续走 `recipe_id = NULL` 这条路径,不改成指向
+// Origin 预设本身——两者对"没有风格"这件事产出相同的视觉效果,但前者是
+// 零查询的最快路径,后者(选中 Origin 预设)是留给"只想调亮度/白平衡、不
+// 要任何风格化观感"这个场景的,两者并存，increment 6 设计交互时需要想清
+// 楚怎么把这个区别对用户讲清楚,不要让两个"看起来都叫 Origin"的东西显得
+// 混乱。
 void ensure_default_presets(db::Database& db);
 
 // increment 2:version 的增删改。这四个调整参数是这次先落地的最小集合
@@ -113,8 +127,17 @@ std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId reci
 // increment 4:把一个 recipe_id 解析成"要用哪个预设的 LUT + 最终生效的
 // 调整参数"。指向预设本身时 lut/size 来自这一行自己，params 全零(预设
 // 自己就是中性状态)；指向 version 时 lut/size 来自 parent 预设，params
-// 来自这一行。lut_data 是拷贝，不是指向 DB 查询结果的指针——那样的指针
-// 在 sqlite3_stmt 析构之后就悬空了。
+// 来自这一行。lut 里的数据是拷贝，不是指向 DB 查询结果的指针——那样的
+// 指针在 sqlite3_stmt 析构之后就悬空了。
+//
+// lut 为空(std::nullopt)是合法状态，不是错误——固定的 "Origin" 预设(见
+// ensure_default_presets)本身就没有 base_lut，代表"没有基础调色风格，只
+// 有亮度/白平衡这类细节可调"，`render` 遇到这种情况直接跳过 apply_lut
+// 那一步，不做一次没有意义的恒等 LUT 三线性插值——这不只是省事，是真的
+// 省掉一次逐像素 8 次查表插值的计算量。对称地，`render` 在 params 四个
+// 调整参数全零时也跳过 apply_adjustments(纯 Origin、或者任何调整全归零
+// 的 version 都是这种情况)，理由一样：全零参数算出来的 delta 恒为
+// 0、增益恒为 1，是个不折不扣的无意义计算。
 //
 // 对软删除的 version 一视同仁，只有 id 真不存在才返回空——这是跟
 // set_image_recipe 刻意不同的地方:set_image_recipe 拒绝软删除的目标是
@@ -122,7 +145,7 @@ std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId reci
 // 引用它的图片继续正常渲染"，resolve_recipe/render 必须对已经软删除的
 // version 也能正常工作。
 struct ResolvedRecipe {
-  color::Lut3D lut;
+  std::optional<color::Lut3D> lut;
   VersionParams params;
 };
 std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_id);

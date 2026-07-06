@@ -812,6 +812,13 @@ int cmd_open(const std::vector<std::string>& args) {
     // 重新拉取/传输图片本身,只有 current_id 真的变了才需要。
     std::optional<pzt::core::ImageId> last_rendered_id;
 
+    // M1 increment 5:`r v` 临时切换当前图片是否展示风格化效果,纯查看层
+    // 面的状态,不碰数据库。导航到新图片时重置为 false(默认展示风格化效
+    // 果),只有 style_toggled 为真时才需要在 current_id 没变的情况下也
+    // 强制重新走一遍渲染(正常情况下 current_id 不变就不需要重画)。
+    bool show_original = false;
+    bool style_toggled = false;
+
     // 上一帧是不是刚显示过 status_override 这种一次性提示——刚显示过的
     // 话,下一次读键不管读到什么都只用来"消除提示",不当成 h/l/j/k/space
     // 的具体动作处理,呼应提示文案里"按任意键继续"这句话:既然说了任意
@@ -953,11 +960,21 @@ int cmd_open(const std::vector<std::string>& args) {
           move_cursor(row++, info_col);
           write_stdout(pad_to("  (无)", info_cols));
         } else {
+          // M1 increment 5:当前实际渲染的是风格化效果时加粗(`r v` 切到
+          // 原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个状
+          // 态。粗体转义码要包在 pad_to 算完显示宽度之后的结果外层,不能
+          // 传给 pad_to 之前就包——不然转义字节会被 display_width 当成
+          // 可见字符,算错截断/补空格的位置。
+          bool bold = !show_original;
+          auto emit_style_line = [&](const std::string& text) {
+            std::string padded = pad_to(text, info_cols);
+            write_stdout(bold ? "\x1b[1m" + padded + "\x1b[0m" : padded);
+          };
           move_cursor(row++, info_col);
-          write_stdout(pad_to("  " + style->preset_name, info_cols));
+          emit_style_line("  " + style->preset_name);
           if (style->version_name) {
             move_cursor(row++, info_col);
-            write_stdout(pad_to("    " + *style->version_name, info_cols));
+            emit_style_line("    " + *style->version_name);
           }
         }
       }
@@ -1005,7 +1022,11 @@ int cmd_open(const std::vector<std::string>& args) {
       // 发现,不加这个判断的话,打个标签也会因为整帧重画而卡顿一下,尽管
       // 图片内容根本没变。只有 current_id 真的变了才重新走一遍"清掉上一
       // 帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。
-      if (last_rendered_id != current_id) {
+      bool navigated = (last_rendered_id != current_id);
+      if (navigated) {
+        show_original = false;  // 每次导航到新图片,默认展示风格化效果
+      }
+      if (navigated || style_toggled) {
         // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
         // 关键一步,没有它,旧 placement 不会自动消失。
         pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
@@ -1024,7 +1045,23 @@ int cmd_open(const std::vector<std::string>& args) {
           // 在这边缩小到面板大致能显示的尺寸,大幅减少终端侧要处理的数
           // 据量。
           auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
-          const auto& to_render = resized.ok() ? resized.value() : img;
+          const auto& downsampled = resized.ok() ? resized.value() : img;
+
+          // M1 increment 5:在降采样之后、发给终端之前应用 recipe。
+          // thread_count=1 同步执行——Phase 0 spike 已经验证过预览分辨率
+          // 下这一步足够便宜(10-22ms),不需要额外的后台线程或缓存;这个
+          // if 块本来就只在导航或 `r v` 切换时才跑,不会每帧都重算。
+          // show_original 为真时(用户按了 r v 切到原图预览)跳过渲染。
+          std::optional<pzt::core::DecodedImage> styled;
+          auto recipe_id = pzt::core::get_image_recipe(current_id);
+          if (recipe_id && !show_original) {
+            auto render_result = pzt::core::render(downsampled, *recipe_id, 1);
+            if (render_result.ok()) styled = std::move(render_result.value());
+            // render 失败(比如引用了一个数据损坏的 recipe_id)时静默回退
+            // 到未处理的画面,不阻断浏览,跟"图片解码失败,跳过"是同一种
+            // 防御精神。
+          }
+          const auto& to_render = styled ? *styled : downsampled;
 
           move_cursor(image_top_row, start_col + 1);
           std::string tmp_path = pzt::cli::kitty::make_tmp_path(
@@ -1038,6 +1075,7 @@ int cmd_open(const std::vector<std::string>& args) {
           std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
         }
         last_rendered_id = current_id;
+        style_toggled = false;
       }
 
       if (!suppress_latency_log) {
@@ -1084,7 +1122,7 @@ int cmd_open(const std::vector<std::string>& args) {
           break;
         }
         if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x' ||
-            c == 'g') {
+            c == 'g' || c == 'r') {
           break;
         }
       }
@@ -1198,6 +1236,15 @@ int cmd_open(const std::vector<std::string>& args) {
           // 按 g+g 在未筛选状态下也触发一次不必要的 list_images 查询。
         }
         // Cancel:什么都不做,静默
+      } else if (c == 'r') {
+        // M1 increment 5:目前只实现 `r` + `v`(临时切换风格/原图预览)。
+        // `r` 菜单剩下的应用/创建/删除留给 increment 6,这里读到除 `v`
+        // 之外的任何字节都静默忽略,不占用后续增量要用的按键含义。
+        char sub = read_one_byte();
+        if (sub == 'v') {
+          show_original = !show_original;
+          style_toggled = true;
+        }
       }
       prefetch.set_current(images, current_id);
     }

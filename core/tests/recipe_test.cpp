@@ -77,14 +77,15 @@ TEST_CASE("ensure_default_presets seeds presets and is idempotent") {
   CHECK(second[1].id == first[1].id);
 }
 
-TEST_CASE("list_presets returns presets in creation order") {
+TEST_CASE("list_presets returns presets in creation order, Origin fixed at id 0") {
   auto db = Database::open_at(temp_db_path("recipe_order"));
   ensure_default_presets(db);
 
   auto presets = list_presets(db);
   REQUIRE(presets.size() == 2);
   CHECK(presets[0].id < presets[1].id);
-  CHECK(presets[0].name == "Standard");
+  CHECK(presets[0].id == 0);
+  CHECK(presets[0].name == "Origin");
   CHECK(presets[1].name == "Warm");
 }
 
@@ -337,13 +338,13 @@ TEST_CASE("describe_recipe returns structured preset/version names, not a pre-fo
 
   auto preset_desc = describe_recipe(db, preset_id);
   REQUIRE(preset_desc.has_value());
-  CHECK(preset_desc->preset_name == "Standard");
+  CHECK(preset_desc->preset_name == "Origin");
   CHECK_FALSE(preset_desc->version_name.has_value());  // 直接应用预设本身,没有第二层
 
   auto named = create_version(db, preset_id, std::string("胶片感"), VersionParams{}).value();
   auto named_desc = describe_recipe(db, named);
   REQUIRE(named_desc.has_value());
-  CHECK(named_desc->preset_name == "Standard");
+  CHECK(named_desc->preset_name == "Origin");
   CHECK(named_desc->version_name == "胶片感");
 
   auto unnamed = create_version(db, preset_id, std::nullopt, VersionParams{}).value();
@@ -354,14 +355,15 @@ TEST_CASE("describe_recipe returns structured preset/version names, not a pre-fo
   CHECK_FALSE(describe_recipe(db, 999999).has_value());
 }
 
-TEST_CASE("resolve_recipe resolves a preset itself with all-zero params") {
+TEST_CASE("resolve_recipe resolves a LUT-bearing preset itself with all-zero params") {
   auto db = Database::open_at(temp_db_path("recipe_resolve_preset"));
   ensure_default_presets(db);
-  auto preset_id = list_presets(db)[0].id;
+  auto warm_id = list_presets(db)[1].id;  // presets[0] 是 Origin，没有 LUT，专门有下面单独一条测试
 
-  auto resolved = resolve_recipe(db, preset_id);
+  auto resolved = resolve_recipe(db, warm_id);
   REQUIRE(resolved.has_value());
-  CHECK(resolved->lut.size == 17);
+  REQUIRE(resolved->lut.has_value());
+  CHECK(resolved->lut->size == 17);
   CHECK(resolved->params.highlights == 0);
   CHECK(resolved->params.shadows == 0);
   CHECK(resolved->params.wb_shift_r == 0);
@@ -371,17 +373,37 @@ TEST_CASE("resolve_recipe resolves a preset itself with all-zero params") {
 TEST_CASE("resolve_recipe resolves a version using the parent preset's LUT plus its own params") {
   auto db = Database::open_at(temp_db_path("recipe_resolve_version"));
   ensure_default_presets(db);
-  auto preset_id = list_presets(db)[0].id;
+  auto warm_id = list_presets(db)[1].id;
   auto version_id =
-      create_version(db, preset_id, std::nullopt, VersionParams{10, -5, 3, -2}).value();
+      create_version(db, warm_id, std::nullopt, VersionParams{10, -5, 3, -2}).value();
 
   auto resolved = resolve_recipe(db, version_id);
   REQUIRE(resolved.has_value());
-  CHECK(resolved->lut.size == 17);  // 来自父预设，不是 version 自己(version 没有 base_lut)
+  REQUIRE(resolved->lut.has_value());  // 来自父预设，不是 version 自己(version 没有 base_lut)
+  CHECK(resolved->lut->size == 17);
   CHECK(resolved->params.highlights == 10);
   CHECK(resolved->params.shadows == -5);
   CHECK(resolved->params.wb_shift_r == 3);
   CHECK(resolved->params.wb_shift_b == -2);
+}
+
+TEST_CASE("resolve_recipe returns no LUT for the Origin preset (skip apply_lut entirely)") {
+  auto db = Database::open_at(temp_db_path("recipe_resolve_origin"));
+  ensure_default_presets(db);
+  auto origin_id = list_presets(db)[0].id;
+  CHECK(origin_id == 0);
+
+  auto resolved = resolve_recipe(db, origin_id);
+  REQUIRE(resolved.has_value());
+  CHECK_FALSE(resolved->lut.has_value());
+
+  // version 挂在 Origin 下面同样没有 LUT，只有细节参数。
+  auto version_id =
+      create_version(db, origin_id, std::nullopt, VersionParams{5, 0, 0, 0}).value();
+  auto version_resolved = resolve_recipe(db, version_id);
+  REQUIRE(version_resolved.has_value());
+  CHECK_FALSE(version_resolved->lut.has_value());
+  CHECK(version_resolved->params.highlights == 5);
 }
 
 TEST_CASE("resolve_recipe still resolves an already soft-deleted version") {
@@ -408,8 +430,8 @@ TEST_CASE("render applies the resolved recipe to a copy, leaving the source unto
   auto db = Database::open_at(temp_db_path("recipe_render"));
   ensure_default_presets(db);
   auto presets = list_presets(db);
-  auto standard_id = presets[0].id;  // 恒等 LUT
-  auto warm_id = presets[1].id;      // 非恒等的暖色偏移
+  auto origin_id = presets[0].id;  // 没有 LUT,render 应该跳过 apply_lut,像素基本不变
+  auto warm_id = presets[1].id;    // 非恒等的暖色偏移
 
   pzt::core::decode::DecodedImage src;
   src.width = 2;
@@ -417,10 +439,10 @@ TEST_CASE("render applies the resolved recipe to a copy, leaving the source unto
   src.rgba = {10, 200, 50, 255, 0, 0, 0, 255};
   auto src_copy = src.rgba;
 
-  auto identity_result = render(db, src, standard_id);
-  REQUIRE(identity_result.ok());
+  auto origin_result = render(db, src, origin_id);
+  REQUIRE(origin_result.ok());
   for (std::size_t i = 0; i < src.rgba.size(); ++i) {
-    CHECK(std::abs(static_cast<int>(identity_result.value().rgba[i]) -
+    CHECK(std::abs(static_cast<int>(origin_result.value().rgba[i]) -
                     static_cast<int>(src_copy[i])) <= 1);
   }
   CHECK(src.rgba == src_copy);  // render 不修改传入的原图
