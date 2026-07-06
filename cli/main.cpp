@@ -656,9 +656,13 @@ std::vector<pzt::core::PresetSummary> presets_for_menu() {
 
 // apply/create/delete 三个流程都要"选一个预设"，这是第三处需要这个交互
 // 的地方(前两处是 cli 调试命令时代的 find_preset_by_name，这次是真正的
-// 交互式菜单)，抽成共用函数。
+// 交互式菜单)，抽成共用函数。区分 Esc(真的想取消,静默)和"按了个不对应
+// 任何预设的键"(真机测试反馈:这种情况应该有反馈,不能什么都不说——用户
+// 分不清是"我没按对"还是"程序没反应")——用 out_message 带一句"该预设不
+// 存在"出去，调用方只在它非空时才展示成状态提示。
 std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row, int start_col,
-                                                                    int content_cols) {
+                                                                    int content_cols,
+                                                                    std::string* out_message) {
   auto presets = presets_for_menu();
   std::string line = " 选预设:";
   for (std::size_t i = 0; i < presets.size(); ++i) {
@@ -669,15 +673,22 @@ std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
-  if (c < '1' || c > static_cast<char>('0' + presets.size())) return std::nullopt;  // 取消,静默
+  if (c == 0x1B) return std::nullopt;  // Esc,静默
+  if (c < '1' || c > static_cast<char>('0' + presets.size())) {
+    *out_message = " 预设不存在 ";
+    return std::nullopt;
+  }
   return presets[static_cast<std::size_t>(c - '1')];
 }
 
-// 已经选定一个预设之后，第二层选"这个预设的中性状态(0)"还是"某个已保存
-// 的 version(1-9)"——只列未软删除的 version，编号规则跟 pzt recipe
-// list/rename/delete 的寻址编号一致(排除已删除的、按 id 升序排位)。
+// 已经选定一个预设之后，第二层选"这个预设的中性状态(0,叫"默认",不是
+// "预设本身"这种拗口的说法)"还是"某个已保存的 version(1-9)"——只列未软
+// 删除的 version，编号规则跟 pzt recipe list/rename/delete 的寻址编号
+// 一致(排除已删除的、按 id 升序排位)。同样区分 Esc 和无效按键，见
+// handle_pick_preset_prompt 的说明。
 std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
-    const pzt::core::PresetSummary& preset, int banner_row, int start_col, int content_cols) {
+    const pzt::core::PresetSummary& preset, int banner_row, int start_col, int content_cols,
+    std::string* out_message) {
   auto all_versions = pzt::core::list_versions(preset.id);
   std::vector<pzt::core::VersionSummary> live;
   for (const auto& v : all_versions) {
@@ -685,7 +696,7 @@ std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
   }
   if (live.size() > 9) live.resize(9);
 
-  std::string line = " " + preset.name + ":  0:预设本身";
+  std::string line = " " + preset.name + ":  0:默认";
   for (std::size_t i = 0; i < live.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
   }
@@ -694,16 +705,18 @@ std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
+  if (c == 0x1B) return std::nullopt;  // Esc,静默
   if (c == '0') return preset.id;
   if (c >= '1' && c <= static_cast<char>('0' + live.size())) {
     return live[static_cast<std::size_t>(c - '1')].id;
   }
-  return std::nullopt;  // 取消,静默
+  *out_message = " 预设不存在 ";
+  return std::nullopt;
 }
 
 // 删除流程的第二层选择：跟应用流程共用同一份"这个预设下未删除的
-// version"列表，但不提供"0:预设本身"这个选项——预设不可删除，从一开始
-// 就不给选，不是"选了之后拒绝"。
+// version"列表，但不提供"0:默认"这个选项——预设不可删除，从一开始就不
+// 给选，不是"选了之后拒绝"。
 std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary& preset,
                                                   int banner_row, int start_col,
                                                   int content_cols) {
@@ -726,7 +739,8 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
   write_stdout(pad_to(line, content_cols));
 
   char c = read_one_byte();
-  if (c < '1' || c > static_cast<char>('0' + live.size())) return "";  // 取消,静默
+  if (c == 0x1B) return "";  // Esc,静默
+  if (c < '1' || c > static_cast<char>('0' + live.size())) return " 预设不存在 ";
 
   const auto& chosen = live[static_cast<std::size_t>(c - '1')];
   // 软删除:不影响已经引用这个 version 的图片渲染，只是从这个菜单里消
@@ -746,8 +760,21 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
 // 析失败时的处理哲学一致。创建之后不会自动应用到当前图片，对齐
 // `space c` 建标签之后也不会自动打到当前图片上这个既有约定。
 std::string handle_r_create_flow(int banner_row, int start_col, int content_cols) {
-  auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols);
-  if (!preset) return "";  // 取消,静默
+  std::string message;
+  auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols, &message);
+  if (!preset) return message;  // Esc 时 message 是空的,静默；无效选择时带一句反馈
+
+  // 应用/删除菜单的第二层用单个数字 1-9 寻址 version,一个预设下超过 9
+  // 个未删除的 version 就没有按键能选中它们——这不是 create_version 本
+  // 身的业务规则(core 层不设上限,pzt recipe list/rename/delete 不受这
+  // 个限制),纯粹是交互菜单"一个数字键对应一个选项"这个设计决定带来的
+  // 输入端约束,所以检查放在这里而不是 core 里。
+  auto existing_versions = pzt::core::list_versions(preset->id);
+  auto live_count = std::count_if(existing_versions.begin(), existing_versions.end(),
+                                   [](const auto& v) { return !v.deleted; });
+  if (live_count >= 9) {
+    return " '" + preset->name + "' 下自定义配方已满(最多 9 个),先删除一些再新建 ";
+  }
 
   auto parse_double_or_zero = [](const std::optional<std::string>& s) -> double {
     if (!s || s->empty()) return 0.0;
@@ -801,7 +828,14 @@ struct RKeyOutcome {
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
                          int content_cols) {
   auto presets = presets_for_menu();
-  std::string line = " r:清除  v:预览原图  c:新建  d:删除";
+  // `v`(原图/风格化切换)只在这张图确实应用了风格时才有意义、才显示这个
+  // 选项——没有风格可言时,切换没有任何视觉效果,不该占一个选项误导用
+  // 户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变(之
+  // 前试过跟着状态变文案,反而更难读)。
+  bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
+  std::string line = " r:清除";
+  if (has_recipe) line += "  v:切换原图/风格化";
+  line += "  c:新建  d:删除";
   for (std::size_t i = 0; i < presets.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
   }
@@ -815,28 +849,33 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
     if (!result.ok()) return {RKeyAction::Cancelled, " 清除失败,请重试 "};
     return {RKeyAction::Cleared, ""};
   }
-  if (c == 'v') {
+  if (c == 'v' && has_recipe) {
     return {RKeyAction::Toggled, ""};
   }
   if (c == 'c') {
     return {RKeyAction::Handled, handle_r_create_flow(banner_row, start_col, content_cols)};
   }
   if (c == 'd') {
-    auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols);
-    if (!preset) return {RKeyAction::Cancelled, ""};
+    std::string message;
+    auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols, &message);
+    if (!preset) return {RKeyAction::Cancelled, message};
     return {RKeyAction::Handled,
             handle_pick_version_to_delete_prompt(*preset, banner_row, start_col, content_cols)};
   }
+  if (c == 0x1B) return {RKeyAction::Cancelled, ""};  // Esc,静默
   if (c >= '1' && c <= static_cast<char>('0' + presets.size())) {
     const auto& preset = presets[static_cast<std::size_t>(c - '1')];
-    auto recipe_id =
-        handle_pick_version_to_apply_prompt(preset, banner_row, start_col, content_cols);
-    if (!recipe_id) return {RKeyAction::Cancelled, ""};
+    std::string message;
+    auto recipe_id = handle_pick_version_to_apply_prompt(preset, banner_row, start_col,
+                                                          content_cols, &message);
+    if (!recipe_id) return {RKeyAction::Cancelled, message};
     auto result = pzt::core::set_image_recipe(image_id, *recipe_id);
     if (!result.ok()) return {RKeyAction::Cancelled, " 应用失败,请重试 "};
     return {RKeyAction::Applied, ""};
   }
-  return {RKeyAction::Cancelled, ""};  // 取消,静默
+  // 不是 Esc,也不对应任何选项(比如按了个字母、或者超出预设编号范围)——
+  // 跟上面几个子菜单一致,给一句反馈而不是完全没反应。
+  return {RKeyAction::Cancelled, " 无效按键 "};
 }
 
 int cmd_new(const std::vector<std::string>& args) {
@@ -955,7 +994,7 @@ int cmd_open(const std::vector<std::string>& args) {
   const int kBannerRows = 1;
   const char* kBannerText =
       " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   x 标记废片"
-      "   g 筛选   q 退出 ";
+      "   g 筛选   r 风格   q 退出 ";
   // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
   // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
   // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
@@ -1042,6 +1081,17 @@ int cmd_open(const std::vector<std::string>& args) {
           current_ref = &images[i];
           break;
         }
+      }
+
+      // 导航检测和 show_original 的重置要放在信息栏绘制之前(这一帧剩下
+      // 的部分,包括信息栏和实际渲染,都要看到重置之后的值)——之前这个
+      // reset 是在图片渲染那一段(信息栏之后)才做的,导致切到新图片的第
+      // 一帧信息栏还在用上一张图片遗留的 show_original,画出"没加粗/没
+      // 星号",要等下一帧才更新成正确的加粗状态,真机测试能明显看到这个
+      // 卡顿。
+      bool navigated = (last_rendered_id != current_id);
+      if (navigated) {
+        show_original = false;  // 每次导航到新图片,默认展示风格化效果
       }
 
       auto term_size = pzt::cli::term::get_terminal_size();
@@ -1151,21 +1201,29 @@ int cmd_open(const std::vector<std::string>& args) {
           move_cursor(row++, info_col);
           write_stdout(pad_to("  (无)", info_cols));
         } else {
-          // M1 increment 5:当前实际渲染的是风格化效果时加粗(`r v` 切到
-          // 原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个状
-          // 态。粗体转义码要包在 pad_to 算完显示宽度之后的结果外层,不能
-          // 传给 pad_to 之前就包——不然转义字节会被 display_width 当成
-          // 可见字符,算错截断/补空格的位置。
-          bool bold = !show_original;
-          auto emit_style_line = [&](const std::string& text) {
-            std::string padded = pad_to(text, info_cols);
-            write_stdout(bold ? "\x1b[1m" + padded + "\x1b[0m" : padded);
+          // M1 increment 5:当前实际渲染的是风格化效果时标出来(`r v` 切
+          // 到原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个
+          // 状态。真机测试发现单靠 ANSI 粗体(`\x1b[1m`)不可靠——很多终端
+          // 的中文字体没有配置独立的粗体字重,ASCII 文本(比如预设名
+          // "Origin")会正常加粗,但中文 version 名字(比如"亮一点")的字
+          // 重不会变,两行看起来不一致,不是代码逻辑的问题,是终端/字体限
+          // 制。改用不依赖字重的文字标记(`*`)当主要信号,粗体转义码还留
+          // 着(在支持的终端上锦上添花),但不再是唯一的指示方式。标记跟
+          // 缩进空格等宽替换,不破坏两级缩进的对齐。粗体转义码要包在
+          // pad_to 算完显示宽度之后的结果外层,不能传给 pad_to 之前就
+          // 包——不然转义字节会被 display_width 当成可见字符,算错截断/
+          // 补空格的位置。
+          bool active = !show_original;
+          auto emit_style_line = [&](const std::string& indent, const std::string& text) {
+            std::string marker = active ? indent.substr(0, indent.size() - 2) + "* " : indent;
+            std::string padded = pad_to(marker + text, info_cols);
+            write_stdout(active ? "\x1b[1m" + padded + "\x1b[0m" : padded);
           };
           move_cursor(row++, info_col);
-          emit_style_line("  " + style->preset_name);
+          emit_style_line("  ", style->preset_name);
           if (style->version_name) {
             move_cursor(row++, info_col);
-            emit_style_line("    " + *style->version_name);
+            emit_style_line("    ", *style->version_name);
           }
         }
       }
@@ -1212,11 +1270,9 @@ int cmd_open(const std::vector<std::string>& args) {
       // 这类操作不会改 current_id,不需要重新清除/传输同一张图——真机测试
       // 发现,不加这个判断的话,打个标签也会因为整帧重画而卡顿一下,尽管
       // 图片内容根本没变。只有 current_id 真的变了才重新走一遍"清掉上一
-      // 帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。
-      bool navigated = (last_rendered_id != current_id);
-      if (navigated) {
-        show_original = false;  // 每次导航到新图片,默认展示风格化效果
-      }
+      // 帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。`navigated` 在这
+      // 一帧最前面(信息栏绘制之前)已经算过、`show_original` 也已经在
+      // 那里重置过,这里直接复用,不重新算一遍。
       if (navigated || style_toggled) {
         // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
         // 关键一步,没有它,旧 placement 不会自动消失。
@@ -1433,7 +1489,8 @@ int cmd_open(const std::vector<std::string>& args) {
         // style_toggled 触发;创建/删除不影响当前图片的 recipe_id,不需
         // 要强制重画。
         if (current_ref) {
-          auto outcome = handle_r_key(current_ref->id, banner_row, start_col, content_cols);
+          auto outcome =
+              handle_r_key(current_ref->id, banner_row, start_col, content_cols);
           status_override = outcome.status;
           if (outcome.action == RKeyAction::Applied || outcome.action == RKeyAction::Cleared) {
             show_original = false;
