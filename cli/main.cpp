@@ -34,13 +34,20 @@ void print_usage() {
                "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
                "加 --no-prune 跳过清理)\n"
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
-               "  pzt tag list <project_name>\n");
+               "  pzt tag list <project_name>\n"
+               "  pzt recipe list\n");
 }
 
 void print_tag_usage() {
   std::fprintf(stderr,
                "usage:\n"
                "  pzt tag list <project_name>\n");
+}
+
+void print_recipe_usage() {
+  std::fprintf(stderr,
+               "usage:\n"
+               "  pzt recipe list\n");
 }
 
 // 找不到项目时打印统一格式的错误提示。返回 nullopt 表示调用方应该直接
@@ -1352,6 +1359,42 @@ int cmd_tag(const std::vector<std::string>& args) {
   return 1;
 }
 
+// increment 1:预设是全局的,不属于任何项目,不需要 <project_name> 参数,
+// 跟 tag_list 的写法不一样。这次只显示预设那一层,version 的展示(含软删
+// 除标注)是 increment 2 的事。
+int recipe_list(const std::vector<std::string>& args) {
+  if (!args.empty()) {
+    std::fprintf(stderr, "pzt recipe list: 不接受参数\n");
+    print_recipe_usage();
+    return 1;
+  }
+  auto presets = pzt::core::list_presets();
+  if (presets.empty()) {
+    std::printf("(没有任何预设)\n");
+    return 0;
+  }
+  int i = 1;
+  for (const auto& p : presets) {
+    std::printf("%-3d %s\n", i++, p.name.c_str());
+  }
+  return 0;
+}
+
+int cmd_recipe(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    print_recipe_usage();
+    return 1;
+  }
+  const std::string& verb = args[0];
+  std::vector<std::string> rest(args.begin() + 1, args.end());
+
+  if (verb == "list") return recipe_list(rest);
+
+  std::fprintf(stderr, "pzt recipe: 未知子命令 '%s'\n", verb.c_str());
+  print_recipe_usage();
+  return 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1371,6 +1414,7 @@ int main(int argc, char** argv) {
   if (subcommand == "rescan") return cmd_rescan(args);
   if (subcommand == "export") return cmd_export(args);
   if (subcommand == "tag") return cmd_tag(args);
+  if (subcommand == "recipe") return cmd_recipe(args);
 
   std::fprintf(stderr, "pzt: 未知子命令 '%s'\n", subcommand.c_str());
   print_usage();

@@ -10,6 +10,7 @@
 #include "core/decode/decode.h"
 #include "core/export/export.h"
 #include "core/project/project.h"
+#include "core/recipe/recipe.h"
 #include "core/result.h"
 #include "core/tagging/tagging.h"
 
@@ -54,6 +55,10 @@ using ExportTagError = exporting::ExportTagError;
 
 using DecodedImage = decode::DecodedImage;
 using DecodeError = decode::DecodeError;
+
+using RecipeId = recipe::RecipeId;
+using PresetSummary = recipe::PresetSummary;
+using VersionSummary = recipe::VersionSummary;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it
@@ -120,5 +125,11 @@ Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string&
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
                                                int target_height);
+
+// 内置预设/version,见 core/recipe/recipe.h。两个函数内部都会先确保内置预
+// 设已经播种(幂等),调用方不需要单独调用一次"初始化"。increment 1 只有
+// 只读查询,version 的创建/改名/软删除留到 increment 2。
+std::vector<PresetSummary> list_presets();
+std::vector<VersionSummary> list_versions(RecipeId preset_id);
 
 }  // namespace pzt::core

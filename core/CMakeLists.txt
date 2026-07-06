@@ -14,6 +14,7 @@ add_library(core STATIC
   browse/prefetch.cpp
   export/export.cpp
   decode/decode.cpp
+  recipe/recipe.cpp
 )
 
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR})

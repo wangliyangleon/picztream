@@ -148,4 +148,16 @@ Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int targe
   return decode::resize_rgba(src, target_width, target_height);
 }
 
+std::vector<PresetSummary> list_presets() {
+  db::Database db = db::Database::open_default();
+  recipe::ensure_default_presets(db);
+  return recipe::list_presets(db);
+}
+
+std::vector<VersionSummary> list_versions(RecipeId preset_id) {
+  db::Database db = db::Database::open_default();
+  recipe::ensure_default_presets(db);
+  return recipe::list_versions(db, preset_id);
+}
+
 }  // namespace pzt::core
