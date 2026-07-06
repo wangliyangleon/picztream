@@ -6,7 +6,6 @@
 #include <iostream>
 #include <optional>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include <poll.h>
@@ -27,6 +26,7 @@ void print_usage() {
                "  pzt list\n"
                "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
                "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,g 筛选,"
+               "r 应用/清除/新建/删除风格,r v 临时预览原图,"
                "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
                "不显示也不产生这些日志)\n"
                "  pzt archive <project_name>\n"
@@ -36,9 +36,7 @@ void print_usage() {
                "加 --no-prune 跳过清理)\n"
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
                "  pzt tag list <project_name>\n"
-               "  pzt recipe list\n"
-               "  pzt color-debug <jpeg_path> <preset_name>[:<version_number>] <output.jpg>  "
-               "(临时调试用,increment 6/7 之后退休)\n");
+               "  pzt recipe list\n");
 }
 
 void print_tag_usage() {
@@ -52,13 +50,7 @@ void print_recipe_usage() {
                "usage:\n"
                "  pzt recipe list\n"
                "  pzt recipe rename <preset>:<version_number> <new_name>\n"
-               "  pzt recipe delete <preset>:<version_number>\n"
-               "  pzt recipe create-debug <preset_name> [--highlights N] [--shadows N] "
-               "[--wb-r N] [--wb-b N] [--name NAME]  (临时调试用,increment 6 之后退休)\n"
-               "  pzt recipe apply-debug <project_name> <image_relative_path> "
-               "<preset_name>[:<version_number>]  (临时调试用,increment 6 之后退休)\n"
-               "  pzt recipe clear-debug <project_name> <image_relative_path>  "
-               "(临时调试用,increment 6 之后退休)\n");
+               "  pzt recipe delete <preset>:<version_number>\n");
 }
 
 // 找不到项目时打印统一格式的错误提示。返回 nullopt 表示调用方应该直接
@@ -646,6 +638,205 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
     if (ref.id == desired) return desired;
   }
   return new_images.front().id;
+}
+
+// increment 6:`r` 前缀键完整交互。预设列表不需要像 tags_for_menu 那样过
+// 滤 is_system——目前所有预设(包括 Origin)都是 is_system,但这里没有"用
+// 户自建预设"这个对立面需要排除,直接按创建顺序编号 1-9。跟废片固定占 0
+// 号位不同,Origin 没有固定编号,它就是 list_presets() 里排第一的普通一
+// 项——`r` + `0`/`r` + `r`(清除)是完全独立于预设列表的快捷路径,直接把
+// recipe_id 设成 NULL,不经过"选中 Origin 预设"这条路,两者对"没有风格"
+// 这件事产出相同效果但走的是不同路径,见 core/recipe/recipe.h
+// ensure_default_presets 的说明。
+std::vector<pzt::core::PresetSummary> presets_for_menu() {
+  auto presets = pzt::core::list_presets();
+  if (presets.size() > 9) presets.resize(9);
+  return presets;
+}
+
+// apply/create/delete 三个流程都要"选一个预设"，这是第三处需要这个交互
+// 的地方(前两处是 cli 调试命令时代的 find_preset_by_name，这次是真正的
+// 交互式菜单)，抽成共用函数。
+std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row, int start_col,
+                                                                    int content_cols) {
+  auto presets = presets_for_menu();
+  std::string line = " 选预设:";
+  for (std::size_t i = 0; i < presets.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c < '1' || c > static_cast<char>('0' + presets.size())) return std::nullopt;  // 取消,静默
+  return presets[static_cast<std::size_t>(c - '1')];
+}
+
+// 已经选定一个预设之后，第二层选"这个预设的中性状态(0)"还是"某个已保存
+// 的 version(1-9)"——只列未软删除的 version，编号规则跟 pzt recipe
+// list/rename/delete 的寻址编号一致(排除已删除的、按 id 升序排位)。
+std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
+    const pzt::core::PresetSummary& preset, int banner_row, int start_col, int content_cols) {
+  auto all_versions = pzt::core::list_versions(preset.id);
+  std::vector<pzt::core::VersionSummary> live;
+  for (const auto& v : all_versions) {
+    if (!v.deleted) live.push_back(v);
+  }
+  if (live.size() > 9) live.resize(9);
+
+  std::string line = " " + preset.name + ":  0:预设本身";
+  for (std::size_t i = 0; i < live.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c == '0') return preset.id;
+  if (c >= '1' && c <= static_cast<char>('0' + live.size())) {
+    return live[static_cast<std::size_t>(c - '1')].id;
+  }
+  return std::nullopt;  // 取消,静默
+}
+
+// 删除流程的第二层选择：跟应用流程共用同一份"这个预设下未删除的
+// version"列表，但不提供"0:预设本身"这个选项——预设不可删除，从一开始
+// 就不给选，不是"选了之后拒绝"。
+std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary& preset,
+                                                  int banner_row, int start_col,
+                                                  int content_cols) {
+  auto all_versions = pzt::core::list_versions(preset.id);
+  std::vector<pzt::core::VersionSummary> live;
+  for (const auto& v : all_versions) {
+    if (!v.deleted) live.push_back(v);
+  }
+  if (live.empty()) {
+    return " '" + preset.name + "' 下没有可删除的 version ";  // 不阻塞读键,跟标签同款理由
+  }
+  if (live.size() > 9) live.resize(9);
+
+  std::string line = " 删除(" + preset.name + "):";
+  for (std::size_t i = 0; i < live.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c < '1' || c > static_cast<char>('0' + live.size())) return "";  // 取消,静默
+
+  const auto& chosen = live[static_cast<std::size_t>(c - '1')];
+  // 软删除:不影响已经引用这个 version 的图片渲染，只是从这个菜单里消
+  // 失。跟 handle_delete_tag_submenu 的硬删除不同，这里不加一道额外的
+  // y/N 二次确认——标签删除是级联清掉所有图片关联、不可逆的项目级操
+  // 作，这里只是把它从"可选列表"里隐藏，风险量级不一样，不需要同等重量
+  // 的确认仪式。
+  auto result = pzt::core::delete_version(chosen.id);
+  if (!result.ok()) return " 删除失败,请重试 ";  // 防御性,理论上不应该发生
+  return " 已删除 '" + chosen.name.value_or("(未命名)") + "' ";
+}
+
+// increment 6.2:`r c` 交互式创建新 version——选一个基础预设、依次读高
+// 光/暗光/白平衡红/蓝几个数值、可选的名字，对齐 handle_create_tag_flow
+// 的多步骤读取风格。数值解析失败/留空都当 0 处理，不重新提示、不阻塞重
+// 试——这几个参数是低风险的元数据，填错了大不了删掉重建，跟标签 cap 解
+// 析失败时的处理哲学一致。创建之后不会自动应用到当前图片，对齐
+// `space c` 建标签之后也不会自动打到当前图片上这个既有约定。
+std::string handle_r_create_flow(int banner_row, int start_col, int content_cols) {
+  auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols);
+  if (!preset) return "";  // 取消,静默
+
+  auto parse_double_or_zero = [](const std::optional<std::string>& s) -> double {
+    if (!s || s->empty()) return 0.0;
+    try {
+      std::size_t consumed = 0;
+      double v = std::stod(*s, &consumed);
+      if (consumed == s->size()) return v;
+    } catch (const std::exception&) {
+      // 解析失败,落到下面的 0.0
+    }
+    return 0.0;
+  };
+
+  auto highlights_text =
+      read_text_line(" 高光(直接 Enter = 0): ", banner_row, start_col, content_cols);
+  if (!highlights_text) return "";  // Esc 中止整个流程
+  auto shadows_text = read_text_line(" 暗光(直接 Enter = 0): ", banner_row, start_col, content_cols);
+  if (!shadows_text) return "";
+  auto wb_r_text =
+      read_text_line(" 白平衡-红(直接 Enter = 0): ", banner_row, start_col, content_cols);
+  if (!wb_r_text) return "";
+  auto wb_b_text =
+      read_text_line(" 白平衡-蓝(直接 Enter = 0): ", banner_row, start_col, content_cols);
+  if (!wb_b_text) return "";
+  auto name_text =
+      read_text_line(" 名称(可选,直接 Enter = 不设置): ", banner_row, start_col, content_cols);
+  if (!name_text) return "";
+
+  pzt::core::VersionParams params;
+  params.highlights = parse_double_or_zero(highlights_text);
+  params.shadows = parse_double_or_zero(shadows_text);
+  params.wb_shift_r = parse_double_or_zero(wb_r_text);
+  params.wb_shift_b = parse_double_or_zero(wb_b_text);
+  std::optional<std::string> name = name_text->empty() ? std::nullopt : name_text;
+
+  auto result = pzt::core::create_version(preset->id, name, params);
+  if (!result.ok()) return " 创建失败,请重试 ";  // 防御性,理论上不应该发生(预设一定存在)
+  return " 已在 '" + preset->name + "' 下创建新 version ";
+}
+
+// `r` 键的入口。选中即应用/清除，不需要额外确认，参照标签系统的交互
+// 哲学；应用/清除成功后返回空字符串(静默)，信息栏下一帧自然显示新的
+// "风格:"状态——跟 handle_add_tag_result 成功时静默是同一个理由。创建/
+// 删除是相对少见、更值得确认的操作，返回非空的状态提示。
+enum class RKeyAction { Cancelled, Applied, Cleared, Toggled, Handled };
+struct RKeyOutcome {
+  RKeyAction action;
+  std::string status;
+};
+
+RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
+                         int content_cols) {
+  auto presets = presets_for_menu();
+  std::string line = " r:清除  v:预览原图  c:新建  d:删除";
+  for (std::size_t i = 0; i < presets.size(); ++i) {
+    line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
+  }
+  line += "  Esc 取消";
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+
+  char c = read_one_byte();
+  if (c == 'r' || c == '0') {
+    auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
+    if (!result.ok()) return {RKeyAction::Cancelled, " 清除失败,请重试 "};
+    return {RKeyAction::Cleared, ""};
+  }
+  if (c == 'v') {
+    return {RKeyAction::Toggled, ""};
+  }
+  if (c == 'c') {
+    return {RKeyAction::Handled, handle_r_create_flow(banner_row, start_col, content_cols)};
+  }
+  if (c == 'd') {
+    auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols);
+    if (!preset) return {RKeyAction::Cancelled, ""};
+    return {RKeyAction::Handled,
+            handle_pick_version_to_delete_prompt(*preset, banner_row, start_col, content_cols)};
+  }
+  if (c >= '1' && c <= static_cast<char>('0' + presets.size())) {
+    const auto& preset = presets[static_cast<std::size_t>(c - '1')];
+    auto recipe_id =
+        handle_pick_version_to_apply_prompt(preset, banner_row, start_col, content_cols);
+    if (!recipe_id) return {RKeyAction::Cancelled, ""};
+    auto result = pzt::core::set_image_recipe(image_id, *recipe_id);
+    if (!result.ok()) return {RKeyAction::Cancelled, " 应用失败,请重试 "};
+    return {RKeyAction::Applied, ""};
+  }
+  return {RKeyAction::Cancelled, ""};  // 取消,静默
 }
 
 int cmd_new(const std::vector<std::string>& args) {
@@ -1237,13 +1428,20 @@ int cmd_open(const std::vector<std::string>& args) {
         }
         // Cancel:什么都不做,静默
       } else if (c == 'r') {
-        // M1 increment 5:目前只实现 `r` + `v`(临时切换风格/原图预览)。
-        // `r` 菜单剩下的应用/创建/删除留给 increment 6,这里读到除 `v`
-        // 之外的任何字节都静默忽略,不占用后续增量要用的按键含义。
-        char sub = read_one_byte();
-        if (sub == 'v') {
-          show_original = !show_original;
-          style_toggled = true;
+        // increment 6:完整的 `r` 前缀键交互,见 handle_r_key。应用/清除
+        // 需要重新走一遍渲染(recipe_id 变了或者切到原图预览),交给
+        // style_toggled 触发;创建/删除不影响当前图片的 recipe_id,不需
+        // 要强制重画。
+        if (current_ref) {
+          auto outcome = handle_r_key(current_ref->id, banner_row, start_col, content_cols);
+          status_override = outcome.status;
+          if (outcome.action == RKeyAction::Applied || outcome.action == RKeyAction::Cleared) {
+            show_original = false;
+            style_toggled = true;
+          } else if (outcome.action == RKeyAction::Toggled) {
+            show_original = !show_original;
+            style_toggled = true;
+          }
         }
       }
       prefetch.set_current(images, current_id);
@@ -1568,111 +1766,6 @@ int recipe_delete(const std::vector<std::string>& args) {
   return 0;
 }
 
-// 临时调试用:正式的创建入口是全键盘循环里的 `r c`(increment 6),那之前
-// 需要一条非交互的路径先把 create_version 测起来,increment 6.4 风格的收
-// 尾阶段会退休这条命令。
-int recipe_create_debug(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    std::fprintf(stderr,
-                 "pzt recipe create-debug: 缺少 <preset_name> [--highlights N] [--shadows N] "
-                 "[--wb-r N] [--wb-b N] [--name NAME]\n");
-    return 1;
-  }
-  auto preset_id = find_preset_by_name(args[0]);
-  if (!preset_id) {
-    std::fprintf(stderr, "pzt recipe create-debug: 找不到预设 '%s'\n", args[0].c_str());
-    return 1;
-  }
-
-  pzt::core::VersionParams params;
-  std::optional<std::string> name;
-  for (std::size_t i = 1; i < args.size(); ++i) {
-    auto next_double = [&]() -> double { return std::stod(args.at(++i)); };
-    if (args[i] == "--highlights") {
-      params.highlights = next_double();
-    } else if (args[i] == "--shadows") {
-      params.shadows = next_double();
-    } else if (args[i] == "--wb-r") {
-      params.wb_shift_r = next_double();
-    } else if (args[i] == "--wb-b") {
-      params.wb_shift_b = next_double();
-    } else if (args[i] == "--name") {
-      name = args.at(++i);
-    } else {
-      std::fprintf(stderr, "pzt recipe create-debug: 未知参数 '%s'\n", args[i].c_str());
-      return 1;
-    }
-  }
-
-  auto result = pzt::core::create_version(*preset_id, name, params);
-  if (!result.ok()) {
-    std::fprintf(stderr, "pzt recipe create-debug: 找不到预设 '%s'\n", args[0].c_str());
-    return 1;
-  }
-  std::printf("已创建 version(id=%lld)\n", static_cast<long long>(result.value()));
-  return 0;
-}
-
-// apply-debug 的目标地址支持两种形式:光一个预设名(应用预设中性状态),
-// 或者 "预设:编号"(应用某个具体 version)——对应 core::set_image_recipe
-// 接受"指向预设本身或指向 version 都行"的设计。
-std::optional<pzt::core::RecipeId> resolve_recipe_target(const std::string& address) {
-  if (address.find(':') == std::string::npos) return find_preset_by_name(address);
-  auto parsed = parse_recipe_address(address);
-  if (!parsed) return std::nullopt;
-  return resolve_recipe_address(parsed->first, parsed->second);
-}
-
-// 临时调试用:正式的应用入口是全键盘循环里的 `r`(increment 6),那之前
-// 需要一条非交互的路径先把 set_image_recipe 测起来,increment 6.4 风格的
-// 收尾阶段会退休这条命令。
-int recipe_apply_debug(const std::vector<std::string>& args) {
-  if (args.size() < 3) {
-    std::fprintf(stderr,
-                 "pzt recipe apply-debug: 缺少 <project_name> <image_relative_path> "
-                 "<preset_name>[:<version_number>]\n");
-    return 1;
-  }
-  auto project_id = resolve_project("pzt recipe apply-debug", args[0]);
-  if (!project_id) return 1;
-  auto image_id = pzt::core::find_image_by_path(*project_id, args[1]);
-  if (!image_id) {
-    std::fprintf(stderr, "pzt recipe apply-debug: 找不到图片 '%s'\n", args[1].c_str());
-    return 1;
-  }
-  auto recipe_id = resolve_recipe_target(args[2]);
-  if (!recipe_id) {
-    std::fprintf(stderr, "pzt recipe apply-debug: 找不到 '%s'\n", args[2].c_str());
-    return 1;
-  }
-  if (!pzt::core::set_image_recipe(*image_id, recipe_id).ok()) {
-    std::fprintf(stderr, "pzt recipe apply-debug: 操作失败\n");
-    return 1;
-  }
-  std::printf("已应用 '%s' 到 '%s'\n", args[2].c_str(), args[1].c_str());
-  return 0;
-}
-
-int recipe_clear_debug(const std::vector<std::string>& args) {
-  if (args.size() < 2) {
-    std::fprintf(stderr, "pzt recipe clear-debug: 缺少 <project_name> <image_relative_path>\n");
-    return 1;
-  }
-  auto project_id = resolve_project("pzt recipe clear-debug", args[0]);
-  if (!project_id) return 1;
-  auto image_id = pzt::core::find_image_by_path(*project_id, args[1]);
-  if (!image_id) {
-    std::fprintf(stderr, "pzt recipe clear-debug: 找不到图片 '%s'\n", args[1].c_str());
-    return 1;
-  }
-  if (!pzt::core::set_image_recipe(*image_id, std::nullopt).ok()) {
-    std::fprintf(stderr, "pzt recipe clear-debug: 操作失败\n");
-    return 1;
-  }
-  std::printf("已清除 '%s' 的 recipe\n", args[1].c_str());
-  return 0;
-}
-
 int cmd_recipe(const std::vector<std::string>& args) {
   if (args.empty()) {
     print_recipe_usage();
@@ -1684,60 +1777,10 @@ int cmd_recipe(const std::vector<std::string>& args) {
   if (verb == "list") return recipe_list(rest);
   if (verb == "rename") return recipe_rename(rest);
   if (verb == "delete") return recipe_delete(rest);
-  if (verb == "create-debug") return recipe_create_debug(rest);
-  if (verb == "apply-debug") return recipe_apply_debug(rest);
-  if (verb == "clear-debug") return recipe_clear_debug(rest);
 
   std::fprintf(stderr, "pzt recipe: 未知子命令 '%s'\n", verb.c_str());
   print_recipe_usage();
   return 1;
-}
-
-// 临时调试用:解码一张真实 jpeg、应用一个 recipe、编码写出,供肉眼在
-// Preview.app 里确认颜色效果——照抄 M0 里 `pzt decode`/`pzt render` 一次
-// 性调试命令的风格,不属于 `pzt recipe` 子命令体系(不操作项目/图片路
-// 径,直接吃一个文件路径),真正的渲染管线要到 increment 5(预览接入
-// `pzt open`)/increment 7(导出烘焙)才会在生产路径里用到。
-int cmd_color_debug(const std::vector<std::string>& args) {
-  if (args.size() < 3) {
-    std::fprintf(stderr,
-                 "usage: pzt color-debug <jpeg_path> <preset_name>[:<version_number>] "
-                 "<output.jpg>\n");
-    return 1;
-  }
-  const std::string& input_path = args[0];
-  const std::string& target = args[1];
-  const std::string& output_path = args[2];
-
-  auto recipe_id = resolve_recipe_target(target);
-  if (!recipe_id) {
-    std::fprintf(stderr, "pzt color-debug: 找不到 '%s'\n", target.c_str());
-    return 1;
-  }
-
-  auto t0 = std::chrono::steady_clock::now();
-  auto decoded = pzt::core::decode_jpeg_file(input_path);
-  if (!decoded.ok()) {
-    std::fprintf(stderr, "pzt color-debug: 解码失败 '%s'\n", input_path.c_str());
-    return 1;
-  }
-  auto rendered =
-      pzt::core::render(decoded.value(), *recipe_id, std::thread::hardware_concurrency());
-  if (!rendered.ok()) {
-    std::fprintf(stderr, "pzt color-debug: 渲染失败,找不到 recipe\n");
-    return 1;
-  }
-  auto encoded = pzt::core::encode_jpeg_file(rendered.value(), output_path);
-  auto t1 = std::chrono::steady_clock::now();
-  if (!encoded.ok()) {
-    std::fprintf(stderr, "pzt color-debug: 编码失败 '%s'\n", output_path.c_str());
-    return 1;
-  }
-
-  double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-  std::printf("已写出 '%s'(%dx%d),解码+渲染+编码整条链路耗时 %.1fms\n", output_path.c_str(),
-              rendered.value().width, rendered.value().height, ms);
-  return 0;
 }
 
 }  // namespace
@@ -1760,7 +1803,6 @@ int main(int argc, char** argv) {
   if (subcommand == "export") return cmd_export(args);
   if (subcommand == "tag") return cmd_tag(args);
   if (subcommand == "recipe") return cmd_recipe(args);
-  if (subcommand == "color-debug") return cmd_color_debug(args);
 
   std::fprintf(stderr, "pzt: 未知子命令 '%s'\n", subcommand.c_str());
   print_usage();
