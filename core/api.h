@@ -62,6 +62,8 @@ using VersionSummary = recipe::VersionSummary;
 using VersionParams = recipe::VersionParams;
 using CreateVersionError = recipe::CreateVersionError;
 using RecipeOpError = recipe::RecipeOpError;
+using SetImageRecipeError = recipe::SetImageRecipeError;
+using RecipeDescription = recipe::RecipeDescription;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it
@@ -141,5 +143,13 @@ Result<RecipeId, CreateVersionError> create_version(RecipeId preset_id,
                                                      VersionParams params);
 Result<void, RecipeOpError> rename_version(RecipeId version_id, const std::string& new_name);
 Result<void, RecipeOpError> delete_version(RecipeId version_id);
+
+// increment 3:图片 ↔ recipe 关联。recipe_id = nullopt 清除(Origin)。
+Result<void, SetImageRecipeError> set_image_recipe(ImageId image_id,
+                                                    std::optional<RecipeId> recipe_id);
+std::optional<RecipeId> get_image_recipe(ImageId image_id);
+
+// 供 `pzt open` 信息栏显示用,见 core/recipe/recipe.h。
+std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id);
 
 }  // namespace pzt::core

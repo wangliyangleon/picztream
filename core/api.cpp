@@ -177,4 +177,20 @@ Result<void, RecipeOpError> delete_version(RecipeId version_id) {
   return recipe::delete_version(db, version_id);
 }
 
+Result<void, SetImageRecipeError> set_image_recipe(ImageId image_id,
+                                                    std::optional<RecipeId> recipe_id) {
+  db::Database db = db::Database::open_default();
+  return recipe::set_image_recipe(db, image_id, recipe_id);
+}
+
+std::optional<RecipeId> get_image_recipe(ImageId image_id) {
+  db::Database db = db::Database::open_default();
+  return recipe::get_image_recipe(db, image_id);
+}
+
+std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id) {
+  db::Database db = db::Database::open_default();
+  return recipe::describe_recipe(db, recipe_id);
+}
+
 }  // namespace pzt::core

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/db/database.h"
+#include "core/project/project.h"
 #include "core/result.h"
 
 // Recipe（色彩配方）模块。见 docs/M1_Eng_Design.md "core/recipe/" 一节。两
@@ -15,6 +16,7 @@
 namespace pzt::core::recipe {
 
 using RecipeId = std::int64_t;
+using project::ImageId;
 
 struct PresetSummary {
   RecipeId id;
@@ -78,5 +80,32 @@ Result<void, RecipeOpError> rename_version(db::Database& db, RecipeId version_id
 // 软删除:设置 deleted_at，不影响已经引用这个 version 的图片渲染，只是从
 // "应用/创建"的可选列表里隐藏。见 docs/M1_PRD.md 里软删除的完整语义说明。
 Result<void, RecipeOpError> delete_version(db::Database& db, RecipeId version_id);
+
+// increment 3:图片 ↔ recipe 关联。
+enum class SetImageRecipeError {
+  ImageNotFound,
+  RecipeNotFound,  // 包括"不存在"和"是个已经软删除的 version"两种情况
+};
+
+// recipe_id = nullopt 就是清除(Origin)。recipe_id 可以指向一个预设本身
+// (应用它的中性状态)或者某个 version——这里的校验对两者一视同仁,只要求
+// 这一行存在且没有被软删除,不区分是预设还是 version。
+Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId image_id,
+                                                    std::optional<RecipeId> recipe_id);
+
+// 图片不存在、或者存在但没应用任何 recipe，两种情况都返回空——跟
+// tags_for_image 对不存在的 image_id 返回空列表是同一个套路，不特殊区分。
+std::optional<RecipeId> get_image_recipe(db::Database& db, ImageId image_id);
+
+// 把一个 recipe_id 解析成"预设名 + 可选的 version 名"这对结构化数据，
+// 不在 core 里拼成一整行文本——展示成一行还是缩进的两层树状结构是 cli
+// 的排版决定，不是 core 的事。version_name 为空表示直接应用的是预设本
+// 身(没有第二层)；version 没设名字时这里用 "(未命名)" 占位字符串填进
+// version_name，调用方不需要再判一次内层是不是空。不存在的 id 返回空。
+struct RecipeDescription {
+  std::string preset_name;
+  std::optional<std::string> version_name;
+};
+std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId recipe_id);
 
 }  // namespace pzt::core::recipe

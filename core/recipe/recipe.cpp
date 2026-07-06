@@ -196,4 +196,64 @@ Result<void, RecipeOpError> delete_version(db::Database& db, RecipeId version_id
   return Result<void, RecipeOpError>::Ok();
 }
 
+Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId image_id,
+                                                    std::optional<RecipeId> recipe_id) {
+  sqlite3* conn = db.handle();
+  if (!project::get_image(db, image_id)) {
+    return Result<void, SetImageRecipeError>::Err(SetImageRecipeError::ImageNotFound);
+  }
+  if (recipe_id) {
+    auto row = get_recipe_row(conn, *recipe_id);
+    if (!row || row->deleted) {
+      return Result<void, SetImageRecipeError>::Err(SetImageRecipeError::RecipeNotFound);
+    }
+  }
+
+  Stmt stmt(conn, "UPDATE images SET recipe_id = ? WHERE id = ?;");
+  if (recipe_id) {
+    sqlite3_bind_int64(stmt.get(), 1, *recipe_id);
+  } else {
+    sqlite3_bind_null(stmt.get(), 1);
+  }
+  sqlite3_bind_int64(stmt.get(), 2, image_id);
+  sqlite3_step(stmt.get());
+  return Result<void, SetImageRecipeError>::Ok();
+}
+
+std::optional<RecipeId> get_image_recipe(db::Database& db, ImageId image_id) {
+  Stmt stmt(db.handle(), "SELECT recipe_id FROM images WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, image_id);
+  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;  // 图片不存在
+  if (sqlite3_column_type(stmt.get(), 0) == SQLITE_NULL) return std::nullopt;  // 没有应用 recipe
+  return sqlite3_column_int64(stmt.get(), 0);
+}
+
+namespace {
+
+std::optional<std::string> recipe_name(sqlite3* conn, RecipeId id) {
+  Stmt stmt(conn, "SELECT name FROM recipes WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, id);
+  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
+  const unsigned char* name = sqlite3_column_text(stmt.get(), 0);
+  return name ? std::optional<std::string>(reinterpret_cast<const char*>(name)) : std::nullopt;
+}
+
+}  // namespace
+
+std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId recipe_id) {
+  sqlite3* conn = db.handle();
+  auto row = get_recipe_row(conn, recipe_id);
+  if (!row) return std::nullopt;
+
+  if (!row->parent_id.has_value()) {
+    // 这一行本身就是预设，预设一定有名字(局部唯一索引保证非空)，没有第
+    // 二层，version_name 留空。
+    return RecipeDescription{recipe_name(conn, recipe_id).value_or(""), std::nullopt};
+  }
+
+  std::string preset_name = recipe_name(conn, *row->parent_id).value_or("?");
+  std::string version_name = recipe_name(conn, recipe_id).value_or("(未命名)");
+  return RecipeDescription{preset_name, version_name};
+}
+
 }  // namespace pzt::core::recipe

@@ -51,7 +51,11 @@ void print_recipe_usage() {
                "  pzt recipe rename <preset>:<version_number> <new_name>\n"
                "  pzt recipe delete <preset>:<version_number>\n"
                "  pzt recipe create-debug <preset_name> [--highlights N] [--shadows N] "
-               "[--wb-r N] [--wb-b N] [--name NAME]  (临时调试用,increment 6 之后退休)\n");
+               "[--wb-r N] [--wb-b N] [--name NAME]  (临时调试用,increment 6 之后退休)\n"
+               "  pzt recipe apply-debug <project_name> <image_relative_path> "
+               "<preset_name>[:<version_number>]  (临时调试用,increment 6 之后退休)\n"
+               "  pzt recipe clear-debug <project_name> <image_relative_path>  "
+               "(临时调试用,increment 6 之后退休)\n");
 }
 
 // 找不到项目时打印统一格式的错误提示。返回 nullopt 表示调用方应该直接
@@ -929,6 +933,30 @@ int cmd_open(const std::vector<std::string>& args) {
           move_cursor(row++, info_col);
           write_stdout(pad_to("大小: " + format_size(info->file_size), info_cols));
         }
+
+        // M1 increment 3:在真正的 `r` 交互(increment 6)和预览渲染
+        // (increment 5)落地之前,先在信息栏露出"这张图应用了哪个风格",
+        // 方便用 apply-debug 之类的调试命令验证时能直观看到结果,不用每
+        // 次都手动查数据库。两层模型(预设/version)用两级缩进画成一棵小
+        // 树,不是拼成一行文本——真机测试发现拼一行会在信息栏这种窄列里
+        // 被截断,例如"风格: Standard: MyStandard"就被切成了"风格:
+        // Standard: MyStanda",看不全。
+        row++;  // 空一行
+        move_cursor(row++, info_col);
+        write_stdout(pad_to("风格:", info_cols));
+        auto recipe_id = current_ref ? pzt::core::get_image_recipe(current_ref->id) : std::nullopt;
+        auto style = recipe_id ? pzt::core::describe_recipe(*recipe_id) : std::nullopt;
+        if (!style) {
+          move_cursor(row++, info_col);
+          write_stdout(pad_to("  (无)", info_cols));
+        } else {
+          move_cursor(row++, info_col);
+          write_stdout(pad_to("  " + style->preset_name, info_cols));
+          if (style->version_name) {
+            move_cursor(row++, info_col);
+            write_stdout(pad_to("    " + *style->version_name, info_cols));
+          }
+        }
       }
 
       // --debug 时,图片/信息栏下方专门留出来的滚动 debug 区——按帧重画最
@@ -1382,14 +1410,21 @@ std::optional<std::pair<std::string, int>> parse_recipe_address(const std::strin
   }
 }
 
-std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& preset_name,
-                                                            int version_number) {
+// 第三处需要"按名字找预设"的地方(create-debug、resolve_recipe_address
+// 自己各写过一遍)，这次抽成共用的小函数。
+std::optional<pzt::core::RecipeId> find_preset_by_name(const std::string& name) {
   auto presets = pzt::core::list_presets();
   auto it = std::find_if(presets.begin(), presets.end(),
-                          [&](const auto& p) { return p.name == preset_name; });
-  if (it == presets.end()) return std::nullopt;
+                          [&](const auto& p) { return p.name == name; });
+  return it == presets.end() ? std::nullopt : std::optional(it->id);
+}
 
-  auto versions = pzt::core::list_versions(it->id);
+std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& preset_name,
+                                                            int version_number) {
+  auto preset_id = find_preset_by_name(preset_name);
+  if (!preset_id) return std::nullopt;
+
+  auto versions = pzt::core::list_versions(*preset_id);
   int v = 1;
   for (const auto& ver : versions) {
     if (ver.deleted) continue;
@@ -1493,10 +1528,8 @@ int recipe_create_debug(const std::vector<std::string>& args) {
                  "[--wb-r N] [--wb-b N] [--name NAME]\n");
     return 1;
   }
-  auto presets = pzt::core::list_presets();
-  auto it = std::find_if(presets.begin(), presets.end(),
-                          [&](const auto& p) { return p.name == args[0]; });
-  if (it == presets.end()) {
+  auto preset_id = find_preset_by_name(args[0]);
+  if (!preset_id) {
     std::fprintf(stderr, "pzt recipe create-debug: 找不到预设 '%s'\n", args[0].c_str());
     return 1;
   }
@@ -1521,12 +1554,72 @@ int recipe_create_debug(const std::vector<std::string>& args) {
     }
   }
 
-  auto result = pzt::core::create_version(it->id, name, params);
+  auto result = pzt::core::create_version(*preset_id, name, params);
   if (!result.ok()) {
     std::fprintf(stderr, "pzt recipe create-debug: 找不到预设 '%s'\n", args[0].c_str());
     return 1;
   }
   std::printf("已创建 version(id=%lld)\n", static_cast<long long>(result.value()));
+  return 0;
+}
+
+// apply-debug 的目标地址支持两种形式:光一个预设名(应用预设中性状态),
+// 或者 "预设:编号"(应用某个具体 version)——对应 core::set_image_recipe
+// 接受"指向预设本身或指向 version 都行"的设计。
+std::optional<pzt::core::RecipeId> resolve_recipe_target(const std::string& address) {
+  if (address.find(':') == std::string::npos) return find_preset_by_name(address);
+  auto parsed = parse_recipe_address(address);
+  if (!parsed) return std::nullopt;
+  return resolve_recipe_address(parsed->first, parsed->second);
+}
+
+// 临时调试用:正式的应用入口是全键盘循环里的 `r`(increment 6),那之前
+// 需要一条非交互的路径先把 set_image_recipe 测起来,increment 6.4 风格的
+// 收尾阶段会退休这条命令。
+int recipe_apply_debug(const std::vector<std::string>& args) {
+  if (args.size() < 3) {
+    std::fprintf(stderr,
+                 "pzt recipe apply-debug: 缺少 <project_name> <image_relative_path> "
+                 "<preset_name>[:<version_number>]\n");
+    return 1;
+  }
+  auto project_id = resolve_project("pzt recipe apply-debug", args[0]);
+  if (!project_id) return 1;
+  auto image_id = pzt::core::find_image_by_path(*project_id, args[1]);
+  if (!image_id) {
+    std::fprintf(stderr, "pzt recipe apply-debug: 找不到图片 '%s'\n", args[1].c_str());
+    return 1;
+  }
+  auto recipe_id = resolve_recipe_target(args[2]);
+  if (!recipe_id) {
+    std::fprintf(stderr, "pzt recipe apply-debug: 找不到 '%s'\n", args[2].c_str());
+    return 1;
+  }
+  if (!pzt::core::set_image_recipe(*image_id, recipe_id).ok()) {
+    std::fprintf(stderr, "pzt recipe apply-debug: 操作失败\n");
+    return 1;
+  }
+  std::printf("已应用 '%s' 到 '%s'\n", args[2].c_str(), args[1].c_str());
+  return 0;
+}
+
+int recipe_clear_debug(const std::vector<std::string>& args) {
+  if (args.size() < 2) {
+    std::fprintf(stderr, "pzt recipe clear-debug: 缺少 <project_name> <image_relative_path>\n");
+    return 1;
+  }
+  auto project_id = resolve_project("pzt recipe clear-debug", args[0]);
+  if (!project_id) return 1;
+  auto image_id = pzt::core::find_image_by_path(*project_id, args[1]);
+  if (!image_id) {
+    std::fprintf(stderr, "pzt recipe clear-debug: 找不到图片 '%s'\n", args[1].c_str());
+    return 1;
+  }
+  if (!pzt::core::set_image_recipe(*image_id, std::nullopt).ok()) {
+    std::fprintf(stderr, "pzt recipe clear-debug: 操作失败\n");
+    return 1;
+  }
+  std::printf("已清除 '%s' 的 recipe\n", args[1].c_str());
   return 0;
 }
 
@@ -1542,6 +1635,8 @@ int cmd_recipe(const std::vector<std::string>& args) {
   if (verb == "rename") return recipe_rename(rest);
   if (verb == "delete") return recipe_delete(rest);
   if (verb == "create-debug") return recipe_create_debug(rest);
+  if (verb == "apply-debug") return recipe_apply_debug(rest);
+  if (verb == "clear-debug") return recipe_clear_debug(rest);
 
   std::fprintf(stderr, "pzt recipe: 未知子命令 '%s'\n", verb.c_str());
   print_recipe_usage();

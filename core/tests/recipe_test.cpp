@@ -2,14 +2,20 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "core/db/database.h"
 #include "core/db/schema.h"
+#include "core/project/project.h"
 #include "core/recipe/recipe.h"
 
 namespace fs = std::filesystem;
 using pzt::core::db::Database;
+using pzt::core::project::create_project;
+using pzt::core::project::find_image_by_path;
+using pzt::core::project::ImageId;
+using pzt::core::project::ProjectId;
 using namespace pzt::core::recipe;
 
 namespace {
@@ -20,6 +26,38 @@ std::string temp_db_path(const std::string& tag) {
   auto path = (dir / (tag + ".db")).string();
   fs::remove(path);
   return path;
+}
+
+// 照抄 export_test.cpp 的 Fixture 模式：一个真实项目 + 一张图片，供图片
+// ↔ recipe 关联测试用（set_image_recipe 需要一个真实存在的 image_id）。
+fs::path fresh_photo_dir(const std::string& tag) {
+  auto dir = fs::temp_directory_path() / "pzt_test" / tag;
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  return dir;
+}
+
+void touch(const fs::path& p) {
+  fs::create_directories(p.parent_path());
+  std::ofstream f(p, std::ios::binary);
+  f << "x";
+}
+
+struct ImageFixture {
+  Database db;
+  ImageId image_id;
+};
+
+ImageFixture make_image_fixture(const std::string& tag) {
+  auto db = Database::open_at(temp_db_path(tag));
+  ensure_default_presets(db);  // open_at 本身不播种，这是 api.cpp 门面才做的事
+  auto photos = fresh_photo_dir(tag);
+  touch(photos / "img_000.jpg");
+  auto created = create_project(db, "proj", photos.string());
+  REQUIRE(created.ok());
+  auto image_id = find_image_by_path(db, created.value(), "img_000.jpg");
+  REQUIRE(image_id.has_value());
+  return ImageFixture{std::move(db), *image_id};
 }
 
 }  // namespace
@@ -215,4 +253,102 @@ TEST_CASE("initialize_schema migrates a pre-M1 database by adding images.recipe_
   CHECK(column_present());
 
   sqlite3_close(raw);
+}
+
+TEST_CASE("set_image_recipe applies a version and get_image_recipe returns it") {
+  auto fx = make_image_fixture("recipe_apply_version");
+  auto preset_id = list_presets(fx.db)[0].id;
+  auto version_id = create_version(fx.db, preset_id, std::string("Look"), VersionParams{}).value();
+
+  auto result = set_image_recipe(fx.db, fx.image_id, version_id);
+  REQUIRE(result.ok());
+  CHECK(get_image_recipe(fx.db, fx.image_id) == version_id);
+}
+
+TEST_CASE("set_image_recipe applies a preset directly (its own neutral state)") {
+  auto fx = make_image_fixture("recipe_apply_preset");
+  auto preset_id = list_presets(fx.db)[0].id;
+
+  REQUIRE(set_image_recipe(fx.db, fx.image_id, preset_id).ok());
+  CHECK(get_image_recipe(fx.db, fx.image_id) == preset_id);
+}
+
+TEST_CASE("set_image_recipe with nullopt clears the association") {
+  auto fx = make_image_fixture("recipe_apply_clear");
+  auto preset_id = list_presets(fx.db)[0].id;
+  REQUIRE(set_image_recipe(fx.db, fx.image_id, preset_id).ok());
+
+  REQUIRE(set_image_recipe(fx.db, fx.image_id, std::nullopt).ok());
+  CHECK_FALSE(get_image_recipe(fx.db, fx.image_id).has_value());
+}
+
+TEST_CASE("set_image_recipe reports ImageNotFound and RecipeNotFound") {
+  auto fx = make_image_fixture("recipe_apply_errors");
+  auto preset_id = list_presets(fx.db)[0].id;
+
+  auto bad_image = set_image_recipe(fx.db, 999999, preset_id);
+  REQUIRE(!bad_image.ok());
+  CHECK(bad_image.error() == SetImageRecipeError::ImageNotFound);
+
+  auto bad_recipe = set_image_recipe(fx.db, fx.image_id, 999999);
+  REQUIRE(!bad_recipe.ok());
+  CHECK(bad_recipe.error() == SetImageRecipeError::RecipeNotFound);
+
+  auto version_id = create_version(fx.db, preset_id, std::nullopt, VersionParams{}).value();
+  REQUIRE(delete_version(fx.db, version_id).ok());
+  auto deleted_recipe = set_image_recipe(fx.db, fx.image_id, version_id);
+  REQUIRE(!deleted_recipe.ok());
+  CHECK(deleted_recipe.error() == SetImageRecipeError::RecipeNotFound);
+}
+
+TEST_CASE("get_image_recipe returns empty for a nonexistent image or one with no recipe applied") {
+  auto fx = make_image_fixture("recipe_get_empty");
+  CHECK_FALSE(get_image_recipe(fx.db, fx.image_id).has_value());  // 存在但没应用过
+  CHECK_FALSE(get_image_recipe(fx.db, 999999).has_value());       // 不存在
+}
+
+TEST_CASE("image-recipe association persists across reopening the database") {
+  std::string path = temp_db_path("recipe_persist");
+  auto photos = fresh_photo_dir("recipe_persist");
+  touch(photos / "img_000.jpg");
+
+  ImageId image_id;
+  RecipeId preset_id;
+  {
+    auto db = Database::open_at(path);
+    ensure_default_presets(db);
+    auto created = create_project(db, "proj", photos.string());
+    REQUIRE(created.ok());
+    image_id = *find_image_by_path(db, created.value(), "img_000.jpg");
+    preset_id = list_presets(db)[0].id;
+    REQUIRE(set_image_recipe(db, image_id, preset_id).ok());
+  }
+  {
+    auto db = Database::open_at(path);  // 独立重开一个连接，模拟重启进程
+    CHECK(get_image_recipe(db, image_id) == preset_id);
+  }
+}
+
+TEST_CASE("describe_recipe returns structured preset/version names, not a pre-formatted string") {
+  auto db = Database::open_at(temp_db_path("recipe_describe"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;
+
+  auto preset_desc = describe_recipe(db, preset_id);
+  REQUIRE(preset_desc.has_value());
+  CHECK(preset_desc->preset_name == "Standard");
+  CHECK_FALSE(preset_desc->version_name.has_value());  // 直接应用预设本身,没有第二层
+
+  auto named = create_version(db, preset_id, std::string("胶片感"), VersionParams{}).value();
+  auto named_desc = describe_recipe(db, named);
+  REQUIRE(named_desc.has_value());
+  CHECK(named_desc->preset_name == "Standard");
+  CHECK(named_desc->version_name == "胶片感");
+
+  auto unnamed = create_version(db, preset_id, std::nullopt, VersionParams{}).value();
+  auto unnamed_desc = describe_recipe(db, unnamed);
+  REQUIRE(unnamed_desc.has_value());
+  CHECK(unnamed_desc->version_name == "(未命名)");
+
+  CHECK_FALSE(describe_recipe(db, 999999).has_value());
 }
