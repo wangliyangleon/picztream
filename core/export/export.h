@@ -38,6 +38,15 @@ enum class ExportTagError {
 // 有序标签用 {零填充序号}_{原文件名}(宽度取 max(2, 本次导出总数的位数)),
 // 无序标签直接用原文件名;命名冲突时在扩展名前追加 _2、_3……直到不冲突;
 // 源文件在磁盘上缺失时跳过并记录原因，不中断其余图片的导出。
+//
+// M1:应用了 recipe 的图片走"解码全分辨率原图 -> core::recipe::render
+// (多线程)-> core::decode::encode_jpeg_file"这条烘焙路径，输出文件体
+// 现处理后的效果，不是原始文件的直接拷贝；没有应用 recipe 的图片继续
+// 保持字节级不变的复制/软链行为。`link_mode` 对烘焙路径没有意义——输出
+// 本来就是新生成的文件，没有"原始字节"可以软链，这类图片不管
+// `link_mode` 是什么都会落地成真实文件，这是对既有 `--link` 语义的一
+// 个自然限制，不是 bug。解码/渲染/编码任一步失败都归入 `skipped`（复用
+// 现有的"源文件缺失"跳过机制），不中断其余图片的导出。
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
                                                  LinkMode link_mode = LinkMode::Copy);

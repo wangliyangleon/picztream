@@ -3,9 +3,12 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <thread>
 
 #include "core/browse/browse.h"
 #include "core/db/stmt.h"
+#include "core/decode/decode.h"
+#include "core/recipe/recipe.h"
 
 namespace pzt::core::exporting {
 
@@ -120,10 +123,35 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
           tag_info->is_ordered ? ordered_name(index, width, img.file_name) : img.file_name;
       fs::path target = resolve_collision(out_dir, base_name);
 
-      if (link_mode == LinkMode::Copy) {
-        fs::copy_file(source, target);
+      auto recipe_id = recipe::get_image_recipe(db, img.id);
+      if (recipe_id) {
+        // 全分辨率烘焙:解码原图 -> recipe::render(多线程) -> 编码写出,
+        // 取代拷贝/软链。link_mode 在这里没有意义——输出本来就是新生成
+        // 的文件,没有"原始字节"可以软链,统一落地成真实文件,这是对既
+        // 有 --link 语义的一个自然限制。
+        auto decoded = decode::decode_jpeg_file(source.string());
+        if (!decoded.ok()) {
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, "解码失败"});
+          continue;
+        }
+        auto rendered = recipe::render(db, decoded.value(), *recipe_id,
+                                        std::thread::hardware_concurrency());
+        if (!rendered.ok()) {
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, "应用风格失败"});
+          continue;
+        }
+        auto encoded = decode::encode_jpeg_file(rendered.value(), target.string());
+        if (!encoded.ok()) {
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, "编码失败"});
+          continue;
+        }
       } else {
-        fs::create_symlink(fs::absolute(source), target);
+        // 没有应用 recipe 的图片继续走原来的复制/软链,字节级不变。
+        if (link_mode == LinkMode::Copy) {
+          fs::copy_file(source, target);
+        } else {
+          fs::create_symlink(fs::absolute(source), target);
+        }
       }
       ++result.exported_count;
     }

@@ -1,21 +1,29 @@
 #include <doctest.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <vector>
 
 #include "core/db/database.h"
+#include "core/decode/decode.h"
 #include "core/export/export.h"
 #include "core/project/project.h"
+#include "core/recipe/recipe.h"
 #include "core/tagging/tagging.h"
 
 namespace fs = std::filesystem;
 using pzt::core::db::Database;
+using pzt::core::decode::DecodedImage;
+using pzt::core::decode::encode_jpeg_file;
 using pzt::core::project::create_project;
 using pzt::core::project::find_image_by_path;
 using pzt::core::project::ImageId;
 using pzt::core::project::ProjectId;
 using namespace pzt::core::exporting;
+using namespace pzt::core::recipe;
 using namespace pzt::core::tagging;
 
 namespace {
@@ -74,6 +82,56 @@ Fixture make_fixture(const std::string& tag, int image_count) {
     images.push_back(*id);
   }
   return Fixture{std::move(db), created.value(), std::move(images), photos};
+}
+
+// increment 7 的烘焙测试需要真正能被 decode_jpeg_file 解码的照片——上面
+// 的 make_fixture 用 touch() 写的是 10 字节的假内容，扫描(只看扩展名)不
+// 会失败，但解码会失败，现有测试从来不会走到解码这一步(从来没给图片应
+// 用过 recipe)所以之前不受影响。这里用刚在 increment 4 提升成生产代码
+// 的 encode_jpeg_file 现场生成纯色真实 JPEG，不用再重新抄一遍
+// CGImageDestination 的写法。
+void write_real_jpeg(const fs::path& path, int width, int height, std::uint8_t r, std::uint8_t g,
+                      std::uint8_t b) {
+  DecodedImage img;
+  img.width = width;
+  img.height = height;
+  img.rgba.resize(static_cast<std::size_t>(width) * height * 4);
+  for (std::size_t i = 0; i < img.rgba.size(); i += 4) {
+    img.rgba[i + 0] = r;
+    img.rgba[i + 1] = g;
+    img.rgba[i + 2] = b;
+    img.rgba[i + 3] = 255;
+  }
+  fs::create_directories(path.parent_path());
+  REQUIRE(encode_jpeg_file(img, path.string()).ok());
+}
+
+Fixture make_real_photo_fixture(const std::string& tag, int image_count) {
+  auto db = Database::open_at(fresh_db_path(tag));
+  ensure_default_presets(db);  // open_at 本身不播种，这是 api.cpp 门面才做的事
+  auto photos = fresh_photo_dir(tag);
+  for (int i = 0; i < image_count; ++i) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "img_%03d.jpg", i);
+    write_real_jpeg(photos / name, 40, 30, 50, 100, 150);
+  }
+  auto created = create_project(db, "proj", photos.string());
+  REQUIRE(created.ok());
+
+  std::vector<ImageId> images;
+  for (int i = 0; i < image_count; ++i) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "img_%03d.jpg", i);
+    auto id = find_image_by_path(db, created.value(), name);
+    REQUIRE(id.has_value());
+    images.push_back(*id);
+  }
+  return Fixture{std::move(db), created.value(), std::move(images), photos};
+}
+
+std::vector<char> read_bytes(const fs::path& path) {
+  std::ifstream f(path, std::ios::binary);
+  return std::vector<char>(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
 }  // namespace
@@ -196,4 +254,65 @@ TEST_CASE("export_tag reports IoError when the output path can't be created as a
   auto result = export_tag(fx.db, tag.value(), out_dir.string());
   REQUIRE(!result.ok());
   CHECK(result.error() == ExportTagError::IoError);
+}
+
+TEST_CASE("export_tag bakes a non-identity recipe into the exported image's bytes") {
+  auto fx = make_real_photo_fixture("export_bake", 1);
+  auto warm_id = list_presets(fx.db)[1].id;  // presets[0] 是 Origin(没有 LUT),[1] 是 Warm
+  REQUIRE(set_image_recipe(fx.db, fx.images[0], warm_id).ok());
+
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  auto out_dir = fresh_output_dir("export_bake");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 1);
+  CHECK(result.value().skipped.empty());
+
+  auto source_bytes = read_bytes(fx.photos_dir / "img_000.jpg");
+  auto output_bytes = read_bytes(out_dir / "img_000.jpg");
+  CHECK(source_bytes != output_bytes);  // 真的重新编码过,不是巧合的拷贝
+}
+
+TEST_CASE("export_tag leaves an image with no recipe byte-for-byte identical to the source") {
+  auto fx = make_real_photo_fixture("export_no_recipe", 1);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  auto out_dir = fresh_output_dir("export_no_recipe");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 1);
+
+  auto source_bytes = read_bytes(fx.photos_dir / "img_000.jpg");
+  auto output_bytes = read_bytes(out_dir / "img_000.jpg");
+  CHECK(source_bytes == output_bytes);  // 回归防线:没应用风格的图片必须字节级不变
+}
+
+TEST_CASE("export_tag --link degrades to a real file for a recipe-applied image "
+          "but still symlinks the untouched one") {
+  auto fx = make_real_photo_fixture("export_bake_link", 2);
+  auto warm_id = list_presets(fx.db)[1].id;
+  REQUIRE(set_image_recipe(fx.db, fx.images[0], warm_id).ok());
+  // images[1] 不应用任何 recipe,保持对照。
+
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+  REQUIRE(add_tag(fx.db, fx.images[1], tag.value()).ok());
+
+  auto out_dir = fresh_output_dir("export_bake_link");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Symlink);
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 2);
+
+  // 应用了 recipe 的那张:输出是新生成的文件,没有"原始字节"可以软链,
+  // link_mode 在这里被忽略。
+  CHECK_FALSE(fs::is_symlink(out_dir / "img_000.jpg"));
+  CHECK(fs::exists(out_dir / "img_000.jpg"));
+  // 没应用 recipe 的那张:--link 语义不变,照常建符号链接。
+  CHECK(fs::is_symlink(out_dir / "img_001.jpg"));
 }
