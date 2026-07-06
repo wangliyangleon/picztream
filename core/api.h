@@ -55,6 +55,7 @@ using ExportTagError = exporting::ExportTagError;
 
 using DecodedImage = decode::DecodedImage;
 using DecodeError = decode::DecodeError;
+using EncodeError = decode::EncodeError;
 
 using RecipeId = recipe::RecipeId;
 using PresetSummary = recipe::PresetSummary;
@@ -64,6 +65,7 @@ using CreateVersionError = recipe::CreateVersionError;
 using RecipeOpError = recipe::RecipeOpError;
 using SetImageRecipeError = recipe::SetImageRecipeError;
 using RecipeDescription = recipe::RecipeDescription;
+using RenderRecipeError = recipe::RenderRecipeError;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it
@@ -131,6 +133,10 @@ Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
                                                int target_height);
 
+// M1 increment 4:像素编码回 JPEG 文件，供导出烘焙和 `pzt color-debug` 用。
+Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::string& path,
+                                            double quality = 0.9);
+
 // 内置预设/version,见 core/recipe/recipe.h。两个函数内部都会先确保内置预
 // 设已经播种(幂等),调用方不需要单独调用一次"初始化"。increment 1 只有
 // 只读查询,version 的创建/改名/软删除留到 increment 2。
@@ -151,5 +157,10 @@ std::optional<RecipeId> get_image_recipe(ImageId image_id);
 
 // 供 `pzt open` 信息栏显示用,见 core/recipe/recipe.h。
 std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id);
+
+// increment 4:给一张已解码的图片应用 recipe。thread_count=1 用于预览
+// (同步),导出烘焙传 hardware_concurrency()。见 core/recipe/recipe.h。
+Result<DecodedImage, RenderRecipeError> render(const DecodedImage& src, RecipeId recipe_id,
+                                                unsigned thread_count = 1);
 
 }  // namespace pzt::core

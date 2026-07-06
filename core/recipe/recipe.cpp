@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 
 #include "core/db/stmt.h"
 
@@ -254,6 +255,66 @@ std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId reci
   std::string preset_name = recipe_name(conn, *row->parent_id).value_or("?");
   std::string version_name = recipe_name(conn, recipe_id).value_or("(未命名)");
   return RecipeDescription{preset_name, version_name};
+}
+
+namespace {
+
+std::optional<color::Lut3D> load_lut(sqlite3* conn, RecipeId preset_id) {
+  Stmt stmt(conn, "SELECT base_lut_size, base_lut FROM recipes WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, preset_id);
+  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
+
+  int size = sqlite3_column_int(stmt.get(), 0);
+  const void* blob = sqlite3_column_blob(stmt.get(), 1);
+  int blob_bytes = sqlite3_column_bytes(stmt.get(), 1);
+  if (!blob || size <= 0) return std::nullopt;
+
+  color::Lut3D lut;
+  lut.size = size;
+  lut.data.resize(static_cast<std::size_t>(blob_bytes) / sizeof(float));
+  std::memcpy(lut.data.data(), blob, static_cast<std::size_t>(blob_bytes));
+  return lut;
+}
+
+}  // namespace
+
+std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_id) {
+  sqlite3* conn = db.handle();
+  Stmt stmt(conn,
+            "SELECT parent_id, highlights, shadows, wb_shift_r, wb_shift_b FROM recipes "
+            "WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, recipe_id);
+  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
+
+  bool is_preset = sqlite3_column_type(stmt.get(), 0) == SQLITE_NULL;
+  RecipeId preset_id = is_preset ? recipe_id : sqlite3_column_int64(stmt.get(), 0);
+  VersionParams params;  // 指向预设本身时保持全零(中性状态)
+  if (!is_preset) {
+    params.highlights = sqlite3_column_double(stmt.get(), 1);
+    params.shadows = sqlite3_column_double(stmt.get(), 2);
+    params.wb_shift_r = sqlite3_column_double(stmt.get(), 3);
+    params.wb_shift_b = sqlite3_column_double(stmt.get(), 4);
+  }
+
+  auto lut = load_lut(conn, preset_id);
+  if (!lut) return std::nullopt;  // 理论上不该发生(预设一定有 base_lut),防御性处理
+  return ResolvedRecipe{std::move(*lut), params};
+}
+
+Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
+                                                        const decode::DecodedImage& src,
+                                                        RecipeId recipe_id,
+                                                        unsigned thread_count) {
+  auto resolved = resolve_recipe(db, recipe_id);
+  if (!resolved) {
+    return Result<decode::DecodedImage, RenderRecipeError>::Err(RenderRecipeError::RecipeNotFound);
+  }
+
+  decode::DecodedImage out = src;  // 拷贝一份工作缓冲区,不修改调用方传入的原图
+  color::apply_lut(out, resolved->lut, thread_count);
+  color::apply_adjustments(out, resolved->params.highlights, resolved->params.shadows,
+                            resolved->params.wb_shift_r, resolved->params.wb_shift_b, thread_count);
+  return Result<decode::DecodedImage, RenderRecipeError>::Ok(std::move(out));
 }
 
 }  // namespace pzt::core::recipe

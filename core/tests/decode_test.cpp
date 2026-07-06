@@ -16,6 +16,7 @@ namespace fs = std::filesystem;
 using pzt::core::decode::decode_jpeg_file;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
+using pzt::core::decode::encode_jpeg_file;
 using pzt::core::decode::resize_rgba;
 
 namespace {
@@ -158,4 +159,30 @@ TEST_CASE("resize_rgba reports DecodeFailed for non-positive dimensions") {
   CHECK(!resize_rgba(src, 0, 10).ok());
   CHECK(!resize_rgba(src, 10, 0).ok());
   CHECK(!resize_rgba(src, -1, 10).ok());
+}
+
+TEST_CASE("encode_jpeg_file writes a file that decode_jpeg_file can read back") {
+  auto src = make_solid(40, 30, 10, 200, 100);
+  auto path = fresh_tmp_dir() / "encoded.jpg";
+
+  auto encoded = encode_jpeg_file(src, path.string());
+  REQUIRE(encoded.ok());
+  REQUIRE(fs::exists(path));
+
+  auto decoded = decode_jpeg_file(path.string());
+  REQUIRE(decoded.ok());
+  CHECK(decoded.value().width == 40);
+  CHECK(decoded.value().height == 30);
+  // 有损压缩,允许小幅偏差,不要求逐字节相等。
+  CHECK(std::abs(static_cast<int>(decoded.value().rgba[0]) - 10) <= 5);
+  CHECK(std::abs(static_cast<int>(decoded.value().rgba[1]) - 200) <= 5);
+  CHECK(std::abs(static_cast<int>(decoded.value().rgba[2]) - 100) <= 5);
+}
+
+TEST_CASE("encode_jpeg_file reports EncodeFailed for non-positive dimensions") {
+  DecodedImage img;
+  img.width = 0;
+  img.height = 0;
+  auto path = fresh_tmp_dir() / "should_not_exist.jpg";
+  CHECK(!encode_jpeg_file(img, path.string()).ok());
 }

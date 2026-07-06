@@ -5,7 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "core/color/color.h"
 #include "core/db/database.h"
+#include "core/decode/decode.h"
 #include "core/project/project.h"
 #include "core/result.h"
 
@@ -107,5 +109,34 @@ struct RecipeDescription {
   std::optional<std::string> version_name;
 };
 std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId recipe_id);
+
+// increment 4:把一个 recipe_id 解析成"要用哪个预设的 LUT + 最终生效的
+// 调整参数"。指向预设本身时 lut/size 来自这一行自己，params 全零(预设
+// 自己就是中性状态)；指向 version 时 lut/size 来自 parent 预设，params
+// 来自这一行。lut_data 是拷贝，不是指向 DB 查询结果的指针——那样的指针
+// 在 sqlite3_stmt 析构之后就悬空了。
+//
+// 对软删除的 version 一视同仁，只有 id 真不存在才返回空——这是跟
+// set_image_recipe 刻意不同的地方:set_image_recipe 拒绝软删除的目标是
+// 为了不让用户*新*选中一个已经删除的东西，但软删除的整个意义就是"已经
+// 引用它的图片继续正常渲染"，resolve_recipe/render 必须对已经软删除的
+// version 也能正常工作。
+struct ResolvedRecipe {
+  color::Lut3D lut;
+  VersionParams params;
+};
+std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_id);
+
+enum class RenderRecipeError {
+  RecipeNotFound,
+};
+
+// 组合 resolve_recipe + core/color 的像素运算，是 core/recipe 对外唯一
+// 需要碰 core/color 的地方。thread_count=1 用于预览(同步)，导出烘焙传
+// hardware_concurrency()。
+Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
+                                                        const decode::DecodedImage& src,
+                                                        RecipeId recipe_id,
+                                                        unsigned thread_count = 1);
 
 }  // namespace pzt::core::recipe

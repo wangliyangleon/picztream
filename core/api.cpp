@@ -148,6 +148,11 @@ Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int targe
   return decode::resize_rgba(src, target_width, target_height);
 }
 
+Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::string& path,
+                                            double quality) {
+  return decode::encode_jpeg_file(img, path, quality);
+}
+
 std::vector<PresetSummary> list_presets() {
   db::Database db = db::Database::open_default();
   recipe::ensure_default_presets(db);
@@ -191,6 +196,12 @@ std::optional<RecipeId> get_image_recipe(ImageId image_id) {
 std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id) {
   db::Database db = db::Database::open_default();
   return recipe::describe_recipe(db, recipe_id);
+}
+
+Result<DecodedImage, RenderRecipeError> render(const DecodedImage& src, RecipeId recipe_id,
+                                                unsigned thread_count) {
+  db::Database db = db::Database::open_default();
+  return recipe::render(db, src, recipe_id, thread_count);
 }
 
 }  // namespace pzt::core

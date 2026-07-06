@@ -1,6 +1,7 @@
 #include <doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -351,4 +352,93 @@ TEST_CASE("describe_recipe returns structured preset/version names, not a pre-fo
   CHECK(unnamed_desc->version_name == "(未命名)");
 
   CHECK_FALSE(describe_recipe(db, 999999).has_value());
+}
+
+TEST_CASE("resolve_recipe resolves a preset itself with all-zero params") {
+  auto db = Database::open_at(temp_db_path("recipe_resolve_preset"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;
+
+  auto resolved = resolve_recipe(db, preset_id);
+  REQUIRE(resolved.has_value());
+  CHECK(resolved->lut.size == 17);
+  CHECK(resolved->params.highlights == 0);
+  CHECK(resolved->params.shadows == 0);
+  CHECK(resolved->params.wb_shift_r == 0);
+  CHECK(resolved->params.wb_shift_b == 0);
+}
+
+TEST_CASE("resolve_recipe resolves a version using the parent preset's LUT plus its own params") {
+  auto db = Database::open_at(temp_db_path("recipe_resolve_version"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;
+  auto version_id =
+      create_version(db, preset_id, std::nullopt, VersionParams{10, -5, 3, -2}).value();
+
+  auto resolved = resolve_recipe(db, version_id);
+  REQUIRE(resolved.has_value());
+  CHECK(resolved->lut.size == 17);  // 来自父预设，不是 version 自己(version 没有 base_lut)
+  CHECK(resolved->params.highlights == 10);
+  CHECK(resolved->params.shadows == -5);
+  CHECK(resolved->params.wb_shift_r == 3);
+  CHECK(resolved->params.wb_shift_b == -2);
+}
+
+TEST_CASE("resolve_recipe still resolves an already soft-deleted version") {
+  // 这是跟 set_image_recipe 刻意不同的地方：已经引用软删除 version 的图片
+  // 必须继续能正常渲染，resolve_recipe/render 不能对软删除的东西报错。
+  auto db = Database::open_at(temp_db_path("recipe_resolve_deleted"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;
+  auto version_id = create_version(db, preset_id, std::nullopt, VersionParams{5, 0, 0, 0}).value();
+  REQUIRE(delete_version(db, version_id).ok());
+
+  auto resolved = resolve_recipe(db, version_id);
+  REQUIRE(resolved.has_value());
+  CHECK(resolved->params.highlights == 5);
+}
+
+TEST_CASE("resolve_recipe returns empty for a nonexistent id") {
+  auto db = Database::open_at(temp_db_path("recipe_resolve_missing"));
+  ensure_default_presets(db);
+  CHECK_FALSE(resolve_recipe(db, 999999).has_value());
+}
+
+TEST_CASE("render applies the resolved recipe to a copy, leaving the source untouched") {
+  auto db = Database::open_at(temp_db_path("recipe_render"));
+  ensure_default_presets(db);
+  auto presets = list_presets(db);
+  auto standard_id = presets[0].id;  // 恒等 LUT
+  auto warm_id = presets[1].id;      // 非恒等的暖色偏移
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 2;
+  src.height = 1;
+  src.rgba = {10, 200, 50, 255, 0, 0, 0, 255};
+  auto src_copy = src.rgba;
+
+  auto identity_result = render(db, src, standard_id);
+  REQUIRE(identity_result.ok());
+  for (std::size_t i = 0; i < src.rgba.size(); ++i) {
+    CHECK(std::abs(static_cast<int>(identity_result.value().rgba[i]) -
+                    static_cast<int>(src_copy[i])) <= 1);
+  }
+  CHECK(src.rgba == src_copy);  // render 不修改传入的原图
+
+  auto warm_result = render(db, src, warm_id);
+  REQUIRE(warm_result.ok());
+  CHECK(warm_result.value().rgba != src_copy);  // 非恒等 LUT 确实改变了像素
+}
+
+TEST_CASE("render reports RecipeNotFound for a nonexistent id") {
+  auto db = Database::open_at(temp_db_path("recipe_render_errors"));
+  ensure_default_presets(db);
+  pzt::core::decode::DecodedImage src;
+  src.width = 1;
+  src.height = 1;
+  src.rgba = {0, 0, 0, 255};
+
+  auto result = render(db, src, 999999);
+  REQUIRE(!result.ok());
+  CHECK(result.error() == RenderRecipeError::RecipeNotFound);
 }

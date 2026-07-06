@@ -9,6 +9,7 @@ add_executable(core_tests
   export_test.cpp
   decode_test.cpp
   recipe_test.cpp
+  color_test.cpp
 )
 
 target_include_directories(core_tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/doctest)

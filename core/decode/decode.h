@@ -42,4 +42,16 @@ Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
                                                int target_height);
 
+// M1 increment 4:把像素编码回 JPEG 文件——M0 从来没有这个需求(导出只是
+// 复制/软链原始文件字节)，这次给应用了 recipe 的图片导出烘焙用。用
+// CGImageDestinationCreateWithURL + kCGImageDestinationLossyCompressionQuality，
+// 跟 core/tests/decode_test.cpp 测试夹具里已经用过的
+// CGBitmapContext -> CGImageDestination 路径一致，这次提升成生产函数。
+enum class EncodeError {
+  EncodeFailed,
+};
+
+Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::string& path,
+                                            double quality = 0.9);
+
 }  // namespace pzt::core::decode

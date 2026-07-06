@@ -6,6 +6,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <poll.h>
@@ -35,7 +36,9 @@ void print_usage() {
                "加 --no-prune 跳过清理)\n"
                "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
                "  pzt tag list <project_name>\n"
-               "  pzt recipe list\n");
+               "  pzt recipe list\n"
+               "  pzt color-debug <jpeg_path> <preset_name>[:<version_number>] <output.jpg>  "
+               "(临时调试用,increment 6/7 之后退休)\n");
 }
 
 void print_tag_usage() {
@@ -1643,6 +1646,53 @@ int cmd_recipe(const std::vector<std::string>& args) {
   return 1;
 }
 
+// 临时调试用:解码一张真实 jpeg、应用一个 recipe、编码写出,供肉眼在
+// Preview.app 里确认颜色效果——照抄 M0 里 `pzt decode`/`pzt render` 一次
+// 性调试命令的风格,不属于 `pzt recipe` 子命令体系(不操作项目/图片路
+// 径,直接吃一个文件路径),真正的渲染管线要到 increment 5(预览接入
+// `pzt open`)/increment 7(导出烘焙)才会在生产路径里用到。
+int cmd_color_debug(const std::vector<std::string>& args) {
+  if (args.size() < 3) {
+    std::fprintf(stderr,
+                 "usage: pzt color-debug <jpeg_path> <preset_name>[:<version_number>] "
+                 "<output.jpg>\n");
+    return 1;
+  }
+  const std::string& input_path = args[0];
+  const std::string& target = args[1];
+  const std::string& output_path = args[2];
+
+  auto recipe_id = resolve_recipe_target(target);
+  if (!recipe_id) {
+    std::fprintf(stderr, "pzt color-debug: 找不到 '%s'\n", target.c_str());
+    return 1;
+  }
+
+  auto t0 = std::chrono::steady_clock::now();
+  auto decoded = pzt::core::decode_jpeg_file(input_path);
+  if (!decoded.ok()) {
+    std::fprintf(stderr, "pzt color-debug: 解码失败 '%s'\n", input_path.c_str());
+    return 1;
+  }
+  auto rendered =
+      pzt::core::render(decoded.value(), *recipe_id, std::thread::hardware_concurrency());
+  if (!rendered.ok()) {
+    std::fprintf(stderr, "pzt color-debug: 渲染失败,找不到 recipe\n");
+    return 1;
+  }
+  auto encoded = pzt::core::encode_jpeg_file(rendered.value(), output_path);
+  auto t1 = std::chrono::steady_clock::now();
+  if (!encoded.ok()) {
+    std::fprintf(stderr, "pzt color-debug: 编码失败 '%s'\n", output_path.c_str());
+    return 1;
+  }
+
+  double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  std::printf("已写出 '%s'(%dx%d),解码+渲染+编码整条链路耗时 %.1fms\n", output_path.c_str(),
+              rendered.value().width, rendered.value().height, ms);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1663,6 +1713,7 @@ int main(int argc, char** argv) {
   if (subcommand == "export") return cmd_export(args);
   if (subcommand == "tag") return cmd_tag(args);
   if (subcommand == "recipe") return cmd_recipe(args);
+  if (subcommand == "color-debug") return cmd_color_debug(args);
 
   std::fprintf(stderr, "pzt: 未知子命令 '%s'\n", subcommand.c_str());
   print_usage();

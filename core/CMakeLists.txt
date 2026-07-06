@@ -15,6 +15,7 @@ add_library(core STATIC
   export/export.cpp
   decode/decode.cpp
   recipe/recipe.cpp
+  color/color.cpp
 )
 
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR})
