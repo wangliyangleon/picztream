@@ -3,11 +3,14 @@
 #include <vector>
 
 #include "cli/commands/commands.h"
+#include "cli/i18n/i18n.h"
 
 // `pzt` 入口:只做子命令名分发,具体逻辑在 cli/commands(小命令 +
 // browse 浏览主循环)、cli/menu(交互菜单)、cli/ui、cli/text 等模块里。
 int main(int argc, char** argv) {
   using namespace pzt::cli::commands;
+
+  pzt::cli::i18n::init_lang();
 
   if (argc < 2) {
     print_usage();
@@ -27,7 +30,7 @@ int main(int argc, char** argv) {
   if (subcommand == "tag") return cmd_tag(args);
   if (subcommand == "recipe") return cmd_recipe(args);
 
-  std::fprintf(stderr, "pzt: 未知子命令 '%s'\n", subcommand.c_str());
+  std::fprintf(stderr, "%s", pzt::cli::i18n::err_unknown_subcommand(subcommand).c_str());
   print_usage();
   return 1;
 }

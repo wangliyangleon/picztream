@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "cli/text/text.h"
+#include "cli/i18n/i18n.h"
 #include "core/api.h"
 
 // cmd_export 里用到 expand_home_path(cli/text),用 using-directive 让搬过
@@ -21,37 +22,15 @@ using namespace pzt::cli::text;
 namespace pzt::cli::commands {
 
 void print_usage() {
-  std::fprintf(stderr,
-               "usage:\n"
-               "  pzt new <project_name> [folder_path]\n"
-               "  pzt list\n"
-               "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
-               "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,g 筛选,"
-               "r 应用/清除/新建/删除风格,r v 临时预览原图,"
-               "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
-               "不显示也不产生这些日志)\n"
-               "  pzt archive <project_name>\n"
-               "  pzt delete <project_name>\n"
-               "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
-               "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
-               "加 --no-prune 跳过清理)\n"
-               "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
-               "  pzt tag list <project_name>\n"
-               "  pzt recipe list\n");
+  std::fprintf(stderr, "%s", pzt::cli::i18n::usage_main().c_str());
 }
 
 void print_tag_usage() {
-  std::fprintf(stderr,
-               "usage:\n"
-               "  pzt tag list <project_name>\n");
+  std::fprintf(stderr, "%s", pzt::cli::i18n::usage_tag().c_str());
 }
 
 void print_recipe_usage() {
-  std::fprintf(stderr,
-               "usage:\n"
-               "  pzt recipe list\n"
-               "  pzt recipe rename <preset>:<version_number> <new_name>\n"
-               "  pzt recipe delete <preset>:<version_number>\n");
+  std::fprintf(stderr, "%s", pzt::cli::i18n::usage_recipe().c_str());
 }
 
 // 找不到项目时打印统一格式的错误提示。返回 nullopt 表示调用方应该直接
@@ -60,15 +39,14 @@ std::optional<pzt::core::ProjectId> resolve_project(const std::string& cmd,
                                                      const std::string& project_name) {
   auto id = pzt::core::find_project_by_name(project_name);
   if (!id) {
-    std::fprintf(stderr, "%s: 找不到项目 '%s',用 pzt list 查看可用项目\n", cmd.c_str(),
-                 project_name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found(cmd, project_name).c_str());
   }
   return id;
 }
 
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::fprintf(stderr, "pzt new: missing <project_name>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_missing_name().c_str());
     print_usage();
     return 1;
   }
@@ -80,11 +58,10 @@ int cmd_new(const std::vector<std::string>& args) {
   if (!result.ok()) {
     switch (result.error()) {
       case pzt::core::CreateProjectError::NameAlreadyExists:
-        std::fprintf(stderr, "pzt new: 项目名 '%s' 已存在\n", name.c_str());
+        std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_name_exists(name).c_str());
         break;
       case pzt::core::CreateProjectError::NoImagesFound:
-        std::fprintf(stderr, "pzt new: '%s' 目录下没有找到任何 JPEG 文件\n",
-                     folder_path.c_str());
+        std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_no_images(folder_path).c_str());
         break;
     }
     return 1;
@@ -100,12 +77,11 @@ int cmd_new(const std::vector<std::string>& args) {
   // CLI invocation, not a hot path.
   for (const auto& p : pzt::core::list_projects()) {
     if (p.id == result.value()) {
-      std::printf("已创建项目 '%s'(%s),共 %lld 张 JPEG\n", p.name.c_str(),
-                  p.root_path.c_str(), static_cast<long long>(p.image_count));
+      std::printf("%s", pzt::cli::i18n::msg_project_created(p.name, p.root_path, p.image_count).c_str());
       return 0;
     }
   }
-  std::printf("已创建项目 '%s'\n", name.c_str());
+  std::printf("%s", pzt::cli::i18n::msg_project_created_simple(name).c_str());
   return 0;
 }
 
@@ -113,13 +89,11 @@ int cmd_list(const std::vector<std::string>& args) {
   (void)args;
   auto projects = pzt::core::list_projects();
   if (projects.empty()) {
-    std::printf("(还没有任何项目,用 pzt new 创建一个)\n");
+    std::printf("%s", pzt::cli::i18n::msg_project_list_empty().c_str());
     return 0;
   }
   for (const auto& p : projects) {
-    std::printf("%-20s %8lld 张  %s%s\n", p.name.c_str(),
-                static_cast<long long>(p.image_count), p.root_path.c_str(),
-                p.archived ? "  [已归档]" : "");
+    std::printf("%s", pzt::cli::i18n::msg_project_item(p.name, p.image_count, p.root_path, p.archived).c_str());
   }
   return 0;
 }
@@ -127,59 +101,57 @@ int cmd_list(const std::vector<std::string>& args) {
 
 int cmd_archive(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::fprintf(stderr, "pzt archive: missing <project_name>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_archive_missing_name().c_str());
     print_usage();
     return 1;
   }
   const std::string& name = args[0];
   auto id = pzt::core::find_project_by_name(name);
   if (!id) {
-    std::fprintf(stderr, "pzt archive: 找不到项目 '%s',用 pzt list 查看可用项目\n", name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found("pzt archive", name).c_str());
     return 1;
   }
   if (!pzt::core::archive_project(*id).ok()) {
-    std::fprintf(stderr, "pzt archive: 找不到项目 '%s'\n", name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_archive_failed(name).c_str());
     return 1;
   }
-  std::printf("已归档项目 '%s'\n", name.c_str());
+  std::printf("%s", pzt::cli::i18n::msg_project_archived(name).c_str());
   return 0;
 }
 
 int cmd_delete(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::fprintf(stderr, "pzt delete: missing <project_name>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_delete_missing_name().c_str());
     print_usage();
     return 1;
   }
   const std::string& name = args[0];
   auto id = pzt::core::find_project_by_name(name);
   if (!id) {
-    std::fprintf(stderr, "pzt delete: 找不到项目 '%s',用 pzt list 查看可用项目\n", name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found("pzt delete", name).c_str());
     return 1;
   }
 
-  std::printf(
-      "即将删除项目 '%s' 的全部标签与浏览状态,不影响磁盘上的照片文件,此操作不可撤销。\n",
-      name.c_str());
-  std::printf("请再次输入项目名确认删除: ");
+  std::printf("%s", pzt::cli::i18n::msg_delete_warn_prompt(name).c_str());
+  std::printf("%s", pzt::cli::i18n::msg_delete_confirm_input().c_str());
   std::fflush(stdout);
   std::string confirmation;
   if (!std::getline(std::cin, confirmation) || confirmation != name) {
-    std::printf("已取消,项目未被删除\n");
+    std::printf("%s", pzt::cli::i18n::msg_delete_cancelled().c_str());
     return 1;
   }
 
   if (!pzt::core::delete_project(*id).ok()) {
-    std::fprintf(stderr, "pzt delete: 找不到项目 '%s'\n", name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_delete_failed(name).c_str());
     return 1;
   }
-  std::printf("已删除项目 '%s' 的元数据\n", name.c_str());
+  std::printf("%s", pzt::cli::i18n::msg_project_deleted(name).c_str());
   return 0;
 }
 
 int tag_list(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::fprintf(stderr, "pzt tag list: 缺少 <project_name>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_tag_list_missing_name().c_str());
     print_tag_usage();
     return 1;
   }
@@ -188,21 +160,20 @@ int tag_list(const std::vector<std::string>& args) {
 
   auto tags = pzt::core::list_tags(*project_id);
   if (tags.empty()) {
-    std::printf("(还没有任何标签,用 pzt tag create 创建一个)\n");
+    std::printf("%s", pzt::cli::i18n::msg_tag_list_empty().c_str());
     return 0;
   }
   for (const auto& t : tags) {
-    std::printf("%-16s %6lld 张%s%s%s\n", t.name.c_str(),
-                static_cast<long long>(t.tagged_count),
-                t.cap ? ("  cap=" + std::to_string(*t.cap)).c_str() : "",
-                t.is_ordered ? "  ordered" : "", t.is_system ? "  system" : "");
+    std::printf("%s", pzt::cli::i18n::msg_tag_item(pzt::cli::i18n::tag_display_name(t), t.tagged_count,
+                                                    t.cap, t.is_ordered, t.is_system)
+                          .c_str());
   }
   return 0;
 }
 
 int cmd_rescan(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::fprintf(stderr, "pzt rescan: missing <project_name>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_rescan_missing_name().c_str());
     print_usage();
     return 1;
   }
@@ -212,7 +183,7 @@ int cmd_rescan(const std::vector<std::string>& args) {
     if (args[i] == "--no-prune") {
       prune = false;
     } else {
-      std::fprintf(stderr, "pzt rescan: 未知参数 '%s'\n", args[i].c_str());
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_rescan_unknown_arg(args[i]).c_str());
       print_usage();
       return 1;
     }
@@ -223,20 +194,19 @@ int cmd_rescan(const std::vector<std::string>& args) {
 
   auto result = pzt::core::rescan_project(*project_id, prune);
   if (!result.ok()) {
-    std::fprintf(stderr, "pzt rescan: 找不到项目 '%s'\n", name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_rescan_failed(name).c_str());
     return 1;
   }
-  std::printf("新增 %lld 张,清除 %lld 张磁盘上已消失的记录,项目现在共 %lld 张\n",
-              static_cast<long long>(result.value().added_count),
-              static_cast<long long>(result.value().removed_count),
-              static_cast<long long>(result.value().total_count));
+  std::printf("%s", pzt::cli::i18n::msg_rescan_result(
+      static_cast<long long>(result.value().added_count),
+      static_cast<long long>(result.value().removed_count),
+      static_cast<long long>(result.value().total_count)).c_str());
   return 0;
 }
 
 int cmd_export(const std::vector<std::string>& args) {
   if (args.size() < 3) {
-    std::fprintf(stderr,
-                 "pzt export: 缺少 <project_name> <tag_name> <output_folder>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_missing_args().c_str());
     print_usage();
     return 1;
   }
@@ -244,7 +214,7 @@ int cmd_export(const std::vector<std::string>& args) {
   if (!project_id) return 1;
   auto tag_id = pzt::core::find_tag_by_name(*project_id, args[1]);
   if (!tag_id) {
-    std::fprintf(stderr, "pzt export: 找不到标签 '%s'\n", args[1].c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_tag_not_found(args[1]).c_str());
     return 1;
   }
   std::string output_folder = expand_home_path(args[2]);
@@ -257,27 +227,25 @@ int cmd_export(const std::vector<std::string>& args) {
   auto result = pzt::core::export_tag(*tag_id, output_folder, link_mode);
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
-      std::fprintf(stderr, "pzt export: 导出目标 '%s' 无法写入(权限不足或路径被占用)\n",
-                   output_folder.c_str());
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());
     } else {
-      std::fprintf(stderr, "pzt export: 找不到标签 '%s'\n", args[1].c_str());
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_tag_not_found(args[1]).c_str());
     }
     return 1;
   }
 
   const auto& r = result.value();
   if (r.exported_count == 0 && r.skipped.empty()) {
-    std::printf("标签 '%s' 下没有图片,未导出\n", args[1].c_str());
+    std::printf("%s", pzt::cli::i18n::msg_export_no_images(args[1]).c_str());
     return 0;
   }
-  std::printf("已导出 %d 张到 '%s'", r.exported_count, output_folder.c_str());
-  if (r.created_output_folder) std::printf("(目录不存在,已新建)");
+  std::printf("%s", pzt::cli::i18n::msg_export_success(r.exported_count, output_folder, r.created_output_folder).c_str());
   if (r.skipped.empty()) {
     std::printf("\n");
   } else {
-    std::printf(",跳过 %zu 张:\n", r.skipped.size());
+    std::printf("%s", pzt::cli::i18n::msg_export_skipped(r.skipped.size()).c_str());
     for (const auto& s : r.skipped) {
-      std::printf("  - %s: %s\n", s.file_name.c_str(), s.reason.c_str());
+      std::printf("%s", pzt::cli::i18n::msg_export_skipped_item(s.file_name, s.reason).c_str());
     }
   }
   return 0;
@@ -293,7 +261,7 @@ int cmd_tag(const std::vector<std::string>& args) {
 
   if (verb == "list") return tag_list(rest);
 
-  std::fprintf(stderr, "pzt tag: 未知子命令 '%s'\n", verb.c_str());
+  std::fprintf(stderr, "%s", pzt::cli::i18n::err_tag_unknown_subcommand(verb).c_str());
   print_tag_usage();
   return 1;
 }
@@ -348,27 +316,26 @@ std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& pre
 // 单独标"[已删除]",直接复用 M0 pzt list 展示归档项目的既有模式。
 int recipe_list(const std::vector<std::string>& args) {
   if (!args.empty()) {
-    std::fprintf(stderr, "pzt recipe list: 不接受参数\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_list_no_args().c_str());
     print_recipe_usage();
     return 1;
   }
   auto presets = pzt::core::list_presets();
   if (presets.empty()) {
-    std::printf("(没有任何预设)\n");
+    std::printf("%s", pzt::cli::i18n::msg_recipe_list_empty().c_str());
     return 0;
   }
   int i = 1;
   for (const auto& p : presets) {
-    std::printf("%-3d %s\n", i++, p.name.c_str());
+    std::printf("%s", pzt::cli::i18n::msg_recipe_preset_item(i++, p.name).c_str());
     auto versions = pzt::core::list_versions(p.id);
     int v = 1;
     for (const auto& ver : versions) {
-      std::string name = ver.name.value_or("(未命名)");
+      std::string name = ver.name.value_or(pzt::cli::i18n::msg_recipe_version_unnamed_label());
       if (ver.deleted) {
-        std::printf("      -   %-14s [已删除]\n", name.c_str());
+        std::printf("      -   %-14s %s\n", name.c_str(), pzt::cli::i18n::msg_recipe_version_deleted_label().c_str());
       } else {
-        std::printf("      %-3d %-14s highlights=%.1f shadows=%.1f wb_r=%.1f wb_b=%.1f\n", v++,
-                     name.c_str(), ver.highlights, ver.shadows, ver.wb_shift_r, ver.wb_shift_b);
+        std::printf("%s", pzt::cli::i18n::msg_recipe_version_item(v++, name, ver.highlights, ver.shadows, ver.wb_shift_r, ver.wb_shift_b).c_str());
       }
     }
   }
@@ -377,51 +344,49 @@ int recipe_list(const std::vector<std::string>& args) {
 
 int recipe_rename(const std::vector<std::string>& args) {
   if (args.size() < 2) {
-    std::fprintf(stderr, "pzt recipe rename: 缺少 <preset>:<version_number> <new_name>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_rename_missing_args().c_str());
     print_recipe_usage();
     return 1;
   }
   auto address = parse_recipe_address(args[0]);
   if (!address) {
-    std::fprintf(stderr, "pzt recipe rename: 无法解析 '%s',格式应为 <preset>:<version_number>\n",
-                 args[0].c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_rename_invalid_address(args[0]).c_str());
     return 1;
   }
   auto id = resolve_recipe_address(address->first, address->second);
   if (!id) {
-    std::fprintf(stderr, "pzt recipe rename: 找不到 '%s'\n", args[0].c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_rename_not_found(args[0]).c_str());
     return 1;
   }
   if (!pzt::core::rename_version(*id, args[1]).ok()) {
-    std::fprintf(stderr, "pzt recipe rename: 操作失败\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_rename_failed().c_str());
     return 1;
   }
-  std::printf("已重命名为 '%s'\n", args[1].c_str());
+  std::printf("%s", pzt::cli::i18n::msg_recipe_renamed(args[1]).c_str());
   return 0;
 }
 
 int recipe_delete(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::fprintf(stderr, "pzt recipe delete: 缺少 <preset>:<version_number>\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_delete_missing_args().c_str());
     print_recipe_usage();
     return 1;
   }
   auto address = parse_recipe_address(args[0]);
   if (!address) {
-    std::fprintf(stderr, "pzt recipe delete: 无法解析 '%s',格式应为 <preset>:<version_number>\n",
-                 args[0].c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_delete_invalid_address(args[0]).c_str());
     return 1;
   }
   auto id = resolve_recipe_address(address->first, address->second);
   if (!id) {
-    std::fprintf(stderr, "pzt recipe delete: 找不到 '%s'\n", args[0].c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_delete_not_found(args[0]).c_str());
     return 1;
   }
   if (!pzt::core::delete_version(*id).ok()) {
-    std::fprintf(stderr, "pzt recipe delete: 操作失败\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_delete_failed().c_str());
     return 1;
   }
-  std::printf("已删除 '%s'(软删除,已经应用它的图片渲染不受影响)\n", args[0].c_str());
+  std::printf("%s", pzt::cli::i18n::msg_recipe_deleted(args[0]).c_str());
   return 0;
 }
 
@@ -437,7 +402,7 @@ int cmd_recipe(const std::vector<std::string>& args) {
   if (verb == "rename") return recipe_rename(rest);
   if (verb == "delete") return recipe_delete(rest);
 
-  std::fprintf(stderr, "pzt recipe: 未知子命令 '%s'\n", verb.c_str());
+  std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_unknown_subcommand(verb).c_str());
   print_recipe_usage();
   return 1;
 }

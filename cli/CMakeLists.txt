@@ -17,14 +17,20 @@ add_library(cli_kitty STATIC
 target_include_directories(cli_kitty PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(cli_kitty PUBLIC core)
 
+add_library(cli_i18n STATIC
+  i18n/i18n.cpp
+)
+target_include_directories(cli_i18n PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(cli_i18n PUBLIC core cli_text)
+
 add_library(cli_menu STATIC
   menu/tag_menu.cpp
   menu/filter_menu.cpp
   menu/recipe_menu.cpp
 )
 target_include_directories(cli_menu PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(cli_menu PUBLIC core cli_ui cli_text)
-# cli_menu 是 space/g/r 交互菜单,依赖 core + cli_ui + cli_text。
+target_link_libraries(cli_menu PUBLIC core cli_ui cli_text cli_i18n)
+# cli_menu 是 space/g/r 交互菜单,依赖 core + cli_ui + cli_text + cli_i18n。
 
 add_executable(pzt
   main.cpp
@@ -32,6 +38,7 @@ add_executable(pzt
   commands/browse.cpp
 )
 
-target_link_libraries(pzt PRIVATE core cli_kitty cli_menu cli_ui cli_text)
+target_link_libraries(pzt PRIVATE core cli_kitty cli_menu cli_ui cli_text cli_i18n)
 
 add_subdirectory(tests)
+

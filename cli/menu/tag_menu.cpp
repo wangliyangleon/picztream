@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cli/ui/ui.h"
+#include "cli/i18n/i18n.h"
 
 // prompt_and_read_key / read_text_line 来自 cli/ui,用 using-directive 让
 // 搬过来的函数体保持逐字不变(.cpp 里用 using,头文件里绝不用)。
@@ -19,23 +20,23 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
                                         const pzt::core::CapExceededInfo& cap_info, int banner_row,
                                         int start_col, int content_cols) {
   if (cap_info.existing_entries.empty()) {
-    return " 标签上限为 0,无法添加 ";  // cap=0 的极端配置,没有可替换的条目
+    return pzt::cli::i18n::tag_menu_cap_zero();
   }
   std::size_t shown = std::min<std::size_t>(cap_info.existing_entries.size(), 9);
 
-  std::string line = " 已满(" + std::to_string(cap_info.cap) + "):";
+  std::string line = pzt::cli::i18n::tag_menu_full(static_cast<int>(cap_info.cap));
   for (std::size_t i = 0; i < shown; ++i) {
     if (i > 0) line += "  ";
     line += std::to_string(i + 1) + ":" + cap_info.existing_entries[i].file_name;
   }
-  line += "  Esc 取消";
+  line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c < '1' || c > static_cast<char>('0' + shown)) return "";  // 取消,静默
 
   const auto& old_entry = cap_info.existing_entries[static_cast<std::size_t>(c - '1')];
   auto result = pzt::core::replace_tag_entry(tag_id, old_entry.image_id, new_image_id);
-  if (!result.ok()) return " 替换失败,请重试 ";  // 防御性,理论上不应该发生
-  return " 已替换 '" + old_entry.file_name + "' ";
+  if (!result.ok()) return pzt::cli::i18n::tag_menu_replace_failed();
+  return pzt::cli::i18n::tag_menu_replaced(old_entry.file_name);
 }
 
 // increment 6.4.4.5:space - 摘除标签。复用跟"加标签"完全相同的列表/编
@@ -48,11 +49,11 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
 std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& tags,
                                        pzt::core::TagId reject_tag_id, pzt::core::ImageId image_id,
                                        int banner_row, int start_col, int content_cols) {
-  std::string line = " 摘除:0:废片";
+  std::string line = pzt::cli::i18n::tag_menu_remove_prefix();
   for (std::size_t i = 0; i < tags.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
   }
-  line += "  Esc 取消";
+  line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   pzt::core::TagId tag_id;
   if (c == '0') {
@@ -73,15 +74,15 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // 题分别用文本输入/单字节是否处理。
 std::string handle_create_tag_flow(pzt::core::ProjectId project_id, int banner_row, int start_col,
                                     int content_cols) {
-  auto name = read_text_line(" 新标签名称: ", banner_row, start_col, content_cols);
+  auto name = read_text_line(pzt::cli::i18n::tag_menu_new_name_prompt(), banner_row, start_col, content_cols);
   if (!name) return "";  // Esc,静默取消
   if (name->empty()) {
     // 空回车不是 Esc——用户确实按了键,不能像 Esc 一样什么反馈都没有。
-    return " 标签名不能为空,已取消 ";
+    return pzt::cli::i18n::tag_menu_new_name_empty();
   }
 
   auto cap_text =
-      read_text_line(" 上限数量(直接 Enter = 不限): ", banner_row, start_col, content_cols);
+      read_text_line(pzt::cli::i18n::tag_menu_cap_prompt(), banner_row, start_col, content_cols);
   if (!cap_text) return "";  // Esc 中止整个流程,即便名字已经输完了
   std::optional<std::int64_t> cap;
   if (!cap_text->empty()) {
@@ -99,15 +100,15 @@ std::string handle_create_tag_flow(pzt::core::ProjectId project_id, int banner_r
     }
   }
 
-  char c = prompt_and_read_key(" 是否需要按顺序排列(用于朋友圈九宫格等,直接 Enter = 否): "
-                                "y 是 / 其它键 = 否 ",
+  char c = prompt_and_read_key(pzt::cli::i18n::tag_menu_order_prompt() +
+                                pzt::cli::i18n::tag_menu_ordered_keys_help(),
                                 banner_row, start_col, content_cols);
   if (c == 0x1B) return "";  // Esc 在这一步依然中止整个流程
   bool is_ordered = (c == 'y' || c == 'Y');  // 其它任何键(包括裸回车)都算"否"
 
   auto result = pzt::core::create_tag(project_id, *name, cap, is_ordered);
-  if (!result.ok()) return " 标签名 '" + *name + "' 已存在,未创建 ";
-  return " 已创建标签 '" + *name + "' ";
+  if (!result.ok()) return pzt::cli::i18n::tag_menu_name_exists(*name);
+  return pzt::cli::i18n::tag_menu_created(*name);
 }
 
 // increment 6.4.4.5:space d 删除标签定义本身(项目级、级联清除所有图片
@@ -124,29 +125,27 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
     if (!t.is_system) deletable.push_back(t);
   }
   if (deletable.empty()) {
-    return " 没有可删除的标签 ";  // 不阻塞读键,跟"项目没有标签"同样的理由
+    return pzt::cli::i18n::tag_menu_no_deletable();
   }
 
-  std::string line = " 删除:";
+  std::string line = pzt::cli::i18n::tag_menu_delete_prefix();
   for (std::size_t i = 0; i < deletable.size(); ++i) {
     if (i > 0) line += "  ";
-    line += std::to_string(i + 1) + ":" + deletable[i].name + "(" +
-            std::to_string(deletable[i].tagged_count) + "张)";
+    line += pzt::cli::i18n::tag_menu_delete_item(static_cast<int>(i + 1), deletable[i].name,
+                                                  deletable[i].tagged_count);
   }
-  line += "  Esc 取消";
+  line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c < '1' || c > static_cast<char>('0' + deletable.size())) return "";  // 取消,静默
   const auto& chosen = deletable[static_cast<std::size_t>(c - '1')];
 
-  std::string confirm = " 确定删除标签 '" + chosen.name + "'(" +
-                         std::to_string(chosen.tagged_count) + " 张关联)?此操作不可撤销。"
-                         "y 确认 / 其它键取消 ";
+  std::string confirm = pzt::cli::i18n::tag_menu_delete_confirm(chosen.name, chosen.tagged_count);
   char yn = prompt_and_read_key(confirm, banner_row, start_col, content_cols);
   if (yn != 'y' && yn != 'Y') return "";  // 取消,静默
 
   auto result = pzt::core::delete_tag(chosen.id);
-  if (!result.ok()) return " 删除失败,请重试 ";  // 防御性,理论上不应该发生
-  return " 已删除标签 '" + chosen.name + "' ";
+  if (!result.ok()) return pzt::cli::i18n::tag_menu_delete_failed();
+  return pzt::cli::i18n::tag_menu_deleted(chosen.name);
 }
 
 }  // namespace
@@ -182,7 +181,7 @@ std::string handle_add_tag_result(pzt::core::TagId tag_id, pzt::core::ImageId im
   }
   // TagNotFound/ImageNotFound/ProjectMismatch:tag_id/image_id 都来自刚查
   // 出来的数据,理论上不会发生,防御性处理而不是假设不可能。
-  return " 打标签失败,请重试 ";
+  return pzt::cli::i18n::tag_menu_add_failed();
 }
 
 // space 键的入口:在 banner 那一行显示可选标签、读一个键选标签或取消,
@@ -195,14 +194,7 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
                               int content_cols) {
   auto tags = tags_for_menu(project_id);  // 只查一次,加/摘/删三个分支共用
 
-  std::string line = " 0:废片";
-  for (std::size_t i = 0; i < tags.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
-    if (tags[i].cap) {
-      line += "(" + std::to_string(tags[i].tagged_count) + "/" + std::to_string(*tags[i].cap) + ")";
-    }
-  }
-  line += "  c:新建  d:删除  -:摘除  Esc 取消";
+  std::string line = pzt::cli::i18n::tag_menu_main_prompt(tags);
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 'c') return handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
   if (c == '-') {

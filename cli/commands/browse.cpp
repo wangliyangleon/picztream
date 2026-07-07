@@ -19,6 +19,7 @@
 #include "cli/term/screen.h"
 #include "cli/text/text.h"
 #include "cli/ui/ui.h"
+#include "cli/i18n/i18n.h"
 #include "core/api.h"
 
 // 搬过来的 cmd_open 函数体调用了 cli/text、cli/ui、cli/menu 里的一大堆函
@@ -64,7 +65,7 @@ int cmd_open(const std::vector<std::string>& args) {
           ? pzt::core::find_project_by_root_path(std::filesystem::current_path().string())
           : pzt::core::find_project_by_name(positional[0]);
   if (!id) {
-    std::fprintf(stderr, "pzt open: 找不到项目,用 pzt list 查看可用项目及其路径\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_project_not_found().c_str());
     return 1;
   }
 
@@ -72,14 +73,14 @@ int cmd_open(const std::vector<std::string>& args) {
   if (!opened.ok()) {
     // id 来自刚成功的查找,理论上不该走到这里,但还是按"不假设它不会发生"
     // 的原则处理,而不是直接解引用。
-    std::fprintf(stderr, "pzt open: 找不到项目,用 pzt list 查看可用项目及其路径\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_project_not_found().c_str());
     return 1;
   }
   const auto& project = opened.value();
 
   auto images = pzt::core::list_images(*id);
   if (images.empty()) {
-    std::fprintf(stderr, "pzt open: 项目 '%s' 里没有图片\n", project.name.c_str());
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_project_no_images(project.name).c_str());
     return 1;
   }
 
@@ -90,10 +91,7 @@ int cmd_open(const std::vector<std::string>& args) {
 
   auto mode = pzt::cli::kitty::detect_terminal_mode();
   if (mode.inside_tmux && !mode.passthrough_ok) {
-    std::fprintf(stderr,
-                 "pzt open: 当前 Tmux 会话未开启 allow-passthrough,Kitty 图形协议无法穿透"
-                 "到 Ghostty。请在 tmux.conf 里加 `set -g allow-passthrough on` 后重启会话,"
-                 "或在独立 Ghostty 窗口(不经过 Tmux)里直接运行\n");
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_tmux_passthrough().c_str());
     return 1;
   }
 
@@ -101,9 +99,7 @@ int cmd_open(const std::vector<std::string>& args) {
   std::size_t frame = 0;
   const int kImageId = 1;
   const int kBannerRows = 1;
-  const char* kBannerText =
-      " h/l 上一张/下一张   j/k 下一张/上一张未打标签   space 打标签   x 标记废片"
-      "   g 筛选   r 风格   q 退出 ";
+  std::string banner_text = pzt::cli::i18n::banner_text();
   // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
   // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
   // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
@@ -266,7 +262,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // 的行号计算,切换筛选状态时不会有内容跳动。
         std::string index_line =
             "[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]";
-        if (active_filter_tag_id) index_line += "  筛选: " + active_filter_tag_name;
+        if (active_filter_tag_id) index_line += pzt::cli::i18n::info_filter_label(active_filter_tag_name);
         write_stdout(pad_to(index_line, info_cols));
 
         move_cursor(row++, info_col);
@@ -274,16 +270,16 @@ int cmd_open(const std::vector<std::string>& args) {
 
         row++;  // 空一行
         move_cursor(row++, info_col);
-        write_stdout(pad_to("标签:", info_cols));
+        write_stdout(pad_to(pzt::cli::i18n::info_tags_label(), info_cols));
         auto tags = current_ref ? pzt::core::tags_for_image(current_ref->id)
                                  : std::vector<pzt::core::TagSummary>{};
         if (tags.empty()) {
           move_cursor(row++, info_col);
-          write_stdout(pad_to("(无)", info_cols));
+          write_stdout(pad_to(pzt::cli::i18n::info_none_label(), info_cols));
         } else {
           for (const auto& t : tags) {
             move_cursor(row++, info_col);
-            write_stdout(pad_to(t.name, info_cols));
+            write_stdout(pad_to(pzt::cli::i18n::tag_display_name(t), info_cols));
           }
         }
 
@@ -291,7 +287,7 @@ int cmd_open(const std::vector<std::string>& args) {
         auto info = current_ref ? pzt::core::get_image(current_ref->id) : std::nullopt;
         if (info) {
           move_cursor(row++, info_col);
-          write_stdout(pad_to("大小: " + format_size(info->file_size), info_cols));
+          write_stdout(pad_to(pzt::cli::i18n::info_size_label(format_size(info->file_size)), info_cols));
         }
 
         // M1 increment 3:在真正的 `r` 交互(increment 6)和预览渲染
@@ -303,12 +299,12 @@ int cmd_open(const std::vector<std::string>& args) {
         // Standard: MyStanda",看不全。
         row++;  // 空一行
         move_cursor(row++, info_col);
-        write_stdout(pad_to("风格:", info_cols));
+        write_stdout(pad_to(pzt::cli::i18n::info_style_label(), info_cols));
         auto recipe_id = current_ref ? pzt::core::get_image_recipe(current_ref->id) : std::nullopt;
         auto style = recipe_id ? pzt::core::describe_recipe(*recipe_id) : std::nullopt;
         if (!style) {
           move_cursor(row++, info_col);
-          write_stdout(pad_to("  (无)", info_cols));
+          write_stdout(pad_to(pzt::cli::i18n::info_style_none_label(), info_cols));
         } else {
           // M1 increment 5:当前实际渲染的是风格化效果时标出来(`r v` 切
           // 到原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个
@@ -363,9 +359,9 @@ int cmd_open(const std::vector<std::string>& args) {
         // 而不是额外的空格。
         std::string trimmed = status_override;
         while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
-        write_stdout(pad_to(trimmed + ",按任意键继续 ", content_cols));
+        write_stdout(pad_to(pzt::cli::i18n::msg_press_any_key_to_continue(trimmed), content_cols));
       } else {
-        write_stdout(pad_to(kBannerText, content_cols));
+        write_stdout(pad_to(banner_text, content_cols));
       }
       status_override.clear();  // 只显示这一帧,不管接下来按了什么键都恢复正常提示
 
@@ -438,10 +434,10 @@ int cmd_open(const std::vector<std::string>& args) {
           auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
               STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
           if (!rendered.ok()) {
-            std::fprintf(stderr, "pzt open: 渲染失败\n");
+            std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_render_failed().c_str());
           }
         } else {
-          std::fprintf(stderr, "pzt open: 图片解码失败,跳过\n");
+          std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_decode_failed().c_str());
         }
         last_rendered_id = current_id;
         style_toggled = false;
@@ -517,7 +513,7 @@ int cmd_open(const std::vector<std::string>& args) {
           if (next) {
             current_id = *next;
           } else {
-            status_override = " 所有图片都已打过标签 ";
+            status_override = pzt::cli::i18n::msg_all_tagged();
           }
         }
       } else if (c == 'k') {
@@ -528,7 +524,7 @@ int cmd_open(const std::vector<std::string>& args) {
           if (prev) {
             current_id = *prev;
           } else {
-            status_override = " 所有图片都已打过标签 ";
+            status_override = pzt::cli::i18n::msg_all_tagged();
           }
         }
       } else if (c == ' ') {
@@ -550,7 +546,7 @@ int cmd_open(const std::vector<std::string>& args) {
               [&](const auto& t) { return t.id == reject_tag_id; });
           if (already_tagged) {
             auto result = pzt::core::remove_tag(current_ref->id, reject_tag_id);
-            status_override = result.ok() ? "" : " 摘标签失败,请重试 ";
+            status_override = result.ok() ? "" : pzt::cli::i18n::err_remove_tag_failed();
           } else {
             status_override = handle_add_tag_result(reject_tag_id, current_ref->id, banner_row,
                                                      start_col, content_cols);
@@ -579,9 +575,9 @@ int cmd_open(const std::vector<std::string>& args) {
           std::fprintf(stderr, "[pzt open] filter_by_tag tag_id=%lld %.2fms\n",
                        static_cast<long long>(decision.tag_id), filter_query_ms);
           if (!filtered.ok()) {
-            status_override = " 筛选失败,请重试 ";  // 结构上不可能,防御性处理
+            status_override = pzt::cli::i18n::err_filter_failed();  // 结构上不可能,防御性处理
           } else if (filtered.value().empty()) {
-            status_override = " 该标签下暂无图片 ";  // 拒绝切换,images/current_id 不变
+            status_override = pzt::cli::i18n::msg_filter_no_images();  // 拒绝切换,images/current_id 不变
           } else {
             // 注意顺序:先用 filtered.value() 算出 new_current,再 move,
             // 不然 move 之后 filtered.value() 已经是空壳。
@@ -641,7 +637,7 @@ int cmd_open(const std::vector<std::string>& args) {
                  latency_samples[p95_index], latency_max_ms);
   }
 
-  std::fprintf(stderr, "已退出浏览\n");
+  std::fprintf(stderr, "%s", pzt::cli::i18n::msg_browse_exited().c_str());
   return 0;
 }
 

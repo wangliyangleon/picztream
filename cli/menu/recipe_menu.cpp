@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "cli/ui/ui.h"
+#include "cli/i18n/i18n.h"
 
 // prompt_and_read_key / read_text_line 来自 cli/ui,用 using-directive 让
 // 搬过来的函数体保持逐字不变(.cpp 里用 using,头文件里绝不用)。
@@ -52,15 +53,15 @@ std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row
                                                                     int content_cols,
                                                                     std::string* out_message) {
   auto presets = presets_for_menu();
-  std::string line = " 选预设:";
+  std::string line = pzt::cli::i18n::recipe_menu_select_preset_prefix();
   for (std::size_t i = 0; i < presets.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
   }
-  line += "  Esc 取消";
+  line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 0x1B) return std::nullopt;  // Esc,静默
   if (c < '1' || c > static_cast<char>('0' + presets.size())) {
-    *out_message = " 预设不存在 ";
+    *out_message = pzt::cli::i18n::recipe_menu_preset_not_exist();
     return std::nullopt;
   }
   return presets[static_cast<std::size_t>(c - '1')];
@@ -76,18 +77,18 @@ std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
     std::string* out_message) {
   auto live = live_versions_for_menu(preset.id);
 
-  std::string line = " " + preset.name + ":  0:默认";
+  std::string line = pzt::cli::i18n::recipe_menu_version_prompt(preset.name);
   for (std::size_t i = 0; i < live.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
+    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or(pzt::cli::i18n::recipe_menu_version_default_label());
   }
-  line += "  Esc 取消";
+  line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 0x1B) return std::nullopt;  // Esc,静默
   if (c == '0') return preset.id;
   if (c >= '1' && c <= static_cast<char>('0' + live.size())) {
     return live[static_cast<std::size_t>(c - '1')].id;
   }
-  *out_message = " 预设不存在 ";
+  *out_message = pzt::cli::i18n::recipe_menu_preset_not_exist();
   return std::nullopt;
 }
 
@@ -99,17 +100,17 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
                                                   int content_cols) {
   auto live = live_versions_for_menu(preset.id);
   if (live.empty()) {
-    return " '" + preset.name + "' 下没有可删除的 version ";  // 不阻塞读键,跟标签同款理由
+    return pzt::cli::i18n::recipe_menu_no_deletable_versions(preset.name);
   }
 
-  std::string line = " 删除(" + preset.name + "):";
+  std::string line = pzt::cli::i18n::recipe_menu_delete_version_prefix(preset.name);
   for (std::size_t i = 0; i < live.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
+    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or(pzt::cli::i18n::recipe_menu_version_default_label());
   }
-  line += "  Esc 取消";
+  line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 0x1B) return "";  // Esc,静默
-  if (c < '1' || c > static_cast<char>('0' + live.size())) return " 预设不存在 ";
+  if (c < '1' || c > static_cast<char>('0' + live.size())) return pzt::cli::i18n::recipe_menu_preset_not_exist();
 
   const auto& chosen = live[static_cast<std::size_t>(c - '1')];
   // 软删除:不影响已经引用这个 version 的图片渲染，只是从这个菜单里消
@@ -118,8 +119,8 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
   // 作，这里只是把它从"可选列表"里隐藏，风险量级不一样，不需要同等重量
   // 的确认仪式。
   auto result = pzt::core::delete_version(chosen.id);
-  if (!result.ok()) return " 删除失败,请重试 ";  // 防御性,理论上不应该发生
-  return " 已删除 '" + chosen.name.value_or("(未命名)") + "' ";
+  if (!result.ok()) return pzt::cli::i18n::recipe_menu_delete_failed();
+  return pzt::cli::i18n::recipe_menu_delete_success(chosen.name.value_or(pzt::cli::i18n::recipe_menu_version_default_label()));
 }
 
 // increment 6.2:`r c` 交互式创建新 version——选一个基础预设、依次读高
@@ -140,7 +141,7 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   // 输入端约束,所以检查放在这里而不是 core 里。live_versions_for_menu
   // 本身就截断到 9,截断后的 size() 达到 9 等价于"原始数量 >= 9"。
   if (live_versions_for_menu(preset->id).size() >= 9) {
-    return " '" + preset->name + "' 下自定义配方已满(最多 9 个),先删除一些再新建 ";
+    return pzt::cli::i18n::recipe_menu_custom_full(preset->name);
   }
 
   auto parse_double_or_zero = [](const std::optional<std::string>& s) -> double {
@@ -156,18 +157,18 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   };
 
   auto highlights_text =
-      read_text_line(" 高光(直接 Enter = 0): ", banner_row, start_col, content_cols);
+      read_text_line(pzt::cli::i18n::recipe_menu_input_highlights(), banner_row, start_col, content_cols);
   if (!highlights_text) return "";  // Esc 中止整个流程
-  auto shadows_text = read_text_line(" 暗光(直接 Enter = 0): ", banner_row, start_col, content_cols);
+  auto shadows_text = read_text_line(pzt::cli::i18n::recipe_menu_input_shadows(), banner_row, start_col, content_cols);
   if (!shadows_text) return "";
   auto wb_r_text =
-      read_text_line(" 白平衡-红(直接 Enter = 0): ", banner_row, start_col, content_cols);
+      read_text_line(pzt::cli::i18n::recipe_menu_input_wb_r(), banner_row, start_col, content_cols);
   if (!wb_r_text) return "";
   auto wb_b_text =
-      read_text_line(" 白平衡-蓝(直接 Enter = 0): ", banner_row, start_col, content_cols);
+      read_text_line(pzt::cli::i18n::recipe_menu_input_wb_b(), banner_row, start_col, content_cols);
   if (!wb_b_text) return "";
   auto name_text =
-      read_text_line(" 名称(可选,直接 Enter = 不设置): ", banner_row, start_col, content_cols);
+      read_text_line(pzt::cli::i18n::recipe_menu_input_name(), banner_row, start_col, content_cols);
   if (!name_text) return "";
 
   pzt::core::VersionParams params;
@@ -178,8 +179,8 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   std::optional<std::string> name = name_text->empty() ? std::nullopt : name_text;
 
   auto result = pzt::core::create_version(preset->id, name, params);
-  if (!result.ok()) return " 创建失败,请重试 ";  // 防御性,理论上不应该发生(预设一定存在)
-  return " 已在 '" + preset->name + "' 下创建新 version ";
+  if (!result.ok()) return pzt::cli::i18n::recipe_menu_create_failed();
+  return pzt::cli::i18n::recipe_menu_create_success(preset->name);
 }
 
 }  // namespace
@@ -192,17 +193,11 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
   // 户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变(之
   // 前试过跟着状态变文案,反而更难读)。
   bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
-  std::string line = " r:清除";
-  if (has_recipe) line += "  v:切换原图/风格化";
-  line += "  c:新建  d:删除";
-  for (std::size_t i = 0; i < presets.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
-  }
-  line += "  Esc 取消";
+  std::string line = pzt::cli::i18n::recipe_menu_main_prompt(has_recipe, presets);
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 'r' || c == '0') {
     auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
-    if (!result.ok()) return {RKeyAction::Cancelled, " 清除失败,请重试 "};
+    if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_clear_failed()};
     return {RKeyAction::Cleared, ""};
   }
   if (c == 'v' && has_recipe) {
@@ -226,12 +221,12 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
                                                           content_cols, &message);
     if (!recipe_id) return {RKeyAction::Cancelled, message};
     auto result = pzt::core::set_image_recipe(image_id, *recipe_id);
-    if (!result.ok()) return {RKeyAction::Cancelled, " 应用失败,请重试 "};
+    if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_apply_failed()};
     return {RKeyAction::Applied, ""};
   }
   // 不是 Esc,也不对应任何选项(比如按了个字母、或者超出预设编号范围)——
   // 跟上面几个子菜单一致,给一句反馈而不是完全没反应。
-  return {RKeyAction::Cancelled, " 无效按键 "};
+  return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_invalid_key()};
 }
 
 }  // namespace pzt::cli::menu
