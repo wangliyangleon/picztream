@@ -240,6 +240,16 @@ char read_one_byte() {
   return n <= 0 ? 0x1B : c;
 }
 
+// 几乎所有单层菜单(space/g/r 顶层及各自的子选择)都是同一套尾巴:把拼
+// 好的提示行画到 banner 那一行,再读一个字节。抽出来去掉重复的
+// move_cursor+pad_to+write_stdout+read_one_byte 四连击。
+char prompt_and_read_key(const std::string& line, int banner_row, int start_col,
+                          int content_cols) {
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line, content_cols));
+  return read_one_byte();
+}
+
 // --debug 模式下,debug 面板的内容来自后台 prefetch 线程往 stderr 打的日
 // 志,不依附于任何按键——主循环原本完全阻塞在 read() 上,刚 open 一个项目
 // 时,当前这张图的解码日志还没写出来就已经画完这一帧,debug 面板要等用户
@@ -327,10 +337,7 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
     line += std::to_string(i + 1) + ":" + cap_info.existing_entries[i].file_name;
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c < '1' || c > static_cast<char>('0' + shown)) return "";  // 取消,静默
 
   const auto& old_entry = cap_info.existing_entries[static_cast<std::size_t>(c - '1')];
@@ -354,10 +361,7 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
     line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   pzt::core::TagId tag_id;
   if (c == '0') {
     tag_id = reject_tag_id;
@@ -403,11 +407,9 @@ std::string handle_create_tag_flow(pzt::core::ProjectId project_id, int banner_r
     }
   }
 
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(" 是否需要按顺序排列(用于朋友圈九宫格等,直接 Enter = 否): "
-                      "y 是 / 其它键 = 否 ",
-                      content_cols));
-  char c = read_one_byte();
+  char c = prompt_and_read_key(" 是否需要按顺序排列(用于朋友圈九宫格等,直接 Enter = 否): "
+                                "y 是 / 其它键 = 否 ",
+                                banner_row, start_col, content_cols);
   if (c == 0x1B) return "";  // Esc 在这一步依然中止整个流程
   bool is_ordered = (c == 'y' || c == 'Y');  // 其它任何键(包括裸回车)都算"否"
 
@@ -440,19 +442,14 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
             std::to_string(deletable[i].tagged_count) + "张)";
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c < '1' || c > static_cast<char>('0' + deletable.size())) return "";  // 取消,静默
   const auto& chosen = deletable[static_cast<std::size_t>(c - '1')];
 
   std::string confirm = " 确定删除标签 '" + chosen.name + "'(" +
                          std::to_string(chosen.tagged_count) + " 张关联)?此操作不可撤销。"
                          "y 确认 / 其它键取消 ";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(confirm, content_cols));
-  char yn = read_one_byte();
+  char yn = prompt_and_read_key(confirm, banner_row, start_col, content_cols);
   if (yn != 'y' && yn != 'Y') return "";  // 取消,静默
 
   auto result = pzt::core::delete_tag(chosen.id);
@@ -497,10 +494,7 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
     }
   }
   line += "  c:新建  d:删除  -:摘除  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 'c') return handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
   if (c == '-') {
     return handle_remove_tag_submenu(tags, reject_tag_id, image_id, banner_row, start_col,
@@ -553,10 +547,7 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
     line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   pzt::core::TagId target_id;
   std::string target_name;
   if (c == 'e' && active_filter_tag_id) {
@@ -610,10 +601,7 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
     line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 'g') return {GKeyAction::ClearFilter, {}, "", ""};
   if (c == 'e') {
     std::string status = handle_g_export_flow(reject_tag_id, tags, active_filter_tag_id,
@@ -654,6 +642,21 @@ std::vector<pzt::core::PresetSummary> presets_for_menu() {
   return presets;
 }
 
+// 应用/删除/新建三个流程都需要"这个预设下未软删除的 version"这份列表,
+// 且都要截断到 9 个(单个数字键 1-9 的寻址上限)。截断之后的 size() 天然
+// 等价于"原始未软删除数量是否 >= 9",所以只需要检查数量上限的调用方
+// (handle_r_create_flow)不需要额外单独查一次未截断的计数,直接复用这
+// 个函数就够了。
+std::vector<pzt::core::VersionSummary> live_versions_for_menu(pzt::core::RecipeId preset_id) {
+  auto all_versions = pzt::core::list_versions(preset_id);
+  std::vector<pzt::core::VersionSummary> live;
+  for (const auto& v : all_versions) {
+    if (!v.deleted) live.push_back(v);
+  }
+  if (live.size() > 9) live.resize(9);
+  return live;
+}
+
 // apply/create/delete 三个流程都要"选一个预设"，这是第三处需要这个交互
 // 的地方(前两处是 cli 调试命令时代的 find_preset_by_name，这次是真正的
 // 交互式菜单)，抽成共用函数。区分 Esc(真的想取消,静默)和"按了个不对应
@@ -669,10 +672,7 @@ std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row
     line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 0x1B) return std::nullopt;  // Esc,静默
   if (c < '1' || c > static_cast<char>('0' + presets.size())) {
     *out_message = " 预设不存在 ";
@@ -689,22 +689,14 @@ std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row
 std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
     const pzt::core::PresetSummary& preset, int banner_row, int start_col, int content_cols,
     std::string* out_message) {
-  auto all_versions = pzt::core::list_versions(preset.id);
-  std::vector<pzt::core::VersionSummary> live;
-  for (const auto& v : all_versions) {
-    if (!v.deleted) live.push_back(v);
-  }
-  if (live.size() > 9) live.resize(9);
+  auto live = live_versions_for_menu(preset.id);
 
   std::string line = " " + preset.name + ":  0:默认";
   for (std::size_t i = 0; i < live.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 0x1B) return std::nullopt;  // Esc,静默
   if (c == '0') return preset.id;
   if (c >= '1' && c <= static_cast<char>('0' + live.size())) {
@@ -720,25 +712,17 @@ std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
 std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary& preset,
                                                   int banner_row, int start_col,
                                                   int content_cols) {
-  auto all_versions = pzt::core::list_versions(preset.id);
-  std::vector<pzt::core::VersionSummary> live;
-  for (const auto& v : all_versions) {
-    if (!v.deleted) live.push_back(v);
-  }
+  auto live = live_versions_for_menu(preset.id);
   if (live.empty()) {
     return " '" + preset.name + "' 下没有可删除的 version ";  // 不阻塞读键,跟标签同款理由
   }
-  if (live.size() > 9) live.resize(9);
 
   std::string line = " 删除(" + preset.name + "):";
   for (std::size_t i = 0; i < live.size(); ++i) {
     line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or("(未命名)");
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 0x1B) return "";  // Esc,静默
   if (c < '1' || c > static_cast<char>('0' + live.size())) return " 预设不存在 ";
 
@@ -768,11 +752,9 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   // 个未删除的 version 就没有按键能选中它们——这不是 create_version 本
   // 身的业务规则(core 层不设上限,pzt recipe list/rename/delete 不受这
   // 个限制),纯粹是交互菜单"一个数字键对应一个选项"这个设计决定带来的
-  // 输入端约束,所以检查放在这里而不是 core 里。
-  auto existing_versions = pzt::core::list_versions(preset->id);
-  auto live_count = std::count_if(existing_versions.begin(), existing_versions.end(),
-                                   [](const auto& v) { return !v.deleted; });
-  if (live_count >= 9) {
+  // 输入端约束,所以检查放在这里而不是 core 里。live_versions_for_menu
+  // 本身就截断到 9,截断后的 size() 达到 9 等价于"原始数量 >= 9"。
+  if (live_versions_for_menu(preset->id).size() >= 9) {
     return " '" + preset->name + "' 下自定义配方已满(最多 9 个),先删除一些再新建 ";
   }
 
@@ -840,10 +822,7 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
     line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
   }
   line += "  Esc 取消";
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(line, content_cols));
-
-  char c = read_one_byte();
+  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   if (c == 'r' || c == '0') {
     auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
     if (!result.ok()) return {RKeyAction::Cancelled, " 清除失败,请重试 "};
@@ -1281,10 +1260,23 @@ int cmd_open(const std::vector<std::string>& args) {
         auto decoded = prefetch.get(current_id);
         if (decoded.ok()) {
           const auto& img = decoded.value();
-          auto fit = pzt::cli::kitty::fit_within(img.width, img.height, image_cols * cell_px_w,
-                                                  top_rows * cell_px_h);
+          // 让图片在面板里居中、四周留一点空隙,而不是贴着左边框/上边
+          // 框——fit_within 只保证"不超出"这个框,不保证"居中",长宽比
+          // 跟面板不完全匹配时(几乎总是这样)不作处理的话,多出来的空白
+          // 会全部堆在右边/下边,图片贴着另外两条边。先从可用区域里减掉
+          // 一份固定 padding 再传给 fit_within,保证贴得最紧的那个维度
+          // 也留有空隙;再用算出来的目标尺寸相对完整的 image_cols x
+          // top_rows 框计算居中偏移,把剩余的宽松空间平均分到两侧。
+          const int kImagePaddingCols = 2;  // 终端 cell 不是正方形,横向
+          const int kImagePaddingRows = 1;  // 留白数值上比纵向大一点,视觉才均衡
+          int avail_cols = std::max(1, image_cols - kImagePaddingCols * 2);
+          int avail_rows = std::max(1, top_rows - kImagePaddingRows * 2);
+          auto fit = pzt::cli::kitty::fit_within(img.width, img.height, avail_cols * cell_px_w,
+                                                  avail_rows * cell_px_h);
           int target_cols = std::max(1, fit.width / cell_px_w);
           int target_rows = std::max(1, fit.height / cell_px_h);
+          int offset_cols = (image_cols - target_cols) / 2;
+          int offset_rows = (top_rows - target_rows) / 2;
 
           // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)
           // 整个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的
@@ -1310,7 +1302,7 @@ int cmd_open(const std::vector<std::string>& args) {
           }
           const auto& to_render = styled ? *styled : downsampled;
 
-          move_cursor(image_top_row, start_col + 1);
+          move_cursor(image_top_row + offset_rows, start_col + 1 + offset_cols);
           std::string tmp_path = pzt::cli::kitty::make_tmp_path(
               std::to_string(getpid()) + "_" + std::to_string(frame++));
           auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
