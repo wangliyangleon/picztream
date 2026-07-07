@@ -207,7 +207,7 @@ Result<void, EncodeError> encode_jpeg_file(const decode::DecodedImage& img, cons
    - **6.4 收尾（已完成）**：退休了这个里程碑过程中新增的全部临时调试命令（`pzt recipe create-debug`/`apply-debug`/`clear-debug`、`pzt color-debug`），连带清理了只被它们使用的 `resolve_recipe_target`；保留 M1_PRD.md 定的正式命令（`pzt recipe list`/`rename`/`delete`，以及它们仍然依赖的 `find_preset_by_name`/`parse_recipe_address`/`resolve_recipe_address`），照抄 M0 increment 6.4.7 的收尾模式。`pzt open` 的 usage 提示补上了 `r` 键的说明
    - **验证方式的局限（写在这里,不是遗漏）**：`r` 键的全部交互逻辑只能在真实终端里手动验证（cbreak 模式下的按键读取没有可行的自动化测试路径，跟 M0 阶段全键盘循环的既有结论一致），这次没有新增可自动化的单元测试——已确认的是构建干净、既有 121 个单元测试全部通过（这次改动不涉及任何 core 层逻辑变化，纯 cli 接线）、退休的调试命令确实返回"未知子命令"、保留的命令确实还能正常工作
 7. **导出烘焙（已完成）**：`export_tag` 内部按"这张图有没有应用 recipe"分两条路径——应用了的走解码→`recipe::render`（`hardware_concurrency()` 多线程）→`encode_jpeg_file`，替代直接拷贝/软链；没应用的完全不变。`--link` 对烘焙路径没有意义（输出本来就是新生成的文件），统一忽略 `link_mode` 落地成真实文件，混合导出时同一批图片里没应用的那些仍然正确遵守 `--link`。解码/渲染/编码任一步失败都复用现有的 `ExportSkipped` 跳过机制，不中断其余图片。`export_tag` 签名不变，`cli/main.cpp` 的 `cmd_export` 不需要任何改动。单元测试覆盖：应用了非恒等 recipe 的图片字节跟源文件不同、没应用的字节级逐字节相同（回归防线）、`--link` 混合场景两种图片各自的正确行为。真机验证：对 `Test` 项目里已经应用了 Warm/Origin 的真实照片跑一遍 `pzt export`，`shasum` 确认无风格图片字节不变，肉眼对比确认 Warm 图片体现了暖色效果
-8. **集成与验收**：逐条核对 `docs/M1_PRD.md` 验收标准；用真实素材（而非合成测试图）试用一轮，重点看预览切换风格的主观卡顿感受
+8. **集成与验收（已完成）**：`docs/M1_PRD.md` 验收标准七条全部打勾，具体验证方式见该文档对应条目。补充验证了 PRD 没有明确写但实现时发现值得确认的一点——内置预设不能通过 `pzt recipe rename`/`delete`（不带冒号编号，含 `Origin:0` 这类边界地址）或交互式 `r d` 删除流程触及，两条路径结构上都够不到预设本身。真实终端（`RelWithDebInfo`）下反复切换两张分别应用了 Warm/Origin 的图片，`key-to-render` 稳定在 58-61ms，主观无延迟感知；Debug+ASan 构建下同样操作是 824-926ms，与已经确认过的 ASan 插桩开销膨胀比例一致，不是真实性能问题。M1 到此全部完成（increment 1-8）。
 
 ## 风险与待确认问题
 
