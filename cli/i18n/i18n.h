@@ -23,6 +23,11 @@ void init_lang();
 std::string reject_tag_label();
 std::string tag_display_name(const pzt::core::TagSummary& tag);
 
+// 所有菜单里"按键 -> 可选项"统一格式:"key:[label]"。数量/状态这类附加
+// 后缀(比如 tag 的 cap 计数、version 名字后面的"张")不属于 label 本身,
+// 由调用方自己拼在括号外面,不传进这个函数。
+std::string menu_item(const std::string& key, const std::string& label);
+
 // Main Usage / Commands Help
 std::string usage_main();
 std::string usage_tag();

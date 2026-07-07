@@ -27,7 +27,7 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
   std::string line = pzt::cli::i18n::tag_menu_full(static_cast<int>(cap_info.cap));
   for (std::size_t i = 0; i < shown; ++i) {
     if (i > 0) line += "  ";
-    line += std::to_string(i + 1) + ":" + cap_info.existing_entries[i].file_name;
+    line += pzt::cli::i18n::menu_item(std::to_string(i + 1), cap_info.existing_entries[i].file_name);
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
@@ -51,7 +51,7 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
                                        int banner_row, int start_col, int content_cols) {
   std::string line = pzt::cli::i18n::tag_menu_remove_prefix();
   for (std::size_t i = 0; i < tags.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
+    line += "  " + pzt::cli::i18n::menu_item(std::to_string(i + 1), tags[i].name);
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
@@ -65,7 +65,7 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
   }
 
   auto result = pzt::core::remove_tag(image_id, tag_id);
-  if (!result.ok()) return " 摘标签失败,请重试 ";  // 防御性,理论上不应该发生
+  if (!result.ok()) return pzt::cli::i18n::tag_menu_remove_failed();  // 防御性,理论上不应该发生
   return "";  // 静默成功,信息栏下一帧自然显示摘除后的结果
 }
 

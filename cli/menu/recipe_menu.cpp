@@ -55,7 +55,7 @@ std::optional<pzt::core::PresetSummary> handle_pick_preset_prompt(int banner_row
   auto presets = presets_for_menu();
   std::string line = pzt::cli::i18n::recipe_menu_select_preset_prefix();
   for (std::size_t i = 0; i < presets.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + presets[i].name;
+    line += "  " + pzt::cli::i18n::menu_item(std::to_string(i + 1), presets[i].name);
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
@@ -79,7 +79,9 @@ std::optional<pzt::core::RecipeId> handle_pick_version_to_apply_prompt(
 
   std::string line = pzt::cli::i18n::recipe_menu_version_prompt(preset.name);
   for (std::size_t i = 0; i < live.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or(pzt::cli::i18n::recipe_menu_version_default_label());
+    line += "  " + pzt::cli::i18n::menu_item(
+                       std::to_string(i + 1),
+                       live[i].name.value_or(pzt::cli::i18n::recipe_menu_version_default_label()));
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
@@ -105,7 +107,9 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
 
   std::string line = pzt::cli::i18n::recipe_menu_delete_version_prefix(preset.name);
   for (std::size_t i = 0; i < live.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + live[i].name.value_or(pzt::cli::i18n::recipe_menu_version_default_label());
+    line += "  " + pzt::cli::i18n::menu_item(
+                       std::to_string(i + 1),
+                       live[i].name.value_or(pzt::cli::i18n::recipe_menu_version_default_label()));
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);

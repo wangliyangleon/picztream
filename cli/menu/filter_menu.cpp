@@ -29,9 +29,9 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
                                   int start_col, int content_cols) {
   std::string line = pzt::cli::i18n::filter_menu_export_prefix();
   if (active_filter_tag_id) line += pzt::cli::i18n::filter_menu_export_current(active_filter_tag_name);
-  line += "0:" + pzt::cli::i18n::reject_tag_label();
+  line += pzt::cli::i18n::menu_item("0", pzt::cli::i18n::reject_tag_label());
   for (std::size_t i = 0; i < tags.size(); ++i) {
-    line += "  " + std::to_string(i + 1) + ":" + tags[i].name;
+    line += "  " + pzt::cli::i18n::menu_item(std::to_string(i + 1), tags[i].name);
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
