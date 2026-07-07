@@ -12,30 +12,94 @@ namespace fs = std::filesystem;
 
 }  // namespace
 
-// Increment 1 占位实现:只验证 CMake/pkg-config 接线到 LibRaw 是否真的
-// 链接成功(构造 LibRaw、调用 open_file/recycle 都是真实符号,不是桩函数),
-// 不实现 increment 2 要落地的"提取内嵌 JPEG 字节"这个真实逻辑——文件存在
-// 且能被 LibRaw 打开时统一返回 DecodeFailed,提醒调用方这条路径还没实现,
-// 不能把这个返回值当作真实的格式校验结果使用。
+// unpack_thumb() + dcraw_make_mem_thumb()：只读取内嵌预览的原始 JPEG 字节，
+// 不跑去马赛克。type 不是 LIBRAW_IMAGE_JPEG（极少数机型内嵌位图缩略图）时
+// 归为 DecodeFailed——spikes/libraw_probe 已经确认徕卡/富士两种测试机型
+// 都是 JPEG 类型，M2 不为位图分支投入实现，真机测试遇到例外再处理（见
+// docs/M2_Eng_Design.md"风险与待确认问题"）。
 Result<std::vector<std::uint8_t>, RawError> extract_embedded_jpeg_bytes(const std::string& path) {
   if (!fs::exists(path)) {
     return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::FileNotFound);
   }
+
   LibRaw proc;
-  proc.open_file(path.c_str());
-  proc.recycle();
-  return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::DecodeFailed);
+  if (proc.open_file(path.c_str()) != LIBRAW_SUCCESS) {
+    return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::DecodeFailed);
+  }
+  if (proc.unpack_thumb() != LIBRAW_SUCCESS) {
+    return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::DecodeFailed);
+  }
+
+  int err = 0;
+  libraw_processed_image_t* thumb = proc.dcraw_make_mem_thumb(&err);
+  if (!thumb) {
+    return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::DecodeFailed);
+  }
+  if (thumb->type != LIBRAW_IMAGE_JPEG) {
+    LibRaw::dcraw_clear_mem(thumb);
+    return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::DecodeFailed);
+  }
+
+  std::vector<std::uint8_t> bytes(thumb->data, thumb->data + thumb->data_size);
+  LibRaw::dcraw_clear_mem(thumb);
+  return Result<std::vector<std::uint8_t>, RawError>::Ok(std::move(bytes));
 }
 
-// 同上，increment 1 占位实现。
+// open_file -> unpack -> dcraw_process(output_bps=8, use_camera_wb=1,
+// output_color=1/sRGB) -> dcraw_make_mem_image。LibRaw 内部完成白平衡
+// （as-shot）+ 去马赛克 + 色彩矩阵 + gamma，直接吐 8-bit sRGB，这里只做一
+// 次字节布局转换：LibRaw 输出是 3 字节/像素紧凑排列(R,G,B,R,G,B,...)，
+// decode::DecodedImage 是 4 字节/像素(R,G,B,跳过的第 4 字节)，对齐
+// core/decode/decode.cpp 用的 kCGImageAlphaNoneSkipLast +
+// kCGBitmapByteOrder32Big 约定——第 4 字节不携带任何语义，下游(encode_
+// jpeg_file/resize_rgba)也用同样的标志位读取，不关心这个字节的值。
 Result<decode::DecodedImage, RawError> decode_full(const std::string& path) {
   if (!fs::exists(path)) {
     return Result<decode::DecodedImage, RawError>::Err(RawError::FileNotFound);
   }
+
   LibRaw proc;
-  proc.open_file(path.c_str());
-  proc.recycle();
-  return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
+  if (proc.open_file(path.c_str()) != LIBRAW_SUCCESS) {
+    return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
+  }
+  proc.imgdata.params.use_camera_wb = 1;
+  proc.imgdata.params.output_bps = 8;
+  proc.imgdata.params.output_color = 1;  // sRGB
+
+  if (proc.unpack() != LIBRAW_SUCCESS) {
+    return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
+  }
+  if (proc.dcraw_process() != LIBRAW_SUCCESS) {
+    return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
+  }
+
+  int err = 0;
+  libraw_processed_image_t* img = proc.dcraw_make_mem_image(&err);
+  if (!img) {
+    return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
+  }
+  if (img->colors != 3 || img->bits != 8) {
+    // dcraw_process 已经显式要求 output_bps=8，这里理论上不该发生；防御性
+    // 地拒绝而不是按错误的通道数瞎读内存。
+    LibRaw::dcraw_clear_mem(img);
+    return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
+  }
+
+  decode::DecodedImage out;
+  out.width = img->width;
+  out.height = img->height;
+  const std::size_t pixel_count =
+      static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
+  out.rgba.resize(pixel_count * 4);
+  for (std::size_t i = 0; i < pixel_count; ++i) {
+    out.rgba[i * 4 + 0] = img->data[i * 3 + 0];
+    out.rgba[i * 4 + 1] = img->data[i * 3 + 1];
+    out.rgba[i * 4 + 2] = img->data[i * 3 + 2];
+    out.rgba[i * 4 + 3] = 0;
+  }
+
+  LibRaw::dcraw_clear_mem(img);
+  return Result<decode::DecodedImage, RawError>::Ok(std::move(out));
 }
 
 }  // namespace pzt::core::raw
