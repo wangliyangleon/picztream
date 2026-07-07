@@ -218,8 +218,43 @@ TEST_CASE("export_tag skips images whose source file is missing without aborting
   CHECK(result.value().exported_count == 1);
   REQUIRE(result.value().skipped.size() == 1);
   CHECK(result.value().skipped[0].file_name == "img_000.jpg");
-  CHECK(result.value().skipped[0].reason == "源文件缺失");
+  CHECK(result.value().skipped[0].reason == SkipReason::SourceMissing);
   CHECK(fs::exists(out_dir / "img_001.jpg"));  // 另一张照常导出
+}
+
+// 应用了 recipe 的图片走烘焙路径(解码->渲染->编码),源文件存在但内容不是
+// 合法 JPEG 时会在 decode_jpeg_file 这一步失败——跟"源文件缺失"是同一种
+// "跳过这张、继续导出其它的"容错路径,只是失败的原因不同(SkipReason::
+// DecodeFailed)。RenderFailed/EncodeFailed 这两种跳过原因在 export_tag
+// 的实际管线里摸不到:images.recipe_id 的外键是 ON DELETE SET NULL(见
+// core/db/schema.cpp),没法人为构造出一个指向不存在的行的 recipe_id 来触
+// 发 RenderFailed;EncodeFailed 只在图片尺寸非正时触发,而这里的
+// DecodedImage 全部来自"解码一张真实照片"，尺寸必为正，没有可行的构造
+// 路径，所以不补这两种。
+TEST_CASE("export_tag skips a recipe-applied image whose source content fails to decode") {
+  auto db = Database::open_at(fresh_db_path("export_decode_fail"));
+  ensure_default_presets(db);  // open_at 本身不播种，这是 api.cpp 门面才做的事
+  auto photos = fresh_photo_dir("export_decode_fail");
+  touch(photos / "img_000.jpg");  // 10 字节假内容，扫描能通过但解不出来
+  auto created = create_project(db, "proj", photos.string());
+  REQUIRE(created.ok());
+  auto image_id = find_image_by_path(db, created.value(), "img_000.jpg");
+  REQUIRE(image_id.has_value());
+
+  auto warm_id = list_presets(db)[1].id;  // presets[0] 是 Origin，[1] 是 Warm
+  REQUIRE(set_image_recipe(db, *image_id, warm_id).ok());
+
+  auto tag = create_tag(db, created.value(), "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(db, *image_id, tag.value()).ok());
+
+  auto out_dir = fresh_output_dir("export_decode_fail");
+  auto result = export_tag(db, tag.value(), out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 0);
+  REQUIRE(result.value().skipped.size() == 1);
+  CHECK(result.value().skipped[0].file_name == "img_000.jpg");
+  CHECK(result.value().skipped[0].reason == SkipReason::DecodeFailed);
 }
 
 TEST_CASE("export_tag with --link creates a symlink instead of copying bytes") {

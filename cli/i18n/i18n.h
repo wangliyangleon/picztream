@@ -66,6 +66,7 @@ std::string msg_export_no_images(const std::string& tag_name);
 std::string msg_export_success(int count, const std::string& path, bool created_folder);
 std::string msg_export_skipped(size_t count);
 std::string msg_export_skipped_item(const std::string& file_name, const std::string& reason);
+std::string export_skip_reason(pzt::core::SkipReason reason);
 std::string err_tag_unknown_subcommand(const std::string& verb);
 std::string err_recipe_list_no_args();
 std::string msg_recipe_list_empty();

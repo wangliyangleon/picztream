@@ -245,7 +245,9 @@ int cmd_export(const std::vector<std::string>& args) {
   } else {
     std::printf("%s", pzt::cli::i18n::msg_export_skipped(r.skipped.size()).c_str());
     for (const auto& s : r.skipped) {
-      std::printf("%s", pzt::cli::i18n::msg_export_skipped_item(s.file_name, s.reason).c_str());
+      std::printf("%s", pzt::cli::i18n::msg_export_skipped_item(
+                             s.file_name, pzt::cli::i18n::export_skip_reason(s.reason))
+                             .c_str());
     }
   }
   return 0;

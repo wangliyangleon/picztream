@@ -18,10 +18,16 @@ using tagging::TagId;
 
 enum class LinkMode { Copy, Symlink };
 
+// 跳过原因。用结构化枚举而不是字符串——core 层不产出面向用户展示的文
+// 本，这跟项目里其它错误类型（CreateProjectError、RecipeOpError、
+// DecodeError 等）的约定一致，转成人话是 cli 的职责（见 cli/i18n 的
+// export_skip_reason）。
+enum class SkipReason { SourceMissing, DecodeFailed, RenderFailed, EncodeFailed };
+
 struct ExportSkipped {
   ImageId image_id;
   std::string file_name;
-  std::string reason;  // 目前主要是"源文件缺失"，字符串类型本身不限制未来扩展
+  SkipReason reason;
 };
 
 struct ExportResult {

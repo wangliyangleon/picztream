@@ -398,6 +398,21 @@ std::string msg_export_skipped_item(const std::string &file_name,
   return "  - " + file_name + ": " + reason + "\n";
 }
 
+std::string export_skip_reason(pzt::core::SkipReason reason) {
+  switch (reason) {
+    case pzt::core::SkipReason::SourceMissing:
+      return g_lang == Lang::zh ? "源文件缺失" : "source file missing";
+    case pzt::core::SkipReason::DecodeFailed:
+      return g_lang == Lang::zh ? "解码失败" : "decode failed";
+    case pzt::core::SkipReason::RenderFailed:
+      return g_lang == Lang::zh ? "应用风格失败" : "apply recipe failed";
+    case pzt::core::SkipReason::EncodeFailed:
+      return g_lang == Lang::zh ? "编码失败" : "encode failed";
+  }
+  return "";  // 不可达,四个枚举值都已覆盖;写这行只是为了不同编译器对"是
+              // 否证明了 switch 穷尽"的判断不完全一致,避免 -Wreturn-type
+}
+
 std::string err_tag_unknown_subcommand(const std::string &verb) {
   if (g_lang == Lang::zh) {
     return "pzt tag: 未知子命令 '" + verb + "'\n";

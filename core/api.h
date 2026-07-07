@@ -49,6 +49,7 @@ using PrefetchCache = browse::PrefetchCache;
 using FetchError = browse::FetchError;
 
 using LinkMode = exporting::LinkMode;
+using SkipReason = exporting::SkipReason;
 using ExportSkipped = exporting::ExportSkipped;
 using ExportResult = exporting::ExportResult;
 using ExportTagError = exporting::ExportTagError;

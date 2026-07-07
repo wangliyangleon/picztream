@@ -115,7 +115,7 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
       ++index;
       fs::path source = root_path / img.file_path;
       if (!fs::exists(source)) {
-        result.skipped.push_back(ExportSkipped{img.id, img.file_name, "源文件缺失"});
+        result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::SourceMissing});
         continue;
       }
 
@@ -131,18 +131,18 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
         // 有 --link 语义的一个自然限制。
         auto decoded = decode::decode_jpeg_file(source.string());
         if (!decoded.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, "解码失败"});
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::DecodeFailed});
           continue;
         }
         auto rendered = recipe::render(db, decoded.value(), *recipe_id,
                                         std::thread::hardware_concurrency());
         if (!rendered.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, "应用风格失败"});
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::RenderFailed});
           continue;
         }
         auto encoded = decode::encode_jpeg_file(rendered.value(), target.string());
         if (!encoded.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, "编码失败"});
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::EncodeFailed});
           continue;
         }
       } else {
