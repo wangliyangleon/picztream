@@ -53,6 +53,15 @@ void print_scan_progress(int done, int total) {
   if (done == total) std::printf("\n");
 }
 
+// export 遇到 kind="raw" 的图片要跑全量解码(秒级/张),同样需要进度提示，
+// 跟 print_scan_progress 是同一个 \r 覆盖写法，只是文案和触发场景不同
+// (一个在 new/rescan 生成预览缓存，一个在 export 真正导出)。
+void print_export_progress(int done, int total) {
+  std::printf("\r%s", pzt::cli::i18n::msg_export_raw_progress(done, total).c_str());
+  std::fflush(stdout);
+  if (done == total) std::printf("\n");
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_missing_name().c_str());
@@ -234,7 +243,7 @@ int cmd_export(const std::vector<std::string>& args) {
     if (args[i] == "--link") link_mode = pzt::core::LinkMode::Symlink;
   }
 
-  auto result = pzt::core::export_tag(*tag_id, output_folder, link_mode);
+  auto result = pzt::core::export_tag(*tag_id, output_folder, link_mode, print_export_progress);
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
       std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());

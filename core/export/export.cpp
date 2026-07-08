@@ -76,7 +76,8 @@ fs::path resolve_collision(const fs::path& dir, const std::string& base_name) {
 
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
-                                                 LinkMode link_mode) {
+                                                 LinkMode link_mode, ExportProgressFn on_progress,
+                                                 RawDecodeFn raw_decode_fn) {
   sqlite3* conn = db.handle();
 
   auto tag_info = get_tag_info(conn, tag_id);
@@ -99,6 +100,15 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   result.exported_count = 0;
   result.created_output_folder = false;
 
+  // M2：这批图片里有多少张 kind="raw"（不管有没有 recipe，两条 raw 分支
+  // 都要走 raw_decode_fn），作为进度回调的分母。纯 JPEG 批次 raw_total==0，
+  // on_progress 全程不会被调用。
+  int raw_total = 0;
+  for (const auto& img : images) {
+    if (img.kind == "raw") ++raw_total;
+  }
+  int raw_done = 0;
+
   // 目标文件夹无法创建/写入(权限不足、路径某一段已经是个普通文件、磁盘写
   // 满等)时,std::filesystem 的抛异常重载会往外抛 filesystem_error——不
   // 捕获的话会直接终止调用方(包括 cli 全键盘交互循环那个长时间运行的进
@@ -119,12 +129,47 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
         continue;
       }
 
-      std::string base_name =
-          tag_info->is_ordered ? ordered_name(index, width, img.file_name) : img.file_name;
+      // M2：kind="raw" 的图片导出永远落地成 JPEG，目标文件名的扩展名要
+      // 换成 .jpg，不能直接复用 .dng/.raf 原扩展名拼目标路径。
+      std::string file_name_for_target =
+          img.kind == "raw" ? fs::path(img.file_name).replace_extension(".jpg").string()
+                             : img.file_name;
+      std::string base_name = tag_info->is_ordered
+                                   ? ordered_name(index, width, file_name_for_target)
+                                   : file_name_for_target;
       fs::path target = resolve_collision(out_dir, base_name);
 
       auto recipe_id = recipe::get_image_recipe(db, img.id);
-      if (recipe_id) {
+
+      if (img.kind == "raw") {
+        // 全量解码：不管有没有 recipe 都要走这一步（M2_PRD.md 已经定了
+        // RAW 图片导出永远落地成可直接查看的 JPEG），只是有没有 recipe
+        // 决定后面要不要再调 render。
+        auto decoded = raw_decode_fn(source.string());
+        ++raw_done;
+        if (on_progress) on_progress(raw_done, raw_total);
+        if (!decoded.ok()) {
+          result.skipped.push_back(
+              ExportSkipped{img.id, img.file_name, SkipReason::RawDecodeFailed});
+          continue;
+        }
+        decode::DecodedImage final_image = std::move(decoded.value());
+        if (recipe_id) {
+          auto rendered = recipe::render(db, final_image, *recipe_id,
+                                          std::thread::hardware_concurrency());
+          if (!rendered.ok()) {
+            result.skipped.push_back(
+                ExportSkipped{img.id, img.file_name, SkipReason::RenderFailed});
+            continue;
+          }
+          final_image = std::move(rendered.value());
+        }
+        auto encoded = decode::encode_jpeg_file(final_image, target.string());
+        if (!encoded.ok()) {
+          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::EncodeFailed});
+          continue;
+        }
+      } else if (recipe_id) {
         // 全分辨率烘焙:解码原图 -> recipe::render(多线程) -> 编码写出,
         // 取代拷贝/软链。link_mode 在这里没有意义——输出本来就是新生成
         // 的文件,没有"原始字节"可以软链,统一落地成真实文件,这是对既
@@ -146,7 +191,7 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
           continue;
         }
       } else {
-        // 没有应用 recipe 的图片继续走原来的复制/软链,字节级不变。
+        // 没有应用 recipe 的 JPEG 图片继续走原来的复制/软链,字节级不变。
         if (link_mode == LinkMode::Copy) {
           fs::copy_file(source, target);
         } else {

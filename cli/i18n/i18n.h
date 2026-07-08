@@ -40,6 +40,7 @@ std::string err_new_missing_name();
 std::string err_new_name_exists(const std::string& name);
 std::string err_new_no_images(const std::string& folder_path);
 std::string msg_raw_preview_progress(int done, int total);
+std::string msg_export_raw_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
 std::string msg_project_created_simple(const std::string& name);
 std::string err_archive_missing_name();

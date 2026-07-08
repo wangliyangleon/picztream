@@ -1,10 +1,13 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "core/db/database.h"
+#include "core/decode/decode.h"
 #include "core/project/project.h"
+#include "core/raw/raw.h"
 #include "core/result.h"
 #include "core/tagging/tagging.h"
 
@@ -21,8 +24,9 @@ enum class LinkMode { Copy, Symlink };
 // 跳过原因。用结构化枚举而不是字符串——core 层不产出面向用户展示的文
 // 本，这跟项目里其它错误类型（CreateProjectError、RecipeOpError、
 // DecodeError 等）的约定一致，转成人话是 cli 的职责（见 cli/i18n 的
-// export_skip_reason）。
-enum class SkipReason { SourceMissing, DecodeFailed, RenderFailed, EncodeFailed };
+// export_skip_reason）。M2：RawDecodeFailed 单独区分开，跟"普通 JPEG 解
+// 码失败"(DecodeFailed)不是一回事，跳过原因里能直接看出是哪条路径出的问题。
+enum class SkipReason { SourceMissing, DecodeFailed, RenderFailed, EncodeFailed, RawDecodeFailed };
 
 struct ExportSkipped {
   ImageId image_id;
@@ -41,6 +45,18 @@ enum class ExportTagError {
   IoError,  // 目标文件夹无法创建/写入(权限不足、路径上某一段已经是个普通文件等)
 };
 
+// M2：导出批量处理进度——只有这批图片里确实有 kind="raw" 的才会被调用，
+// 纯 JPEG 批次不触发（呼应 core::project::ScanProgressFn 同一个设计取
+// 舍：不为不相关的场景打印"0/0"这种没有意义的输出）。跟 ScanProgressFn
+// 类型结构一样但语义上是两件事（一个是 new/rescan 的预览缓存生成进度，
+// 一个是 export 的全量解码进度），各自独立声明，不共享。
+using ExportProgressFn = std::function<void(int done, int total)>;
+
+// M2：kind="raw" 图片的全量解码函数，默认指向真实的 raw::decode_full。
+// 测试注入假函数验证路由逻辑，不需要真的链接调用 LibRaw（跟
+// browse::PrefetchCache 的 DecodeFn 是同一个注入模式）。
+using RawDecodeFn = std::function<Result<decode::DecodedImage, raw::RawError>(const std::string&)>;
+
 // 有序标签用 {零填充序号}_{原文件名}(宽度取 max(2, 本次导出总数的位数)),
 // 无序标签直接用原文件名;命名冲突时在扩展名前追加 _2、_3……直到不冲突;
 // 源文件在磁盘上缺失时跳过并记录原因，不中断其余图片的导出。
@@ -53,8 +69,14 @@ enum class ExportTagError {
 // `link_mode` 是什么都会落地成真实文件，这是对既有 `--link` 语义的一
 // 个自然限制，不是 bug。解码/渲染/编码任一步失败都归入 `skipped`（复用
 // 现有的"源文件缺失"跳过机制），不中断其余图片的导出。
+//
+// M2：kind="raw" 的图片无论有没有 recipe 都要走 `raw_decode_fn` 全量解
+// 码 -> (有 recipe 才 render) -> encode_jpeg_file，输出文件名的扩展名会
+// 被换成 .jpg；`on_progress` 汇报这部分的解码进度。
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
-                                                 LinkMode link_mode = LinkMode::Copy);
+                                                 LinkMode link_mode = LinkMode::Copy,
+                                                 ExportProgressFn on_progress = nullptr,
+                                                 RawDecodeFn raw_decode_fn = raw::decode_full);
 
 }  // namespace pzt::core::exporting

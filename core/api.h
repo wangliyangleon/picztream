@@ -54,6 +54,7 @@ using SkipReason = exporting::SkipReason;
 using ExportSkipped = exporting::ExportSkipped;
 using ExportResult = exporting::ExportResult;
 using ExportTagError = exporting::ExportTagError;
+using ExportProgressFn = exporting::ExportProgressFn;
 
 using DecodedImage = decode::DecodedImage;
 using DecodeError = decode::DecodeError;
@@ -131,8 +132,12 @@ std::optional<ImageId> prev_untagged(const std::vector<ImageRef>& images,
                                       std::optional<ImageId> current_id);
 Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 
+// M2：on_progress 汇报 RAW 图片全量解码的进度（纯 JPEG 批次不触发），见
+// core/export/export.h。RawDecodeFn 不在门面层暴露——那是测试用的依赖注
+// 入点，cli 不需要覆盖真实的 raw::decode_full。
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
-                                                 LinkMode link_mode = LinkMode::Copy);
+                                                 LinkMode link_mode = LinkMode::Copy,
+                                                 ExportProgressFn on_progress = nullptr);
 
 // 纯粹的"字节 -> 像素"操作,不碰数据库。见 core/decode/decode.h。
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);

@@ -162,6 +162,14 @@ std::string msg_raw_preview_progress(int done, int total) {
   }
 }
 
+std::string msg_export_raw_progress(int done, int total) {
+  if (g_lang == Lang::zh) {
+    return "正在处理 RAW 图片 (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
+  } else {
+    return "Processing RAW images (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
+  }
+}
+
 std::string msg_project_created(const std::string &name,
                                 const std::string &root_path,
                                 long long image_count) {
@@ -423,6 +431,8 @@ std::string export_skip_reason(pzt::core::SkipReason reason) {
       return g_lang == Lang::zh ? "应用风格失败" : "apply recipe failed";
     case pzt::core::SkipReason::EncodeFailed:
       return g_lang == Lang::zh ? "编码失败" : "encode failed";
+    case pzt::core::SkipReason::RawDecodeFailed:
+      return g_lang == Lang::zh ? "RAW 解码失败" : "RAW decode failed";
   }
   return "";  // 不可达,四个枚举值都已覆盖;写这行只是为了不同编译器对"是
               // 否证明了 switch 穷尽"的判断不完全一致,避免 -Wreturn-type

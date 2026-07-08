@@ -1,27 +1,33 @@
 #include <doctest.h>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/db/database.h"
 #include "core/decode/decode.h"
 #include "core/export/export.h"
 #include "core/project/project.h"
+#include "core/raw/raw.h"
 #include "core/recipe/recipe.h"
 #include "core/tagging/tagging.h"
 
 namespace fs = std::filesystem;
 using pzt::core::db::Database;
+using pzt::core::decode::decode_jpeg_file;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::encode_jpeg_file;
 using pzt::core::project::create_project;
 using pzt::core::project::find_image_by_path;
 using pzt::core::project::ImageId;
 using pzt::core::project::ProjectId;
+using pzt::core::raw::RawError;
+using pzt::core::Result;
 using namespace pzt::core::exporting;
 using namespace pzt::core::recipe;
 using namespace pzt::core::tagging;
@@ -132,6 +138,51 @@ Fixture make_real_photo_fixture(const std::string& tag, int image_count) {
 std::vector<char> read_bytes(const fs::path& path) {
   std::ifstream f(path, std::ios::binary);
   return std::vector<char>(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+// M2：构造 kind="raw" 的图片——touch() 一个 .RAF 后缀的假文件，
+// create_project 扫描只看扩展名就能识别成 kind="raw"（预览缓存生成会因
+// 为假内容静默失败，不影响拿到这个 image id）。export_tag 的路由测试用
+// 注入的 fake RawDecodeFn，不会真的碰这个文件内容，所以不需要真实 RAF。
+Fixture make_raw_fixture(const std::string& tag, int image_count) {
+  auto db = Database::open_at(fresh_db_path(tag));
+  ensure_default_presets(db);
+  auto photos = fresh_photo_dir(tag);
+  for (int i = 0; i < image_count; ++i) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "img_%03d.RAF", i);
+    touch(photos / name);
+  }
+  auto created = create_project(db, "proj", photos.string());
+  REQUIRE(created.ok());
+
+  std::vector<ImageId> images;
+  for (int i = 0; i < image_count; ++i) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "img_%03d.RAF", i);
+    auto id = find_image_by_path(db, created.value(), name);
+    REQUIRE(id.has_value());
+    images.push_back(*id);
+  }
+  return Fixture{std::move(db), created.value(), std::move(images), photos};
+}
+
+RawDecodeFn make_fake_raw_decode(int width, int height, std::uint8_t r, std::uint8_t g,
+                                  std::uint8_t b, std::atomic<int>* call_count = nullptr) {
+  return [=](const std::string&) -> Result<DecodedImage, RawError> {
+    if (call_count) call_count->fetch_add(1);
+    DecodedImage img;
+    img.width = width;
+    img.height = height;
+    img.rgba.resize(static_cast<std::size_t>(width) * height * 4);
+    for (std::size_t i = 0; i < img.rgba.size(); i += 4) {
+      img.rgba[i + 0] = r;
+      img.rgba[i + 1] = g;
+      img.rgba[i + 2] = b;
+      img.rgba[i + 3] = 255;
+    }
+    return Result<DecodedImage, RawError>::Ok(img);
+  };
 }
 
 }  // namespace
@@ -350,4 +401,121 @@ TEST_CASE("export_tag --link degrades to a real file for a recipe-applied image 
   CHECK(fs::exists(out_dir / "img_000.jpg"));
   // 没应用 recipe 的那张:--link 语义不变,照常建符号链接。
   CHECK(fs::is_symlink(out_dir / "img_001.jpg"));
+}
+
+// M2 increment 5：kind="raw" 的导出路由。
+
+TEST_CASE("export_tag decodes a raw-kind image via raw_decode_fn and writes a neutral JPEG "
+          "when no recipe is applied") {
+  auto fx = make_raw_fixture("export_raw_no_recipe", 1);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  std::atomic<int> calls{0};
+  auto fake_decode = make_fake_raw_decode(40, 30, 128, 128, 128, &calls);
+
+  auto out_dir = fresh_output_dir("export_raw_no_recipe");
+  auto result =
+      export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy, nullptr, fake_decode);
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 1);
+  CHECK(calls.load() == 1);  // raw_decode_fn 被调用了，即使没有 recipe
+  CHECK(fs::exists(out_dir / "img_000.jpg"));       // 扩展名从 .RAF 换成了 .jpg
+  CHECK_FALSE(fs::exists(out_dir / "img_000.RAF"));  // 不是原样拷贝
+
+  auto decoded = decode_jpeg_file((out_dir / "img_000.jpg").string());
+  REQUIRE(decoded.ok());
+  CHECK(decoded.value().width == 40);
+  CHECK(decoded.value().height == 30);
+}
+
+TEST_CASE("export_tag applies recipe on top of raw_decode_fn output when a recipe is set") {
+  auto make_export = [](const std::string& tag_suffix, bool with_recipe) -> std::vector<char> {
+    auto fx = make_raw_fixture("export_raw_recipe_cmp_" + tag_suffix, 1);
+    if (with_recipe) {
+      auto warm_id = list_presets(fx.db)[1].id;  // presets[0] 是 Origin(没有 LUT),[1] 是 Warm
+      REQUIRE(set_image_recipe(fx.db, fx.images[0], warm_id).ok());
+    }
+    auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+    REQUIRE(tag.ok());
+    REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+    auto fake_decode = make_fake_raw_decode(40, 30, 128, 128, 128);
+    auto out_dir = fresh_output_dir("export_raw_recipe_cmp_" + tag_suffix);
+    auto result =
+        export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy, nullptr, fake_decode);
+    REQUIRE(result.ok());
+    REQUIRE(result.value().exported_count == 1);
+    return read_bytes(out_dir / "img_000.jpg");
+  };
+
+  auto without_recipe = make_export("no", false);
+  auto with_recipe = make_export("yes", true);
+  // 同样的 fake RAW 解码输出(中性灰),一个套了 Warm 一个没套——字节应该不
+  // 一样，证明 render 真的在 raw_decode_fn 的结果上跑过。
+  CHECK(without_recipe != with_recipe);
+}
+
+TEST_CASE("export_tag skips a raw-kind image when raw_decode_fn fails, without aborting the rest") {
+  auto fx = make_raw_fixture("export_raw_decode_fail", 2);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+  REQUIRE(add_tag(fx.db, fx.images[1], tag.value()).ok());
+
+  // img_000 解码失败，img_001 成功——按路径里的文件名区分，不依赖调用顺序假设。
+  RawDecodeFn flaky_decode = [](const std::string& path) -> Result<DecodedImage, RawError> {
+    if (path.find("img_000") != std::string::npos) {
+      return Result<DecodedImage, RawError>::Err(RawError::DecodeFailed);
+    }
+    DecodedImage img;
+    img.width = 10;
+    img.height = 10;
+    img.rgba.assign(10 * 10 * 4, 128);
+    return Result<DecodedImage, RawError>::Ok(img);
+  };
+
+  auto out_dir = fresh_output_dir("export_raw_decode_fail");
+  auto result =
+      export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy, nullptr, flaky_decode);
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 1);
+  REQUIRE(result.value().skipped.size() == 1);
+  CHECK(result.value().skipped[0].file_name == "img_000.RAF");
+  CHECK(result.value().skipped[0].reason == SkipReason::RawDecodeFailed);
+  CHECK(fs::exists(out_dir / "img_001.jpg"));  // 另一张照常导出
+}
+
+TEST_CASE("export_tag's progress callback fires once per raw image with correct done/total") {
+  auto fx = make_raw_fixture("export_raw_progress", 3);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  for (auto id : fx.images) REQUIRE(add_tag(fx.db, id, tag.value()).ok());
+
+  std::vector<std::pair<int, int>> calls;
+  auto fake_decode = make_fake_raw_decode(10, 10, 0, 0, 0);
+  auto out_dir = fresh_output_dir("export_raw_progress");
+  auto result = export_tag(
+      fx.db, tag.value(), out_dir.string(), LinkMode::Copy,
+      [&](int done, int total) { calls.emplace_back(done, total); }, fake_decode);
+  REQUIRE(result.ok());
+  REQUIRE(calls.size() == 3);
+  CHECK(calls[0] == std::make_pair(1, 3));
+  CHECK(calls[1] == std::make_pair(2, 3));
+  CHECK(calls[2] == std::make_pair(3, 3));
+}
+
+TEST_CASE("export_tag's progress callback never fires for a pure-jpeg batch") {
+  auto fx = make_fixture("export_jpeg_no_progress", 2);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  for (auto id : fx.images) REQUIRE(add_tag(fx.db, id, tag.value()).ok());
+
+  int call_count = 0;
+  auto out_dir = fresh_output_dir("export_jpeg_no_progress");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy,
+                            [&](int, int) { ++call_count; });
+  REQUIRE(result.ok());
+  CHECK(call_count == 0);
 }
