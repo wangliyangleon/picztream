@@ -328,15 +328,21 @@ std::string err_rescan_failed(const std::string &name) {
 }
 
 std::string msg_rescan_result(long long added, long long removed,
-                              long long total) {
+                              long long total, long long paired) {
+  std::string paired_suffix;
+  if (paired > 0) {
+    paired_suffix = g_lang == Lang::zh
+                        ? ("，其中 " + std::to_string(paired) + " 张补上了配对的 RAW/JPEG")
+                        : (", " + std::to_string(paired) + " of which gained a paired RAW/JPEG");
+  }
   if (g_lang == Lang::zh) {
     return "新增 " + std::to_string(added) + " 张,清除 " +
            std::to_string(removed) + " 张磁盘上已消失的记录,项目现在共 " +
-           std::to_string(total) + " 张\n";
+           std::to_string(total) + " 张" + paired_suffix + "\n";
   } else {
     return "Added " + std::to_string(added) + " images, cleared " +
            std::to_string(removed) + " missing records, project now has " +
-           std::to_string(total) + " images\n";
+           std::to_string(total) + " images" + paired_suffix + "\n";
   }
 }
 

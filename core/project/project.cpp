@@ -337,11 +337,6 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
     return Result<RescanSummary, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
   }
 
-  // 注意:这里只处理"这次扫描本身发现的新配对"(比如同一次 rescan 里 RAW
-  // 和 JPEG 都是新加进来的),不处理"文件夹里已经有一条纯 JPEG/纯 RAW 记
-  // 录,这次扫描才补上另一半"这种升级场景——那是 increment 4 的范围，见
-  // docs/M2_Eng_Design.md 任务分解。这里的 exists_stmt 仍然只按 file_path
-  // 全字符串匹配，不会把新扫到的 RAW 文件识别成"应该并入已有的 JPEG 行"。
   std::vector<ScannedImage> scanned = scan_media(fs::path(summary->root_path));
   const std::int64_t imported_at = now_unix();
 
@@ -351,17 +346,65 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
 
   std::int64_t added = 0;
   std::int64_t removed = 0;
+  std::int64_t paired = 0;
   exec_simple(conn, "BEGIN;");
   try {
-    Stmt exists_stmt(conn, "SELECT 1 FROM images WHERE project_id = ? AND file_path = ?;");
+    Stmt find_by_path_stmt(conn,
+                            "SELECT id, kind FROM images WHERE project_id = ? AND file_path = ?;");
     Stmt insert_stmt(conn,
                       "INSERT INTO images (project_id, file_path, file_name, file_size, "
                       "imported_at, kind, raw_path) VALUES (?, ?, ?, ?, ?, ?, ?);");
+    // 把一条已有记录原地升级成配对：file_path/file_name 换成 JPEG 那份(配
+    // 对约定 culling 预览用 JPEG，见 M2_Eng_Design.md)，kind 固定
+    // "raw_jpeg"，raw_path 记 RAW 那份路径。两种升级方向(先有 JPEG 后补
+    // RAW / 先有 RAW 后补 JPEG)用的是同一条语句，只是调用时传的
+    // existing_id 来自不同的查找。
+    Stmt upgrade_stmt(conn,
+                       "UPDATE images SET file_path = ?, file_name = ?, kind = 'raw_jpeg', "
+                       "raw_path = ? WHERE id = ?;");
+
+    auto find_by_path = [&](const std::string& path) -> std::optional<std::pair<ImageId, std::string>> {
+      sqlite3_reset(find_by_path_stmt.get());
+      sqlite3_bind_int64(find_by_path_stmt.get(), 1, id);
+      sqlite3_bind_text(find_by_path_stmt.get(), 2, path.c_str(), -1, SQLITE_TRANSIENT);
+      if (sqlite3_step(find_by_path_stmt.get()) != SQLITE_ROW) return std::nullopt;
+      return std::make_pair(
+          sqlite3_column_int64(find_by_path_stmt.get(), 0),
+          std::string(reinterpret_cast<const char*>(sqlite3_column_text(find_by_path_stmt.get(), 1))));
+    };
+
+    auto run_upgrade = [&](ImageId existing_id, const ScannedImage& img) {
+      sqlite3_reset(upgrade_stmt.get());
+      sqlite3_bind_text(upgrade_stmt.get(), 1, img.relative_path.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(upgrade_stmt.get(), 2, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(upgrade_stmt.get(), 3, img.raw_relative_path->c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_int64(upgrade_stmt.get(), 4, existing_id);
+      if (sqlite3_step(upgrade_stmt.get()) != SQLITE_DONE) {
+        throw std::runtime_error(std::string("upgrade image failed: ") + sqlite3_errmsg(conn));
+      }
+    };
+
     for (const auto& img : scanned) {
-      sqlite3_reset(exists_stmt.get());
-      sqlite3_bind_int64(exists_stmt.get(), 1, id);
-      sqlite3_bind_text(exists_stmt.get(), 2, img.relative_path.c_str(), -1, SQLITE_TRANSIENT);
-      if (sqlite3_step(exists_stmt.get()) == SQLITE_ROW) continue;  // 已经在 images 表里了
+      if (auto existing = find_by_path(img.relative_path)) {
+        // 已经有一条记录用的就是这个 file_path——纯 JPEG/纯 RAW 情况下这就
+        // 是它自己，什么都不用做；如果这次扫描把它识别成了配对
+        // (kind="raw_jpeg")而记录还停留在旧的单一 kind，原地升级。
+        if (img.kind == "raw_jpeg" && existing->second != "raw_jpeg") {
+          run_upgrade(existing->first, img);
+          ++paired;
+        }
+        continue;
+      }
+
+      if (img.kind == "raw_jpeg") {
+        // JPEG 路径没匹配到已有记录，可能是 RAW 那一半之前被当纯 RAW 单独
+        // 记过——按 RAW 路径再查一次。
+        if (auto existing_raw = find_by_path(*img.raw_relative_path)) {
+          run_upgrade(existing_raw->first, img);
+          ++paired;
+          continue;
+        }
+      }
 
       sqlite3_reset(insert_stmt.get());
       sqlite3_bind_int64(insert_stmt.get(), 1, id);
@@ -413,6 +456,7 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
   result.added_count = added;
   result.removed_count = removed;
   result.total_count = summary->image_count + added - removed;
+  result.paired_count = paired;
   return Result<RescanSummary, ProjectNotFoundError>::Ok(result);
 }
 

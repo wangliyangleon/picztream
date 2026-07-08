@@ -58,7 +58,7 @@ std::string msg_project_item(const std::string& name, long long image_count, con
 std::string err_rescan_missing_name();
 std::string err_rescan_unknown_arg(const std::string& arg);
 std::string err_rescan_failed(const std::string& name);
-std::string msg_rescan_result(long long added, long long removed, long long total);
+std::string msg_rescan_result(long long added, long long removed, long long total, long long paired);
 std::string err_export_missing_args();
 std::string err_export_tag_not_found(const std::string& tag_name);
 std::string err_export_io_error(const std::string& path);

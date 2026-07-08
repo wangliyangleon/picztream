@@ -323,6 +323,86 @@ TEST_CASE("rescan_project is idempotent - rescanning again with no new files add
   CHECK(second.value().total_count == 2);
 }
 
+TEST_CASE("rescan_project upgrades a jpeg-only record when its RAW companion later appears") {
+  auto db = Database::open_at(fresh_db_path("rescan_pair_upgrade_jpeg_first"));
+  auto photos = fresh_photo_dir("rescan_pair_upgrade_jpeg_first");
+  touch(photos / "IMG_001.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto before_id = find_image_by_path(db, created.value(), "IMG_001.jpg");
+  REQUIRE(before_id.has_value());
+  CHECK(get_image(db, *before_id)->kind == "jpeg");
+
+  touch(photos / "IMG_001.dng");  // 补上同名 RAW
+
+  auto rescanned = rescan_project(db, created.value());
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().added_count == 0);
+  CHECK(rescanned.value().paired_count == 1);
+  CHECK(rescanned.value().total_count == 1);  // 不是新插一条,还是同一张图
+
+  auto after_id = find_image_by_path(db, created.value(), "IMG_001.jpg");
+  REQUIRE(after_id.has_value());
+  CHECK(*after_id == *before_id);  // 同一行原地升级,id 不变
+  auto after = get_image(db, *after_id);
+  REQUIRE(after.has_value());
+  CHECK(after->kind == "raw_jpeg");
+  REQUIRE(after->raw_path.has_value());
+  CHECK(*after->raw_path == "IMG_001.dng");
+}
+
+TEST_CASE("rescan_project upgrades a raw-only record when its JPEG companion later appears") {
+  auto db = Database::open_at(fresh_db_path("rescan_pair_upgrade_raw_first"));
+  auto photos = fresh_photo_dir("rescan_pair_upgrade_raw_first");
+  touch(photos / "IMG_002.raf");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto before_id = find_image_by_path(db, created.value(), "IMG_002.raf");
+  REQUIRE(before_id.has_value());
+  CHECK(get_image(db, *before_id)->kind == "raw");
+
+  touch(photos / "IMG_002.jpg");  // 补上同名 JPEG
+
+  auto rescanned = rescan_project(db, created.value());
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().added_count == 0);
+  CHECK(rescanned.value().paired_count == 1);
+  CHECK(rescanned.value().total_count == 1);
+
+  // file_path 换成了 JPEG 那份 - 原来的 RAW 路径不再是一条独立记录的
+  // file_path,但仍然作为 raw_path 挂在同一行上。
+  CHECK(!find_image_by_path(db, created.value(), "IMG_002.raf").has_value());
+  auto after_id = find_image_by_path(db, created.value(), "IMG_002.jpg");
+  REQUIRE(after_id.has_value());
+  CHECK(*after_id == *before_id);  // 同一行原地升级,id 不变
+  auto after = get_image(db, *after_id);
+  REQUIRE(after.has_value());
+  CHECK(after->kind == "raw_jpeg");
+  REQUIRE(after->raw_path.has_value());
+  CHECK(*after->raw_path == "IMG_002.raf");
+}
+
+TEST_CASE("rescan_project pairing upgrade is idempotent") {
+  auto db = Database::open_at(fresh_db_path("rescan_pair_idempotent"));
+  auto photos = fresh_photo_dir("rescan_pair_idempotent");
+  touch(photos / "IMG_003.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+  touch(photos / "IMG_003.dng");
+
+  auto first = rescan_project(db, created.value());
+  REQUIRE(first.ok());
+  CHECK(first.value().paired_count == 1);
+
+  auto second = rescan_project(db, created.value());
+  REQUIRE(second.ok());
+  CHECK(second.value().added_count == 0);
+  CHECK(second.value().paired_count == 0);  // 已经是 raw_jpeg 了,不重复升级
+  CHECK(second.value().total_count == 1);
+}
+
 TEST_CASE("rescan_project reports NotFound for a missing project id") {
   auto db = Database::open_at(fresh_db_path("rescan_missing"));
   auto missing = rescan_project(db, 999);

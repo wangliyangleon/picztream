@@ -200,7 +200,8 @@ int cmd_rescan(const std::vector<std::string>& args) {
   std::printf("%s", pzt::cli::i18n::msg_rescan_result(
       static_cast<long long>(result.value().added_count),
       static_cast<long long>(result.value().removed_count),
-      static_cast<long long>(result.value().total_count)).c_str());
+      static_cast<long long>(result.value().total_count),
+      static_cast<long long>(result.value().paired_count)).c_str());
   return 0;
 }
 

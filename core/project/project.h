@@ -81,6 +81,7 @@ struct RescanSummary {
   std::int64_t added_count;
   std::int64_t removed_count;
   std::int64_t total_count;
+  std::int64_t paired_count;  // M2：把已有的纯 JPEG/纯 RAW 记录升级成配对(raw_jpeg)的数量
 };
 
 // 复用 create_project 内部的扫描逻辑，把磁盘上有、但 images 表里还没有的
@@ -90,6 +91,13 @@ struct RescanSummary {
 // 挂载时把整个项目的标签悄悄清空，但实际使用中发现"删了照片、标签却清不
 // 掉"更让人困惑。prune=false 保留旧行为，留给明确知道自己在对一个可能暂
 // 时不完整的存储位置跑 rescan 的场景用。
+//
+// M2：如果磁盘上出现了跟已有记录同名主干的另一半文件（比如项目建的时候
+// 只有 JPEG，后来往文件夹里补了同名 RAW 进来，反过来先有 RAW 后补 JPEG
+// 也一样），已有的那条记录会被原地升级成 kind="raw_jpeg"（同名主干的另
+// 一半此前从未被单独记录过时才会发生这种升级——如果磁盘上从来就是一对，
+// 从第一次扫描起就会被识别成配对，不会经历"先单独存在、再升级"这个阶
+// 段），不会插入重复记录，计入 paired_count。
 Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
                                                              bool prune = true);
 
