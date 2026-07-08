@@ -2,7 +2,9 @@
 
 ## 背景
 
-`docs/M2_PRD.md` 已经拍板了 M2 的产品决策(纯 DNG/RAF、按需触发 LibRaw 解码、8-bit sRGB 输出、RAW+JPEG 同名配对模型),按 `AGENTS.md` 的工程契约,具体的表结构、模块划分、接口签名要落到这份文档,implementation 应在本文档评审通过后再开始。
+`docs/M2_PRD.md` 已经拍板了 M2 的产品决策(纯 DNG/RAF、按需触发 LibRaw 解码、8-bit sRGB 输出),按 `AGENTS.md` 的工程契约,具体的表结构、模块划分、接口签名要落到这份文档,implementation 应在本文档评审通过后再开始。
+
+**这份文档经历过一次方向调整**(increment 3/4 实现完、真机验证时发现的问题倒逼的):最初设计是"RAW+JPEG 同名配对,配对图片预览用 JPEG 伴侣文件、导出才碰 RAW",跑通后真机测试发现——某些相机(比如用户的徕卡 Q3)在黑白胶片模式下拍摄时,内嵌/伴侣 JPEG 是黑白的,但 LibRaw 解码 RAW 数据永远是彩色,导致预览和导出观感割裂,应用 recipe 时这个落差还会被放大(白平衡偏移对灰阶图会直接染色)。改成现在这版:**不再保留配对,同名 JPEG 直接忽略;预览也走 LibRaw 解码(降分辨率),在 `new`/`rescan` 时一次性生成缓存**,换取预览和导出色彩一致,代价是 `new`/`rescan` 处理 RAW 文件时需要付出一次性解码成本、需要进度提示。以下内容是调整后的最终设计,不再保留旧版配对方案的细节(git 历史里能查到)。
 
 ## LibRaw 解码性能验证结论
 
@@ -16,9 +18,9 @@
 
 ### 对 core 设计的直接影响
 
-- 预览路径:`core::raw::extract_embedded_jpeg_bytes` 只处理 JPEG 类型,不做位图分支(真机测试没遇到过再加)
-- 处理路径:`core::raw::decode_full` 不需要 `jthread`/线程池包装,直接调用 LibRaw 单线程 API(LibRaw 内部自己用 OpenMP)
-- `pzt export` 遇到需要走 `raw::decode_full` 的图片时,往 stderr 打一行"正在处理 X/N"的轻量进度日志(沿用现有延迟日志的输出通道和风格,不引入进度条之类的复杂 UI)
+- 预览路径:`core::raw::extract_embedded_jpeg_bytes` 只处理 JPEG 类型,不做位图分支(真机测试没遇到过再加);这个函数现在降级成"预览缓存缺失时的兜底路径",不是主路径(见下"RAW 预览缓存"一节)
+- 处理路径:`core::raw::decode_full`(全量解码,导出用)和新增的 `core::raw::decode_preview`(half_size 降分辨率解码,预览缓存生成用)都不需要 `jthread`/线程池包装,直接调用 LibRaw 单线程 API(LibRaw 内部自己用 OpenMP)
+- `pzt export` 遇到需要走 `raw::decode_full` 的图片时,往 stderr 打一行"正在处理 X/N"的轻量进度日志;`pzt new`/`pzt rescan` 遇到需要生成预览缓存的 RAW 图片时同样需要进度提示,见"RAW 预览缓存"一节
 
 ## 数据库 Schema 设计
 
@@ -26,18 +28,19 @@
 
 ```sql
 ALTER TABLE images ADD COLUMN kind TEXT NOT NULL DEFAULT 'jpeg';
--- 'jpeg' | 'raw' | 'raw_jpeg'。M0/M1 时代的旧库迁移时所有已有行都落在默认值
--- 'jpeg'，行为完全不变——这也是选 TEXT 默认值而不是要求显式回填的原因。
+-- 'jpeg' | 'raw'。两态，不再有 'raw_jpeg'——同名 JPEG 存在时直接忽略，不
+-- 生成配对记录。M0/M1 时代的旧库迁移时所有已有行都落在默认值 'jpeg'。
 
-ALTER TABLE images ADD COLUMN raw_path TEXT;
--- kind != 'jpeg' 时才有值：kind='raw' 时等于 file_path 本身（冗余存储换
--- 一个不用为 kind='raw' 单独 if 分支的下游查询）；kind='raw_jpeg' 时是配对
--- 的 RAW 文件相对路径。
+ALTER TABLE images ADD COLUMN preview_cache_path TEXT;
+-- kind='raw' 时才可能有值：new/rescan 时用 LibRaw half_size 模式生成的降
+-- 分辨率预览 JPEG 的绝对路径，落在 PZT 自己的数据目录下（不在用户照片文
+-- 件夹内，见"RAW 预览缓存"一节）。生成失败、或还没来得及生成时为 NULL，
+-- 这种情况下预览退化到内嵌预览提取兜底路径。
 ```
 
-`file_path`/`file_name` 两列的既有语义不变,延续代表"culling 预览用哪个文件":纯 JPEG → JPEG 本身(不变);纯 RAW → RAW 本身;RAW+JPEG 配对 → JPEG 伴侣文件(不是 RAW)。这个设计的好处是 `core::decode_preview_file` 只需要看扩展名分发,不需要知道 `kind`;`export_tag` 的路由只需要查 `kind` + `raw_path`,不需要额外 JOIN。
+`file_path`/`file_name` 两列的语义保持跟 M0/M1 完全一致——就是这张图对应的那个文件的相对路径，`kind='raw'` 时就是 `.dng`/`.raf` 本身，不再有"配对时改存 JPEG 路径"这种特殊情况。`preview_cache_path` 是绝对路径（不是相对 `root_path`，因为它压根不在 `root_path` 目录树下）。
 
-不新增唯一索引约束 `raw_path`——配对关系的正确性由扫描阶段的分组逻辑(见下)在 C++ 层保证,不需要 DB 层再加一层约束,避免过度设计。
+不新增唯一索引约束——不需要跨行约束。
 
 ## core/api 接口设计
 
@@ -67,10 +70,21 @@ Result<std::vector<std::uint8_t>, RawError> extract_embedded_jpeg_bytes(const st
 // 消费，core::color 不需要任何改动。
 Result<decode::DecodedImage, RawError> decode_full(const std::string& path);
 
+// unpack -> dcraw_process(跟 decode_full 同样的 output_bps=8/use_camera_wb=1/
+// output_color=1，额外加 half_size=1) -> dcraw_make_mem_image。跳过完整去
+// 马赛克，直接 2x2/3x3 块平均，真机实测徕卡 ~944ms/富士 ~120ms(全量解码
+// 分别是 ~1998ms/~4972ms)，富士这边几乎是把最贵的 X-Trans 去马赛克整个跳
+// 过了。分辨率减半(徕卡 4768x3172、富士 3876x2589)，白平衡/色彩矩阵/
+// gamma 这条管线跟 decode_full 完全一样，只是去马赛克步骤更便宜——这是
+// "预览色彩要跟导出一致"这个目标能用低成本实现的关键：不是另开一条渲染
+// 管线，只是同一条管线在更低分辨率下跑一遍。只给 new/rescan 生成预览缓存
+// 用，不能拿来当导出结果（分辨率不够）。
+Result<decode::DecodedImage, RawError> decode_preview(const std::string& path);
+
 }  // namespace pzt::core::raw
 ```
 
-`decode_full` 的实现要点:`libraw_processed_image_t` 返回的是 3 字节/像素紧凑排列(`colors=3, bits=8`),转换成 `DecodedImage` 的 4 字节/像素(RGBA,alpha 位跳过)布局需要一次逐像素展开拷贝,不是简单的 `memcpy`。这一步以及最终的字节序/通道顺序要不要跟现有 `decode_jpeg_file` 严格对齐,是实现阶段第一个要写单元测试(用一个已知 RGB 值的小图或者直接跟真机验收的肉眼对比)锁定的地方,避免颜色通道错位这种"能跑但是错的"问题(呼应 PRD 风险清单里"色彩管理边界变化"那条)。
+`decode_full`/`decode_preview` 的实现要点:`libraw_processed_image_t` 返回的是 3 字节/像素紧凑排列(`colors=3, bits=8`),转换成 `DecodedImage` 的 4 字节/像素(RGBA,alpha 位跳过)布局需要一次逐像素展开拷贝,不是简单的 `memcpy`。这一步以及最终的字节序/通道顺序要不要跟现有 `decode_jpeg_file` 严格对齐,是实现阶段第一个要写单元测试(用一个已知 RGB 值的小图或者直接跟真机验收的肉眼对比)锁定的地方,避免颜色通道错位这种"能跑但是错的"问题(呼应 PRD 风险清单里"色彩管理边界变化"那条)。
 
 ### `core/decode/` 增补
 
@@ -95,36 +109,54 @@ Result<DecodedImage, DecodeError> decode_preview_file(const std::string& path);
 
 `cli/commands/browse.cpp:136` 现有的 `PrefetchCache prefetch(project.root_path, 3, pzt::core::decode_jpeg_file);` 改成传 `pzt::core::decode_preview_file`。`PrefetchCache`/`browse::DecodeFn` 本身的类型签名不需要任何改动——这次验证了 M1 时期这个类设计成"解码函数可注入"的决定是对的,新的解码策略接入零成本。
 
-### `core::project` 增补:格式识别与配对
+### `core::project` 增补:格式识别(不再做配对)
 
 ```cpp
 // project.cpp 内部，is_jpeg 旁边新增:
 bool is_raw(const fs::path& p);  // 扩展名在 {.dng, .raf} 内，大小写不敏感
 
-// ScannedImage 增加两个字段：
+// ScannedImage 只增加一个字段(不再需要 raw_relative_path)：
 struct ScannedImage {
   std::string relative_path;
   std::string file_name;
   std::int64_t file_size;
-  std::string kind;                        // "jpeg" | "raw" | "raw_jpeg"
-  std::optional<std::string> raw_relative_path;  // kind != "jpeg" 时有值
+  std::string kind;  // "jpeg" | "raw"
 };
 ```
 
 `scan_jpegs` 改名 `scan_media`,先各自扫出 JPEG 类和 RAW 类两个文件列表,按"所在目录 + 文件名主干(不含扩展名,大小写敏感比较主干本身)"分组:
 
-- 一组里恰好一个 JPEG + 一个 RAW → 合并成一条 `kind="raw_jpeg"`,`relative_path`/`file_name`/`file_size` 取 JPEG 那份(对齐"预览用 JPEG"的设计),`raw_relative_path` 记 RAW 那份的路径
-- 只有 JPEG → `kind="jpeg"`(M0/M1 现有行为,不变)
-- 只有 RAW → `kind="raw"`,`raw_relative_path` 等于 `relative_path` 自己
-- 其它形状(比如同一主干出现两个 RAW 文件)不做配对,每个文件各自成一条独立记录——这类输入 PRD 已经说明"理论上不该发生",不强行发明消歧规则
+- 一组里存在 RAW 文件(不管有没有同名 JPEG)→ 只产出一条 `kind="raw"` 记录,`relative_path` 是 RAW 自己的路径;同名 JPEG(如果有)直接忽略,不产生任何记录
+- 一组里只有 JPEG,没有 RAW → `kind="jpeg"`(M0/M1 现有行为,不变)
+- 同一主干出现多个 RAW 文件(不该发生,但不强行消歧)→ 每个各自独立成一条 `kind="raw"` 记录
 
-`is_raw` 用一个 `constexpr` 字符串数组表达受支持的扩展名集合,不写死在多处判断里,给"未来加 CR2/CR3/NEF/ARW"这个已知的未来考虑留好扩展点(不是现在就做插件化设计,只是不把判断逻辑分散复制)。
+`is_raw` 用一个 `constexpr` 字符串数组表达受支持的扩展名集合,不写死在多处判断里,给"未来加 CR2/CR3/NEF/ARW"这个已知的未来考虑留好扩展点。
 
-### `core::project::rescan_project` 的配对升级逻辑
+### RAW 预览缓存:生成、存放、生命周期
 
-现有 `rescan_project` 只有"路径已存在就跳过、不存在就插入"这个二分支。M2 需要处理第三种情况:新扫到的文件与一条已有记录构成配对升级——比如项目建的时候文件夹里只有 JPEG,之后才把对应的 RAW 拷贝进来。这种情况下,已有的 `kind="jpeg"` 记录要被 **UPDATE** 成 `kind="raw_jpeg"` 并补上 `raw_path`,而不是插入一条新记录(否则会出现两条指向同一张照片的记录,违反"配对文件不重复计数"这条验收标准)。
+这是这次方向调整新增的核心机制。`create_project`/`rescan_project` 对每一条新增或刚被识别成 `kind="raw"` 的记录,在写入 `images` 表之后,调用 `raw::decode_preview` + `decode::encode_jpeg_file` 生成一份降分辨率预览 JPEG,写入 PZT 自己的数据目录,再把这个绝对路径写回该行的 `preview_cache_path` 列。
 
-实现上,`rescan_project` 内部的"已存在检查"要从"按 `file_path` 查一行是否存在"扩展成"按配对规则查:这个新扫到的文件的主干,是否匹配一条已有记录(不管是匹配它的 `file_path` 主干还是 `raw_path` 主干)",匹配到则 UPDATE 而不是跳过或插入。这是任务分解里单独的一个 increment 和一组单元测试,逻辑形状跟"新增/删除"这两个现有分支不一样,值得独立验证。
+**存放路径**:`<xdg_config_home>/pzt/raw_previews/<project_id>/<image_id>.jpg`——复用 `core/db/database.cpp` 里已经算好的 `default_db_path()` 所在目录(同一个 `~/.config/pzt/` 下开一个兄弟子目录,不是新的配置根),按 `project_id` 分子目录方便删项目时整目录删除。`database.h`/`.cpp` 补一个 `raw_preview_cache_dir(ProjectId)` 辅助函数返回这个路径,`core::project` 和 `core::db` 之外的模块不需要知道具体存放规则。
+
+**生成失败时**:保持 `preview_cache_path` 为 NULL,不阻断这次 `new`/`rescan` 的其它文件(照抄导出路径"单张失败不中断整体"的既有惯例),浏览时该图退化到 `raw::extract_embedded_jpeg_bytes` 兜底路径(见 PRD"浏览与选片"一节)。
+
+**进度回调**:`create_project`/`rescan_project` 都新增一个可选参数:
+
+```cpp
+using ScanProgressFn = std::function<void(int done, int total)>;
+```
+
+只有当这次扫描/rescan 里确实有需要生成缓存的 RAW 图片时才会被调用(纯 JPEG 项目、或者本来就有缓存不需要重新生成的 RAW 图片,不触发回调,不产生"进度是 0/0"这种没有意义的输出)。`cli` 侧传一个用 `\r` 覆盖同一行打印"正在生成 RAW 预览缓存 (X/N)..."的 lambda,`total` 已知(等于这次要生成缓存的 RAW 图片数量),不是那种边扫描边发现总数变化的场景,不需要处理"进度条总数中途变化"这种复杂情况。
+
+**生命周期**:`rescan_project` 的 prune 分支删除一条记录之前,如果它的 `preview_cache_path` 非空,先 `fs::remove` 掉那个缓存文件,再删数据库行(避免留下没有对应数据库记录的孤儿缓存文件)。`delete_project` 整个删除一个项目时,`fs::remove_all(raw_preview_cache_dir(project_id))` 把这个项目名下所有缓存文件连同子目录一起清掉——这不违反"不触碰用户原始图片文件"的承诺,缓存目录压根不在用户照片文件夹里,是 PZT 自己的数据。
+
+### `core::project::rescan_project` 的升级逻辑(单方向,已简化)
+
+去掉配对之后,只剩一种需要"原地升级而不是插入新记录"的场景:项目建的时候文件夹里只有 JPEG(`kind="jpeg"`),之后才把同名的 RAW 拷贝进来。这种情况下,已有的 `kind="jpeg"` 记录要被 **UPDATE** 成 `kind="raw"`(`file_path`/`file_name` 换成 RAW 的),而不是插入一条新记录——否则会产生两条指向"同一张照片"的记录,而且原来那条 JPEG 记录打过的标签/应用过的 `recipe` 会因为找不到对应的磁盘文件被 `prune` 误删,丢失用户已经做过的标注。
+
+反过来的场景(先有 RAW、后来同名 JPEG 才出现)不需要处理——`scan_media` 从第一次扫描起就会忽略这份 JPEG,不会有任何代码路径尝试为它创建记录,自然也不存在"升级"这一说。
+
+实现上,`rescan_project` 内部的"已存在检查"在按 `file_path` 精确匹配落空、且这条 `ScannedImage` 是 `kind="raw"` 时,再按"文件名主干是否匹配一条现有的 `kind='jpeg'` 记录"查一次——命中则 UPDATE(顺带触发预览缓存生成,这条记录之前是 JPEG,没有缓存),不命中则走正常插入(同样触发预览缓存生成)。
 
 ### `core::project::ImageInfo` 增补
 
@@ -135,12 +167,12 @@ struct ImageInfo {
   std::string file_path;
   std::string file_name;
   std::int64_t file_size;
-  std::string kind;                         // 新增，供信息栏展示来源类型
-  std::optional<std::string> raw_path;       // 新增
+  std::string kind;                              // 新增，"jpeg" | "raw"
+  std::optional<std::string> preview_cache_path;  // 新增，kind="raw" 且缓存已生成时有值
 };
 ```
 
-`get_image` 的 SQL 补上 `kind, raw_path` 两列。
+`get_image` 的 SQL 补上 `kind, preview_cache_path` 两列。
 
 ### `core::browse::ImageRef` 增补
 
@@ -149,34 +181,32 @@ struct ImageRef {
   ImageId id;
   std::string file_path;
   std::string file_name;
-  std::string kind = "jpeg";                 // 新增，尾部追加，默认值保证现有聚合初始化调用点不受影响
-  std::optional<std::string> raw_path;        // 新增
+  std::string kind = "jpeg";                          // 新增，尾部追加，默认值保证现有聚合初始化调用点不受影响
+  std::optional<std::string> preview_cache_path;       // 新增
 };
 ```
 
-`list_images`/`filter_by_tag` 两处 SQL 和 `ImageRef{...}` 构造点补上这两个字段(已用 `grep ImageRef{` 确认全仓库只有这两处生产构造点 + `prefetch_test.cpp` 一处测试构造点,新增尾部字段是安全的加法变更,不破坏现有调用)。`export_tag` 靠这两个新字段做路由判断,不需要额外查库。
+`list_images`/`filter_by_tag` 两处 SQL 和 `ImageRef{...}` 构造点补上这两个字段(已用 `grep ImageRef{` 确认全仓库只有这两处生产构造点 + `prefetch_test.cpp` 一处测试构造点,新增尾部字段是安全的加法变更,不破坏现有调用)。`export_tag` 靠 `kind` 做路由判断(不需要 `preview_cache_path`，那个只在预览路径用得上，见 increment 4)，不需要额外查库。
 
-### `core::export::export_tag` 路由改造
+### `core::export::export_tag` 路由改造(下一个 increment 才动手，这里先定设计)
 
-现有的"有 recipe 就解码渲染编码,没有就复制/软链"二分支,扩成 `kind` × `has_recipe` 的六种组合:
+现有的"有 recipe 就解码渲染编码,没有就复制/软链"二分支,扩成 `kind` × `has_recipe` 的四种组合(比配对方案的六种简化了):
 
 | `img.kind` | 有无 `recipe_id` | 源 | 处理 |
 |---|---|---|---|
 | jpeg | 无 | `file_path` | 复制/软链(不变) |
 | jpeg | 有 | `file_path` | `decode_jpeg_file`→`render`→`encode_jpeg_file`(不变) |
-| raw | 无 | `raw_path`(=`file_path`) | `raw::decode_full`→不调 `render`→`encode_jpeg_file` |
-| raw | 有 | `raw_path` | `raw::decode_full`→`render`→`encode_jpeg_file` |
-| raw_jpeg | 无 | `file_path`(JPEG 伴侣) | 复制/软链,不碰 RAW,不解码 |
-| raw_jpeg | 有 | `raw_path` | `raw::decode_full`→`render`→`encode_jpeg_file` |
+| raw | 无 | `file_path` | `raw::decode_full`→不调 `render`→`encode_jpeg_file` |
+| raw | 有 | `file_path` | `raw::decode_full`→`render`→`encode_jpeg_file` |
 
 两个容易漏的实现细节:
 
-1. **目标文件扩展名**:纯 RAW 图片(不管有没有 recipe)和"配对+有 recipe"这三条路径,输出都是 JPEG,目标文件名要把原扩展名(`.dng`/`.raf`)换成 `.jpg`(`fs::path(file_name).replace_extension(".jpg")`),不能直接复用 `ordered_name`/`resolve_collision` 现有的"原样拼文件名"逻辑,否则会生成一个内容是 JPEG、后缀却是 `.dng` 的文件。
-2. **进度日志**:每次真正调用 `raw::decode_full` 前后,往 stderr 打一行"正在处理第 X/N 张"(X = 当前已处理数,N = 这次导出总数,不需要区分是不是走 RAW 路径的子计数,直接复用外层遍历的 `index`/`images.size()`,保持实现简单),对应 spike 结论第 4 条。
+1. **目标文件扩展名**:两条 raw 路径输出都是 JPEG,目标文件名要把原扩展名(`.dng`/`.raf`)换成 `.jpg`(`fs::path(file_name).replace_extension(".jpg")`),不能直接复用 `ordered_name`/`resolve_collision` 现有的"原样拼文件名"逻辑。
+2. **进度日志**:每次真正调用 `raw::decode_full` 前后,往 stderr 打一行"正在处理第 X/N 张",对应 spike 结论第 4 条——注意这是导出时的全量解码进度,跟 increment 3 的预览缓存生成进度是两套独立的进度提示,场景不同(一个在 `new`/`rescan`,一个在 `export`)，不合并成一套机制。
 
-`--link` 对纯 RAW 和配对+recipe 这几条新路径继续沿用 M1 已确立的限制(烘焙输出没有原始字节可软链,统一落地成真实文件)。
+`--link` 对两条 raw 路径继续沿用 M1 已确立的限制(烘焙输出没有原始字节可软链,统一落地成真实文件)。
 
-**依赖注入(供单元测试用)**:RAF 是私有格式,没法像 JPEG 那样用 CGImageDestination 现场合成合法测试素材,`core::raw::decode_full`/`extract_embedded_jpeg_bytes` 本身的正确性依赖 Phase 0 spike(已完成)+ 真机验收覆盖,不进 `ctest`(呼应项目里"cbreak 按键循环没法自动化测试"这个已经被接受的同类局限)。但 `export_tag` 的路由分支逻辑(六种组合各自该用哪个源、该不该调 `render`、目标扩展名对不对)是可以单测的——给 `export_tag` 新增一个可选参数:
+**依赖注入(供单元测试用)**:RAF 是私有格式,没法像 JPEG 那样用 CGImageDestination 现场合成合法测试素材,`core::raw::decode_full`/`decode_preview`/`extract_embedded_jpeg_bytes` 本身的正确性依赖 Phase 0 spike(已完成)+ 真机验收覆盖,不进 `ctest`(呼应项目里"cbreak 按键循环没法自动化测试"这个已经被接受的同类局限)。但 `export_tag` 的路由分支逻辑(四种组合各自该用哪个源、该不该调 `render`、目标扩展名对不对)是可以单测的——给 `export_tag` 新增一个可选参数:
 
 ```cpp
 using RawDecodeFn = std::function<Result<decode::DecodedImage, raw::RawError>(const std::string&)>;
@@ -209,21 +239,30 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
 
 ## 任务分解(Task Breakdown)
 
-延续 M0/M1 的节奏:每个 increment 结束都要能实际验证,不是最后一起验收。
+延续 M0/M1 的节奏:每个 increment 结束都要能实际验证,不是最后一起验收。increment 3/4 是方向调整前的旧设计,已经实现过一版(配对模型),这次按新设计重做——旧版的部分产出(`core/raw` 的两个函数、`ensure_column` 迁移机制的使用方式)照样复用,不推倒重来。
 
-1. **环境 + CMake 接线**:`brew install libraw pkg-config`(spike 阶段已装),`core/CMakeLists.txt` 接入 `pkg_check_modules`,新建空壳 `core/raw/raw.{h,cpp}` 能编译链接进 `core` 静态库,不需要真功能。第一件事验证 `libomp` include 路径问题在 CMake 环境下是否需要手动处理。
-2. **`core/raw` 两个函数实现**:`extract_embedded_jpeg_bytes`/`decode_full`,用 `~/Pictures/raw_test_files/` 的真实文件手动验证(临时调试命令,或者直接复用/扩展 spike probe 的代码路径做验证,不需要等 core/project 的 schema 改动就绪)。这一步要锁定 `libraw_processed_image_t` 到 `DecodedImage` 的字节布局转换正确性(肉眼对比真机渲染效果,颜色不能跑偏)。
-3. **Schema 迁移 + `scan_media` 配对分组**(`create_project` 路径):`ensure_column` 加两列,`is_raw`/`scan_media`/分组逻辑,单元测试覆盖"只有 JPEG"、"只有 RAW"、"配对"、"同主干两个 RAW 不配对"这几种分组形状。
-4. **`rescan_project` 的配对升级逻辑**:单独的单元测试覆盖"先有 JPEG 后补 RAW"、"先有 RAW 后补 JPEG"两种升级路径,确认不产生重复记录。
-5. **预览路径接入**:`decode_jpeg_bytes` 拆分、`decode_preview_file` 门面函数、`PrefetchCache` 构造点换函数、信息栏新增"来源:"展示(RAW/JPEG/RAW&JPEG)。真机验收:用真实 RAW 项目过一遍 `pzt open`,确认切图延迟无感知差异。
-6. **导出路由六态改造**:`export_tag` 签名新增 `RawDecodeFn` 参数、扩展名替换逻辑、进度日志、`SkipReason::RawDecodeFailed`,单元测试用注入的假解码函数覆盖六种分支。
-7. **集成与真机验收**:用 `~/Pictures/raw_test_files/` 建一个真实项目过一遍 `docs/M2_PRD.md` 验收标准清单,需要手动构造至少一组同名 RAW+JPEG(从某个 RAF/DNG 提取内嵌预览另存为同名 JPEG,模拟配对场景),实测一次真实的"应用风格的 RAW 图片导出"耗时,确认进度日志按预期出现。
+1. **环境 + CMake 接线**(已完成):`core/raw/raw.{h,cpp}` 空壳能编译链接进 `core` 静态库。
+2. **`core/raw` 两个函数实现**(已完成):`extract_embedded_jpeg_bytes`/`decode_full`,真实文件验证过字节布局转换正确、颜色不跑偏。
+3. **(当前 increment,取代旧的 increment 3+4)Schema + 扫描简化 + RAW 预览缓存生成**:
+   - `ensure_column` 加 `kind`(两态)、`preview_cache_path`
+   - `scan_media` 简化成"RAW 存在就忽略同名 JPEG",不再做配对分组
+   - `core::raw::decode_preview`(half_size 解码)
+   - `core/db` 补 `raw_preview_cache_dir(ProjectId)`
+   - `create_project`/`rescan_project` 接入缓存生成 + `ScanProgressFn` 进度回调
+   - `rescan_project` 的单方向升级逻辑(JPEG 记录后补 RAW 时原地升级)
+   - 缓存文件生命周期:`rescan` 的 prune 分支、`delete_project` 都要清理对应缓存
+   - 单元测试覆盖:扫描时"只有 JPEG"/"只有 RAW"/"RAW+同名JPEG(JPEG 被忽略)"/"同主干两个 RAW 不消歧"几种形状;rescan 升级路径;缓存生命周期(prune 删缓存文件、delete_project 删整个项目子目录)
+   - 真机验证:真实文件跑一遍 `new`/`rescan`,确认缓存文件生成、进度提示出现、`sqlite3` 直接查表确认 `preview_cache_path` 落地正确
+   - **这一步完成后暂停,不接着做 increment 4,先详细 review/验证/清理现场**
+4. **预览路径接入**:`decode_jpeg_bytes` 拆分、预览调度门面函数(按 `kind` 查 `preview_cache_path`,命中就解码缓存文件,缺失则退化到 `extract_embedded_jpeg_bytes`)、`PrefetchCache` 构造点换函数、信息栏新增"来源:"展示(RAW/JPEG)。真机验收:用真实 RAW 项目过一遍 `pzt open`,确认切图延迟无感知差异,且预览色彩肉眼判断跟导出结果一致。
+5. **导出路由四态改造**:`export_tag` 签名新增 `RawDecodeFn` 参数、扩展名替换逻辑、进度日志、`SkipReason::RawDecodeFailed`,单元测试用注入的假解码函数覆盖四种分支。
+6. **集成与真机验收**:用 `~/Pictures/raw_test_files/` 建一个真实项目过一遍 `docs/M2_PRD.md` 验收标准清单,验证同名 JPEG 确实被忽略、缓存目录里确实找不到用户照片文件夹的任何痕迹之外的文件、导出效果符合预期。
 
 ## 风险与待确认问题
 
-延续自 `docs/M2_PRD.md`,这次工程设计阶段能定的都定了(白平衡基线、内嵌预览提取方式、输出位深、进度提示需求),以下几条仍然留到实现或真机验证阶段:
+延续自 `docs/M2_PRD.md`,这次工程设计阶段能定的都定了(白平衡基线、half_size 预览缓存方案、输出位深、两套独立的进度提示需求),以下几条仍然留到实现或真机验证阶段:
 
-* **`decode_full` 的 RGB→RGBA 字节布局转换正确性**:目前只有理论对齐(`kCGImageAlphaNoneSkipLast` + `kCGBitmapByteOrder32Big`),没有实际写代码验证过,increment 2 需要专门花时间肉眼核对颜色是否正确,不能想当然
-* **色彩管理(ICC)边界**:LibRaw 输出的 8-bit sRGB 不经过 CoreGraphics ColorSync 自动匹配(这条路径完全绕开了 ImageIO),M0/M1"信任系统默认处理"的假设在这里不成立,`output_color=1` 已经显式指定 sRGB 输出,理论上足够,但要在真机验收时留意色彩是否有肉眼可见的偏差
-* **内嵌预览缺失的边缘情况**:两台测试机身都确认是 JPEG 类型,但不代表所有 DNG/RAF 变体都是——真机测试之外的机型如果出现例外,`extract_embedded_jpeg_bytes` 目前会归为 `DecodeFailed`,不做位图兜底,留到真正遇到实例再处理
-* **RAW+JPEG 配对判定规则边界**:同名不同扩展名是最简单的规则,"同一主干两个 RAW"这类不该发生的输入,选择"不配对、各自独立"而不是报错拒绝整个扫描——这个宽松处理策略在真机测试中如果发现体验不好(比如用户以为配对了实际上没有),可以后续调整
+* **`decode_full`/`decode_preview` 的 RGB→RGBA 字节布局转换正确性**:`decode_full` 已经在 increment 2 验证过(肉眼核对真实文件颜色正常);`decode_preview` 复用同一段转换代码,理论上没有新风险,但 increment 3 里第一次真正调用它时仍然要肉眼核对一次,不能假设"跟 decode_full 共享代码所以肯定没问题"
+* **色彩管理(ICC)边界**:LibRaw 输出的 8-bit sRGB 不经过 CoreGraphics ColorSync 自动匹配,`output_color=1` 已经显式指定 sRGB 输出,理论上足够,但要在真机验收时留意色彩是否有肉眼可见的偏差
+* **内嵌预览缺失的边缘情况**:两台测试机身都确认是 JPEG 类型,但不代表所有 DNG/RAF 变体都是——这条路径现在只是"预览缓存缺失时的兜底",出现问题时影响面比它原来是主路径时小很多,依然不做位图兜底,留到真正遇到实例再处理
+* **多张 RAW 图片的缓存生成要不要并行**:PRD 已经把"几百张真实项目的总耗时量级"列为风险,这份文档暂定沿用"每张图片各自处理,不引入额外线程池"这个简单模型(跟导出路径一致的理由:LibRaw 内部已经用 OpenMP);如果真机验证发现几百张 RAW 的 `new`/`rescan` 耗时明显不可接受,再考虑要不要在 `core::project` 这一层加一层 `jthread` 并行(每个线程各自开一个 `LibRaw` 实例处理不同文件,理论上可行,但目前没有实测数据支撑这个复杂度)
