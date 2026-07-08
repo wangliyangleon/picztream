@@ -36,6 +36,12 @@ ALTER TABLE images ADD COLUMN preview_cache_path TEXT;
 -- 分辨率预览 JPEG 的绝对路径，落在 PZT 自己的数据目录下（不在用户照片文
 -- 件夹内，见"RAW 预览缓存"一节）。生成失败、或还没来得及生成时为 NULL，
 -- 这种情况下预览退化到内嵌预览提取兜底路径。
+
+ALTER TABLE images ADD COLUMN captured_at INTEGER;
+-- M2 收尾问题 3（验收之后真机使用发现的追加需求，见任务分解第 7 条）：
+-- 拍摄时间，Unix 秒数，从 EXIF（JPEG）/LibRaw（RAW）提取。可空——相机没
+-- 提供、文件读取失败都落在 NULL。list_images 默认浏览顺序改成按这一列排
+-- （NULL 排最后，退化到 file_path 兜底），取代纯文件名排序。
 ```
 
 `file_path`/`file_name` 两列的语义保持跟 M0/M1 完全一致——就是这张图对应的那个文件的相对路径，`kind='raw'` 时就是 `.dng`/`.raf` 本身，不再有"配对时改存 JPEG 路径"这种特殊情况。`preview_cache_path` 是绝对路径（不是相对 `root_path`，因为它压根不在 `root_path` 目录树下）。
@@ -258,6 +264,10 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
 5. **导出路由四态改造**(已完成):`export_tag` 签名新增 `RawDecodeFn`/`ExportProgressFn` 参数、扩展名替换逻辑、`SkipReason::RawDecodeFailed`,单元测试用注入的假解码函数覆盖四种分支(5 个新用例:无 recipe 解码、有 recipe 渲染、解码失败跳过、进度回调计数、纯 JPEG 批次不触发进度)。真机验证:对真实项目里一张富士 RAF 应用 Warm、一张徕卡 DNG 不应用任何风格,跑 `pzt export`——导出文件是 `.jpg`(不是原扩展名)、分辨率是全量(7752x5178/9536x6344,不是预览缓存的一半分辨率)、Warm 效果肉眼可见、进度提示正确出现。真实总耗时 7.8 秒(2 张),跟 Phase 0 spike 的量级(富士 ~5s+徕卡 ~2s)对得上。
 5.5. **移除 `--link`(已完成,增量之外的临时插入项)**:increment 5 做完之后复盘发现,`--link`(`LinkMode::Symlink`)这个从 M0 就有的功能,能生效的场景已经缩到只剩"纯 JPEG + 无 recipe"——应用了 recipe 的 JPEG、以及 M2 新增的两条 raw 路径,输出都是新生成的文件,`link_mode` 早就被忽略、强制落地成真实文件了。用户(这个工具唯一的目标用户)确认想不出这个功能剩下的用途,决定整个删掉,不是简单不推荐用。`LinkMode` 枚举、`link_mode` 参数从 `export_tag` 签名(`core/export/export.h`/`.cpp`、`core/api.h`/`.cpp`)整个消失,`cmd_export` 的 `--link` 解析、`g e` 快捷导出里固定传 `LinkMode::Copy` 的调用点、usage 文本里的 `[--link]` 都一并清掉;删掉两个 `--link` 专属单元测试,其余测试改成按新签名调用(无行为变化)。副作用:`docs/M0_Eng_Design.md`"待确认问题"里记录的"`--link` 模式下 rescan 会把符号链接当新照片重复扫进 `images` 表,出现两条记录指向同一物理文件"这个 bug 的 symlink 那一半,从此不会再发生(另一半——复制体本身被误扫描进 root_path 内的导出目录——跟 link 模式无关,依然存在,留在原处)。真机验证:`pzt export`(不带任何 flag)导出行为不变,逐字节复制;传一个现在已经不认识的 `--link` 会被静默当成多余参数忽略,不报错,不影响导出结果。
 6. **集成与真机验收**(已完成):用 `~/Pictures/raw_test_files/` 的 4 个真实文件 + 手动构造的一组同名 RAW+JPEG 建了一个真实项目,过了一遍 `docs/M2_PRD.md` 的 8 条验收标准。可自动化验证的部分(格式识别与同名 JPEG 忽略、`new`/`rescan` 进度提示、照片文件夹字节级不变、预览色彩与导出结果一致、导出四态正确路由、单元测试覆盖)全部通过;"浏览体验主观感受"和"信息栏来源类型展示"这两条依赖真实终端交互,自动化只能验证背后的机制(真实 `PrefetchCache` 解码耗时、`info_source_label` 逻辑),主观感受部分留给用户在真实终端里确认,这是项目里"cbreak 按键循环没法自动化测试"的一贯局限,不是新问题。真机跑出来的暗角问题(见 `docs/M2_PRD.md`"未来考虑")不影响本次验收——那是镜头矫正缺失的独立问题,不是 M2 范围内的色彩管线正确性问题。
+7. **M2 收尾(已完成,验收通过之后真机使用中发现的三个问题)**:
+   - **导出进度提示时机**:`on_progress` 原来在 `raw_decode_fn`/`generate_preview_cache` 完成之后才触发,批次里第一张(单张导出时是唯一一张)解码期间界面完全没反应,单张 RAW 全量解码要几秒,看起来像卡住了。改成开始前触发,`export_tag`/`export_image`/`create_project`/`rescan_project` 四处统一。
+   - **顶层 `e` 键导出当前图片**:`pzt open` 原来只能通过 `g`+`e` 导出一整个标签,想导出"就是当前这张"得先建个临时标签。新增 `export_image`(`core/export/export.h`/`.cpp`),从 `export_tag` 循环体里抽出来的 `write_one_export` 两边共用,单张导出没有"有序编号"这个概念。顺带发现并修了 `g`+`e` 批量导出一直没接 `on_progress` 的口子(跟第一条是同一个根因,只是没人真机测到)。
+   - **按拍摄时间排序**:`list_images` 原来 `ORDER BY file_path ASC`,多相机场景下文件名交替跟实际拍摄顺序没关系。新增 `captured_at` 列(见上面 Schema 一节),`core::raw::read_capture_time`/`core::decode::read_jpeg_capture_time` 分别从 LibRaw `open_file()`(不触发全量解码,1-2ms 量级)和 ImageIO EXIF(不解码像素)提取,`core/project/project.cpp` 扫描时写入,`rescan_project` 额外对已有的 NULL 行做一次性回填。排序改成 `captured_at IS NULL, captured_at DESC, file_path ASC`(NULL 排最后按文件名兜底,有值的按新到旧)。过程中发现并修了一个真实的时区语义不一致 bug:LibRaw 的 `imgdata.other.timestamp` 是按本地时区 `mktime()` 语义算出来的(真机验证过),但最初写的 `read_jpeg_capture_time` 用的是 `timegm()`(UTC)——同一个项目里 RAW 和真实相机 JPEG 的 `captured_at` 会有一个时区偏移量的系统性错位,已改成两边统一用 `mktime()`。信息栏新增"拍摄时间"这一行,精确到分钟。
 
 ## 风险与待确认问题
 
