@@ -245,6 +245,11 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
   Stmt update_cache_stmt(conn, "UPDATE images SET preview_cache_path = ? WHERE id = ?;");
   int done = 0;
   for (const auto& [image_id, relative_path] : needs_cache) {
+    // 进度回调在生成开始前触发，不是完成后——见 export_tag 里同一处修复
+    // 的说明，单张生成慢的时候（尤其是徕卡 DNG，实测半分辨率解码接近
+    // 1 秒）完成后才报进度会让第一张的等待期界面上什么都不显示。
+    ++done;
+    if (on_progress) on_progress(done, static_cast<int>(needs_cache.size()));
     fs::path absolute = fs::path(folder_path) / relative_path;
     auto cache_path = generate_preview_cache(db, project_id, image_id, absolute.string());
     if (cache_path) {
@@ -253,8 +258,6 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
       sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
       sqlite3_step(update_cache_stmt.get());
     }
-    ++done;
-    if (on_progress) on_progress(done, static_cast<int>(needs_cache.size()));
   }
 
   return Result<ProjectId, CreateProjectError>::Ok(project_id);
@@ -494,10 +497,13 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
     throw;
   }
 
-  // 同 create_project：预览缓存生成放在主事务提交之后。
+  // 同 create_project：预览缓存生成放在主事务提交之后,进度回调在生成开
+  // 始前触发(见 create_project 里同一处修复的说明)。
   Stmt update_cache_stmt(conn, "UPDATE images SET preview_cache_path = ? WHERE id = ?;");
   int done = 0;
   for (const auto& [image_id, relative_path] : needs_cache) {
+    ++done;
+    if (on_progress) on_progress(done, static_cast<int>(needs_cache.size()));
     fs::path absolute = fs::path(summary->root_path) / relative_path;
     auto cache_path = generate_preview_cache(db, id, image_id, absolute.string());
     if (cache_path) {
@@ -506,8 +512,6 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
       sqlite3_step(update_cache_stmt.get());
     }
-    ++done;
-    if (on_progress) on_progress(done, static_cast<int>(needs_cache.size()));
   }
 
   RescanSummary result;

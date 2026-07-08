@@ -144,10 +144,13 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
       if (img.kind == "raw") {
         // 全量解码：不管有没有 recipe 都要走这一步（M2_PRD.md 已经定了
         // RAW 图片导出永远落地成可直接查看的 JPEG），只是有没有 recipe
-        // 决定后面要不要再调 render。
-        auto decoded = raw_decode_fn(source.string());
+        // 决定后面要不要再调 render。进度回调要在解码开始前触发，不是完
+        // 成后——全量解码单张就要几秒，完成后才报进度的话，批次里第一张
+        // (单张导出时是唯一一张)在解码期间界面上什么都不显示，看起来像
+        // 卡住了，真机使用中被发现过。
         ++raw_done;
         if (on_progress) on_progress(raw_done, raw_total);
+        auto decoded = raw_decode_fn(source.string());
         if (!decoded.ok()) {
           result.skipped.push_back(
               ExportSkipped{img.id, img.file_name, SkipReason::RawDecodeFailed});
