@@ -254,7 +254,7 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
    - 单元测试覆盖:扫描时"只有 JPEG"/"只有 RAW"/"RAW+同名JPEG(JPEG 被忽略)"/"同主干两个 RAW 不消歧"几种形状;rescan 升级路径;缓存生命周期(prune 删缓存文件、delete_project 删整个项目子目录)
    - 真机验证:真实文件跑一遍 `new`/`rescan`,确认缓存文件生成、进度提示出现、`sqlite3` 直接查表确认 `preview_cache_path` 落地正确
    - **这一步完成后暂停,不接着做 increment 4,先详细 review/验证/清理现场**
-4. **预览路径接入**:`decode_jpeg_bytes` 拆分、预览调度门面函数(按 `kind` 查 `preview_cache_path`,命中就解码缓存文件,缺失则退化到 `extract_embedded_jpeg_bytes`)、`PrefetchCache` 构造点换函数、信息栏新增"来源:"展示(RAW/JPEG)。真机验收:用真实 RAW 项目过一遍 `pzt open`,确认切图延迟无感知差异,且预览色彩肉眼判断跟导出结果一致。
+4. **预览路径接入**(已完成):`decode_jpeg_bytes` 拆分、`decode_preview_file` 门面函数(按扩展名分发,不感知 kind/缓存——路径选择这一步的职责在 `browse::PrefetchCache::set_current` 里,不在这个函数里)、`PrefetchCache` 构造点换函数、信息栏新增"来源:"展示(RAW/JPEG)。真机验证发现的真实 bug:改动前 `PrefetchCache` 一直在对 kind="raw" 的图片直接调用 `decode_jpeg_file(原始 .dng/.raf 路径)`——macOS ImageIO 自带的系统级 RAW 解码器能"正常跑"（不报错），但速度慢（真机实测到 10 秒量级）且对富士 X-Trans 支持明显更差（画面明显偏黑），这解释了两个真机报告的现象，根源是同一个：预览从来没有真正用上生成好的缓存文件。修复后（改成按 kind 选路径喂给 `decode_fn`）实测：Debug+ASan 构建下解码耗时被 ASan 插桩放大到 570-970ms（跟项目里已知的 ASan 开销倍数一致），RelWithDebInfo 构建下是 52-72ms，回到跟普通 JPEG 同一个量级。
 5. **导出路由四态改造**:`export_tag` 签名新增 `RawDecodeFn` 参数、扩展名替换逻辑、进度日志、`SkipReason::RawDecodeFailed`,单元测试用注入的假解码函数覆盖四种分支。
 6. **集成与真机验收**:用 `~/Pictures/raw_test_files/` 建一个真实项目过一遍 `docs/M2_PRD.md` 验收标准清单,验证同名 JPEG 确实被忽略、缓存目录里确实找不到用户照片文件夹的任何痕迹之外的文件、导出效果符合预期。
 

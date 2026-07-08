@@ -652,6 +652,14 @@ std::string info_size_label(const std::string &size_str) {
   }
 }
 
+std::string info_source_label(bool is_raw) {
+  if (g_lang == Lang::zh) {
+    return is_raw ? "来源: RAW" : "来源: JPEG";
+  } else {
+    return is_raw ? "Source: RAW" : "Source: JPEG";
+  }
+}
+
 std::string info_style_label() {
   if (g_lang == Lang::zh) {
     return "风格:";

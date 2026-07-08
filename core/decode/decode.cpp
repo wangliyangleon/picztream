@@ -24,11 +24,8 @@ std::optional<std::vector<std::uint8_t>> read_file(const std::string& path) {
 
 }  // namespace
 
-Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {
-  auto bytes = read_file(path);
-  if (!bytes) return Result<DecodedImage, DecodeError>::Err(DecodeError::FileNotFound);
-
-  CFDataRef data = CFDataCreate(nullptr, bytes->data(), static_cast<CFIndex>(bytes->size()));
+Result<DecodedImage, DecodeError> decode_jpeg_bytes(const std::vector<std::uint8_t>& bytes) {
+  CFDataRef data = CFDataCreate(nullptr, bytes.data(), static_cast<CFIndex>(bytes.size()));
   CGImageSourceRef src = CGImageSourceCreateWithData(data, nullptr);
   CFRelease(data);
   if (!src) return Result<DecodedImage, DecodeError>::Err(DecodeError::DecodeFailed);
@@ -60,6 +57,12 @@ Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {
   CGImageRelease(img);
 
   return Result<DecodedImage, DecodeError>::Ok(std::move(out));
+}
+
+Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {
+  auto bytes = read_file(path);
+  if (!bytes) return Result<DecodedImage, DecodeError>::Err(DecodeError::FileNotFound);
+  return decode_jpeg_bytes(*bytes);
 }
 
 Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,

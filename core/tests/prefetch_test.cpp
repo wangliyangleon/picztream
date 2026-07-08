@@ -23,7 +23,7 @@ std::vector<ImageRef> make_images(int n) {
   for (int i = 0; i < n; ++i) {
     char name[16];
     std::snprintf(name, sizeof(name), "%c.jpg", 'a' + i);
-    images.push_back(ImageRef{static_cast<ImageId>(i + 1), name, name});
+    images.push_back(ImageRef{static_cast<ImageId>(i + 1), name, name, "jpeg", std::nullopt});
   }
   return images;
 }
@@ -70,6 +70,45 @@ TEST_CASE("PrefetchCache decodes the window around current and get() returns mat
   auto d = cache.get(images[3].id);
   REQUIRE(d.ok());
   CHECK(d.value().width == 40);
+}
+
+TEST_CASE("PrefetchCache passes the preview cache path for kind=raw images, not the raw file path") {
+  // M2 回归测试:kind="raw" 且 preview_cache_path 有值时,decode_fn 应该拿
+  // 到缓存文件的绝对路径(本身就是 JPEG,解码飞快),而不是 root_path +
+  // file_path 拼出来的原始 .dng/.raf 路径(会退化成走内嵌预览提取兜底,
+  // 或者更糟——如果 decode_fn 是真实的 decode_jpeg_file,会直接把原始
+  // RAW 字节丢给 ImageIO,触发系统自带的 RAW 解码器,慢且有些机型(比如
+  // 富士 X-Trans)解码效果很差,这正是真机测试中发现的 bug)。
+  ImageId with_cache_id = 1;
+  ImageId without_cache_id = 2;
+  std::vector<ImageRef> images = {
+      ImageRef{with_cache_id, "photo1.RAF", "photo1.RAF", "raw", std::string("/cache/1.jpg")},
+      ImageRef{without_cache_id, "photo2.RAF", "photo2.RAF", "raw", std::nullopt},
+  };
+
+  std::vector<std::string> seen_paths;
+  DecodeFn recording_decode = [&](const std::string& path) -> Result<DecodedImage, DecodeError> {
+    seen_paths.push_back(path);
+    DecodedImage img;
+    img.width = 1;
+    img.height = 1;
+    img.rgba = {0, 0, 0, 0};
+    return Result<DecodedImage, DecodeError>::Ok(img);
+  };
+
+  PrefetchCache cache("/root", /*window=*/1, recording_decode);
+  cache.set_current(images, with_cache_id);
+  REQUIRE(cache.get(with_cache_id).ok());
+  REQUIRE(cache.get(without_cache_id).ok());
+
+  bool used_cache_path = false;
+  bool used_raw_file_path = false;
+  for (const auto& p : seen_paths) {
+    if (p == "/cache/1.jpg") used_cache_path = true;
+    if (p == "/root/photo2.RAF") used_raw_file_path = true;
+  }
+  CHECK(used_cache_path);       // 有缓存时用缓存路径,不是 /root/photo1.RAF
+  CHECK(used_raw_file_path);    // 没缓存时退化成原始文件路径
 }
 
 TEST_CASE("PrefetchCache reports NotInWindow for images outside the window") {

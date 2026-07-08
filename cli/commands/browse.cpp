@@ -133,7 +133,8 @@ int cmd_open(const std::vector<std::string>& args) {
 
     // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
     // 受这次影响,调优留给以后有真实使用数据再说。
-    pzt::core::PrefetchCache prefetch(project.root_path, /*window=*/3, pzt::core::decode_jpeg_file);
+    pzt::core::PrefetchCache prefetch(project.root_path, /*window=*/3,
+                                       pzt::core::decode_preview_file);
     pzt::core::ImageId current_id = images.front().id;
     prefetch.set_current(images, current_id);
 
@@ -288,6 +289,8 @@ int cmd_open(const std::vector<std::string>& args) {
         if (info) {
           move_cursor(row++, info_col);
           write_stdout(pad_to(pzt::cli::i18n::info_size_label(format_size(info->file_size)), info_cols));
+          move_cursor(row++, info_col);
+          write_stdout(pad_to(pzt::cli::i18n::info_source_label(info->kind == "raw"), info_cols));
         }
 
         // M1 increment 3:在真正的 `r` 交互(increment 6)和预览渲染

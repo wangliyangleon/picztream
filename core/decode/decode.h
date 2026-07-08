@@ -31,6 +31,11 @@ enum class DecodeError {
 
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 
+// M2：decode_jpeg_file 拆出来的后半段（字节 -> 像素），供
+// core::raw::extract_embedded_jpeg_bytes 拿到的内嵌预览字节复用，不用重
+// 新实现一遍 CGImageSource 逻辑。
+Result<DecodedImage, DecodeError> decode_jpeg_bytes(const std::vector<std::uint8_t>& bytes);
+
 // 把已经解码的图片缩放成正好 target_width x target_height(不保持长宽比——
 // 调用方负责用长宽比正确的目标尺寸调用这个函数,这里只管缩放本身)。目标
 // 尺寸已经不小于原图时直接返回原图的拷贝,不做无意义的重采样。

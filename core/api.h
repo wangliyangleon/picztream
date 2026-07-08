@@ -139,6 +139,17 @@ Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);
 Result<DecodedImage, DecodeError> resize_rgba(const DecodedImage& src, int target_width,
                                                int target_height);
 
+// M2：culling 预览的统一解码入口，core/decode 和 core/raw 之间唯一的"胶
+// 水"函数——按扩展名分发：.jpg/.jpeg 走 decode_jpeg_file(不变)；.dng/.raf
+// 走 raw::extract_embedded_jpeg_bytes + decode::decode_jpeg_bytes(内嵌预览
+// 提取，不触发 LibRaw 全量解码)。调用方(core::browse::PrefetchCache 的
+// decode_fn)传的 path 已经由 browse 层按 kind/preview_cache_path 决定好
+// 该传哪个了——kind="raw" 且缓存有效时，调用方直接传缓存文件的路径（本
+// 身就是 .jpg，这个函数按扩展名走的还是第一条分支，不需要知道"这是缓存
+// 文件"这件事）；只有缓存缺失时才会传原始 .dng/.raf 路径，走这里的兜底
+// 分支。
+Result<DecodedImage, DecodeError> decode_preview_file(const std::string& path);
+
 // M1 increment 4:像素编码回 JPEG 文件，供导出烘焙和 `pzt color-debug` 用。
 Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::string& path,
                                             double quality = 0.9);

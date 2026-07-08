@@ -24,6 +24,8 @@ struct ImageRef {
   ImageId id;
   std::string file_path;
   std::string file_name;
+  std::string kind = "jpeg";                     // "jpeg" | "raw"，见 M2_Eng_Design.md
+  std::optional<std::string> preview_cache_path;  // kind="raw" 且缓存已生成时有值(绝对路径)
 };
 
 // 项目内所有图片，按 file_path 字典序排列——一个确定性的浏览顺序基准。

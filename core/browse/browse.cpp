@@ -33,21 +33,31 @@ std::optional<std::size_t> index_of(const std::vector<ImageRef>& images,
   return static_cast<std::size_t>(std::distance(images.begin(), it));
 }
 
+// list_images/filter_by_tag 的 SELECT 都按同样的 5 列顺序取(id, file_path,
+// file_name, kind, preview_cache_path)，抽出来避免重复。
+ImageRef row_to_image_ref(sqlite3_stmt* stmt) {
+  ImageRef ref;
+  ref.id = sqlite3_column_int64(stmt, 0);
+  ref.file_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+  ref.file_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+  ref.kind = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+  if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) {
+    ref.preview_cache_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+  }
+  return ref;
+}
+
 }  // namespace
 
 std::vector<ImageRef> list_images(db::Database& db, ProjectId project_id) {
   Stmt stmt(db.handle(),
-            "SELECT id, file_path, file_name FROM images WHERE project_id = ? "
-            "ORDER BY file_path ASC;");
+            "SELECT id, file_path, file_name, kind, preview_cache_path FROM images "
+            "WHERE project_id = ? ORDER BY file_path ASC;");
   sqlite3_bind_int64(stmt.get(), 1, project_id);
 
   std::vector<ImageRef> out;
   while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-    out.push_back(ImageRef{
-        sqlite3_column_int64(stmt.get(), 0),
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1)),
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2)),
-    });
+    out.push_back(row_to_image_ref(stmt.get()));
   }
   return out;
 }
@@ -98,20 +108,18 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(db::Database& db, Ta
   }
 
   const char* order_by = *is_ordered ? "it.position ASC" : "it.tagged_at ASC";
-  std::string sql = std::string("SELECT i.id, i.file_path, i.file_name FROM image_tags it "
-                                 "JOIN images i ON i.id = it.image_id "
-                                 "WHERE it.tag_id = ? ORDER BY ") +
-                     order_by + ";";
+  std::string sql =
+      std::string("SELECT i.id, i.file_path, i.file_name, i.kind, i.preview_cache_path "
+                   "FROM image_tags it "
+                   "JOIN images i ON i.id = it.image_id "
+                   "WHERE it.tag_id = ? ORDER BY ") +
+      order_by + ";";
   Stmt stmt(conn, sql.c_str());
   sqlite3_bind_int64(stmt.get(), 1, tag_id);
 
   std::vector<ImageRef> out;
   while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-    out.push_back(ImageRef{
-        sqlite3_column_int64(stmt.get(), 0),
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1)),
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2)),
-    });
+    out.push_back(row_to_image_ref(stmt.get()));
   }
   return Result<std::vector<ImageRef>, BrowseTagError>::Ok(std::move(out));
 }

@@ -90,15 +90,26 @@ void PrefetchCache::set_current(const std::vector<ImageRef>& images,
     }
   }
 
-  std::unordered_map<ImageId, const std::string*> path_by_id;
-  for (const auto& ref : images) path_by_id[ref.id] = &ref.file_path;
+  // M2：kind="raw" 且预览缓存已经生成时，直接把缓存文件的绝对路径交给
+  // decode_fn(本身就是一张真正的 JPEG，走 decode_preview_file 里 .jpg 分
+  // 支，解码速度跟普通 JPEG 没有差别)；缓存缺失(还没生成/生成失败)时才退
+  // 化成传原始 .dng/.raf 路径，让 decode_preview_file 走内嵌预览提取兜
+  // 底。kind="jpeg" 的图片行为完全不变。
+  std::unordered_map<ImageId, std::string> resolved_path_by_id;
+  for (const auto& ref : images) {
+    if (ref.kind == "raw" && ref.preview_cache_path) {
+      resolved_path_by_id[ref.id] = *ref.preview_cache_path;
+    } else {
+      resolved_path_by_id[ref.id] = root_path_ + "/" + ref.file_path;
+    }
+  }
 
   pending_queue_.clear();
   for (ImageId id : wanted) {
     auto cache_it = cache_.find(id);
     if (cache_it == cache_.end()) {
       cache_.emplace(id, Entry{State::Pending, {}});
-      paths_[id] = root_path_ + "/" + *path_by_id.at(id);
+      paths_[id] = resolved_path_by_id.at(id);
       pending_queue_.push_back(id);
     } else if (cache_it->second.state == State::Pending) {
       pending_queue_.push_back(id);
