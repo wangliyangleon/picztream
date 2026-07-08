@@ -157,9 +157,9 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id) {
 }
 
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
-                                                 LinkMode link_mode, ExportProgressFn on_progress) {
+                                                 ExportProgressFn on_progress) {
   db::Database db = db::Database::open_default();
-  return exporting::export_tag(db, tag_id, output_folder, link_mode, std::move(on_progress));
+  return exporting::export_tag(db, tag_id, output_folder, std::move(on_progress));
 }
 
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {

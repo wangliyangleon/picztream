@@ -238,12 +238,7 @@ int cmd_export(const std::vector<std::string>& args) {
   }
   std::string output_folder = expand_home_path(args[2]);
 
-  auto link_mode = pzt::core::LinkMode::Copy;
-  for (std::size_t i = 3; i < args.size(); ++i) {
-    if (args[i] == "--link") link_mode = pzt::core::LinkMode::Symlink;
-  }
-
-  auto result = pzt::core::export_tag(*tag_id, output_folder, link_mode, print_export_progress);
+  auto result = pzt::core::export_tag(*tag_id, output_folder, print_export_progress);
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
       std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());

@@ -76,7 +76,7 @@ fs::path resolve_collision(const fs::path& dir, const std::string& base_name) {
 
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
-                                                 LinkMode link_mode, ExportProgressFn on_progress,
+                                                 ExportProgressFn on_progress,
                                                  RawDecodeFn raw_decode_fn) {
   sqlite3* conn = db.handle();
 
@@ -171,9 +171,7 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
         }
       } else if (recipe_id) {
         // 全分辨率烘焙:解码原图 -> recipe::render(多线程) -> 编码写出,
-        // 取代拷贝/软链。link_mode 在这里没有意义——输出本来就是新生成
-        // 的文件,没有"原始字节"可以软链,统一落地成真实文件,这是对既
-        // 有 --link 语义的一个自然限制。
+        // 取代复制。
         auto decoded = decode::decode_jpeg_file(source.string());
         if (!decoded.ok()) {
           result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::DecodeFailed});
@@ -191,12 +189,8 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
           continue;
         }
       } else {
-        // 没有应用 recipe 的 JPEG 图片继续走原来的复制/软链,字节级不变。
-        if (link_mode == LinkMode::Copy) {
-          fs::copy_file(source, target);
-        } else {
-          fs::create_symlink(fs::absolute(source), target);
-        }
+        // 没有应用 recipe 的 JPEG 图片继续走原来的复制,字节级不变。
+        fs::copy_file(source, target);
       }
       ++result.exported_count;
     }

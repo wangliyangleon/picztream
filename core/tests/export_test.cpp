@@ -308,18 +308,6 @@ TEST_CASE("export_tag skips a recipe-applied image whose source content fails to
   CHECK(result.value().skipped[0].reason == SkipReason::DecodeFailed);
 }
 
-TEST_CASE("export_tag with --link creates a symlink instead of copying bytes") {
-  auto fx = make_fixture("export_link", 1);
-  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
-  REQUIRE(tag.ok());
-  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
-
-  auto out_dir = fresh_output_dir("export_link");
-  auto result = export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Symlink);
-  REQUIRE(result.ok());
-  CHECK(fs::is_symlink(out_dir / "img_000.jpg"));
-}
-
 TEST_CASE("export_tag reports TagNotFound") {
   auto fx = make_fixture("export_errors", 1);
   auto out_dir = fresh_output_dir("export_errors");
@@ -378,30 +366,6 @@ TEST_CASE("export_tag leaves an image with no recipe byte-for-byte identical to 
   CHECK(source_bytes == output_bytes);  // 回归防线:没应用风格的图片必须字节级不变
 }
 
-TEST_CASE("export_tag --link degrades to a real file for a recipe-applied image "
-          "but still symlinks the untouched one") {
-  auto fx = make_real_photo_fixture("export_bake_link", 2);
-  auto warm_id = list_presets(fx.db)[1].id;
-  REQUIRE(set_image_recipe(fx.db, fx.images[0], warm_id).ok());
-  // images[1] 不应用任何 recipe,保持对照。
-
-  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
-  REQUIRE(tag.ok());
-  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
-  REQUIRE(add_tag(fx.db, fx.images[1], tag.value()).ok());
-
-  auto out_dir = fresh_output_dir("export_bake_link");
-  auto result = export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Symlink);
-  REQUIRE(result.ok());
-  CHECK(result.value().exported_count == 2);
-
-  // 应用了 recipe 的那张:输出是新生成的文件,没有"原始字节"可以软链,
-  // link_mode 在这里被忽略。
-  CHECK_FALSE(fs::is_symlink(out_dir / "img_000.jpg"));
-  CHECK(fs::exists(out_dir / "img_000.jpg"));
-  // 没应用 recipe 的那张:--link 语义不变,照常建符号链接。
-  CHECK(fs::is_symlink(out_dir / "img_001.jpg"));
-}
 
 // M2 increment 5：kind="raw" 的导出路由。
 
@@ -417,7 +381,7 @@ TEST_CASE("export_tag decodes a raw-kind image via raw_decode_fn and writes a ne
 
   auto out_dir = fresh_output_dir("export_raw_no_recipe");
   auto result =
-      export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy, nullptr, fake_decode);
+      export_tag(fx.db, tag.value(), out_dir.string(), nullptr, fake_decode);
   REQUIRE(result.ok());
   CHECK(result.value().exported_count == 1);
   CHECK(calls.load() == 1);  // raw_decode_fn 被调用了，即使没有 recipe
@@ -444,7 +408,7 @@ TEST_CASE("export_tag applies recipe on top of raw_decode_fn output when a recip
     auto fake_decode = make_fake_raw_decode(40, 30, 128, 128, 128);
     auto out_dir = fresh_output_dir("export_raw_recipe_cmp_" + tag_suffix);
     auto result =
-        export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy, nullptr, fake_decode);
+        export_tag(fx.db, tag.value(), out_dir.string(), nullptr, fake_decode);
     REQUIRE(result.ok());
     REQUIRE(result.value().exported_count == 1);
     return read_bytes(out_dir / "img_000.jpg");
@@ -478,7 +442,7 @@ TEST_CASE("export_tag skips a raw-kind image when raw_decode_fn fails, without a
 
   auto out_dir = fresh_output_dir("export_raw_decode_fail");
   auto result =
-      export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy, nullptr, flaky_decode);
+      export_tag(fx.db, tag.value(), out_dir.string(), nullptr, flaky_decode);
   REQUIRE(result.ok());
   CHECK(result.value().exported_count == 1);
   REQUIRE(result.value().skipped.size() == 1);
@@ -497,7 +461,7 @@ TEST_CASE("export_tag's progress callback fires once per raw image with correct 
   auto fake_decode = make_fake_raw_decode(10, 10, 0, 0, 0);
   auto out_dir = fresh_output_dir("export_raw_progress");
   auto result = export_tag(
-      fx.db, tag.value(), out_dir.string(), LinkMode::Copy,
+      fx.db, tag.value(), out_dir.string(),
       [&](int done, int total) { calls.emplace_back(done, total); }, fake_decode);
   REQUIRE(result.ok());
   REQUIRE(calls.size() == 3);
@@ -514,7 +478,7 @@ TEST_CASE("export_tag's progress callback never fires for a pure-jpeg batch") {
 
   int call_count = 0;
   auto out_dir = fresh_output_dir("export_jpeg_no_progress");
-  auto result = export_tag(fx.db, tag.value(), out_dir.string(), LinkMode::Copy,
+  auto result = export_tag(fx.db, tag.value(), out_dir.string(),
                             [&](int, int) { ++call_count; });
   REQUIRE(result.ok());
   CHECK(call_count == 0);

@@ -204,8 +204,6 @@ struct ImageRef {
 1. **目标文件扩展名**:两条 raw 路径输出都是 JPEG,目标文件名要把原扩展名(`.dng`/`.raf`)换成 `.jpg`(`fs::path(file_name).replace_extension(".jpg")`),不能直接复用 `ordered_name`/`resolve_collision` 现有的"原样拼文件名"逻辑。
 2. **进度日志**:每次真正调用 `raw::decode_full` 前后,往 stderr 打一行"正在处理第 X/N 张",对应 spike 结论第 4 条——注意这是导出时的全量解码进度,跟 increment 3 的预览缓存生成进度是两套独立的进度提示,场景不同(一个在 `new`/`rescan`,一个在 `export`)，不合并成一套机制。
 
-`--link` 对两条 raw 路径继续沿用 M1 已确立的限制(烘焙输出没有原始字节可软链,统一落地成真实文件)。
-
 **依赖注入(供单元测试用)**:RAF 是私有格式,没法像 JPEG 那样用 CGImageDestination 现场合成合法测试素材,`core::raw::decode_full`/`decode_preview`/`extract_embedded_jpeg_bytes` 本身的正确性依赖 Phase 0 spike(已完成)+ 真机验收覆盖,不进 `ctest`(呼应项目里"cbreak 按键循环没法自动化测试"这个已经被接受的同类局限)。但 `export_tag` 的路由分支逻辑(四种组合各自该用哪个源、该不该调 `render`、目标扩展名对不对)是可以单测的——给 `export_tag` 新增一个可选参数:
 
 ```cpp
@@ -213,9 +211,11 @@ using RawDecodeFn = std::function<Result<decode::DecodedImage, raw::RawError>(co
 
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
-                                                 LinkMode link_mode = LinkMode::Copy,
+                                                 ExportProgressFn on_progress = nullptr,
                                                  RawDecodeFn raw_decode_fn = raw::decode_full);
 ```
+
+（这一版签名已经不带 `link_mode` 了——`--link` 这个功能在 increment 5 之后被整个移除,见下方"移除 `--link`"一节,不是这份文档最初写的样子。）
 
 签名类比 `browse::PrefetchCache` 现有的 `DecodeFn` 注入模式。默认值指向真实的 `raw::decode_full`,`cli/commands/commands.cpp` 现有调用点不用改;测试注入一个内存里现场构造 `DecodedImage` 的假函数,验证六种分支各自的源路径选择、是否调用了 `render`、目标扩展名是否正确,不需要真的链接调用 LibRaw。这是这次唯一需要改变现有函数签名的地方。
 
@@ -256,6 +256,7 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
    - **这一步完成后暂停,不接着做 increment 4,先详细 review/验证/清理现场**
 4. **预览路径接入**(已完成):`decode_jpeg_bytes` 拆分、`decode_preview_file` 门面函数(按扩展名分发,不感知 kind/缓存——路径选择这一步的职责在 `browse::PrefetchCache::set_current` 里,不在这个函数里)、`PrefetchCache` 构造点换函数、信息栏新增"来源:"展示(RAW/JPEG)。真机验证发现的真实 bug:改动前 `PrefetchCache` 一直在对 kind="raw" 的图片直接调用 `decode_jpeg_file(原始 .dng/.raf 路径)`——macOS ImageIO 自带的系统级 RAW 解码器能"正常跑"（不报错），但速度慢（真机实测到 10 秒量级）且对富士 X-Trans 支持明显更差（画面明显偏黑），这解释了两个真机报告的现象，根源是同一个：预览从来没有真正用上生成好的缓存文件。修复后（改成按 kind 选路径喂给 `decode_fn`）实测：Debug+ASan 构建下解码耗时被 ASan 插桩放大到 570-970ms（跟项目里已知的 ASan 开销倍数一致），RelWithDebInfo 构建下是 52-72ms，回到跟普通 JPEG 同一个量级。
 5. **导出路由四态改造**(已完成):`export_tag` 签名新增 `RawDecodeFn`/`ExportProgressFn` 参数、扩展名替换逻辑、`SkipReason::RawDecodeFailed`,单元测试用注入的假解码函数覆盖四种分支(5 个新用例:无 recipe 解码、有 recipe 渲染、解码失败跳过、进度回调计数、纯 JPEG 批次不触发进度)。真机验证:对真实项目里一张富士 RAF 应用 Warm、一张徕卡 DNG 不应用任何风格,跑 `pzt export`——导出文件是 `.jpg`(不是原扩展名)、分辨率是全量(7752x5178/9536x6344,不是预览缓存的一半分辨率)、Warm 效果肉眼可见、进度提示正确出现。真实总耗时 7.8 秒(2 张),跟 Phase 0 spike 的量级(富士 ~5s+徕卡 ~2s)对得上。
+5.5. **移除 `--link`(已完成,增量之外的临时插入项)**:increment 5 做完之后复盘发现,`--link`(`LinkMode::Symlink`)这个从 M0 就有的功能,能生效的场景已经缩到只剩"纯 JPEG + 无 recipe"——应用了 recipe 的 JPEG、以及 M2 新增的两条 raw 路径,输出都是新生成的文件,`link_mode` 早就被忽略、强制落地成真实文件了。用户(这个工具唯一的目标用户)确认想不出这个功能剩下的用途,决定整个删掉,不是简单不推荐用。`LinkMode` 枚举、`link_mode` 参数从 `export_tag` 签名(`core/export/export.h`/`.cpp`、`core/api.h`/`.cpp`)整个消失,`cmd_export` 的 `--link` 解析、`g e` 快捷导出里固定传 `LinkMode::Copy` 的调用点、usage 文本里的 `[--link]` 都一并清掉;删掉两个 `--link` 专属单元测试,其余测试改成按新签名调用(无行为变化)。副作用:`docs/M0_Eng_Design.md`"待确认问题"里记录的"`--link` 模式下 rescan 会把符号链接当新照片重复扫进 `images` 表,出现两条记录指向同一物理文件"这个 bug 的 symlink 那一半,从此不会再发生(另一半——复制体本身被误扫描进 root_path 内的导出目录——跟 link 模式无关,依然存在,留在原处)。真机验证:`pzt export`(不带任何 flag)导出行为不变,逐字节复制;传一个现在已经不认识的 `--link` 会被静默当成多余参数忽略,不报错,不影响导出结果。
 6. **集成与真机验收**:用 `~/Pictures/raw_test_files/` 建一个真实项目过一遍 `docs/M2_PRD.md` 验收标准清单,验证同名 JPEG 确实被忽略、缓存目录里确实找不到用户照片文件夹的任何痕迹之外的文件、导出效果符合预期。
 
 ## 风险与待确认问题

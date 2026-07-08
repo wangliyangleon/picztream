@@ -49,7 +49,6 @@ using BrowseTagError = browse::BrowseTagError;
 using PrefetchCache = browse::PrefetchCache;
 using FetchError = browse::FetchError;
 
-using LinkMode = exporting::LinkMode;
 using SkipReason = exporting::SkipReason;
 using ExportSkipped = exporting::ExportSkipped;
 using ExportResult = exporting::ExportResult;
@@ -136,7 +135,6 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 // core/export/export.h。RawDecodeFn 不在门面层暴露——那是测试用的依赖注
 // 入点，cli 不需要覆盖真实的 raw::decode_full。
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
-                                                 LinkMode link_mode = LinkMode::Copy,
                                                  ExportProgressFn on_progress = nullptr);
 
 // 纯粹的"字节 -> 像素"操作,不碰数据库。见 core/decode/decode.h。

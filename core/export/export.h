@@ -19,8 +19,6 @@ namespace pzt::core::exporting {
 using project::ImageId;
 using tagging::TagId;
 
-enum class LinkMode { Copy, Symlink };
-
 // 跳过原因。用结构化枚举而不是字符串——core 层不产出面向用户展示的文
 // 本，这跟项目里其它错误类型（CreateProjectError、RecipeOpError、
 // DecodeError 等）的约定一致，转成人话是 cli 的职责（见 cli/i18n 的
@@ -64,18 +62,19 @@ using RawDecodeFn = std::function<Result<decode::DecodedImage, raw::RawError>(co
 // M1:应用了 recipe 的图片走"解码全分辨率原图 -> core::recipe::render
 // (多线程)-> core::decode::encode_jpeg_file"这条烘焙路径，输出文件体
 // 现处理后的效果，不是原始文件的直接拷贝；没有应用 recipe 的图片继续
-// 保持字节级不变的复制/软链行为。`link_mode` 对烘焙路径没有意义——输出
-// 本来就是新生成的文件，没有"原始字节"可以软链，这类图片不管
-// `link_mode` 是什么都会落地成真实文件，这是对既有 `--link` 语义的一
-// 个自然限制，不是 bug。解码/渲染/编码任一步失败都归入 `skipped`（复用
-// 现有的"源文件缺失"跳过机制），不中断其余图片的导出。
+// 保持字节级不变的复制行为。解码/渲染/编码任一步失败都归入 `skipped`
+// （复用现有的"源文件缺失"跳过机制），不中断其余图片的导出。
 //
 // M2：kind="raw" 的图片无论有没有 recipe 都要走 `raw_decode_fn` 全量解
 // 码 -> (有 recipe 才 render) -> encode_jpeg_file，输出文件名的扩展名会
 // 被换成 .jpg；`on_progress` 汇报这部分的解码进度。
+//
+// 曾经有一个 `link_mode` 参数(复制 vs 软链)，M2 时移除了——应用了
+// recipe/kind="raw" 的图片输出永远是新生成的文件，没有"原始字节"可软
+// 链，唯一还会被软链模式影响的场景("纯 JPEG + 无 recipe")覆盖面太窄，
+// 想不出实际用途，直接删掉比保留一个只在一种场景下生效的选项更简单。
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
-                                                 LinkMode link_mode = LinkMode::Copy,
                                                  ExportProgressFn on_progress = nullptr,
                                                  RawDecodeFn raw_decode_fn = raw::decode_full);
 

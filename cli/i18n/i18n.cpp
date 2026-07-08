@@ -71,7 +71,7 @@ std::string usage_main() {
            "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
            "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
            "加 --no-prune 跳过清理)\n"
-           "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
+           "  pzt export <project_name> <tag_name> <output_folder>\n"
            "  pzt tag list <project_name>\n"
            "  pzt recipe list\n";
   } else {
@@ -92,7 +92,7 @@ std::string usage_main() {
            "and their tags by default; pass --no-prune to skip pruning when "
            "running "
            "on temporarily unmounted storage)\n"
-           "  pzt export <project_name> <tag_name> <output_folder> [--link]\n"
+           "  pzt export <project_name> <tag_name> <output_folder>\n"
            "  pzt tag list <project_name>\n"
            "  pzt recipe list\n";
   }

@@ -162,7 +162,7 @@ void apply_adjustments(decode::DecodedImage& img, double highlights, double shad
 
 ### `core/decode/` 增补：JPEG 编码（导出烘焙需要，M0 阶段只有解码）
 
-M0 从来没有"把像素写回 JPEG 文件"这个需求——导出功能只是复制/软链原始文件字节。M1 导出应用了 recipe 的图片时需要把处理后的像素编码回 JPEG，这个能力目前只在 `core/tests/decode_test.cpp` 的测试夹具里出现过（用 `CGImageDestination` 现场编码纯色 JPEG 作测试输入），这次把它提升成正式的生产函数：
+M0 从来没有"把像素写回 JPEG 文件"这个需求——导出功能只是复制/软链原始文件字节（软链这部分 M2 阶段已移除，见"风险与待确认问题"末尾的追加说明）。M1 导出应用了 recipe 的图片时需要把处理后的像素编码回 JPEG，这个能力目前只在 `core/tests/decode_test.cpp` 的测试夹具里出现过（用 `CGImageDestination` 现场编码纯色 JPEG 作测试输入），这次把它提升成正式的生产函数：
 
 ```cpp
 enum class EncodeError { EncodeFailed };
@@ -174,7 +174,7 @@ Result<void, EncodeError> encode_jpeg_file(const decode::DecodedImage& img, cons
 
 ### `core/export/` 修改
 
-`export_tag` 遇到 `get_recipe(image_id)` 非空的图片时：解码原图（全分辨率）→ `recipe::render(..., thread_count = hardware_concurrency())` → `encode_jpeg_file` 写到目标路径，取代原来的 `fs::copy_file`/`fs::create_symlink`；没有应用 recipe 的图片继续走原来的复制/软链路径，字节级不变。`--link` 模式下，应用了 recipe 的图片没有"原始字节"可以软链，只能落地成一份真实文件——这是 M1 对既有 `--link` 语义的一个自然限制，写清楚在函数说明里，不需要额外的参数或分支。
+`export_tag` 遇到 `get_recipe(image_id)` 非空的图片时：解码原图（全分辨率）→ `recipe::render(..., thread_count = hardware_concurrency())` → `encode_jpeg_file` 写到目标路径，取代原来的 `fs::copy_file`/`fs::create_symlink`；没有应用 recipe 的图片继续走原来的复制/软链路径，字节级不变。`--link` 模式下，应用了 recipe 的图片没有"原始字节"可以软链，只能落地成一份真实文件——这是 M1 对既有 `--link` 语义的一个自然限制，写清楚在函数说明里，不需要额外的参数或分支（`--link` 本身 M2 阶段已移除，见"风险与待确认问题"末尾）。
 
 ## 模块划分与并发模型
 
@@ -206,7 +206,7 @@ Result<void, EncodeError> encode_jpeg_file(const decode::DecodedImage& img, cons
    - **6.3 删除（已完成）**：`r` + `d` 先选预设（复用 6.2 的预设选择器），再从该预设下未删除的 version 里选一个（预设本身不出现在这一层，不是"选了拒绝"而是从一开始就不给选）。**跟 `handle_delete_tag_submenu` 刻意不同**：没有加一道 y/N 二次确认——标签删除是级联清光所有关联的不可逆项目级操作，这里只是软删除（从可选列表隐藏，不影响已经引用它的图片渲染），风险量级不对等，不需要同等重量的确认仪式
    - **6.4 收尾（已完成）**：退休了这个里程碑过程中新增的全部临时调试命令（`pzt recipe create-debug`/`apply-debug`/`clear-debug`、`pzt color-debug`），连带清理了只被它们使用的 `resolve_recipe_target`；保留 M1_PRD.md 定的正式命令（`pzt recipe list`/`rename`/`delete`，以及它们仍然依赖的 `find_preset_by_name`/`parse_recipe_address`/`resolve_recipe_address`），照抄 M0 increment 6.4.7 的收尾模式。`pzt open` 的 usage 提示补上了 `r` 键的说明
    - **验证方式的局限（写在这里,不是遗漏）**：`r` 键的全部交互逻辑只能在真实终端里手动验证（cbreak 模式下的按键读取没有可行的自动化测试路径，跟 M0 阶段全键盘循环的既有结论一致），这次没有新增可自动化的单元测试——已确认的是构建干净、既有 121 个单元测试全部通过（这次改动不涉及任何 core 层逻辑变化，纯 cli 接线）、退休的调试命令确实返回"未知子命令"、保留的命令确实还能正常工作
-7. **导出烘焙（已完成）**：`export_tag` 内部按"这张图有没有应用 recipe"分两条路径——应用了的走解码→`recipe::render`（`hardware_concurrency()` 多线程）→`encode_jpeg_file`，替代直接拷贝/软链；没应用的完全不变。`--link` 对烘焙路径没有意义（输出本来就是新生成的文件），统一忽略 `link_mode` 落地成真实文件，混合导出时同一批图片里没应用的那些仍然正确遵守 `--link`。解码/渲染/编码任一步失败都复用现有的 `ExportSkipped` 跳过机制，不中断其余图片。`export_tag` 签名不变，`cli/main.cpp` 的 `cmd_export` 不需要任何改动。单元测试覆盖：应用了非恒等 recipe 的图片字节跟源文件不同、没应用的字节级逐字节相同（回归防线）、`--link` 混合场景两种图片各自的正确行为。真机验证：对 `Test` 项目里已经应用了 Warm/Origin 的真实照片跑一遍 `pzt export`，`shasum` 确认无风格图片字节不变，肉眼对比确认 Warm 图片体现了暖色效果
+7. **导出烘焙（已完成）**：`export_tag` 内部按"这张图有没有应用 recipe"分两条路径——应用了的走解码→`recipe::render`（`hardware_concurrency()` 多线程）→`encode_jpeg_file`，替代直接拷贝/软链；没应用的完全不变。`--link` 对烘焙路径没有意义（输出本来就是新生成的文件），统一忽略 `link_mode` 落地成真实文件，混合导出时同一批图片里没应用的那些仍然正确遵守 `--link`（`--link` 本身 M2 阶段已移除，见"风险与待确认问题"末尾）。解码/渲染/编码任一步失败都复用现有的 `ExportSkipped` 跳过机制，不中断其余图片。`export_tag` 签名不变，`cli/main.cpp` 的 `cmd_export` 不需要任何改动。单元测试覆盖：应用了非恒等 recipe 的图片字节跟源文件不同、没应用的字节级逐字节相同（回归防线）、`--link` 混合场景两种图片各自的正确行为。真机验证：对 `Test` 项目里已经应用了 Warm/Origin 的真实照片跑一遍 `pzt export`，`shasum` 确认无风格图片字节不变，肉眼对比确认 Warm 图片体现了暖色效果
 8. **集成与验收（已完成）**：`docs/M1_PRD.md` 验收标准七条全部打勾，具体验证方式见该文档对应条目。补充验证了 PRD 没有明确写但实现时发现值得确认的一点——内置预设不能通过 `pzt recipe rename`/`delete`（不带冒号编号，含 `Origin:0` 这类边界地址）或交互式 `r d` 删除流程触及，两条路径结构上都够不到预设本身。真实终端（`RelWithDebInfo`）下反复切换两张分别应用了 Warm/Origin 的图片，`key-to-render` 稳定在 58-61ms，主观无延迟感知；Debug+ASan 构建下同样操作是 824-926ms，与已经确认过的 ASan 插桩开销膨胀比例一致，不是真实性能问题。M1 到此全部完成（increment 1-8）。
 
 ## 风险与待确认问题
@@ -218,4 +218,4 @@ Result<void, EncodeError> encode_jpeg_file(const decode::DecodedImage& img, cons
 * **软删除 version 的清理时机**：M1_PRD.md 已经定为可选、不强制，这次不实现任何清理机制，如果后续发现孤儿 version 堆积成问题再补
 * **软删除没有对应的"恢复"操作**：跟 `archive` 没有 `unarchive` 是同一类悬而未决状态
 * **色彩管理（ICC）缺口维持 M0 假设**：不在 M1 处理，等真机测试发现明显偏色问题再评估
-* **`--link` 导出遇到应用了 recipe 的图片时退化成真实文件拷贝**：这是这次工程设计阶段发现的、`--link` 语义的一个自然限制（见"core/api 接口设计"里 `core/export/` 修改一节），已经决定接受这个限制，不需要额外设计
+* **`--link` 导出遇到应用了 recipe 的图片时退化成真实文件拷贝**：这是这次工程设计阶段发现的、`--link` 语义的一个自然限制（见"core/api 接口设计"里 `core/export/` 修改一节），已经决定接受这个限制，不需要额外设计（**M2 阶段追加**：这条限制后来发展成了移除整个 `--link` 功能的理由之一——M2 又给 RAW 图片加了一条同样"退化成真实文件"的路径之后，`--link` 能生效的场景只剩"纯 JPEG 且未应用风格"，用户确认想不出剩下的用途，整个删掉了，`export_tag` 现在没有 `link_mode` 参数，导出统一是复制，详见 `docs/M2_Eng_Design.md`）

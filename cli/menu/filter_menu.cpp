@@ -18,10 +18,10 @@ namespace {
 
 // g + e 之后:选导出目标标签(数字编号同 g 菜单,或者当前处于筛选视图时按
 // `e` 表示"就导出这个筛选标签",省一次选择)、读目标路径、调用
-// export_tag。固定用 LinkMode::Copy——软链场景用独立的 `pzt export
-// --link`,这个快捷方式不做模式切换,见 docs/M0_Eng_Design.md increment
-// 6.6 的说明。空路径不是 Esc,得给个反馈而不是静默(跟 handle_create_tag_
-// flow 空标签名的处理一致);Esc 在任一步都中止整个流程,静默。
+// export_tag。复制是导出的唯一行为(M2 移除了曾经的软链模式,见
+// docs/M0_Eng_Design.md 相应说明)。空路径不是 Esc,得给个反馈而不是静默
+// (跟 handle_create_tag_flow 空标签名的处理一致);Esc 在任一步都中止整
+// 个流程,静默。
 std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
                                   const std::vector<pzt::core::TagSummary>& tags,
                                   std::optional<pzt::core::TagId> active_filter_tag_id,
@@ -56,7 +56,7 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
   if (path->empty()) return pzt::cli::i18n::filter_menu_export_path_empty();
   std::string resolved_path = expand_home_path(*path);
 
-  auto result = pzt::core::export_tag(target_id, resolved_path, pzt::core::LinkMode::Copy);
+  auto result = pzt::core::export_tag(target_id, resolved_path);
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
       return pzt::cli::i18n::filter_menu_export_io_error(resolved_path);
