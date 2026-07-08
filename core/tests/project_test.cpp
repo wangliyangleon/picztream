@@ -16,6 +16,7 @@ using pzt::core::project::delete_project;
 using pzt::core::project::find_image_by_path;
 using pzt::core::project::find_project_by_name;
 using pzt::core::project::find_project_by_root_path;
+using pzt::core::project::get_image;
 using pzt::core::project::list_projects;
 using pzt::core::project::open_project;
 using pzt::core::project::ProjectNotFoundError;
@@ -64,6 +65,84 @@ TEST_CASE("create_project scans JPEGs recursively across subfolders") {
   REQUIRE(projects.size() == 1);
   CHECK(projects[0].name == "trip");
   CHECK(projects[0].image_count == 3);
+}
+
+TEST_CASE("create_project pairs a same-stem RAW+JPEG file into one raw_jpeg record") {
+  auto db = Database::open_at(fresh_db_path("pair_raw_jpeg"));
+  auto photos = fresh_photo_dir("pair_raw_jpeg");
+
+  touch(photos / "IMG_001.JPG");
+  touch(photos / "IMG_001.DNG");
+  touch(photos / "IMG_002.jpg");  // unpaired JPEG, should stay kind="jpeg"
+
+  auto result = create_project(db, "trip", photos.string());
+  REQUIRE(result.ok());
+
+  auto projects = list_projects(db);
+  REQUIRE(projects.size() == 1);
+  CHECK(projects[0].image_count == 2);  // paired file counts once, not twice
+
+  auto paired_id = find_image_by_path(db, result.value(), "IMG_001.JPG");
+  REQUIRE(paired_id.has_value());
+  auto paired = get_image(db, *paired_id);
+  REQUIRE(paired.has_value());
+  CHECK(paired->kind == "raw_jpeg");
+  REQUIRE(paired->raw_path.has_value());
+  CHECK(*paired->raw_path == "IMG_001.DNG");
+
+  auto unpaired_id = find_image_by_path(db, result.value(), "IMG_002.jpg");
+  REQUIRE(unpaired_id.has_value());
+  auto unpaired = get_image(db, *unpaired_id);
+  REQUIRE(unpaired.has_value());
+  CHECK(unpaired->kind == "jpeg");
+  CHECK(!unpaired->raw_path.has_value());
+}
+
+TEST_CASE("create_project records a pure RAW file with kind=raw") {
+  auto db = Database::open_at(fresh_db_path("pure_raw"));
+  auto photos = fresh_photo_dir("pure_raw");
+  touch(photos / "DSCF0001.RAF");
+
+  auto result = create_project(db, "trip", photos.string());
+  REQUIRE(result.ok());
+  CHECK(list_projects(db)[0].image_count == 1);
+
+  auto id = find_image_by_path(db, result.value(), "DSCF0001.RAF");
+  REQUIRE(id.has_value());
+  auto info = get_image(db, *id);
+  REQUIRE(info.has_value());
+  CHECK(info->kind == "raw");
+  REQUIRE(info->raw_path.has_value());
+  CHECK(*info->raw_path == "DSCF0001.RAF");
+}
+
+TEST_CASE("create_project recognizes .dng/.raf case-insensitively") {
+  auto db = Database::open_at(fresh_db_path("raw_case_insensitive"));
+  auto photos = fresh_photo_dir("raw_case_insensitive");
+  touch(photos / "a.dng");
+  touch(photos / "b.Raf");
+
+  auto result = create_project(db, "trip", photos.string());
+  REQUIRE(result.ok());
+  CHECK(list_projects(db)[0].image_count == 2);
+}
+
+TEST_CASE("create_project does not pair two RAW files sharing the same stem") {
+  auto db = Database::open_at(fresh_db_path("dup_raw_stem"));
+  auto photos = fresh_photo_dir("dup_raw_stem");
+  touch(photos / "IMG_001.dng");
+  touch(photos / "IMG_001.raf");  // same stem, different RAW format - not a JPEG+RAW pair
+
+  auto result = create_project(db, "trip", photos.string());
+  REQUIRE(result.ok());
+  CHECK(list_projects(db)[0].image_count == 2);  // each stays independent, not merged
+
+  auto dng_id = find_image_by_path(db, result.value(), "IMG_001.dng");
+  auto raf_id = find_image_by_path(db, result.value(), "IMG_001.raf");
+  REQUIRE(dng_id.has_value());
+  REQUIRE(raf_id.has_value());
+  CHECK(get_image(db, *dng_id)->kind == "raw");
+  CHECK(get_image(db, *raf_id)->kind == "raw");
 }
 
 TEST_CASE("create_project rejects an empty (no-JPEG) folder") {

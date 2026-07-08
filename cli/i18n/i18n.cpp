@@ -147,9 +147,9 @@ std::string err_new_name_exists(const std::string &name) {
 
 std::string err_new_no_images(const std::string &folder_path) {
   if (g_lang == Lang::zh) {
-    return "pzt new: '" + folder_path + "' 目录下没有找到任何 JPEG 文件\n";
+    return "pzt new: '" + folder_path + "' 目录下没有找到任何 JPEG/RAW 文件\n";
   } else {
-    return "pzt new: no JPEG files found in directory '" + folder_path + "'\n";
+    return "pzt new: no JPEG/RAW files found in directory '" + folder_path + "'\n";
   }
 }
 
@@ -158,10 +158,10 @@ std::string msg_project_created(const std::string &name,
                                 long long image_count) {
   if (g_lang == Lang::zh) {
     return "已创建项目 '" + name + "'(" + root_path + "),共 " +
-           std::to_string(image_count) + " 张 JPEG\n";
+           std::to_string(image_count) + " 张图片\n";
   } else {
     return "Project '" + name + "'(" + root_path + ") created, total " +
-           std::to_string(image_count) + " JPEGs\n";
+           std::to_string(image_count) + " images\n";
   }
 }
 

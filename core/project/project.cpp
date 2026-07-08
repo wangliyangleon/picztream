@@ -1,10 +1,12 @@
 #include "core/project/project.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -25,29 +27,114 @@ std::int64_t now_unix() {
       .count();
 }
 
-bool is_jpeg(const fs::path& p) {
+std::string lower_ext(const fs::path& p) {
   std::string ext = p.extension().string();
   std::transform(ext.begin(), ext.end(), ext.begin(),
                   [](unsigned char c) { return std::tolower(c); });
+  return ext;
+}
+
+bool is_jpeg(const fs::path& p) {
+  std::string ext = lower_ext(p);
   return ext == ".jpg" || ext == ".jpeg";
+}
+
+// M2：目前只认徕卡 DNG / 富士 RAF（docs/M2_PRD.md 明确的范围），写成一个
+// 集合而不是分散的字符串比较，给"以后加 CR2/CR3/NEF/ARW"这个已知的未来
+// 考虑留好扩展点，不需要在多处改判断逻辑。
+constexpr std::array<const char*, 2> kRawExtensions = {".dng", ".raf"};
+
+bool is_raw(const fs::path& p) {
+  std::string ext = lower_ext(p);
+  for (const char* raw_ext : kRawExtensions) {
+    if (ext == raw_ext) return true;
+  }
+  return false;
 }
 
 struct ScannedImage {
   std::string relative_path;
   std::string file_name;
   std::int64_t file_size;
+  std::string kind;                              // "jpeg" | "raw" | "raw_jpeg"
+  std::optional<std::string> raw_relative_path;  // kind != "jpeg" 时有值
 };
 
-std::vector<ScannedImage> scan_jpegs(const fs::path& root) {
-  std::vector<ScannedImage> found;
+// 一个还没配对的 RAW 文件候选，扫描阶段的中间状态，不对外暴露。
+struct RawFileEntry {
+  std::string relative_path;
+  std::string file_name;
+  std::int64_t file_size;
+};
+
+// "目录 + 文件名主干(不含扩展名)"作为配对键。只有扩展名判断是大小写不敏
+// 感的(is_jpeg/is_raw 已经做了)，主干本身按原样比较，不做大小写归一——
+// 相机产出的文件名主干在实践中大小写是一致的，没必要引入额外的模糊匹配。
+std::string path_stem_key(const fs::path& relative_path) {
+  return (relative_path.parent_path() / relative_path.stem()).string();
+}
+
+// 递归扫描出 JPEG 和 RAW 两类文件，按"目录+文件名主干"分组配对：
+// - 一个 JPEG + 一个 RAW 同主干 -> 合并成一条 kind="raw_jpeg"，取 JPEG 的
+//   路径/文件名/大小(culling 预览用 JPEG，见 M2_Eng_Design.md)，raw_
+//   relative_path 记 RAW 那份路径
+// - 只有 JPEG -> kind="jpeg"（M0/M1 现有行为，不变）
+// - 只有 RAW -> kind="raw"
+// - 同一主干出现多个 RAW 文件（不该发生，但不强行消歧）：不配对，每个各
+//   自独立成一条 kind="raw" 记录
+std::vector<ScannedImage> scan_media(const fs::path& root) {
+  std::vector<ScannedImage> jpegs;
+  std::unordered_map<std::string, std::size_t> jpeg_index_by_stem;
+  std::unordered_map<std::string, std::vector<RawFileEntry>> raw_groups;
+
   for (const auto& entry : fs::recursive_directory_iterator(root)) {
     if (!entry.is_regular_file()) continue;
-    if (!is_jpeg(entry.path())) continue;
-    found.push_back(ScannedImage{
-        fs::relative(entry.path(), root).string(),
-        entry.path().filename().string(),
-        static_cast<std::int64_t>(entry.file_size()),
-    });
+    fs::path rel = fs::relative(entry.path(), root);
+    if (is_jpeg(entry.path())) {
+      jpeg_index_by_stem[path_stem_key(rel)] = jpegs.size();
+      jpegs.push_back(ScannedImage{
+          rel.string(),
+          entry.path().filename().string(),
+          static_cast<std::int64_t>(entry.file_size()),
+          "jpeg",
+          std::nullopt,
+      });
+    } else if (is_raw(entry.path())) {
+      raw_groups[path_stem_key(rel)].push_back(RawFileEntry{
+          rel.string(),
+          entry.path().filename().string(),
+          static_cast<std::int64_t>(entry.file_size()),
+      });
+    }
+  }
+
+  std::vector<ScannedImage> found = std::move(jpegs);
+  for (auto& [stem, raws] : raw_groups) {
+    if (raws.size() == 1) {
+      auto jpeg_it = jpeg_index_by_stem.find(stem);
+      if (jpeg_it != jpeg_index_by_stem.end()) {
+        found[jpeg_it->second].kind = "raw_jpeg";
+        found[jpeg_it->second].raw_relative_path = raws[0].relative_path;
+        continue;
+      }
+      found.push_back(ScannedImage{
+          raws[0].relative_path,
+          raws[0].file_name,
+          raws[0].file_size,
+          "raw",
+          raws[0].relative_path,
+      });
+    } else {
+      for (const auto& raw : raws) {
+        found.push_back(ScannedImage{
+            raw.relative_path,
+            raw.file_name,
+            raw.file_size,
+            "raw",
+            raw.relative_path,
+        });
+      }
+    }
   }
   return found;
 }
@@ -85,6 +172,18 @@ std::optional<ProjectSummary> get_project_summary(sqlite3* db, ProjectId id) {
   return s;
 }
 
+// create_project 和 rescan_project 的 INSERT 语句都要写 kind/raw_path 这
+// 两列，抽出来避免重复。
+void bind_kind_and_raw_path(sqlite3_stmt* stmt, int kind_index, int raw_path_index,
+                             const ScannedImage& img) {
+  sqlite3_bind_text(stmt, kind_index, img.kind.c_str(), -1, SQLITE_TRANSIENT);
+  if (img.raw_relative_path) {
+    sqlite3_bind_text(stmt, raw_path_index, img.raw_relative_path->c_str(), -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, raw_path_index);
+  }
+}
+
 }  // namespace
 
 Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std::string& name,
@@ -95,7 +194,7 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
     return Result<ProjectId, CreateProjectError>::Err(CreateProjectError::NameAlreadyExists);
   }
 
-  std::vector<ScannedImage> images = scan_jpegs(fs::path(folder_path));
+  std::vector<ScannedImage> images = scan_media(fs::path(folder_path));
   if (images.empty()) {
     return Result<ProjectId, CreateProjectError>::Err(CreateProjectError::NoImagesFound);
   }
@@ -116,7 +215,7 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
 
     Stmt insert_image(conn,
                        "INSERT INTO images (project_id, file_path, file_name, file_size, "
-                       "imported_at) VALUES (?, ?, ?, ?, ?);");
+                       "imported_at, kind, raw_path) VALUES (?, ?, ?, ?, ?, ?, ?);");
     for (const auto& img : images) {
       sqlite3_reset(insert_image.get());
       sqlite3_bind_int64(insert_image.get(), 1, project_id);
@@ -124,6 +223,7 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
       sqlite3_bind_text(insert_image.get(), 3, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(insert_image.get(), 4, img.file_size);
       sqlite3_bind_int64(insert_image.get(), 5, created_at);
+      bind_kind_and_raw_path(insert_image.get(), 6, 7, img);
       if (sqlite3_step(insert_image.get()) != SQLITE_DONE) {
         throw std::runtime_error(std::string("insert image failed: ") + sqlite3_errmsg(conn));
       }
@@ -211,7 +311,8 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   Stmt stmt(db.handle(),
-            "SELECT id, project_id, file_path, file_name, file_size FROM images WHERE id = ?;");
+            "SELECT id, project_id, file_path, file_name, file_size, kind, raw_path "
+            "FROM images WHERE id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, id);
   if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
 
@@ -221,6 +322,10 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   info.file_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
   info.file_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
   info.file_size = sqlite3_column_int64(stmt.get(), 4);
+  info.kind = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
+  if (sqlite3_column_type(stmt.get(), 6) != SQLITE_NULL) {
+    info.raw_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
+  }
   return info;
 }
 
@@ -232,7 +337,12 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
     return Result<RescanSummary, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
   }
 
-  std::vector<ScannedImage> scanned = scan_jpegs(fs::path(summary->root_path));
+  // 注意:这里只处理"这次扫描本身发现的新配对"(比如同一次 rescan 里 RAW
+  // 和 JPEG 都是新加进来的),不处理"文件夹里已经有一条纯 JPEG/纯 RAW 记
+  // 录,这次扫描才补上另一半"这种升级场景——那是 increment 4 的范围，见
+  // docs/M2_Eng_Design.md 任务分解。这里的 exists_stmt 仍然只按 file_path
+  // 全字符串匹配，不会把新扫到的 RAW 文件识别成"应该并入已有的 JPEG 行"。
+  std::vector<ScannedImage> scanned = scan_media(fs::path(summary->root_path));
   const std::int64_t imported_at = now_unix();
 
   std::unordered_set<std::string> scanned_paths;
@@ -246,7 +356,7 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
     Stmt exists_stmt(conn, "SELECT 1 FROM images WHERE project_id = ? AND file_path = ?;");
     Stmt insert_stmt(conn,
                       "INSERT INTO images (project_id, file_path, file_name, file_size, "
-                      "imported_at) VALUES (?, ?, ?, ?, ?);");
+                      "imported_at, kind, raw_path) VALUES (?, ?, ?, ?, ?, ?, ?);");
     for (const auto& img : scanned) {
       sqlite3_reset(exists_stmt.get());
       sqlite3_bind_int64(exists_stmt.get(), 1, id);
@@ -259,6 +369,7 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       sqlite3_bind_text(insert_stmt.get(), 3, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(insert_stmt.get(), 4, img.file_size);
       sqlite3_bind_int64(insert_stmt.get(), 5, imported_at);
+      bind_kind_and_raw_path(insert_stmt.get(), 6, 7, img);
       if (sqlite3_step(insert_stmt.get()) != SQLITE_DONE) {
         throw std::runtime_error(std::string("insert image failed: ") + sqlite3_errmsg(conn));
       }

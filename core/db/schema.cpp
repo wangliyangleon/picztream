@@ -141,6 +141,11 @@ void initialize_schema(sqlite3* conn) {
   exec(conn, kCreateRecipesPresetNameIndex);
   ensure_column(conn, "images", "recipe_id",
                 "recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL");
+  // M2: 图片来源类型 + 配对的 RAW 文件路径。见 docs/M2_Eng_Design.md"数据库
+  // Schema 设计"。默认值 'jpeg' 让 M0/M1 时代建的旧库迁移时所有已有行行为
+  // 不变，不需要区分新装/升级用户。
+  ensure_column(conn, "images", "kind", "kind TEXT NOT NULL DEFAULT 'jpeg'");
+  ensure_column(conn, "images", "raw_path", "raw_path TEXT");
 }
 
 }  // namespace pzt::core::db

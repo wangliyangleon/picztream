@@ -29,8 +29,10 @@ struct ProjectSummary {
   bool archived;
 };
 
-// 递归扫描 folder_path 下所有 .jpg/.jpeg（大小写不敏感），写入 images 表。
-// 名字已存在或扫描不到任何 JPEG 时返回对应错误，不创建项目。
+// 递归扫描 folder_path 下所有 .jpg/.jpeg/.dng/.raf（大小写不敏感），写入
+// images 表。同一目录下文件名主干相同的 JPEG + RAW 会被识别为同一张逻辑
+// 图片（kind="raw_jpeg"），不重复计数，见 M2_Eng_Design.md。名字已存在或
+// 扫描不到任何图片时返回对应错误，不创建项目。
 Result<ProjectId, CreateProjectError> create_project(db::Database& db,
                                                       const std::string& name,
                                                       const std::string& folder_path);
@@ -64,6 +66,8 @@ struct ImageInfo {
   std::string file_path;
   std::string file_name;
   std::int64_t file_size;
+  std::string kind;                     // "jpeg" | "raw" | "raw_jpeg"，见 M2_Eng_Design.md
+  std::optional<std::string> raw_path;  // kind != "jpeg" 时有值
 };
 
 // 给 cli 调试命令把"图片相对路径"翻译成内部 id 用。
