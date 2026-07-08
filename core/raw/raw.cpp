@@ -45,15 +45,18 @@ Result<std::vector<std::uint8_t>, RawError> extract_embedded_jpeg_bytes(const st
   return Result<std::vector<std::uint8_t>, RawError>::Ok(std::move(bytes));
 }
 
+namespace {
+
 // open_file -> unpack -> dcraw_process(output_bps=8, use_camera_wb=1,
-// output_color=1/sRGB) -> dcraw_make_mem_image。LibRaw 内部完成白平衡
-// （as-shot）+ 去马赛克 + 色彩矩阵 + gamma，直接吐 8-bit sRGB，这里只做一
-// 次字节布局转换：LibRaw 输出是 3 字节/像素紧凑排列(R,G,B,R,G,B,...)，
-// decode::DecodedImage 是 4 字节/像素(R,G,B,跳过的第 4 字节)，对齐
-// core/decode/decode.cpp 用的 kCGImageAlphaNoneSkipLast +
+// output_color=1/sRGB[, half_size]) -> dcraw_make_mem_image。LibRaw 内部完
+// 成白平衡（as-shot）+ 去马赛克 + 色彩矩阵 + gamma，直接吐 8-bit sRGB，这
+// 里只做一次字节布局转换：LibRaw 输出是 3 字节/像素紧凑排列
+// (R,G,B,R,G,B,...)，decode::DecodedImage 是 4 字节/像素(R,G,B,跳过的第
+// 4 字节)，对齐 core/decode/decode.cpp 用的 kCGImageAlphaNoneSkipLast +
 // kCGBitmapByteOrder32Big 约定——第 4 字节不携带任何语义，下游(encode_
 // jpeg_file/resize_rgba)也用同样的标志位读取，不关心这个字节的值。
-Result<decode::DecodedImage, RawError> decode_full(const std::string& path) {
+// decode_full/decode_preview 共用这一份实现，只是 half_size 参数不同。
+Result<decode::DecodedImage, RawError> decode(const std::string& path, bool half_size) {
   if (!fs::exists(path)) {
     return Result<decode::DecodedImage, RawError>::Err(RawError::FileNotFound);
   }
@@ -65,6 +68,7 @@ Result<decode::DecodedImage, RawError> decode_full(const std::string& path) {
   proc.imgdata.params.use_camera_wb = 1;
   proc.imgdata.params.output_bps = 8;
   proc.imgdata.params.output_color = 1;  // sRGB
+  proc.imgdata.params.half_size = half_size ? 1 : 0;
 
   if (proc.unpack() != LIBRAW_SUCCESS) {
     return Result<decode::DecodedImage, RawError>::Err(RawError::DecodeFailed);
@@ -100,6 +104,16 @@ Result<decode::DecodedImage, RawError> decode_full(const std::string& path) {
 
   LibRaw::dcraw_clear_mem(img);
   return Result<decode::DecodedImage, RawError>::Ok(std::move(out));
+}
+
+}  // namespace
+
+Result<decode::DecodedImage, RawError> decode_full(const std::string& path) {
+  return decode(path, /*half_size=*/false);
+}
+
+Result<decode::DecodedImage, RawError> decode_preview(const std::string& path) {
+  return decode(path, /*half_size=*/true);
 }
 
 }  // namespace pzt::core::raw

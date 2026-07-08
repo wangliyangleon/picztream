@@ -32,19 +32,23 @@ Database Database::open_at(const std::string& path) {
   }
 
   initialize_schema(db);
-  return Database(db);
+  return Database(db, path);
 }
 
 Database::~Database() {
   if (db_) sqlite3_close(db_);
 }
 
-Database::Database(Database&& other) noexcept : db_(other.db_) { other.db_ = nullptr; }
+Database::Database(Database&& other) noexcept
+    : db_(other.db_), path_(std::move(other.path_)) {
+  other.db_ = nullptr;
+}
 
 Database& Database::operator=(Database&& other) noexcept {
   if (this != &other) {
     if (db_) sqlite3_close(db_);
     db_ = other.db_;
+    path_ = std::move(other.path_);
     other.db_ = nullptr;
   }
   return *this;

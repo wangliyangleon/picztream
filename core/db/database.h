@@ -34,10 +34,16 @@ class Database {
 
   sqlite3* handle() const { return db_; }
 
+  // M2：RAW 预览缓存文件也要落在跟这个数据库同一个"数据目录"下（同一父目
+  // 录），而不是硬编码 ~/.config/pzt/——测试用 open_at 指向 /tmp 下的临时
+  // db 时，缓存也必须跟着落进 /tmp，不能污染真实的 ~/.config/pzt/。
+  const std::string& path() const { return path_; }
+
  private:
-  explicit Database(sqlite3* db) : db_(db) {}
+  Database(sqlite3* db, std::string path) : db_(db), path_(std::move(path)) {}
 
   sqlite3* db_;
+  std::string path_;
 };
 
 }  // namespace pzt::core::db

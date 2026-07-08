@@ -153,6 +153,15 @@ std::string err_new_no_images(const std::string &folder_path) {
   }
 }
 
+std::string msg_raw_preview_progress(int done, int total) {
+  if (g_lang == Lang::zh) {
+    return "正在生成 RAW 预览缓存 (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
+  } else {
+    return "Generating RAW preview cache (" + std::to_string(done) + "/" + std::to_string(total) +
+           ")...";
+  }
+}
+
 std::string msg_project_created(const std::string &name,
                                 const std::string &root_path,
                                 long long image_count) {
@@ -328,21 +337,21 @@ std::string err_rescan_failed(const std::string &name) {
 }
 
 std::string msg_rescan_result(long long added, long long removed,
-                              long long total, long long paired) {
-  std::string paired_suffix;
-  if (paired > 0) {
-    paired_suffix = g_lang == Lang::zh
-                        ? ("，其中 " + std::to_string(paired) + " 张补上了配对的 RAW/JPEG")
-                        : (", " + std::to_string(paired) + " of which gained a paired RAW/JPEG");
+                              long long total, long long upgraded) {
+  std::string upgraded_suffix;
+  if (upgraded > 0) {
+    upgraded_suffix = g_lang == Lang::zh
+                        ? ("，其中 " + std::to_string(upgraded) + " 张补上了同名 RAW,已切换成 RAW")
+                        : (", " + std::to_string(upgraded) + " of which gained a matching RAW file and switched to RAW");
   }
   if (g_lang == Lang::zh) {
     return "新增 " + std::to_string(added) + " 张,清除 " +
            std::to_string(removed) + " 张磁盘上已消失的记录,项目现在共 " +
-           std::to_string(total) + " 张" + paired_suffix + "\n";
+           std::to_string(total) + " 张" + upgraded_suffix + "\n";
   } else {
     return "Added " + std::to_string(added) + " images, cleared " +
            std::to_string(removed) + " missing records, project now has " +
-           std::to_string(total) + " images" + paired_suffix + "\n";
+           std::to_string(total) + " images" + upgraded_suffix + "\n";
   }
 }
 

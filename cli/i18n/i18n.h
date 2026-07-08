@@ -39,6 +39,7 @@ std::string err_project_not_found(const std::string& cmd, const std::string& pro
 std::string err_new_missing_name();
 std::string err_new_name_exists(const std::string& name);
 std::string err_new_no_images(const std::string& folder_path);
+std::string msg_raw_preview_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
 std::string msg_project_created_simple(const std::string& name);
 std::string err_archive_missing_name();
@@ -58,7 +59,7 @@ std::string msg_project_item(const std::string& name, long long image_count, con
 std::string err_rescan_missing_name();
 std::string err_rescan_unknown_arg(const std::string& arg);
 std::string err_rescan_failed(const std::string& name);
-std::string msg_rescan_result(long long added, long long removed, long long total, long long paired);
+std::string msg_rescan_result(long long added, long long removed, long long total, long long upgraded);
 std::string err_export_missing_args();
 std::string err_export_tag_not_found(const std::string& tag_name);
 std::string err_export_io_error(const std::string& path);

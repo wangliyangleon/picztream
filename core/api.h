@@ -25,6 +25,7 @@ using ProjectSummary = project::ProjectSummary;
 using ProjectNotFoundError = project::ProjectNotFoundError;
 using ImageId = project::ImageId;
 using ImageInfo = project::ImageInfo;
+using ScanProgressFn = project::ScanProgressFn;
 
 using TagId = tagging::TagId;
 using CreateTagError = tagging::CreateTagError;
@@ -70,9 +71,12 @@ using RenderRecipeError = recipe::RenderRecipeError;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it
-// to cwd when omitted) - core has no notion of "current directory".
+// to cwd when omitted) - core has no notion of "current directory". M2:
+// on_progress reports RAW preview cache generation progress, see
+// core/project/project.h.
 Result<ProjectId, CreateProjectError> create_project(const std::string& name,
-                                                      const std::string& folder_path);
+                                                      const std::string& folder_path,
+                                                      ScanProgressFn on_progress = nullptr);
 
 std::vector<ProjectSummary> list_projects();
 
@@ -113,7 +117,8 @@ TagId ensure_reject_tag(ProjectId project_id);
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见
 // core/project/project.h 里 rescan_project 的说明。
-Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune = true);
+Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune = true,
+                                                             ScanProgressFn on_progress = nullptr);
 
 std::vector<ImageRef> list_images(ProjectId project_id);
 std::optional<ImageId> next_image(const std::vector<ImageRef>& images,

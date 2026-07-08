@@ -32,7 +32,14 @@ Result<std::vector<std::uint8_t>, RawError> extract_embedded_jpeg_bytes(const st
 // open_file -> unpack -> dcraw_process(output_bps=8, use_camera_wb=1,
 // output_color=1/*sRGB*/) -> dcraw_make_mem_image，转换成
 // core::decode::DecodedImage 的 RGBA 字节布局直接返回，供
-// core::recipe::render 无缝消费。
+// core::recipe::render 无缝消费。只用于导出（唯一需要全分辨率的场景）。
 Result<decode::DecodedImage, RawError> decode_full(const std::string& path);
+
+// 跟 decode_full 完全一样的参数（同一套白平衡/色彩矩阵/gamma 管线），额外
+// 加 half_size=1：跳过完整去马赛克，直接块平均，分辨率减半但速度快很多
+// （真机实测：徕卡 Bayer ~2 倍，富士 X-Trans ~40 倍——X-Trans 的完整去马
+// 赛克正是全量解码慢的根源，half_size 几乎整个跳过了它）。只用于生成
+// new/rescan 时的预览缓存，不能当导出结果用（分辨率不够）。
+Result<decode::DecodedImage, RawError> decode_preview(const std::string& path);
 
 }  // namespace pzt::core::raw

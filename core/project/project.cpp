@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "core/db/stmt.h"
+#include "core/decode/decode.h"
+#include "core/raw/raw.h"
 
 namespace pzt::core::project {
 
@@ -56,51 +58,49 @@ struct ScannedImage {
   std::string relative_path;
   std::string file_name;
   std::int64_t file_size;
-  std::string kind;                              // "jpeg" | "raw" | "raw_jpeg"
-  std::optional<std::string> raw_relative_path;  // kind != "jpeg" 时有值
+  std::string kind;  // "jpeg" | "raw"
 };
 
-// 一个还没配对的 RAW 文件候选，扫描阶段的中间状态，不对外暴露。
+// 一个 RAW 文件候选，扫描阶段的中间状态，不对外暴露。
 struct RawFileEntry {
   std::string relative_path;
   std::string file_name;
   std::int64_t file_size;
 };
 
-// "目录 + 文件名主干(不含扩展名)"作为配对键。只有扩展名判断是大小写不敏
-// 感的(is_jpeg/is_raw 已经做了)，主干本身按原样比较，不做大小写归一——
-// 相机产出的文件名主干在实践中大小写是一致的，没必要引入额外的模糊匹配。
+// "目录 + 文件名主干(不含扩展名)"用来判断"这个 JPEG 是不是应该被同名 RAW
+// 挤掉"。只有扩展名判断是大小写不敏感的(is_jpeg/is_raw 已经做了)，主干本
+// 身按原样比较，不做大小写归一——相机产出的文件名主干在实践中大小写是一
+// 致的，没必要引入额外的模糊匹配。
 std::string path_stem_key(const fs::path& relative_path) {
   return (relative_path.parent_path() / relative_path.stem()).string();
 }
 
-// 递归扫描出 JPEG 和 RAW 两类文件，按"目录+文件名主干"分组配对：
-// - 一个 JPEG + 一个 RAW 同主干 -> 合并成一条 kind="raw_jpeg"，取 JPEG 的
-//   路径/文件名/大小(culling 预览用 JPEG，见 M2_Eng_Design.md)，raw_
-//   relative_path 记 RAW 那份路径
-// - 只有 JPEG -> kind="jpeg"（M0/M1 现有行为，不变）
-// - 只有 RAW -> kind="raw"
-// - 同一主干出现多个 RAW 文件（不该发生，但不强行消歧）：不配对，每个各
-//   自独立成一条 kind="raw" 记录
+// 递归扫描出 JPEG 和 RAW 两类文件，按"目录+文件名主干"分组：
+// - 一组里存在 RAW 文件(不管有没有同名 JPEG) -> 只产出 RAW 的记录，同名
+//   JPEG 直接忽略、不生成任何记录(M2_Eng_Design.md"RAW+JPEG 同名")
+// - 一组里只有 JPEG -> kind="jpeg"（M0/M1 现有行为，不变）
+// - 同一主干出现多个 RAW 文件（不该发生，但不强行消歧）：每个各自独立成
+//   一条 kind="raw" 记录
 std::vector<ScannedImage> scan_media(const fs::path& root) {
   std::vector<ScannedImage> jpegs;
-  std::unordered_map<std::string, std::size_t> jpeg_index_by_stem;
+  std::unordered_set<std::string> raw_stems;
   std::unordered_map<std::string, std::vector<RawFileEntry>> raw_groups;
 
   for (const auto& entry : fs::recursive_directory_iterator(root)) {
     if (!entry.is_regular_file()) continue;
     fs::path rel = fs::relative(entry.path(), root);
     if (is_jpeg(entry.path())) {
-      jpeg_index_by_stem[path_stem_key(rel)] = jpegs.size();
       jpegs.push_back(ScannedImage{
           rel.string(),
           entry.path().filename().string(),
           static_cast<std::int64_t>(entry.file_size()),
           "jpeg",
-          std::nullopt,
       });
     } else if (is_raw(entry.path())) {
-      raw_groups[path_stem_key(rel)].push_back(RawFileEntry{
+      std::string stem = path_stem_key(rel);
+      raw_stems.insert(stem);
+      raw_groups[stem].push_back(RawFileEntry{
           rel.string(),
           entry.path().filename().string(),
           static_cast<std::int64_t>(entry.file_size()),
@@ -108,32 +108,14 @@ std::vector<ScannedImage> scan_media(const fs::path& root) {
     }
   }
 
-  std::vector<ScannedImage> found = std::move(jpegs);
+  std::vector<ScannedImage> found;
+  for (auto& jpeg : jpegs) {
+    if (raw_stems.count(path_stem_key(jpeg.relative_path)) != 0) continue;  // 被同名 RAW 挤掉
+    found.push_back(std::move(jpeg));
+  }
   for (auto& [stem, raws] : raw_groups) {
-    if (raws.size() == 1) {
-      auto jpeg_it = jpeg_index_by_stem.find(stem);
-      if (jpeg_it != jpeg_index_by_stem.end()) {
-        found[jpeg_it->second].kind = "raw_jpeg";
-        found[jpeg_it->second].raw_relative_path = raws[0].relative_path;
-        continue;
-      }
-      found.push_back(ScannedImage{
-          raws[0].relative_path,
-          raws[0].file_name,
-          raws[0].file_size,
-          "raw",
-          raws[0].relative_path,
-      });
-    } else {
-      for (const auto& raw : raws) {
-        found.push_back(ScannedImage{
-            raw.relative_path,
-            raw.file_name,
-            raw.file_size,
-            "raw",
-            raw.relative_path,
-        });
-      }
+    for (const auto& raw : raws) {
+      found.push_back(ScannedImage{raw.relative_path, raw.file_name, raw.file_size, "raw"});
     }
   }
   return found;
@@ -172,22 +154,39 @@ std::optional<ProjectSummary> get_project_summary(sqlite3* db, ProjectId id) {
   return s;
 }
 
-// create_project 和 rescan_project 的 INSERT 语句都要写 kind/raw_path 这
-// 两列，抽出来避免重复。
-void bind_kind_and_raw_path(sqlite3_stmt* stmt, int kind_index, int raw_path_index,
-                             const ScannedImage& img) {
-  sqlite3_bind_text(stmt, kind_index, img.kind.c_str(), -1, SQLITE_TRANSIENT);
-  if (img.raw_relative_path) {
-    sqlite3_bind_text(stmt, raw_path_index, img.raw_relative_path->c_str(), -1, SQLITE_TRANSIENT);
-  } else {
-    sqlite3_bind_null(stmt, raw_path_index);
-  }
+// RAW 预览缓存的存放目录：跟这次打开的数据库文件同一个父目录下的
+// raw_previews/<project_id> 子目录——不是硬编码 ~/.config/pzt/，这样测试
+// 用 Database::open_at 指向 /tmp 下的临时库时，缓存也会落在 /tmp 里，不
+// 会碰真实用户数据。见 core/db/database.h 的 Database::path() 说明。
+fs::path raw_preview_cache_dir(db::Database& db, ProjectId project_id) {
+  return fs::path(db.path()).parent_path() / "raw_previews" / std::to_string(project_id);
+}
+
+// 给一张 RAW 图片生成降分辨率预览缓存并写盘，成功时返回缓存的绝对路径。
+// 失败（LibRaw 解不出来、编码失败）时返回 nullopt，调用方不应该让这个失
+// 败中断整批处理——照抄 core/export 里"单张失败不中断整体"的既有惯例。
+std::optional<std::string> generate_preview_cache(db::Database& db, ProjectId project_id,
+                                                    ImageId image_id,
+                                                    const std::string& raw_absolute_path) {
+  auto decoded = raw::decode_preview(raw_absolute_path);
+  if (!decoded.ok()) return std::nullopt;
+
+  fs::path cache_dir = raw_preview_cache_dir(db, project_id);
+  std::error_code ec;
+  fs::create_directories(cache_dir, ec);
+  if (ec) return std::nullopt;
+
+  fs::path cache_path = cache_dir / (std::to_string(image_id) + ".jpg");
+  auto encoded = decode::encode_jpeg_file(decoded.value(), cache_path.string());
+  if (!encoded.ok()) return std::nullopt;
+  return cache_path.string();
 }
 
 }  // namespace
 
 Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std::string& name,
-                                                       const std::string& folder_path) {
+                                                       const std::string& folder_path,
+                                                       ScanProgressFn on_progress) {
   sqlite3* conn = db.handle();
 
   if (project_name_exists(conn, name)) {
@@ -200,6 +199,8 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
   }
 
   const std::int64_t created_at = now_unix();
+  ProjectId project_id = 0;
+  std::vector<std::pair<ImageId, std::string>> needs_cache;  // (image_id, relative_path)
 
   exec_simple(conn, "BEGIN;");
   try {
@@ -211,11 +212,11 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
     if (sqlite3_step(insert_project.get()) != SQLITE_DONE) {
       throw std::runtime_error(std::string("insert project failed: ") + sqlite3_errmsg(conn));
     }
-    const ProjectId project_id = sqlite3_last_insert_rowid(conn);
+    project_id = sqlite3_last_insert_rowid(conn);
 
     Stmt insert_image(conn,
                        "INSERT INTO images (project_id, file_path, file_name, file_size, "
-                       "imported_at, kind, raw_path) VALUES (?, ?, ?, ?, ?, ?, ?);");
+                       "imported_at, kind) VALUES (?, ?, ?, ?, ?, ?);");
     for (const auto& img : images) {
       sqlite3_reset(insert_image.get());
       sqlite3_bind_int64(insert_image.get(), 1, project_id);
@@ -223,18 +224,40 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
       sqlite3_bind_text(insert_image.get(), 3, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(insert_image.get(), 4, img.file_size);
       sqlite3_bind_int64(insert_image.get(), 5, created_at);
-      bind_kind_and_raw_path(insert_image.get(), 6, 7, img);
+      sqlite3_bind_text(insert_image.get(), 6, img.kind.c_str(), -1, SQLITE_TRANSIENT);
       if (sqlite3_step(insert_image.get()) != SQLITE_DONE) {
         throw std::runtime_error(std::string("insert image failed: ") + sqlite3_errmsg(conn));
+      }
+      if (img.kind == "raw") {
+        needs_cache.emplace_back(sqlite3_last_insert_rowid(conn), img.relative_path);
       }
     }
 
     exec_simple(conn, "COMMIT;");
-    return Result<ProjectId, CreateProjectError>::Ok(project_id);
   } catch (...) {
     exec_simple(conn, "ROLLBACK;");
     throw;
   }
+
+  // 预览缓存生成(慢，可能秒级/张)特意放在主事务提交之后：不拖长那次
+  // BEGIN/COMMIT 持有的时间，单张生成失败也不影响已经成功创建的项目和其
+  // 它图片的记录。
+  Stmt update_cache_stmt(conn, "UPDATE images SET preview_cache_path = ? WHERE id = ?;");
+  int done = 0;
+  for (const auto& [image_id, relative_path] : needs_cache) {
+    fs::path absolute = fs::path(folder_path) / relative_path;
+    auto cache_path = generate_preview_cache(db, project_id, image_id, absolute.string());
+    if (cache_path) {
+      sqlite3_reset(update_cache_stmt.get());
+      sqlite3_bind_text(update_cache_stmt.get(), 1, cache_path->c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
+      sqlite3_step(update_cache_stmt.get());
+    }
+    ++done;
+    if (on_progress) on_progress(done, static_cast<int>(needs_cache.size()));
+  }
+
+  return Result<ProjectId, CreateProjectError>::Ok(project_id);
 }
 
 std::vector<ProjectSummary> list_projects(db::Database& db) {
@@ -297,6 +320,12 @@ Result<void, ProjectNotFoundError> delete_project(db::Database& db, ProjectId id
   if (sqlite3_changes(conn) == 0) {
     return Result<void, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
   }
+  // images/tags/image_tags 已经靠 ON DELETE CASCADE 清掉了；RAW 预览缓存
+  // 是磁盘文件，数据库外键管不到，这里手动清掉整个项目的缓存子目录，避
+  // 免留下孤儿文件。缓存目录本来就在 PZT 自己的数据目录下，不是"用户原始
+  // 文件"，删除不违反 delete_project 一贯"不触碰磁盘上的原始图片"的承诺。
+  std::error_code ec;
+  fs::remove_all(raw_preview_cache_dir(db, id), ec);
   return Result<void, ProjectNotFoundError>::Ok();
 }
 
@@ -311,7 +340,7 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   Stmt stmt(db.handle(),
-            "SELECT id, project_id, file_path, file_name, file_size, kind, raw_path "
+            "SELECT id, project_id, file_path, file_name, file_size, kind, preview_cache_path "
             "FROM images WHERE id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, id);
   if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
@@ -324,13 +353,14 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   info.file_size = sqlite3_column_int64(stmt.get(), 4);
   info.kind = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
   if (sqlite3_column_type(stmt.get(), 6) != SQLITE_NULL) {
-    info.raw_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
+    info.preview_cache_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
   }
   return info;
 }
 
 Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
-                                                             bool prune) {
+                                                             bool prune,
+                                                             ScanProgressFn on_progress) {
   sqlite3* conn = db.handle();
   auto summary = get_project_summary(conn, id);
   if (!summary) {
@@ -346,62 +376,63 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
 
   std::int64_t added = 0;
   std::int64_t removed = 0;
-  std::int64_t paired = 0;
+  std::int64_t upgraded = 0;
+  std::vector<std::pair<ImageId, std::string>> needs_cache;  // (image_id, relative_path)
+
   exec_simple(conn, "BEGIN;");
   try {
-    Stmt find_by_path_stmt(conn,
-                            "SELECT id, kind FROM images WHERE project_id = ? AND file_path = ?;");
+    Stmt find_by_path_stmt(conn, "SELECT id FROM images WHERE project_id = ? AND file_path = ?;");
+    Stmt find_by_stem_jpeg_stmt(
+        conn,
+        "SELECT id FROM images WHERE project_id = ? AND kind = 'jpeg' AND "
+        "file_path = ?;");
     Stmt insert_stmt(conn,
                       "INSERT INTO images (project_id, file_path, file_name, file_size, "
-                      "imported_at, kind, raw_path) VALUES (?, ?, ?, ?, ?, ?, ?);");
-    // 把一条已有记录原地升级成配对：file_path/file_name 换成 JPEG 那份(配
-    // 对约定 culling 预览用 JPEG，见 M2_Eng_Design.md)，kind 固定
-    // "raw_jpeg"，raw_path 记 RAW 那份路径。两种升级方向(先有 JPEG 后补
-    // RAW / 先有 RAW 后补 JPEG)用的是同一条语句，只是调用时传的
-    // existing_id 来自不同的查找。
-    Stmt upgrade_stmt(conn,
-                       "UPDATE images SET file_path = ?, file_name = ?, kind = 'raw_jpeg', "
-                       "raw_path = ? WHERE id = ?;");
-
-    auto find_by_path = [&](const std::string& path) -> std::optional<std::pair<ImageId, std::string>> {
-      sqlite3_reset(find_by_path_stmt.get());
-      sqlite3_bind_int64(find_by_path_stmt.get(), 1, id);
-      sqlite3_bind_text(find_by_path_stmt.get(), 2, path.c_str(), -1, SQLITE_TRANSIENT);
-      if (sqlite3_step(find_by_path_stmt.get()) != SQLITE_ROW) return std::nullopt;
-      return std::make_pair(
-          sqlite3_column_int64(find_by_path_stmt.get(), 0),
-          std::string(reinterpret_cast<const char*>(sqlite3_column_text(find_by_path_stmt.get(), 1))));
-    };
-
-    auto run_upgrade = [&](ImageId existing_id, const ScannedImage& img) {
-      sqlite3_reset(upgrade_stmt.get());
-      sqlite3_bind_text(upgrade_stmt.get(), 1, img.relative_path.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(upgrade_stmt.get(), 2, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(upgrade_stmt.get(), 3, img.raw_relative_path->c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_int64(upgrade_stmt.get(), 4, existing_id);
-      if (sqlite3_step(upgrade_stmt.get()) != SQLITE_DONE) {
-        throw std::runtime_error(std::string("upgrade image failed: ") + sqlite3_errmsg(conn));
-      }
-    };
+                      "imported_at, kind) VALUES (?, ?, ?, ?, ?, ?);");
+    // 把一条原来是 kind='jpeg' 的记录原地升级成 kind='raw'：file_path/
+    // file_name 换成 RAW 的，不插入新记录——否则原来那条 JPEG 记录会在
+    // prune 阶段被误判成"磁盘上已消失"，连带丢失已经打过的标签/recipe。
+    Stmt upgrade_stmt(
+        conn, "UPDATE images SET file_path = ?, file_name = ?, kind = 'raw' WHERE id = ?;");
 
     for (const auto& img : scanned) {
-      if (auto existing = find_by_path(img.relative_path)) {
-        // 已经有一条记录用的就是这个 file_path——纯 JPEG/纯 RAW 情况下这就
-        // 是它自己，什么都不用做；如果这次扫描把它识别成了配对
-        // (kind="raw_jpeg")而记录还停留在旧的单一 kind，原地升级。
-        if (img.kind == "raw_jpeg" && existing->second != "raw_jpeg") {
-          run_upgrade(existing->first, img);
-          ++paired;
-        }
-        continue;
-      }
+      sqlite3_reset(find_by_path_stmt.get());
+      sqlite3_bind_int64(find_by_path_stmt.get(), 1, id);
+      sqlite3_bind_text(find_by_path_stmt.get(), 2, img.relative_path.c_str(), -1,
+                         SQLITE_TRANSIENT);
+      if (sqlite3_step(find_by_path_stmt.get()) == SQLITE_ROW) continue;  // 已经在 images 表里了
 
-      if (img.kind == "raw_jpeg") {
-        // JPEG 路径没匹配到已有记录，可能是 RAW 那一半之前被当纯 RAW 单独
-        // 记过——按 RAW 路径再查一次。
-        if (auto existing_raw = find_by_path(*img.raw_relative_path)) {
-          run_upgrade(existing_raw->first, img);
-          ++paired;
+      // file_path 没有精确匹配到已有记录。如果这是一张 RAW 图片，检查同一
+      // 文件名主干是不是曾经作为纯 JPEG 记录过——命中就原地升级，不是插入。
+      if (img.kind == "raw") {
+        fs::path stem = fs::path(img.relative_path).parent_path() /
+                         fs::path(img.relative_path).stem();
+        // JPEG 扩展名不确定是 .jpg 还是 .jpeg，两个都试一次；这里用不到
+        // is_jpeg 那个大小写不敏感的通用逻辑，因为 file_path 本身就是磁盘
+        // 上真实存在过的路径，只有这两种可能。
+        std::optional<ImageId> jpeg_id;
+        for (const char* ext : {".jpg", ".jpeg", ".JPG", ".JPEG"}) {
+          sqlite3_reset(find_by_stem_jpeg_stmt.get());
+          sqlite3_bind_int64(find_by_stem_jpeg_stmt.get(), 1, id);
+          std::string candidate = stem.string() + ext;
+          sqlite3_bind_text(find_by_stem_jpeg_stmt.get(), 2, candidate.c_str(), -1,
+                             SQLITE_TRANSIENT);
+          if (sqlite3_step(find_by_stem_jpeg_stmt.get()) == SQLITE_ROW) {
+            jpeg_id = sqlite3_column_int64(find_by_stem_jpeg_stmt.get(), 0);
+            break;
+          }
+        }
+        if (jpeg_id) {
+          sqlite3_reset(upgrade_stmt.get());
+          sqlite3_bind_text(upgrade_stmt.get(), 1, img.relative_path.c_str(), -1,
+                             SQLITE_TRANSIENT);
+          sqlite3_bind_text(upgrade_stmt.get(), 2, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
+          sqlite3_bind_int64(upgrade_stmt.get(), 3, *jpeg_id);
+          if (sqlite3_step(upgrade_stmt.get()) != SQLITE_DONE) {
+            throw std::runtime_error(std::string("upgrade image failed: ") + sqlite3_errmsg(conn));
+          }
+          ++upgraded;
+          needs_cache.emplace_back(*jpeg_id, img.relative_path);
           continue;
         }
       }
@@ -412,11 +443,14 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       sqlite3_bind_text(insert_stmt.get(), 3, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(insert_stmt.get(), 4, img.file_size);
       sqlite3_bind_int64(insert_stmt.get(), 5, imported_at);
-      bind_kind_and_raw_path(insert_stmt.get(), 6, 7, img);
+      sqlite3_bind_text(insert_stmt.get(), 6, img.kind.c_str(), -1, SQLITE_TRANSIENT);
       if (sqlite3_step(insert_stmt.get()) != SQLITE_DONE) {
         throw std::runtime_error(std::string("insert image failed: ") + sqlite3_errmsg(conn));
       }
       ++added;
+      if (img.kind == "raw") {
+        needs_cache.emplace_back(sqlite3_last_insert_rowid(conn), img.relative_path);
+      }
     }
 
     if (prune) {
@@ -424,23 +458,31 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       // PRAGMA foreign_keys = ON，delete_project 依赖的是同一个级联行为），
       // 删这一行就会把这张图打过的标签一并带走，不需要额外手写删
       // image_tags 的语句。
-      std::vector<std::pair<std::int64_t, std::string>> existing;
-      Stmt list_stmt(conn, "SELECT id, file_path FROM images WHERE project_id = ?;");
+      std::vector<std::tuple<std::int64_t, std::string, std::optional<std::string>>> existing;
+      Stmt list_stmt(conn, "SELECT id, file_path, preview_cache_path FROM images WHERE project_id = ?;");
       sqlite3_bind_int64(list_stmt.get(), 1, id);
       while (sqlite3_step(list_stmt.get()) == SQLITE_ROW) {
-        existing.emplace_back(
-            sqlite3_column_int64(list_stmt.get(), 0),
-            reinterpret_cast<const char*>(sqlite3_column_text(list_stmt.get(), 1)));
+        std::optional<std::string> cache_path;
+        if (sqlite3_column_type(list_stmt.get(), 2) != SQLITE_NULL) {
+          cache_path = reinterpret_cast<const char*>(sqlite3_column_text(list_stmt.get(), 2));
+        }
+        existing.emplace_back(sqlite3_column_int64(list_stmt.get(), 0),
+                               reinterpret_cast<const char*>(sqlite3_column_text(list_stmt.get(), 1)),
+                               std::move(cache_path));
       }
 
       Stmt delete_stmt(conn, "DELETE FROM images WHERE id = ?;");
-      for (const auto& [image_id, file_path] : existing) {
+      for (const auto& [image_id, file_path, cache_path] : existing) {
         if (scanned_paths.count(file_path) != 0) continue;  // 磁盘上还在
         sqlite3_reset(delete_stmt.get());
         sqlite3_bind_int64(delete_stmt.get(), 1, image_id);
         if (sqlite3_step(delete_stmt.get()) != SQLITE_DONE) {
           throw std::runtime_error(std::string("delete missing image failed: ") +
                                     sqlite3_errmsg(conn));
+        }
+        if (cache_path) {
+          std::error_code ec;
+          fs::remove(*cache_path, ec);  // 孤儿缓存文件清理，失败不影响 rescan 本身
         }
         ++removed;
       }
@@ -452,11 +494,27 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
     throw;
   }
 
+  // 同 create_project：预览缓存生成放在主事务提交之后。
+  Stmt update_cache_stmt(conn, "UPDATE images SET preview_cache_path = ? WHERE id = ?;");
+  int done = 0;
+  for (const auto& [image_id, relative_path] : needs_cache) {
+    fs::path absolute = fs::path(summary->root_path) / relative_path;
+    auto cache_path = generate_preview_cache(db, id, image_id, absolute.string());
+    if (cache_path) {
+      sqlite3_reset(update_cache_stmt.get());
+      sqlite3_bind_text(update_cache_stmt.get(), 1, cache_path->c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
+      sqlite3_step(update_cache_stmt.get());
+    }
+    ++done;
+    if (on_progress) on_progress(done, static_cast<int>(needs_cache.size()));
+  }
+
   RescanSummary result;
   result.added_count = added;
   result.removed_count = removed;
   result.total_count = summary->image_count + added - removed;
-  result.paired_count = paired;
+  result.upgraded_count = upgraded;
   return Result<RescanSummary, ProjectNotFoundError>::Ok(result);
 }
 

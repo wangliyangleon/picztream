@@ -44,6 +44,15 @@ std::optional<pzt::core::ProjectId> resolve_project(const std::string& cmd,
   return id;
 }
 
+// new/rescan 扫到 RAW 文件时会顺带生成预览缓存(真的要跑一遍 LibRaw 降分
+// 辨率解码,不是纯文件系统扫描那么快)，用 \r 覆盖同一行打印进度，不能让
+// 用户误以为卡住了。done==total 时换行，交给后面的结果消息另起一行。
+void print_scan_progress(int done, int total) {
+  std::printf("\r%s", pzt::cli::i18n::msg_raw_preview_progress(done, total).c_str());
+  std::fflush(stdout);
+  if (done == total) std::printf("\n");
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_missing_name().c_str());
@@ -54,7 +63,7 @@ int cmd_new(const std::vector<std::string>& args) {
   std::string folder_path =
       args.size() >= 2 ? args[1] : std::filesystem::current_path().string();
 
-  auto result = pzt::core::create_project(name, folder_path);
+  auto result = pzt::core::create_project(name, folder_path, print_scan_progress);
   if (!result.ok()) {
     switch (result.error()) {
       case pzt::core::CreateProjectError::NameAlreadyExists:
@@ -192,7 +201,7 @@ int cmd_rescan(const std::vector<std::string>& args) {
   auto project_id = resolve_project("pzt rescan", name);
   if (!project_id) return 1;
 
-  auto result = pzt::core::rescan_project(*project_id, prune);
+  auto result = pzt::core::rescan_project(*project_id, prune, print_scan_progress);
   if (!result.ok()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_rescan_failed(name).c_str());
     return 1;
@@ -201,7 +210,7 @@ int cmd_rescan(const std::vector<std::string>& args) {
       static_cast<long long>(result.value().added_count),
       static_cast<long long>(result.value().removed_count),
       static_cast<long long>(result.value().total_count),
-      static_cast<long long>(result.value().paired_count)).c_str());
+      static_cast<long long>(result.value().upgraded_count)).c_str());
   return 0;
 }
 

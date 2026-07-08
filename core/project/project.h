@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -29,13 +30,23 @@ struct ProjectSummary {
   bool archived;
 };
 
+// 每处理完一张需要生成 RAW 预览缓存的图片调用一次(done, total)。只有这次
+// 扫描/rescan 确实有 RAW 图片需要生成缓存时才会被调用——纯 JPEG 项目、或
+// 者所有 RAW 图片本来就已经有缓存，不触发任何调用。见 M2_Eng_Design.md
+// "RAW 预览缓存"。
+using ScanProgressFn = std::function<void(int done, int total)>;
+
 // 递归扫描 folder_path 下所有 .jpg/.jpeg/.dng/.raf（大小写不敏感），写入
-// images 表。同一目录下文件名主干相同的 JPEG + RAW 会被识别为同一张逻辑
-// 图片（kind="raw_jpeg"），不重复计数，见 M2_Eng_Design.md。名字已存在或
-// 扫描不到任何图片时返回对应错误，不创建项目。
+// images 表。同一目录下文件名主干相同的 JPEG + RAW 同时存在时只认 RAW，
+// 那份 JPEG 被忽略、不生成记录（M2_Eng_Design.md"RAW+JPEG 同名"）。每张
+// RAW 图片会额外触发一次预览缓存生成（half_size LibRaw 解码 + 编码 JPEG，
+// 写进 PZT 自己的数据目录，不进用户照片文件夹），耗时不再是纯文件系统扫
+// 描那么快，on_progress 非空时会汇报进度。名字已存在或扫描不到任何图片
+// 时返回对应错误，不创建项目。
 Result<ProjectId, CreateProjectError> create_project(db::Database& db,
                                                       const std::string& name,
-                                                      const std::string& folder_path);
+                                                      const std::string& folder_path,
+                                                      ScanProgressFn on_progress = nullptr);
 
 // 未归档项目在前，归档项目排最后；同组内按名字排序。
 std::vector<ProjectSummary> list_projects(db::Database& db);
@@ -66,8 +77,8 @@ struct ImageInfo {
   std::string file_path;
   std::string file_name;
   std::int64_t file_size;
-  std::string kind;                     // "jpeg" | "raw" | "raw_jpeg"，见 M2_Eng_Design.md
-  std::optional<std::string> raw_path;  // kind != "jpeg" 时有值
+  std::string kind;                              // "jpeg" | "raw"
+  std::optional<std::string> preview_cache_path;  // kind="raw" 且缓存已生成时有值(绝对路径)
 };
 
 // 给 cli 调试命令把"图片相对路径"翻译成内部 id 用。
@@ -81,24 +92,27 @@ struct RescanSummary {
   std::int64_t added_count;
   std::int64_t removed_count;
   std::int64_t total_count;
-  std::int64_t paired_count;  // M2：把已有的纯 JPEG/纯 RAW 记录升级成配对(raw_jpeg)的数量
+  std::int64_t upgraded_count;  // M2：把已有的 kind="jpeg" 记录原地升级成 kind="raw" 的数量
 };
 
 // 复用 create_project 内部的扫描逻辑，把磁盘上有、但 images 表里还没有的
 // 文件插进去。prune（默认 true）时还会清掉 images 表里有、但磁盘上已经找
-// 不到对应文件的记录——级联清掉这些图片打过的标签（ON DELETE CASCADE）。
-// 这条清理默认打开是刻意的决定：早期版本"只增不减"是为了防止外置硬盘没
-// 挂载时把整个项目的标签悄悄清空，但实际使用中发现"删了照片、标签却清不
-// 掉"更让人困惑。prune=false 保留旧行为，留给明确知道自己在对一个可能暂
-// 时不完整的存储位置跑 rescan 的场景用。
+// 不到对应文件的记录——级联清掉这些图片打过的标签（ON DELETE CASCADE），
+// 如果该行有预览缓存文件也一并删除，不留孤儿文件。这条清理默认打开是刻
+// 意的决定：早期版本"只增不减"是为了防止外置硬盘没挂载时把整个项目的标
+// 签悄悄清空，但实际使用中发现"删了照片、标签却清不掉"更让人困惑。
+// prune=false 保留旧行为，留给明确知道自己在对一个可能暂时不完整的存储
+// 位置跑 rescan 的场景用。
 //
-// M2：如果磁盘上出现了跟已有记录同名主干的另一半文件（比如项目建的时候
-// 只有 JPEG，后来往文件夹里补了同名 RAW 进来，反过来先有 RAW 后补 JPEG
-// 也一样），已有的那条记录会被原地升级成 kind="raw_jpeg"（同名主干的另
-// 一半此前从未被单独记录过时才会发生这种升级——如果磁盘上从来就是一对，
-// 从第一次扫描起就会被识别成配对，不会经历"先单独存在、再升级"这个阶
-// 段），不会插入重复记录，计入 paired_count。
+// M2：如果磁盘上给一条已有的 kind="jpeg" 记录补上了同名 RAW 文件，这条记
+// 录会被原地升级成 kind="raw"（file_path/file_name 换成 RAW 的），不会插
+// 入重复记录（否则原来那条 JPEG 记录会在 prune 时被误判成"磁盘上已消
+// 失"，连带丢失已经打过的标签/recipe），计入 upgraded_count。反过来"先有
+// RAW 后补 JPEG"不需要处理——扫描阶段从一开始就会忽略新出现的同名
+// JPEG，见 create_project 的说明。升级/新增的 RAW 图片都会触发预览缓存
+// 生成，on_progress 非空时汇报进度。
 Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
-                                                             bool prune = true);
+                                                             bool prune = true,
+                                                             ScanProgressFn on_progress = nullptr);
 
 }  // namespace pzt::core::project

@@ -1,13 +1,16 @@
 #include "core/api.h"
 
+#include <utility>
+
 #include "core/db/database.h"
 
 namespace pzt::core {
 
 Result<ProjectId, CreateProjectError> create_project(const std::string& name,
-                                                      const std::string& folder_path) {
+                                                      const std::string& folder_path,
+                                                      ScanProgressFn on_progress) {
   db::Database db = db::Database::open_default();
-  return project::create_project(db, name, folder_path);
+  return project::create_project(db, name, folder_path, std::move(on_progress));
 }
 
 std::vector<ProjectSummary> list_projects() {
@@ -96,9 +99,10 @@ TagId ensure_reject_tag(ProjectId project_id) {
   return tagging::ensure_reject_tag(db, project_id);
 }
 
-Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune) {
+Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
+                                                             ScanProgressFn on_progress) {
   db::Database db = db::Database::open_default();
-  return project::rescan_project(db, project_id, prune);
+  return project::rescan_project(db, project_id, prune, std::move(on_progress));
 }
 
 std::vector<ImageRef> list_images(ProjectId project_id) {
