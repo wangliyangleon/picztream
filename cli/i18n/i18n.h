@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>
@@ -98,6 +99,7 @@ std::string info_tags_label();
 std::string info_none_label();
 std::string info_size_label(const std::string& size_str);
 std::string info_source_label(bool is_raw);
+std::string info_captured_at_label(std::optional<std::int64_t> captured_at);
 std::string info_style_label();
 std::string info_style_none_label();
 std::string msg_press_any_key_to_continue(const std::string& status);

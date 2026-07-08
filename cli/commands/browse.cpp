@@ -322,6 +322,8 @@ int cmd_open(const std::vector<std::string>& args) {
           write_stdout(pad_to(pzt::cli::i18n::info_size_label(format_size(info->file_size)), info_cols));
           move_cursor(row++, info_col);
           write_stdout(pad_to(pzt::cli::i18n::info_source_label(info->kind == "raw"), info_cols));
+          move_cursor(row++, info_col);
+          write_stdout(pad_to(pzt::cli::i18n::info_captured_at_label(info->captured_at), info_cols));
         }
 
         // M1 increment 3:在真正的 `r` 交互(increment 6)和预览渲染

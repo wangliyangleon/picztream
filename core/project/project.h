@@ -79,6 +79,7 @@ struct ImageInfo {
   std::int64_t file_size;
   std::string kind;                              // "jpeg" | "raw"
   std::optional<std::string> preview_cache_path;  // kind="raw" 且缓存已生成时有值(绝对路径)
+  std::optional<std::int64_t> captured_at;        // 拍摄时间(Unix 秒数)，提取失败/没有这个信息时为空
 };
 
 // 给 cli 调试命令把"图片相对路径"翻译成内部 id 用。

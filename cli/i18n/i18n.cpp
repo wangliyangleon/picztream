@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 namespace pzt::cli::i18n {
 
@@ -667,6 +668,28 @@ std::string info_source_label(bool is_raw) {
     return is_raw ? "来源: RAW" : "来源: JPEG";
   } else {
     return is_raw ? "Source: RAW" : "Source: JPEG";
+  }
+}
+
+std::string info_captured_at_label(std::optional<std::int64_t> captured_at) {
+  std::string formatted = "-";
+  if (captured_at) {
+    // localtime_r 是 mktime 的逆运算——core::decode::read_jpeg_capture_time/
+    // core::raw::read_capture_time 存进去的 epoch 都是按本地时区的
+    // mktime() 语义算出来的，这里用 localtime_r 转回去，精确到分钟，正
+    // 好能还原出跟拍摄时相机屏幕上、或者 EXIF 里原始字符串一致的墙钟时
+    // 间，不会因为时区换算错位。
+    time_t t = static_cast<time_t>(*captured_at);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
+    formatted = buf;
+  }
+  if (g_lang == Lang::zh) {
+    return "拍摄时间: " + formatted;
+  } else {
+    return "Captured: " + formatted;
   }
 }
 

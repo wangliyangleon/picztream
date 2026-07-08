@@ -187,13 +187,18 @@ std::optional<std::int64_t> read_jpeg_capture_time(const std::string& path) {
     if (dto) {
       char buf[32];
       if (CFStringGetCString(dto, buf, sizeof(buf), kCFStringEncodingUTF8)) {
-        // EXIF 固定格式 "YYYY:MM:DD HH:MM:SS"，没有时区信息——按 UTC 解释，
-        // 不做本地时区换算。这只影响"跟真实墙钟时间差多少"，不影响同一
-        // 台相机内部的相对排序；跨相机比较时如果两台相机所在时区确实不
-        // 同，排序可能有小误差，这是目前接受的已知简化。
+        // EXIF 固定格式 "YYYY:MM:DD HH:MM:SS"，没有时区信息——用 mktime()
+        // 按本地时区解释，不是 timegm()/UTC。这不是随便选的：实测过
+        // LibRaw 的 imgdata.other.timestamp 对同一个字符串就是用 mktime()
+        // 语义算出来的（真机验证时用真实富士 RAF 核实过，两条路径读到
+        // 的原始字符串一致，转出来的 epoch 也必须一致，否则同一个项目
+        // 里 RAW 和真实相机 JPEG 的 captured_at 会有一个时区偏移量的系统
+        // 性错位，混合排序时序会乱）。跨相机比较时如果两台相机所在时区
+        // 确实不同，排序可能有小误差，这是目前接受的已知简化。
         std::tm tm{};
         if (strptime(buf, "%Y:%m:%d %H:%M:%S", &tm)) {
-          result = static_cast<std::int64_t>(timegm(&tm));
+          tm.tm_isdst = -1;  // 交给 mktime 自己判断有没有夏令时，不要瞎猜
+          result = static_cast<std::int64_t>(mktime(&tm));
         }
       }
     }

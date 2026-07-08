@@ -361,8 +361,8 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   Stmt stmt(db.handle(),
-            "SELECT id, project_id, file_path, file_name, file_size, kind, preview_cache_path "
-            "FROM images WHERE id = ?;");
+            "SELECT id, project_id, file_path, file_name, file_size, kind, preview_cache_path, "
+            "captured_at FROM images WHERE id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, id);
   if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
 
@@ -375,6 +375,9 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   info.kind = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
   if (sqlite3_column_type(stmt.get(), 6) != SQLITE_NULL) {
     info.preview_cache_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
+  }
+  if (sqlite3_column_type(stmt.get(), 7) != SQLITE_NULL) {
+    info.captured_at = sqlite3_column_int64(stmt.get(), 7);
   }
   return info;
 }

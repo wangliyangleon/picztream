@@ -236,14 +236,20 @@ TEST_CASE("encode_jpeg_file reports EncodeFailed for non-positive dimensions") {
   CHECK(!encode_jpeg_file(img, path.string()).ok());
 }
 
-TEST_CASE("read_jpeg_capture_time parses EXIF DateTimeOriginal as a UTC epoch") {
+TEST_CASE("read_jpeg_capture_time parses EXIF DateTimeOriginal using local-time semantics") {
+  // 用 mktime()（本地时区），不是 timegm()（UTC）——跟 core::raw::
+  // read_capture_time 读到的 LibRaw imgdata.other.timestamp 是同一套语
+  // 义，真机验证过两条路径对同一个字符串必须转出同一个 epoch，否则同一
+  // 个项目里 RAW 跟真实相机 JPEG 的 captured_at 会有一个时区偏移量的系
+  // 统性错位。
   auto path = write_jpeg_with_exif_date("with_date.jpg", "2025:05:11 19:24:22");
   auto result = read_jpeg_capture_time(path.string());
   REQUIRE(result.has_value());
 
   std::tm expected{};
   strptime("2025:05:11 19:24:22", "%Y:%m:%d %H:%M:%S", &expected);
-  CHECK(*result == static_cast<std::int64_t>(timegm(&expected)));
+  expected.tm_isdst = -1;
+  CHECK(*result == static_cast<std::int64_t>(mktime(&expected)));
 }
 
 TEST_CASE("read_jpeg_capture_time returns nullopt when there's no EXIF DateTimeOriginal") {
