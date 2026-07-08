@@ -50,9 +50,15 @@ ImageRef row_to_image_ref(sqlite3_stmt* stmt) {
 }  // namespace
 
 std::vector<ImageRef> list_images(db::Database& db, ProjectId project_id) {
+  // M2 收尾：按拍摄时间排序，取代纯文件名排序——多相机场景下不同机身的
+  // 文件名计数器互相独立，按文件名交替排列跟实际拍摄顺序没关系。
+  // `captured_at IS NULL` 对有值的行是 0、没值的行是 1，ORDER BY 这一列
+  // 自然把有值的排在前面；有值的再按 captured_at 升序排，没值的落到最
+  // 后按 file_path 兜底。
   Stmt stmt(db.handle(),
             "SELECT id, file_path, file_name, kind, preview_cache_path FROM images "
-            "WHERE project_id = ? ORDER BY file_path ASC;");
+            "WHERE project_id = ? "
+            "ORDER BY captured_at IS NULL, captured_at ASC, file_path ASC;");
   sqlite3_bind_int64(stmt.get(), 1, project_id);
 
   std::vector<ImageRef> out;

@@ -116,4 +116,15 @@ Result<decode::DecodedImage, RawError> decode_preview(const std::string& path) {
   return decode(path, /*half_size=*/true);
 }
 
+std::optional<std::int64_t> read_capture_time(const std::string& path) {
+  if (!fs::exists(path)) return std::nullopt;
+
+  LibRaw proc;
+  if (proc.open_file(path.c_str()) != LIBRAW_SUCCESS) return std::nullopt;
+
+  time_t ts = proc.imgdata.other.timestamp;
+  if (ts == 0) return std::nullopt;  // LibRaw 用 0 表示"这个字段没有数据"
+  return static_cast<std::int64_t>(ts);
+}
+
 }  // namespace pzt::core::raw

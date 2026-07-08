@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,5 +42,12 @@ Result<decode::DecodedImage, RawError> decode_full(const std::string& path);
 // 赛克正是全量解码慢的根源，half_size 几乎整个跳过了它）。只用于生成
 // new/rescan 时的预览缓存，不能当导出结果用（分辨率不够）。
 Result<decode::DecodedImage, RawError> decode_preview(const std::string& path);
+
+// 只读文件头部/metadata，不走 unpack()/dcraw_process() 那条全量解码慢路
+// 径——open_file() 本身就已经把这个信息解析出来了（实测徕卡/富士两台测
+// 试机身都是 1-2ms 量级）。相机没提供、文件打不开、解析失败，统一返回
+// nullopt——调用方（core::project 的排序场景）把它当"没有这个信息"处
+// 理，不是需要报错的异常状态。
+std::optional<std::int64_t> read_capture_time(const std::string& path);
 
 }  // namespace pzt::core::raw

@@ -147,6 +147,12 @@ void initialize_schema(sqlite3* conn) {
   // 存在时直接忽略，不做配对。
   ensure_column(conn, "images", "kind", "kind TEXT NOT NULL DEFAULT 'jpeg'");
   ensure_column(conn, "images", "preview_cache_path", "preview_cache_path TEXT");
+  // M2 收尾：拍摄时间(Unix 秒数，从 EXIF/LibRaw 提取)，用来把 list_images
+  // 的默认浏览顺序从"按文件名"换成"按拍摄时间"——多相机场景下文件名交替
+  // 跟实际拍摄顺序没关系。可空:相机没提供、文件读取失败都落在 NULL，
+  // list_images 按"NULL 排最后、用文件名兜底"处理，不是错误状态。旧库
+  // 迁移时全部落在 NULL，下一次 rescan 会顺手回填。
+  ensure_column(conn, "images", "captured_at", "captured_at INTEGER");
 }
 
 }  // namespace pzt::core::db

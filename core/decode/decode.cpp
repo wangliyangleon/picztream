@@ -4,6 +4,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <ImageIO/ImageIO.h>
 
+#include <ctime>
 #include <fstream>
 #include <optional>
 
@@ -163,6 +164,42 @@ Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::s
 
   if (!ok) return Result<void, EncodeError>::Err(EncodeError::EncodeFailed);
   return Result<void, EncodeError>::Ok();
+}
+
+std::optional<std::int64_t> read_jpeg_capture_time(const std::string& path) {
+  CFStringRef cf_path = CFStringCreateWithCString(nullptr, path.c_str(), kCFStringEncodingUTF8);
+  CFURLRef url = CFURLCreateWithFileSystemPath(nullptr, cf_path, kCFURLPOSIXPathStyle, false);
+  CGImageSourceRef src = CGImageSourceCreateWithURL(url, nullptr);
+  CFRelease(cf_path);
+  CFRelease(url);
+  if (!src) return std::nullopt;
+
+  CFDictionaryRef props = CGImageSourceCopyPropertiesAtIndex(src, 0, nullptr);
+  CFRelease(src);
+  if (!props) return std::nullopt;
+
+  std::optional<std::int64_t> result;
+  auto exif = static_cast<CFDictionaryRef>(
+      CFDictionaryGetValue(props, kCGImagePropertyExifDictionary));
+  if (exif) {
+    auto dto = static_cast<CFStringRef>(
+        CFDictionaryGetValue(exif, kCGImagePropertyExifDateTimeOriginal));
+    if (dto) {
+      char buf[32];
+      if (CFStringGetCString(dto, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+        // EXIF 固定格式 "YYYY:MM:DD HH:MM:SS"，没有时区信息——按 UTC 解释，
+        // 不做本地时区换算。这只影响"跟真实墙钟时间差多少"，不影响同一
+        // 台相机内部的相对排序；跨相机比较时如果两台相机所在时区确实不
+        // 同，排序可能有小误差，这是目前接受的已知简化。
+        std::tm tm{};
+        if (strptime(buf, "%Y:%m:%d %H:%M:%S", &tm)) {
+          result = static_cast<std::int64_t>(timegm(&tm));
+        }
+      }
+    }
+  }
+  CFRelease(props);
+  return result;
 }
 
 }  // namespace pzt::core::decode

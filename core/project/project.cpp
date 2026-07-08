@@ -162,6 +162,16 @@ fs::path raw_preview_cache_dir(db::Database& db, ProjectId project_id) {
   return fs::path(db.path()).parent_path() / "raw_previews" / std::to_string(project_id);
 }
 
+// 按 kind 分发到对应的拍摄时间提取函数——这里已经知道 kind 了，不需要像
+// core::decode_preview_file 那样按扩展名猜。1-2ms 量级（open_file()/
+// CGImageSourceCopyPropertiesAtIndex 都不触发全量解码），可以放心放进主
+// 扫描路径，不需要像预览缓存生成那样挪到事务提交之后。
+std::optional<std::int64_t> read_capture_time(const std::string& kind,
+                                               const std::string& absolute_path) {
+  return kind == "raw" ? raw::read_capture_time(absolute_path)
+                        : decode::read_jpeg_capture_time(absolute_path);
+}
+
 // 给一张 RAW 图片生成降分辨率预览缓存并写盘，成功时返回缓存的绝对路径。
 // 失败（LibRaw 解不出来、编码失败）时返回 nullopt，调用方不应该让这个失
 // 败中断整批处理——照抄 core/export 里"单张失败不中断整体"的既有惯例。
@@ -216,8 +226,11 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
 
     Stmt insert_image(conn,
                        "INSERT INTO images (project_id, file_path, file_name, file_size, "
-                       "imported_at, kind) VALUES (?, ?, ?, ?, ?, ?);");
+                       "imported_at, kind, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?);");
     for (const auto& img : images) {
+      auto captured_at =
+          read_capture_time(img.kind, (fs::path(folder_path) / img.relative_path).string());
+
       sqlite3_reset(insert_image.get());
       sqlite3_bind_int64(insert_image.get(), 1, project_id);
       sqlite3_bind_text(insert_image.get(), 2, img.relative_path.c_str(), -1, SQLITE_TRANSIENT);
@@ -225,6 +238,11 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
       sqlite3_bind_int64(insert_image.get(), 4, img.file_size);
       sqlite3_bind_int64(insert_image.get(), 5, created_at);
       sqlite3_bind_text(insert_image.get(), 6, img.kind.c_str(), -1, SQLITE_TRANSIENT);
+      if (captured_at) {
+        sqlite3_bind_int64(insert_image.get(), 7, *captured_at);
+      } else {
+        sqlite3_bind_null(insert_image.get(), 7);
+      }
       if (sqlite3_step(insert_image.get()) != SQLITE_DONE) {
         throw std::runtime_error(std::string("insert image failed: ") + sqlite3_errmsg(conn));
       }
@@ -384,26 +402,47 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
 
   exec_simple(conn, "BEGIN;");
   try {
-    Stmt find_by_path_stmt(conn, "SELECT id FROM images WHERE project_id = ? AND file_path = ?;");
+    Stmt find_by_path_stmt(
+        conn, "SELECT id, captured_at FROM images WHERE project_id = ? AND file_path = ?;");
     Stmt find_by_stem_jpeg_stmt(
         conn,
         "SELECT id FROM images WHERE project_id = ? AND kind = 'jpeg' AND "
         "file_path = ?;");
     Stmt insert_stmt(conn,
                       "INSERT INTO images (project_id, file_path, file_name, file_size, "
-                      "imported_at, kind) VALUES (?, ?, ?, ?, ?, ?);");
+                      "imported_at, kind, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?);");
     // 把一条原来是 kind='jpeg' 的记录原地升级成 kind='raw'：file_path/
     // file_name 换成 RAW 的，不插入新记录——否则原来那条 JPEG 记录会在
     // prune 阶段被误判成"磁盘上已消失"，连带丢失已经打过的标签/recipe。
     Stmt upgrade_stmt(
-        conn, "UPDATE images SET file_path = ?, file_name = ?, kind = 'raw' WHERE id = ?;");
+        conn,
+        "UPDATE images SET file_path = ?, file_name = ?, kind = 'raw', captured_at = ? "
+        "WHERE id = ?;");
+    Stmt backfill_captured_at_stmt(conn, "UPDATE images SET captured_at = ? WHERE id = ?;");
 
     for (const auto& img : scanned) {
       sqlite3_reset(find_by_path_stmt.get());
       sqlite3_bind_int64(find_by_path_stmt.get(), 1, id);
       sqlite3_bind_text(find_by_path_stmt.get(), 2, img.relative_path.c_str(), -1,
                          SQLITE_TRANSIENT);
-      if (sqlite3_step(find_by_path_stmt.get()) == SQLITE_ROW) continue;  // 已经在 images 表里了
+      if (sqlite3_step(find_by_path_stmt.get()) == SQLITE_ROW) {
+        // 已经在 images 表里了。captured_at 还没有的话顺手补上——这样这个
+        // 字段上线之前建好的老项目不用删了重建，下一次 rescan 自然补齐。
+        // 已经有值的不重新读一遍，rescan 常态下这些行占大多数，不为它们
+        // 重复付读取 metadata 的开销。
+        if (sqlite3_column_type(find_by_path_stmt.get(), 1) == SQLITE_NULL) {
+          ImageId existing_id = sqlite3_column_int64(find_by_path_stmt.get(), 0);
+          auto captured_at = read_capture_time(
+              img.kind, (fs::path(summary->root_path) / img.relative_path).string());
+          if (captured_at) {
+            sqlite3_reset(backfill_captured_at_stmt.get());
+            sqlite3_bind_int64(backfill_captured_at_stmt.get(), 1, *captured_at);
+            sqlite3_bind_int64(backfill_captured_at_stmt.get(), 2, existing_id);
+            sqlite3_step(backfill_captured_at_stmt.get());
+          }
+        }
+        continue;
+      }
 
       // file_path 没有精确匹配到已有记录。如果这是一张 RAW 图片，检查同一
       // 文件名主干是不是曾经作为纯 JPEG 记录过——命中就原地升级，不是插入。
@@ -426,11 +465,20 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
           }
         }
         if (jpeg_id) {
+          // 现在能拿到 RAW 文件本身了，captured_at 顺手用它重新算一遍——
+          // 比升级前用 JPEG 算出来的更权威。
+          auto captured_at = read_capture_time(
+              "raw", (fs::path(summary->root_path) / img.relative_path).string());
           sqlite3_reset(upgrade_stmt.get());
           sqlite3_bind_text(upgrade_stmt.get(), 1, img.relative_path.c_str(), -1,
                              SQLITE_TRANSIENT);
           sqlite3_bind_text(upgrade_stmt.get(), 2, img.file_name.c_str(), -1, SQLITE_TRANSIENT);
-          sqlite3_bind_int64(upgrade_stmt.get(), 3, *jpeg_id);
+          if (captured_at) {
+            sqlite3_bind_int64(upgrade_stmt.get(), 3, *captured_at);
+          } else {
+            sqlite3_bind_null(upgrade_stmt.get(), 3);
+          }
+          sqlite3_bind_int64(upgrade_stmt.get(), 4, *jpeg_id);
           if (sqlite3_step(upgrade_stmt.get()) != SQLITE_DONE) {
             throw std::runtime_error(std::string("upgrade image failed: ") + sqlite3_errmsg(conn));
           }
@@ -440,6 +488,8 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
         }
       }
 
+      auto captured_at = read_capture_time(
+          img.kind, (fs::path(summary->root_path) / img.relative_path).string());
       sqlite3_reset(insert_stmt.get());
       sqlite3_bind_int64(insert_stmt.get(), 1, id);
       sqlite3_bind_text(insert_stmt.get(), 2, img.relative_path.c_str(), -1, SQLITE_TRANSIENT);
@@ -447,6 +497,11 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       sqlite3_bind_int64(insert_stmt.get(), 4, img.file_size);
       sqlite3_bind_int64(insert_stmt.get(), 5, imported_at);
       sqlite3_bind_text(insert_stmt.get(), 6, img.kind.c_str(), -1, SQLITE_TRANSIENT);
+      if (captured_at) {
+        sqlite3_bind_int64(insert_stmt.get(), 7, *captured_at);
+      } else {
+        sqlite3_bind_null(insert_stmt.get(), 7);
+      }
       if (sqlite3_step(insert_stmt.get()) != SQLITE_DONE) {
         throw std::runtime_error(std::string("insert image failed: ") + sqlite3_errmsg(conn));
       }

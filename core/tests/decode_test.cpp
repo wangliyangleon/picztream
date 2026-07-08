@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <vector>
@@ -17,6 +18,7 @@ using pzt::core::decode::decode_jpeg_file;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
 using pzt::core::decode::encode_jpeg_file;
+using pzt::core::decode::read_jpeg_capture_time;
 using pzt::core::decode::resize_rgba;
 
 namespace {
@@ -69,6 +71,53 @@ fs::path write_jpeg_fixture(const std::string& name, int width, int height, unsi
   auto path = fresh_tmp_dir() / name;
   std::ofstream f(path, std::ios::binary);
   f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+  return path;
+}
+
+// read_jpeg_capture_time 测试专用：跟 encode_solid_jpeg 几乎一样，只是
+// CGImageDestinationAddImage 的 properties 参数从 nullptr 换成带 EXIF
+// DateTimeOriginal 的字典，现场编码一张真的带拍摄时间的测试 JPEG——这样
+// 就能对着真实 EXIF 格式做精确断言，不用只测"没崩溃"。
+fs::path write_jpeg_with_exif_date(const std::string& name, const std::string& exif_date) {
+  std::vector<unsigned char> pixels(4 * 4 * 4, 128);
+  CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+  const auto bitmap_info = static_cast<CGBitmapInfo>(
+      static_cast<std::uint32_t>(kCGImageAlphaNoneSkipLast) |
+      static_cast<std::uint32_t>(kCGBitmapByteOrder32Big));
+  CGContextRef ctx = CGBitmapContextCreate(pixels.data(), 4, 4, 8, 4 * 4, cs, bitmap_info);
+  CGImageRef img = CGBitmapContextCreateImage(ctx);
+
+  CFStringRef date_str = CFStringCreateWithCString(nullptr, exif_date.c_str(), kCFStringEncodingUTF8);
+  const void* exif_keys[] = {kCGImagePropertyExifDateTimeOriginal};
+  const void* exif_values[] = {date_str};
+  CFDictionaryRef exif_dict =
+      CFDictionaryCreate(nullptr, exif_keys, exif_values, 1, &kCFTypeDictionaryKeyCallBacks,
+                          &kCFTypeDictionaryValueCallBacks);
+  const void* prop_keys[] = {kCGImagePropertyExifDictionary};
+  const void* prop_values[] = {exif_dict};
+  CFDictionaryRef props =
+      CFDictionaryCreate(nullptr, prop_keys, prop_values, 1, &kCFTypeDictionaryKeyCallBacks,
+                          &kCFTypeDictionaryValueCallBacks);
+
+  CFMutableDataRef out_data = CFDataCreateMutable(nullptr, 0);
+  CGImageDestinationRef dest =
+      CGImageDestinationCreateWithData(out_data, CFSTR("public.jpeg"), 1, nullptr);
+  CGImageDestinationAddImage(dest, img, props);
+  CGImageDestinationFinalize(dest);
+
+  auto path = fresh_tmp_dir() / name;
+  std::ofstream f(path, std::ios::binary);
+  f.write(reinterpret_cast<const char*>(CFDataGetBytePtr(out_data)),
+          static_cast<std::streamsize>(CFDataGetLength(out_data)));
+
+  CFRelease(props);
+  CFRelease(exif_dict);
+  CFRelease(date_str);
+  CFRelease(dest);
+  CFRelease(out_data);
+  CGImageRelease(img);
+  CGContextRelease(ctx);
+  CGColorSpaceRelease(cs);
   return path;
 }
 
@@ -185,4 +234,23 @@ TEST_CASE("encode_jpeg_file reports EncodeFailed for non-positive dimensions") {
   img.height = 0;
   auto path = fresh_tmp_dir() / "should_not_exist.jpg";
   CHECK(!encode_jpeg_file(img, path.string()).ok());
+}
+
+TEST_CASE("read_jpeg_capture_time parses EXIF DateTimeOriginal as a UTC epoch") {
+  auto path = write_jpeg_with_exif_date("with_date.jpg", "2025:05:11 19:24:22");
+  auto result = read_jpeg_capture_time(path.string());
+  REQUIRE(result.has_value());
+
+  std::tm expected{};
+  strptime("2025:05:11 19:24:22", "%Y:%m:%d %H:%M:%S", &expected);
+  CHECK(*result == static_cast<std::int64_t>(timegm(&expected)));
+}
+
+TEST_CASE("read_jpeg_capture_time returns nullopt when there's no EXIF DateTimeOriginal") {
+  auto path = write_jpeg_fixture("no_date.jpg", 4, 4, 128, 128, 128);
+  CHECK_FALSE(read_jpeg_capture_time(path.string()).has_value());
+}
+
+TEST_CASE("read_jpeg_capture_time returns nullopt for a missing file") {
+  CHECK_FALSE(read_jpeg_capture_time("/nonexistent/pzt_test_missing.jpg").has_value());
 }

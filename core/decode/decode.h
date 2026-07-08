@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -58,5 +59,11 @@ enum class EncodeError {
 
 Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::string& path,
                                             double quality = 0.9);
+
+// EXIF DateTimeOriginal，只读容器 metadata 不解码像素
+// （CGImageSourceCopyPropertiesAtIndex 实测几毫秒量级）。文件打不开、没
+// 有 EXIF、没有这个字段，统一返回 nullopt——跟 raw::read_capture_time 是
+// 同一种"没有这个信息不是错误"的处理方式。
+std::optional<std::int64_t> read_jpeg_capture_time(const std::string& path);
 
 }  // namespace pzt::core::decode

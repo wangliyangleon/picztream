@@ -306,6 +306,45 @@ TEST_CASE("rescan_project only adds files missing from images, leaves existing r
   CHECK(projects[0].image_count == 3);
 }
 
+TEST_CASE("rescan_project backfills captured_at only for rows that don't already have it") {
+  // M2 收尾问题 3：这个字段上线之前建好的老项目，captured_at 全是
+  // NULL，下一次 rescan 应该顺手回填；已经有值的行不应该被重新触碰
+  // （用假文件测不出真实提取成功的情形——touch() 的内容不是真实
+  // JPEG/RAW，read_capture_time 会返回 nullopt，所以这里验证的是"已有值
+  // 的不被覆盖、没有值的 rescan 后仍然是 NULL 但没有崩溃"这两条边界，
+  // 真实提取成功的情形只能靠真机验证）。
+  auto db = Database::open_at(fresh_db_path("rescan_backfill"));
+  auto photos = fresh_photo_dir("rescan_backfill");
+  touch(photos / "a.jpg");
+  touch(photos / "b.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto a_id = find_image_by_path(db, created.value(), "a.jpg");
+  REQUIRE(a_id.has_value());
+
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(), "UPDATE images SET captured_at = ? WHERE id = ?;", -1, &stmt,
+                      nullptr);
+  sqlite3_bind_int64(stmt, 1, 12345);
+  sqlite3_bind_int64(stmt, 2, *a_id);
+  REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+
+  auto rescanned = rescan_project(db, created.value());
+  REQUIRE(rescanned.ok());
+
+  // 已经有值的行 rescan 之后原样保留，不被重新读取/覆盖。ImageInfo 不直
+  // 接暴露 captured_at，直接查库确认。
+  sqlite3_stmt* check_stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(), "SELECT captured_at FROM images WHERE id = ?;", -1, &check_stmt,
+                      nullptr);
+  sqlite3_bind_int64(check_stmt, 1, *a_id);
+  REQUIRE(sqlite3_step(check_stmt) == SQLITE_ROW);
+  CHECK(sqlite3_column_int64(check_stmt, 0) == 12345);
+  sqlite3_finalize(check_stmt);
+}
+
 TEST_CASE("rescan_project is idempotent - rescanning again with no new files adds nothing") {
   auto db = Database::open_at(fresh_db_path("rescan_idempotent"));
   auto photos = fresh_photo_dir("rescan_idempotent");

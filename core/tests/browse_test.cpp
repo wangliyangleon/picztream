@@ -80,6 +80,32 @@ TEST_CASE("list_images returns images sorted by file_path") {
   CHECK(images[2].file_path == "c.jpg");
 }
 
+TEST_CASE("list_images sorts by captured_at first, falling back to file_path when null") {
+  // M2 收尾问题 3：captured_at 有值的按升序排在前面，没值的落到最后按
+  // file_path 兜底——直接 SQL 设置 captured_at 模拟"已经提取过"的状态，
+  // 不依赖真实文件（跟 core/tests/project_test.cpp 操作 preview_cache_path
+  // 的现成手法一致）。images: a,b,c,d；b=100, d=50，a/c 留空。
+  auto fx = make_fixture("list_images_captured_at", 4);
+  auto set_captured_at = [&](ImageId id, std::int64_t value) {
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(fx.db.handle(), "UPDATE images SET captured_at = ? WHERE id = ?;", -1,
+                        &stmt, nullptr);
+    sqlite3_bind_int64(stmt, 1, value);
+    sqlite3_bind_int64(stmt, 2, id);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+  };
+  set_captured_at(fx.images[1], 100);  // b
+  set_captured_at(fx.images[3], 50);   // d
+
+  auto images = list_images(fx.db, fx.project_id);
+  REQUIRE(images.size() == 4);
+  CHECK(images[0].file_path == "d.jpg");  // captured_at=50
+  CHECK(images[1].file_path == "b.jpg");  // captured_at=100
+  CHECK(images[2].file_path == "a.jpg");  // 无 captured_at，按文件名兜底
+  CHECK(images[3].file_path == "c.jpg");
+}
+
 TEST_CASE("next_image/prev_image wrap around at both ends") {
   auto fx = make_fixture("next_prev", 3);
   auto images = list_images(fx.db, fx.project_id);
