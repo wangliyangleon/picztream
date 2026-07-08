@@ -78,4 +78,28 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  ExportProgressFn on_progress = nullptr,
                                                  RawDecodeFn raw_decode_fn = raw::decode_full);
 
+enum class ExportImageError {
+  ImageNotFound,
+  IoError,  // 目标文件夹无法创建/写入，跟 ExportTagError::IoError 是同一类问题
+};
+
+struct ExportImageResult {
+  bool exported;                          // false 时看 skip_reason，Result 本身仍是 Ok——
+                                           // 源文件缺失/解码失败是"这一张没导出成"，不是整
+                                           // 个调用失败，跟 export_tag 对单张图片失败的处理
+                                           // 保持同一个语义
+  std::optional<SkipReason> skip_reason;  // exported==false 时有值
+  std::string output_path;                // exported==true 时是写出的绝对路径
+  bool created_output_folder;
+};
+
+// 导出单张图片，不需要标签——`pzt open` 里按 `e` 键"就导出当前这张"这个
+// 场景专用，跟 export_tag 共用同一套 kind × 有无 recipe 路由逻辑(见
+// export.cpp 里的私有 write_one_export)，但没有"有序编号"这个概念(单张
+// 导出直接用原文件名)。
+Result<ExportImageResult, ExportImageError> export_image(db::Database& db, ImageId image_id,
+                                                           const std::string& output_folder,
+                                                           ExportProgressFn on_progress = nullptr,
+                                                           RawDecodeFn raw_decode_fn = raw::decode_full);
+
 }  // namespace pzt::core::exporting

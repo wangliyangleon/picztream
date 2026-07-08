@@ -162,6 +162,13 @@ Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string&
   return exporting::export_tag(db, tag_id, output_folder, std::move(on_progress));
 }
 
+Result<ExportImageResult, ExportImageError> export_image(ImageId image_id,
+                                                           const std::string& output_folder,
+                                                           ExportProgressFn on_progress) {
+  db::Database db = db::Database::open_default();
+  return exporting::export_image(db, image_id, output_folder, std::move(on_progress));
+}
+
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path) {
   return decode::decode_jpeg_file(path);
 }

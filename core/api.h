@@ -54,6 +54,8 @@ using ExportSkipped = exporting::ExportSkipped;
 using ExportResult = exporting::ExportResult;
 using ExportTagError = exporting::ExportTagError;
 using ExportProgressFn = exporting::ExportProgressFn;
+using ExportImageError = exporting::ExportImageError;
+using ExportImageResult = exporting::ExportImageResult;
 
 using DecodedImage = decode::DecodedImage;
 using DecodeError = decode::DecodeError;
@@ -136,6 +138,12 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 // 入点，cli 不需要覆盖真实的 raw::decode_full。
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
                                                  ExportProgressFn on_progress = nullptr);
+
+// 导出单张图片，不需要标签——`pzt open` 里按 `e` 键"就导出当前这张"专
+// 用，见 core/export/export.h。
+Result<ExportImageResult, ExportImageError> export_image(ImageId image_id,
+                                                           const std::string& output_folder,
+                                                           ExportProgressFn on_progress = nullptr);
 
 // 纯粹的"字节 -> 像素"操作,不碰数据库。见 core/decode/decode.h。
 Result<DecodedImage, DecodeError> decode_jpeg_file(const std::string& path);

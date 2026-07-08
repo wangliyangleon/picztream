@@ -483,3 +483,95 @@ TEST_CASE("export_tag's progress callback never fires for a pure-jpeg batch") {
   REQUIRE(result.ok());
   CHECK(call_count == 0);
 }
+
+// M2 收尾问题 2：export_image，单张导出，不需要标签。
+
+TEST_CASE("export_image copies a jpeg image with no recipe byte-for-byte") {
+  auto fx = make_real_photo_fixture("export_image_jpeg_no_recipe", 1);
+  auto out_dir = fresh_output_dir("export_image_jpeg_no_recipe");
+
+  auto result = export_image(fx.db, fx.images[0], out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported);
+  CHECK_FALSE(result.value().skip_reason.has_value());
+  CHECK(result.value().output_path == (out_dir / "img_000.jpg").string());
+
+  auto source_bytes = read_bytes(fx.photos_dir / "img_000.jpg");
+  auto output_bytes = read_bytes(out_dir / "img_000.jpg");
+  CHECK(source_bytes == output_bytes);
+}
+
+TEST_CASE("export_image bakes a non-identity recipe into a jpeg image") {
+  auto fx = make_real_photo_fixture("export_image_jpeg_recipe", 1);
+  auto warm_id = list_presets(fx.db)[1].id;
+  REQUIRE(set_image_recipe(fx.db, fx.images[0], warm_id).ok());
+  auto out_dir = fresh_output_dir("export_image_jpeg_recipe");
+
+  auto result = export_image(fx.db, fx.images[0], out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported);
+
+  auto source_bytes = read_bytes(fx.photos_dir / "img_000.jpg");
+  auto output_bytes = read_bytes(out_dir / "img_000.jpg");
+  CHECK(source_bytes != output_bytes);
+}
+
+TEST_CASE("export_image routes a raw-kind image through raw_decode_fn and swaps the extension") {
+  auto fx = make_raw_fixture("export_image_raw", 1);
+  std::atomic<int> calls{0};
+  auto fake_decode = make_fake_raw_decode(40, 30, 10, 20, 30, &calls);
+  auto out_dir = fresh_output_dir("export_image_raw");
+
+  auto result = export_image(fx.db, fx.images[0], out_dir.string(), nullptr, fake_decode);
+  REQUIRE(result.ok());
+  CHECK(result.value().exported);
+  CHECK(calls.load() == 1);
+  CHECK(fs::exists(out_dir / "img_000.jpg"));
+  CHECK_FALSE(fs::exists(out_dir / "img_000.RAF"));
+  CHECK(result.value().output_path == (out_dir / "img_000.jpg").string());
+}
+
+TEST_CASE("export_image's progress callback fires once for a raw image before the decode call") {
+  auto fx = make_raw_fixture("export_image_raw_progress", 1);
+  auto fake_decode = make_fake_raw_decode(10, 10, 0, 0, 0);
+  auto out_dir = fresh_output_dir("export_image_raw_progress");
+
+  std::vector<std::pair<int, int>> calls;
+  auto result = export_image(
+      fx.db, fx.images[0], out_dir.string(),
+      [&](int done, int total) { calls.emplace_back(done, total); }, fake_decode);
+  REQUIRE(result.ok());
+  REQUIRE(calls.size() == 1);
+  CHECK(calls[0] == std::make_pair(1, 1));
+}
+
+TEST_CASE("export_image's progress callback never fires for a jpeg image") {
+  auto fx = make_real_photo_fixture("export_image_jpeg_no_progress", 1);
+  int call_count = 0;
+  auto out_dir = fresh_output_dir("export_image_jpeg_no_progress");
+
+  auto result = export_image(fx.db, fx.images[0], out_dir.string(), [&](int, int) { ++call_count; });
+  REQUIRE(result.ok());
+  CHECK(call_count == 0);
+}
+
+TEST_CASE("export_image reports SourceMissing without erroring when the file is gone from disk") {
+  auto fx = make_fixture("export_image_missing_source", 1);
+  fs::remove(fx.photos_dir / "img_000.jpg");
+  auto out_dir = fresh_output_dir("export_image_missing_source");
+
+  auto result = export_image(fx.db, fx.images[0], out_dir.string());
+  REQUIRE(result.ok());  // 源文件缺失是"没导出成"，不是整个调用失败
+  CHECK_FALSE(result.value().exported);
+  REQUIRE(result.value().skip_reason.has_value());
+  CHECK(*result.value().skip_reason == pzt::core::exporting::SkipReason::SourceMissing);
+}
+
+TEST_CASE("export_image returns ImageNotFound for an unknown image id") {
+  auto fx = make_fixture("export_image_not_found", 1);
+  auto out_dir = fresh_output_dir("export_image_not_found");
+
+  auto result = export_image(fx.db, fx.images[0] + 999999, out_dir.string());
+  REQUIRE(!result.ok());
+  CHECK(result.error() == ExportImageError::ImageNotFound);
+}

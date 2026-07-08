@@ -108,6 +108,8 @@ std::string err_remove_tag_failed();
 std::string err_filter_failed();
 std::string msg_filter_no_images();
 std::string msg_browse_exited();
+std::string export_current_success(const std::string& output_path, bool created_folder);
+std::string export_current_skipped(const std::string& file_name, pzt::core::SkipReason reason);
 
 // Tag Menu
 std::string tag_menu_cap_zero();

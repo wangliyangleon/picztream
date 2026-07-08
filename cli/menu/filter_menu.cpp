@@ -56,7 +56,16 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
   if (path->empty()) return pzt::cli::i18n::filter_menu_export_path_empty();
   std::string resolved_path = expand_home_path(*path);
 
-  auto result = pzt::core::export_tag(target_id, resolved_path);
+  // 批次里含 RAW 图片时全量解码要几秒/张,不接进度回调的话界面在解码期间
+  // 什么都不显示,看起来像卡住了(跟 cmd_export 那边修过的问题同一个根
+  // 因,这里是交互路径,之前没接上)。在 AltScreen 固定坐标布局里跟其它
+  // banner 内容一样走 move_cursor + pad_to + write_stdout,不能用 cli/
+  // commands 那套 \r 覆写 stdout 的写法。
+  auto on_progress = [&](int done, int total) {
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
+  };
+  auto result = pzt::core::export_tag(target_id, resolved_path, on_progress);
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
       return pzt::cli::i18n::filter_menu_export_io_error(resolved_path);

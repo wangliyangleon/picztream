@@ -62,7 +62,7 @@ std::string usage_main() {
            "  pzt new <project_name> [folder_path]\n"
            "  pzt list\n"
            "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
-           "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,g 筛选,"
+           "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,e 导出当前图片,g 筛选,"
            "r 应用/清除/新建/删除风格,r v 临时预览原图,"
            "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
            "不显示也不产生这些日志)\n"
@@ -79,8 +79,8 @@ std::string usage_main() {
            "  pzt new <project_name> [folder_path]\n"
            "  pzt list\n"
            "  pzt open [project_name] [--debug]  (h/l Prev/Next image, "
-           "j/k Next/Prev untagged image, space Tag image, x Toggle Reject, g "
-           "Filter, "
+           "j/k Next/Prev untagged image, space Tag image, x Toggle Reject, "
+           "e Export current image, g Filter, "
            "r Apply/Clear/Create/Delete recipe, r v Temporarily preview "
            "original, "
            "q Quit; --debug displays internal logs in an area below the image, "
@@ -621,11 +621,11 @@ std::string err_open_tmux_passthrough() {
 std::string banner_text() {
   if (g_lang == Lang::zh) {
     return " h/l:[上一张/下一张]   j/k:[下一张/上一张未打标签]   "
-           "space:[打标签]   x:[标记废片]"
+           "space:[打标签]   x:[标记废片]   e:[导出]"
            "   g:[筛选]   r:[风格]   q:[退出] ";
   } else {
     return " h/l:[Prev/Next]   j/k:[Next/Prev Untagged]   space:[Tag]   "
-           "x:[Toggle Reject]"
+           "x:[Toggle Reject]   e:[Export]"
            "   g:[Filter]   r:[Recipe]   q:[Quit] ";
   }
 }
@@ -747,6 +747,28 @@ std::string msg_browse_exited() {
     return "已退出浏览\n";
   } else {
     return "Exited browse mode\n";
+  }
+}
+
+std::string export_current_success(const std::string &output_path, bool created_folder) {
+  if (g_lang == Lang::zh) {
+    std::string status = " 已导出到 '" + output_path + "'";
+    if (created_folder) status += "(目录不存在,已新建)";
+    status += " ";
+    return status;
+  } else {
+    std::string status = " Exported to '" + output_path + "'";
+    if (created_folder) status += " (created directory)";
+    status += " ";
+    return status;
+  }
+}
+
+std::string export_current_skipped(const std::string &file_name, pzt::core::SkipReason reason) {
+  if (g_lang == Lang::zh) {
+    return " '" + file_name + "' 未导出:" + export_skip_reason(reason) + " ";
+  } else {
+    return " '" + file_name + "' not exported: " + export_skip_reason(reason) + " ";
   }
 }
 

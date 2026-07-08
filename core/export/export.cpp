@@ -72,6 +72,54 @@ fs::path resolve_collision(const fs::path& dir, const std::string& base_name) {
   }
 }
 
+// 单张图片的实际写出逻辑：kind × 有无 recipe 四态路由。export_tag 和
+// export_image 共用同一份，只接收写出逻辑需要的字段，不接收整个
+// ImageInfo/ImageRef——两个调用方用的是不同的图片结构体，字段有重叠但不
+// 同源，取需要的字段比硬统一类型更简单。调用方负责在调用前确认 source
+// 存在、算好 target（含冲突消歧），以及 kind="raw" 时的进度回调时机（要
+// 在这个函数调用之前，不是之后，见函数说明）。
+std::optional<SkipReason> write_one_export(db::Database& db, ImageId image_id,
+                                            const std::string& kind, const fs::path& source,
+                                            const fs::path& target,
+                                            const RawDecodeFn& raw_decode_fn) {
+  auto recipe_id = recipe::get_image_recipe(db, image_id);
+
+  if (kind == "raw") {
+    // 全量解码：不管有没有 recipe 都要走这一步（M2_PRD.md 已经定了 RAW
+    // 图片导出永远落地成可直接查看的 JPEG），只是有没有 recipe 决定后面
+    // 要不要再调 render。
+    auto decoded = raw_decode_fn(source.string());
+    if (!decoded.ok()) return SkipReason::RawDecodeFailed;
+    decode::DecodedImage final_image = std::move(decoded.value());
+    if (recipe_id) {
+      auto rendered = recipe::render(db, final_image, *recipe_id, std::thread::hardware_concurrency());
+      if (!rendered.ok()) return SkipReason::RenderFailed;
+      final_image = std::move(rendered.value());
+    }
+    auto encoded = decode::encode_jpeg_file(final_image, target.string());
+    if (!encoded.ok()) return SkipReason::EncodeFailed;
+  } else if (recipe_id) {
+    // 全分辨率烘焙：解码原图 -> recipe::render(多线程) -> 编码写出，取代
+    // 复制。
+    auto decoded = decode::decode_jpeg_file(source.string());
+    if (!decoded.ok()) return SkipReason::DecodeFailed;
+    auto rendered = recipe::render(db, decoded.value(), *recipe_id, std::thread::hardware_concurrency());
+    if (!rendered.ok()) return SkipReason::RenderFailed;
+    auto encoded = decode::encode_jpeg_file(rendered.value(), target.string());
+    if (!encoded.ok()) return SkipReason::EncodeFailed;
+  } else {
+    // 没有应用 recipe 的 JPEG 图片继续走原来的复制，字节级不变。
+    fs::copy_file(source, target);
+  }
+  return std::nullopt;
+}
+
+// export_tag/export_image 都要用："kind=raw 的图片导出永远落地成 .jpg，
+// 目标文件名不能直接沿用 .dng/.raf 原扩展名"这条规则只有一份。
+std::string target_file_name(const std::string& file_name, const std::string& kind) {
+  return kind == "raw" ? fs::path(file_name).replace_extension(".jpg").string() : file_name;
+}
+
 }  // namespace
 
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
@@ -129,71 +177,23 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
         continue;
       }
 
-      // M2：kind="raw" 的图片导出永远落地成 JPEG，目标文件名的扩展名要
-      // 换成 .jpg，不能直接复用 .dng/.raf 原扩展名拼目标路径。
-      std::string file_name_for_target =
-          img.kind == "raw" ? fs::path(img.file_name).replace_extension(".jpg").string()
-                             : img.file_name;
+      std::string file_name_for_target = target_file_name(img.file_name, img.kind);
       std::string base_name = tag_info->is_ordered
                                    ? ordered_name(index, width, file_name_for_target)
                                    : file_name_for_target;
       fs::path target = resolve_collision(out_dir, base_name);
 
-      auto recipe_id = recipe::get_image_recipe(db, img.id);
-
+      // 进度回调要在解码开始前触发，不是完成后——全量解码单张就要几秒，
+      // 完成后才报进度的话，批次里第一张(单张导出时是唯一一张)在解码期
+      // 间界面上什么都不显示，看起来像卡住了，真机使用中被发现过。
       if (img.kind == "raw") {
-        // 全量解码：不管有没有 recipe 都要走这一步（M2_PRD.md 已经定了
-        // RAW 图片导出永远落地成可直接查看的 JPEG），只是有没有 recipe
-        // 决定后面要不要再调 render。进度回调要在解码开始前触发，不是完
-        // 成后——全量解码单张就要几秒，完成后才报进度的话，批次里第一张
-        // (单张导出时是唯一一张)在解码期间界面上什么都不显示，看起来像
-        // 卡住了，真机使用中被发现过。
         ++raw_done;
         if (on_progress) on_progress(raw_done, raw_total);
-        auto decoded = raw_decode_fn(source.string());
-        if (!decoded.ok()) {
-          result.skipped.push_back(
-              ExportSkipped{img.id, img.file_name, SkipReason::RawDecodeFailed});
-          continue;
-        }
-        decode::DecodedImage final_image = std::move(decoded.value());
-        if (recipe_id) {
-          auto rendered = recipe::render(db, final_image, *recipe_id,
-                                          std::thread::hardware_concurrency());
-          if (!rendered.ok()) {
-            result.skipped.push_back(
-                ExportSkipped{img.id, img.file_name, SkipReason::RenderFailed});
-            continue;
-          }
-          final_image = std::move(rendered.value());
-        }
-        auto encoded = decode::encode_jpeg_file(final_image, target.string());
-        if (!encoded.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::EncodeFailed});
-          continue;
-        }
-      } else if (recipe_id) {
-        // 全分辨率烘焙:解码原图 -> recipe::render(多线程) -> 编码写出,
-        // 取代复制。
-        auto decoded = decode::decode_jpeg_file(source.string());
-        if (!decoded.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::DecodeFailed});
-          continue;
-        }
-        auto rendered = recipe::render(db, decoded.value(), *recipe_id,
-                                        std::thread::hardware_concurrency());
-        if (!rendered.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::RenderFailed});
-          continue;
-        }
-        auto encoded = decode::encode_jpeg_file(rendered.value(), target.string());
-        if (!encoded.ok()) {
-          result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::EncodeFailed});
-          continue;
-        }
-      } else {
-        // 没有应用 recipe 的 JPEG 图片继续走原来的复制,字节级不变。
-        fs::copy_file(source, target);
+      }
+      auto skip_reason = write_one_export(db, img.id, img.kind, source, target, raw_decode_fn);
+      if (skip_reason) {
+        result.skipped.push_back(ExportSkipped{img.id, img.file_name, *skip_reason});
+        continue;
       }
       ++result.exported_count;
     }
@@ -202,6 +202,54 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   }
 
   return Result<ExportResult, ExportTagError>::Ok(std::move(result));
+}
+
+Result<ExportImageResult, ExportImageError> export_image(db::Database& db, ImageId image_id,
+                                                           const std::string& output_folder,
+                                                           ExportProgressFn on_progress,
+                                                           RawDecodeFn raw_decode_fn) {
+  sqlite3* conn = db.handle();
+
+  auto img = project::get_image(db, image_id);
+  if (!img) {
+    return Result<ExportImageResult, ExportImageError>::Err(ExportImageError::ImageNotFound);
+  }
+
+  fs::path root_path = get_project_root_path(conn, img->project_id);
+  fs::path out_dir(output_folder);
+  fs::path source = root_path / img->file_path;
+
+  ExportImageResult result;
+  result.exported = false;
+  result.created_output_folder = false;
+
+  try {
+    result.created_output_folder = !fs::exists(out_dir);
+    fs::create_directories(out_dir);
+
+    if (!fs::exists(source)) {
+      result.skip_reason = SkipReason::SourceMissing;
+      return Result<ExportImageResult, ExportImageError>::Ok(std::move(result));
+    }
+
+    // 单张导出没有"标签是否有序"这个概念，直接用原文件名（RAW 照样把扩
+    // 展名换成 .jpg），只走冲突消歧。
+    fs::path target = resolve_collision(out_dir, target_file_name(img->file_name, img->kind));
+
+    if (img->kind == "raw" && on_progress) on_progress(1, 1);
+    auto skip_reason = write_one_export(db, img->id, img->kind, source, target, raw_decode_fn);
+    if (skip_reason) {
+      result.skip_reason = skip_reason;
+      return Result<ExportImageResult, ExportImageError>::Ok(std::move(result));
+    }
+
+    result.exported = true;
+    result.output_path = target.string();
+  } catch (const fs::filesystem_error&) {
+    return Result<ExportImageResult, ExportImageError>::Err(ExportImageError::IoError);
+  }
+
+  return Result<ExportImageResult, ExportImageError>::Ok(std::move(result));
 }
 
 }  // namespace pzt::core::exporting

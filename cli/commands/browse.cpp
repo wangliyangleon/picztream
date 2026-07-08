@@ -44,6 +44,37 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
   return new_images.front().id;
 }
 
+// 顶层 `e` 键:直接导出当前正在看的这一张,不需要先建标签。流程照抄
+// filter_menu.cpp 里 handle_g_export_flow 的结构(读路径 -> 校验空 ->
+// expand_home_path -> 调导出 -> 拼状态文案),但进度回调不能用 cmd_export
+// 那套 \r 覆写 stdout 的写法——这里在 AltScreen 里跑固定坐标布局,直接写
+// stdout 会破坏画面,得跟 banner 其它内容一样走 move_cursor + pad_to +
+// write_stdout。
+std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::string& file_name,
+                                        int banner_row, int start_col, int content_cols) {
+  auto path = read_text_line(pzt::cli::i18n::filter_menu_export_to_prompt(), banner_row, start_col,
+                              content_cols);
+  if (!path) return "";  // Esc,静默取消
+  if (path->empty()) return pzt::cli::i18n::filter_menu_export_path_empty();
+  std::string resolved_path = expand_home_path(*path);
+
+  auto on_progress = [&](int done, int total) {
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
+  };
+  auto result = pzt::core::export_image(image_id, resolved_path, on_progress);
+  if (!result.ok()) {
+    if (result.error() == pzt::core::ExportImageError::IoError) {
+      return pzt::cli::i18n::filter_menu_export_io_error(resolved_path);
+    }
+    return pzt::cli::i18n::filter_menu_export_failed();
+  }
+
+  const auto& r = result.value();
+  if (!r.exported) return pzt::cli::i18n::export_current_skipped(file_name, *r.skip_reason);
+  return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
+}
+
 }  // namespace
 
 // increment 6.4.2:三面板固定布局(图片区左上约 80% 宽、信息栏右上、
@@ -490,7 +521,7 @@ int cmd_open(const std::vector<std::string>& args) {
           break;
         }
         if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x' ||
-            c == 'g' || c == 'r') {
+            c == 'g' || c == 'r' || c == 'e') {
           break;
         }
       }
@@ -620,6 +651,13 @@ int cmd_open(const std::vector<std::string>& args) {
             show_original = !show_original;
             style_toggled = true;
           }
+        }
+      } else if (c == 'e') {
+        // 顶层导出快捷键:就导出当前这一张,不需要标签。current_id 不变,
+        // 跟 space/x/r 一样只走 status_override 原地刷新。
+        if (current_ref) {
+          status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
+                                                         banner_row, start_col, content_cols);
         }
       }
       prefetch.set_current(images, current_id);
