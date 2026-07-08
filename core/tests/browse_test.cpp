@@ -80,11 +80,12 @@ TEST_CASE("list_images returns images sorted by file_path") {
   CHECK(images[2].file_path == "c.jpg");
 }
 
-TEST_CASE("list_images sorts by captured_at first, falling back to file_path when null") {
-  // M2 收尾问题 3：captured_at 有值的按升序排在前面，没值的落到最后按
-  // file_path 兜底——直接 SQL 设置 captured_at 模拟"已经提取过"的状态，
-  // 不依赖真实文件（跟 core/tests/project_test.cpp 操作 preview_cache_path
-  // 的现成手法一致）。images: a,b,c,d；b=100, d=50，a/c 留空。
+TEST_CASE("list_images sorts by captured_at descending, falling back to file_path when null") {
+  // M2 收尾问题 3(+ 后续调整)：captured_at 有值的按降序排在前面(最新拍
+  // 的排最前)，没值的落到最后按 file_path 兜底——直接 SQL 设置
+  // captured_at 模拟"已经提取过"的状态，不依赖真实文件（跟
+  // core/tests/project_test.cpp 操作 preview_cache_path 的现成手法一致）。
+  // images: a,b,c,d；b=100, d=50，a/c 留空。
   auto fx = make_fixture("list_images_captured_at", 4);
   auto set_captured_at = [&](ImageId id, std::int64_t value) {
     sqlite3_stmt* stmt = nullptr;
@@ -100,8 +101,8 @@ TEST_CASE("list_images sorts by captured_at first, falling back to file_path whe
 
   auto images = list_images(fx.db, fx.project_id);
   REQUIRE(images.size() == 4);
-  CHECK(images[0].file_path == "d.jpg");  // captured_at=50
-  CHECK(images[1].file_path == "b.jpg");  // captured_at=100
+  CHECK(images[0].file_path == "b.jpg");  // captured_at=100，最新
+  CHECK(images[1].file_path == "d.jpg");  // captured_at=50
   CHECK(images[2].file_path == "a.jpg");  // 无 captured_at，按文件名兜底
   CHECK(images[3].file_path == "c.jpg");
 }
