@@ -28,6 +28,7 @@ struct ProjectSummary {
   std::string root_path;
   std::int64_t image_count;
   bool archived;
+  bool support_raw;  // 见 docs/RAW_Support.md：默认关闭的 opt-in 标记，一旦打开不会自动关闭
 };
 
 // 每处理完一张需要生成 RAW 预览缓存的图片调用一次(done, total)。只有这次
@@ -36,16 +37,20 @@ struct ProjectSummary {
 // "RAW 预览缓存"。
 using ScanProgressFn = std::function<void(int done, int total)>;
 
-// 递归扫描 folder_path 下所有 .jpg/.jpeg/.dng/.raf（大小写不敏感），写入
-// images 表。同一目录下文件名主干相同的 JPEG + RAW 同时存在时只认 RAW，
-// 那份 JPEG 被忽略、不生成记录（M2_Eng_Design.md"RAW+JPEG 同名"）。每张
-// RAW 图片会额外触发一次预览缓存生成（half_size LibRaw 解码 + 编码 JPEG，
-// 写进 PZT 自己的数据目录，不进用户照片文件夹），耗时不再是纯文件系统扫
-// 描那么快，on_progress 非空时会汇报进度。名字已存在或扫描不到任何图片
-// 时返回对应错误，不创建项目。
+// 递归扫描 folder_path 下所有 .jpg/.jpeg，support_raw=true 时额外识别
+// .dng/.raf（大小写不敏感），写入 images 表。support_raw=false（默认）时
+// RAW 文件完全不参与扫描——见 docs/RAW_Support.md，这是这个功能默认关闭
+// 的核心：不传这个参数时代码路径跟 M0/M1 时代完全一样，同名 JPEG 不会因
+// 为文件夹里有 RAW 而被忽略。support_raw=true 时，同一目录下文件名主干相
+// 同的 JPEG + RAW 同时存在只认 RAW，那份 JPEG 被忽略、不生成记录
+// （M2_Eng_Design.md"RAW+JPEG 同名"）。每张 RAW 图片会额外触发一次预览缓
+// 存生成（half_size LibRaw 解码 + 编码 JPEG，写进 PZT 自己的数据目录，不
+// 进用户照片文件夹），耗时不再是纯文件系统扫描那么快，on_progress 非空时
+// 会汇报进度。名字已存在或扫描不到任何图片时返回对应错误，不创建项目。
 Result<ProjectId, CreateProjectError> create_project(db::Database& db,
                                                       const std::string& name,
                                                       const std::string& folder_path,
+                                                      bool support_raw = false,
                                                       ScanProgressFn on_progress = nullptr);
 
 // 未归档项目在前，归档项目排最后；同组内按名字排序。
@@ -105,15 +110,28 @@ struct RescanSummary {
 // prune=false 保留旧行为，留给明确知道自己在对一个可能暂时不完整的存储
 // 位置跑 rescan 的场景用。
 //
+// support_raw（默认 false）：这次 rescan 要不要处理 RAW 文件，语义跟
+// create_project 的同名参数一致，只看这次调用传入的值，不读项目持久化的
+// 状态——见 docs/RAW_Support.md。false 时新出现的 RAW 文件不会被发现，但
+// 已经存在的 kind="raw" 记录也不会被当成"磁盘上消失了"误删（prune 阶段
+// 会跳过它们）。support_raw=true 时，rescan 结束会把项目的 support_raw
+// 持久化标记置为 1（一旦打开不会自动关闭）。
+//
 // M2：如果磁盘上给一条已有的 kind="jpeg" 记录补上了同名 RAW 文件，这条记
 // 录会被原地升级成 kind="raw"（file_path/file_name 换成 RAW 的），不会插
 // 入重复记录（否则原来那条 JPEG 记录会在 prune 时被误判成"磁盘上已消
-// 失"，连带丢失已经打过的标签/recipe），计入 upgraded_count。反过来"先有
-// RAW 后补 JPEG"不需要处理——扫描阶段从一开始就会忽略新出现的同名
-// JPEG，见 create_project 的说明。升级/新增的 RAW 图片都会触发预览缓存
-// 生成，on_progress 非空时汇报进度。
+// 失"，连带丢失已经打过的标签/recipe），计入 upgraded_count——但这只在项
+// 目此前已经是 support_raw 状态时成立。如果这次 rescan 是这个项目第一次
+// 打开 RAW 支持（项目此前是 support_raw=false，这条 JPEG 记录是在完全不
+// 知道 RAW 概念的情况下打的标签/建的 recipe），则不做原地升级，改成插入
+// 一条独立的新记录（文件名带 "_raw" 后缀区分），原 JPEG 记录不受影响，计
+// 入 added_count，见 docs/RAW_Support.md"Edge case"一节。反过来"先有 RAW
+// 后补 JPEG"不需要处理——扫描阶段从一开始就会忽略新出现的同名 JPEG，见
+// create_project 的说明。升级/新增的 RAW 图片都会触发预览缓存生成，
+// on_progress 非空时汇报进度。
 Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
                                                              bool prune = true,
+                                                             bool support_raw = false,
                                                              ScanProgressFn on_progress = nullptr);
 
 }  // namespace pzt::core::project

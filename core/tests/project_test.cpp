@@ -75,7 +75,7 @@ TEST_CASE("create_project ignores a same-stem JPEG when a RAW file exists") {
   touch(photos / "IMG_001.DNG");
   touch(photos / "IMG_002.jpg");  // no RAW companion, stays kind="jpeg"
 
-  auto result = create_project(db, "trip", photos.string());
+  auto result = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(result.ok());
 
   auto projects = list_projects(db);
@@ -103,7 +103,7 @@ TEST_CASE("create_project records a pure RAW file with kind=raw") {
   auto photos = fresh_photo_dir("pure_raw");
   touch(photos / "DSCF0001.RAF");  // fake 10-byte content, not a real RAF
 
-  auto result = create_project(db, "trip", photos.string());
+  auto result = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(result.ok());
   CHECK(list_projects(db)[0].image_count == 1);
 
@@ -124,7 +124,7 @@ TEST_CASE("create_project recognizes .dng/.raf case-insensitively") {
   touch(photos / "a.dng");
   touch(photos / "b.Raf");
 
-  auto result = create_project(db, "trip", photos.string());
+  auto result = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(result.ok());
   CHECK(list_projects(db)[0].image_count == 2);
 }
@@ -135,7 +135,7 @@ TEST_CASE("create_project does not merge two RAW files sharing the same stem") {
   touch(photos / "IMG_001.dng");
   touch(photos / "IMG_001.raf");  // same stem, different RAW format - not a JPEG+RAW pair
 
-  auto result = create_project(db, "trip", photos.string());
+  auto result = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(result.ok());
   CHECK(list_projects(db)[0].image_count == 2);  // each stays independent, not merged
 
@@ -145,6 +145,25 @@ TEST_CASE("create_project does not merge two RAW files sharing the same stem") {
   REQUIRE(raf_id.has_value());
   CHECK(get_image(db, *dng_id)->kind == "raw");
   CHECK(get_image(db, *raf_id)->kind == "raw");
+}
+
+TEST_CASE("create_project ignores RAW files entirely when support_raw is not passed") {
+  // RAW 支持默认关闭，见 docs/RAW_Support.md——不传 support_raw 时代码路径
+  // 跟 M0/M1 完全一样，RAW 文件不产生记录，同名 JPEG 也不会被"同名 RAW 存
+  // 在"这条规则挤掉，因为这一轮压根不知道 RAW 存在。
+  auto db = Database::open_at(fresh_db_path("support_raw_default_off"));
+  auto photos = fresh_photo_dir("support_raw_default_off");
+  touch(photos / "IMG_001.jpg");
+  touch(photos / "IMG_001.dng");  // 同名 RAW，默认关闭时应该被完全忽略
+
+  auto result = create_project(db, "trip", photos.string());
+  REQUIRE(result.ok());
+  CHECK(list_projects(db)[0].image_count == 1);  // 只有 JPEG，RAW 完全没被扫描到
+
+  auto jpeg_id = find_image_by_path(db, result.value(), "IMG_001.jpg");
+  REQUIRE(jpeg_id.has_value());
+  CHECK(get_image(db, *jpeg_id)->kind == "jpeg");
+  CHECK(!find_image_by_path(db, result.value(), "IMG_001.dng").has_value());
 }
 
 TEST_CASE("create_project rejects an empty (no-JPEG) folder") {
@@ -365,10 +384,14 @@ TEST_CASE("rescan_project is idempotent - rescanning again with no new files add
 }
 
 TEST_CASE("rescan_project upgrades a jpeg-only record in place when its RAW companion later appears") {
+  // 项目从创建起就是 support_raw=true(一直是 RAW-aware 状态)，只是这张照
+  // 片的 RAW 伴侣当时还没出现——这种"稳态"场景才会原地升级，见
+  // docs/RAW_Support.md"Edge case"一节；对照的"第一次激活"场景见下面
+  // "rescan_project inserts a separate record..."。
   auto db = Database::open_at(fresh_db_path("rescan_upgrade_jpeg_to_raw"));
   auto photos = fresh_photo_dir("rescan_upgrade_jpeg_to_raw");
   touch(photos / "IMG_001.jpg");
-  auto created = create_project(db, "trip", photos.string());
+  auto created = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(created.ok());
 
   auto before_id = find_image_by_path(db, created.value(), "IMG_001.jpg");
@@ -377,7 +400,7 @@ TEST_CASE("rescan_project upgrades a jpeg-only record in place when its RAW comp
 
   touch(photos / "IMG_001.dng");  // 补上同名 RAW
 
-  auto rescanned = rescan_project(db, created.value());
+  auto rescanned = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
   REQUIRE(rescanned.ok());
   CHECK(rescanned.value().added_count == 0);
   CHECK(rescanned.value().upgraded_count == 1);
@@ -396,7 +419,7 @@ TEST_CASE("rescan_project ignores a JPEG that appears after its RAW companion al
   auto db = Database::open_at(fresh_db_path("rescan_raw_first_jpeg_ignored"));
   auto photos = fresh_photo_dir("rescan_raw_first_jpeg_ignored");
   touch(photos / "IMG_002.raf");
-  auto created = create_project(db, "trip", photos.string());
+  auto created = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(created.ok());
 
   auto before_id = find_image_by_path(db, created.value(), "IMG_002.raf");
@@ -404,7 +427,7 @@ TEST_CASE("rescan_project ignores a JPEG that appears after its RAW companion al
 
   touch(photos / "IMG_002.jpg");  // 补上同名 JPEG - 应该被忽略，不产生任何变化
 
-  auto rescanned = rescan_project(db, created.value());
+  auto rescanned = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
   REQUIRE(rescanned.ok());
   CHECK(rescanned.value().added_count == 0);
   CHECK(rescanned.value().upgraded_count == 0);
@@ -421,26 +444,143 @@ TEST_CASE("rescan_project jpeg-to-raw upgrade is idempotent") {
   auto db = Database::open_at(fresh_db_path("rescan_upgrade_idempotent"));
   auto photos = fresh_photo_dir("rescan_upgrade_idempotent");
   touch(photos / "IMG_003.jpg");
-  auto created = create_project(db, "trip", photos.string());
+  auto created = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(created.ok());
   touch(photos / "IMG_003.dng");
 
-  auto first = rescan_project(db, created.value());
+  auto first = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
   REQUIRE(first.ok());
   CHECK(first.value().upgraded_count == 1);
 
-  auto second = rescan_project(db, created.value());
+  auto second = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
   REQUIRE(second.ok());
   CHECK(second.value().added_count == 0);
   CHECK(second.value().upgraded_count == 0);  // 已经是 kind=raw 了,不重复升级
   CHECK(second.value().total_count == 1);
 }
 
+TEST_CASE("rescan_project ignores new RAW files when support_raw is not passed") {
+  auto db = Database::open_at(fresh_db_path("rescan_support_raw_default_off"));
+  auto photos = fresh_photo_dir("rescan_support_raw_default_off");
+  touch(photos / "a.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  touch(photos / "b.raf");  // 新出现的纯 RAW 文件，没有同名 JPEG
+
+  auto rescanned = rescan_project(db, created.value());  // support_raw 默认 false
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().added_count == 0);
+  CHECK(rescanned.value().total_count == 1);
+  CHECK(!find_image_by_path(db, created.value(), "b.raf").has_value());
+}
+
+TEST_CASE("rescan_project without support_raw does not prune existing RAW records") {
+  // support_raw=false 时这次根本没有扫描 RAW 文件，scanned_paths 里不会
+  // 出现任何 RAW 路径——如果不特殊处理，现有 prune 逻辑会把已有的
+  // kind='raw' 记录误判成"磁盘上消失了"直接删掉，这是必须避免的破坏性
+  // bug，见 docs/RAW_Support.md。
+  auto db = Database::open_at(fresh_db_path("rescan_no_support_raw_preserves_existing"));
+  auto photos = fresh_photo_dir("rescan_no_support_raw_preserves_existing");
+  touch(photos / "IMG_001.dng");
+  auto created = create_project(db, "trip", photos.string(), /*support_raw=*/true);
+  REQUIRE(created.ok());
+  auto raw_id = find_image_by_path(db, created.value(), "IMG_001.dng");
+  REQUIRE(raw_id.has_value());
+
+  // 不带 --support-raw 的普通 rescan，prune 默认开启。
+  auto rescanned = rescan_project(db, created.value());
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().removed_count == 0);
+  CHECK(find_image_by_path(db, created.value(), "IMG_001.dng").has_value());
+  CHECK(get_image(db, *raw_id)->kind == "raw");
+}
+
+TEST_CASE("rescan_project inserts a separate RAW record instead of upgrading when RAW support is activated for the first time") {
+  // Edge case（docs/RAW_Support.md）：项目最初是在没有 --support-raw 的情
+  // 况下建的（纯 JPEG，已经打过标签/建过 recipe），后来才补了同名 RAW 文
+  // 件，第一次用 --support-raw 打开 RAW 支持——不应该把已有的 JPEG 记录原
+  // 地升级成 RAW（那样会让用户已经做的标注含义变得含糊），而是保留 JPEG
+  // 记录不动，把 RAW 当成一条独立的新记录插入，数据库里存的文件名带
+  // "_raw" 后缀区分（不改磁盘上的真实文件名）。
+  auto db = Database::open_at(fresh_db_path("rescan_activation_edge_case"));
+  auto photos = fresh_photo_dir("rescan_activation_edge_case");
+  touch(photos / "IMG_001.jpg");
+  auto created = create_project(db, "trip", photos.string());  // support_raw 默认 false
+  REQUIRE(created.ok());
+
+  auto jpeg_id = find_image_by_path(db, created.value(), "IMG_001.jpg");
+  REQUIRE(jpeg_id.has_value());
+
+  touch(photos / "IMG_001.dng");  // 补上同名 RAW
+
+  auto rescanned = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
+  REQUIRE(rescanned.ok());
+  CHECK(rescanned.value().added_count == 1);
+  CHECK(rescanned.value().upgraded_count == 0);
+  CHECK(rescanned.value().total_count == 2);  // 两条独立记录，不是原地升级
+
+  // 原来的 JPEG 记录原样不变，同一个 id，kind 还是 jpeg。
+  auto jpeg_after = find_image_by_path(db, created.value(), "IMG_001.jpg");
+  REQUIRE(jpeg_after.has_value());
+  CHECK(*jpeg_after == *jpeg_id);
+  CHECK(get_image(db, *jpeg_after)->kind == "jpeg");
+
+  // 新增的 RAW 记录：file_path 指向真实磁盘文件，file_name 带 _raw 后缀。
+  auto raw_id = find_image_by_path(db, created.value(), "IMG_001.dng");
+  REQUIRE(raw_id.has_value());
+  auto raw_info = get_image(db, *raw_id);
+  REQUIRE(raw_info.has_value());
+  CHECK(raw_info->kind == "raw");
+  CHECK(raw_info->file_name == "IMG_001_raw.dng");
+
+  // 项目的 support_raw 持久化标记被打开了。
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(), "SELECT support_raw FROM projects WHERE id = ?;", -1, &stmt,
+                      nullptr);
+  sqlite3_bind_int64(stmt, 1, created.value());
+  REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+  CHECK(sqlite3_column_int64(stmt, 0) == 1);
+  sqlite3_finalize(stmt);
+}
+
+TEST_CASE("rescan_project upgrades in place once RAW support is already active, even after an earlier activation") {
+  // 紧接上一个测试的场景：项目已经因为一次 rescan --support-raw 变成
+  // support_raw=true 持久化状态了，之后再遇到"已有 JPEG 记录 + 新 RAW 到
+  // 达"，这次应该走正常的原地升级（was_already_supported=true 分支），
+  // 不应该退化成插入独立记录+后缀那条 edge case 分支。
+  auto db = Database::open_at(fresh_db_path("rescan_steady_state_after_activation"));
+  auto photos = fresh_photo_dir("rescan_steady_state_after_activation");
+  touch(photos / "IMG_001.jpg");
+  touch(photos / "IMG_002.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  touch(photos / "IMG_001.dng");
+  auto activation = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
+  REQUIRE(activation.ok());
+  CHECK(activation.value().added_count == 1);  // IMG_001 走 edge case，插成独立记录
+
+  // 现在项目已经是 support_raw=true 了。IMG_002 的 RAW 伴侣这时候才出现。
+  touch(photos / "IMG_002.dng");
+  auto steady_state = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
+  REQUIRE(steady_state.ok());
+  CHECK(steady_state.value().upgraded_count == 1);  // 原地升级，不是插入
+  CHECK(steady_state.value().added_count == 0);
+
+  auto img2_id = find_image_by_path(db, created.value(), "IMG_002.jpg");
+  CHECK(!img2_id.has_value());  // 原地升级把 file_path 换成了 RAW 的
+  auto img2_raw_id = find_image_by_path(db, created.value(), "IMG_002.dng");
+  REQUIRE(img2_raw_id.has_value());
+  CHECK(get_image(db, *img2_raw_id)->kind == "raw");
+  CHECK(get_image(db, *img2_raw_id)->file_name == "IMG_002.dng");  // 没有 _raw 后缀
+}
+
 TEST_CASE("delete_project removes the RAW preview cache directory for the project") {
   auto db = Database::open_at(fresh_db_path("delete_project_cache_cleanup"));
   auto photos = fresh_photo_dir("delete_project_cache_cleanup");
   touch(photos / "IMG_001.dng");
-  auto created = create_project(db, "trip", photos.string());
+  auto created = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(created.ok());
   auto image_id = find_image_by_path(db, created.value(), "IMG_001.dng");
   REQUIRE(image_id.has_value());
@@ -473,7 +613,7 @@ TEST_CASE("rescan_project prune removes the cache file for a pruned RAW image") 
   auto db = Database::open_at(fresh_db_path("rescan_prune_cache_cleanup"));
   auto photos = fresh_photo_dir("rescan_prune_cache_cleanup");
   touch(photos / "IMG_001.dng");
-  auto created = create_project(db, "trip", photos.string());
+  auto created = create_project(db, "trip", photos.string(), /*support_raw=*/true);
   REQUIRE(created.ok());
   auto image_id = find_image_by_path(db, created.value(), "IMG_001.dng");
   REQUIRE(image_id.has_value());
@@ -494,7 +634,7 @@ TEST_CASE("rescan_project prune removes the cache file for a pruned RAW image") 
 
   fs::remove(photos / "IMG_001.dng");  // 模拟源文件被删除，触发 prune
 
-  auto rescanned = rescan_project(db, created.value());
+  auto rescanned = rescan_project(db, created.value(), /*prune=*/true, /*support_raw=*/true);
   REQUIRE(rescanned.ok());
   CHECK(rescanned.value().removed_count == 1);
   CHECK(!fs::exists(cache_file));  // 缓存文件跟着数据库记录一起被清理了

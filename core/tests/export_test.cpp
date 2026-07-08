@@ -153,7 +153,7 @@ Fixture make_raw_fixture(const std::string& tag, int image_count) {
     std::snprintf(name, sizeof(name), "img_%03d.RAF", i);
     touch(photos / name);
   }
-  auto created = create_project(db, "proj", photos.string());
+  auto created = create_project(db, "proj", photos.string(), /*support_raw=*/true);
   REQUIRE(created.ok());
 
   std::vector<ImageId> images;

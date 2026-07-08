@@ -78,6 +78,7 @@ using RenderRecipeError = recipe::RenderRecipeError;
 // core/project/project.h.
 Result<ProjectId, CreateProjectError> create_project(const std::string& name,
                                                       const std::string& folder_path,
+                                                      bool support_raw = false,
                                                       ScanProgressFn on_progress = nullptr);
 
 std::vector<ProjectSummary> list_projects();
@@ -120,6 +121,7 @@ TagId ensure_reject_tag(ProjectId project_id);
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见
 // core/project/project.h 里 rescan_project 的说明。
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune = true,
+                                                             bool support_raw = false,
                                                              ScanProgressFn on_progress = nullptr);
 
 std::vector<ImageRef> list_images(ProjectId project_id);

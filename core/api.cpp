@@ -27,9 +27,10 @@ bool has_raw_extension(const std::string& path) {
 
 Result<ProjectId, CreateProjectError> create_project(const std::string& name,
                                                       const std::string& folder_path,
+                                                      bool support_raw,
                                                       ScanProgressFn on_progress) {
   db::Database db = db::Database::open_default();
-  return project::create_project(db, name, folder_path, std::move(on_progress));
+  return project::create_project(db, name, folder_path, support_raw, std::move(on_progress));
 }
 
 std::vector<ProjectSummary> list_projects() {
@@ -119,9 +120,10 @@ TagId ensure_reject_tag(ProjectId project_id) {
 }
 
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
+                                                             bool support_raw,
                                                              ScanProgressFn on_progress) {
   db::Database db = db::Database::open_default();
-  return project::rescan_project(db, project_id, prune, std::move(on_progress));
+  return project::rescan_project(db, project_id, prune, support_raw, std::move(on_progress));
 }
 
 std::vector<ImageRef> list_images(ProjectId project_id) {

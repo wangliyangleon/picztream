@@ -271,9 +271,4 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
 
 ## 风险与待确认问题
 
-延续自 `docs/M2_PRD.md`,这次工程设计阶段能定的都定了(白平衡基线、half_size 预览缓存方案、输出位深、两套独立的进度提示需求),以下几条仍然留到实现或真机验证阶段:
-
-* **`decode_full`/`decode_preview` 的 RGB→RGBA 字节布局转换正确性**:`decode_full` 已经在 increment 2 验证过(肉眼核对真实文件颜色正常);`decode_preview` 复用同一段转换代码,理论上没有新风险,但 increment 3 里第一次真正调用它时仍然要肉眼核对一次,不能假设"跟 decode_full 共享代码所以肯定没问题"
-* **色彩管理(ICC)边界**:LibRaw 输出的 8-bit sRGB 不经过 CoreGraphics ColorSync 自动匹配,`output_color=1` 已经显式指定 sRGB 输出,理论上足够,但要在真机验收时留意色彩是否有肉眼可见的偏差
-* **内嵌预览缺失的边缘情况**:两台测试机身都确认是 JPEG 类型,但不代表所有 DNG/RAF 变体都是——这条路径现在只是"预览缓存缺失时的兜底",出现问题时影响面比它原来是主路径时小很多,依然不做位图兜底,留到真正遇到实例再处理
-* **多张 RAW 图片的缓存生成要不要并行**:PRD 已经把"几百张真实项目的总耗时量级"列为风险,这份文档暂定沿用"每张图片各自处理,不引入额外线程池"这个简单模型(跟导出路径一致的理由:LibRaw 内部已经用 OpenMP);如果真机验证发现几百张 RAW 的 `new`/`rescan` 耗时明显不可接受,再考虑要不要在 `core::project` 这一层加一层 `jthread` 并行(每个线程各自开一个 `LibRaw` 实例处理不同文件,理论上可行,但目前没有实测数据支撑这个复杂度)
+RAW 支持的现存风险与待办已迁移到 `docs/RAW_Support.md` 统一维护，不在这里重复保留。`decode_full`/`decode_preview` 的 RGB→RGBA 字节布局转换正确性这一条已经在 increment 2/3 真机验证时确认过没问题，不算现存风险，不迁移。

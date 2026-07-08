@@ -69,10 +69,22 @@ int cmd_new(const std::vector<std::string>& args) {
     return 1;
   }
   const std::string& name = args[0];
+  // RAW 支持默认关闭、隐藏功能，见 docs/RAW_Support.md——--support-raw 不
+  // 出现在 usage_main() 里，但正常生效。不管它出现在 name 后面第几个位
+  // 置，摘出来之后剩下的第一个位置参数才是 folder_path。
+  bool support_raw = false;
+  std::vector<std::string> positional;
+  for (std::size_t i = 1; i < args.size(); ++i) {
+    if (args[i] == "--support-raw") {
+      support_raw = true;
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
   std::string folder_path =
-      args.size() >= 2 ? args[1] : std::filesystem::current_path().string();
+      !positional.empty() ? positional[0] : std::filesystem::current_path().string();
 
-  auto result = pzt::core::create_project(name, folder_path, print_scan_progress);
+  auto result = pzt::core::create_project(name, folder_path, support_raw, print_scan_progress);
   if (!result.ok()) {
     switch (result.error()) {
       case pzt::core::CreateProjectError::NameAlreadyExists:
@@ -197,9 +209,13 @@ int cmd_rescan(const std::vector<std::string>& args) {
   }
   const std::string& name = args[0];
   bool prune = true;
+  // --support-raw：RAW 支持默认关闭、隐藏功能，见 docs/RAW_Support.md。
+  bool support_raw = false;
   for (std::size_t i = 1; i < args.size(); ++i) {
     if (args[i] == "--no-prune") {
       prune = false;
+    } else if (args[i] == "--support-raw") {
+      support_raw = true;
     } else {
       std::fprintf(stderr, "%s", pzt::cli::i18n::err_rescan_unknown_arg(args[i]).c_str());
       print_usage();
@@ -210,7 +226,7 @@ int cmd_rescan(const std::vector<std::string>& args) {
   auto project_id = resolve_project("pzt rescan", name);
   if (!project_id) return 1;
 
-  auto result = pzt::core::rescan_project(*project_id, prune, print_scan_progress);
+  auto result = pzt::core::rescan_project(*project_id, prune, support_raw, print_scan_progress);
   if (!result.ok()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_rescan_failed(name).c_str());
     return 1;

@@ -153,6 +153,11 @@ void initialize_schema(sqlite3* conn) {
   // list_images 按"NULL 排最后、用文件名兜底"处理，不是错误状态。旧库
   // 迁移时全部落在 NULL，下一次 rescan 会顺手回填。
   ensure_column(conn, "images", "captured_at", "captured_at INTEGER");
+  // RAW 支持默认关闭、opt-in（`pzt new`/`pzt rescan` 传 `--support-raw` 才
+  // 会读取和处理 RAW 文件）。见 docs/RAW_Support.md。旧库迁移时所有项目落
+  // 在 0（未开启），跟 M0/M1 时代"没有 RAW 概念"的项目语义一致。一旦被
+  // 打开过就不会自动关闭，没有对应的取消开关。
+  ensure_column(conn, "projects", "support_raw", "support_raw INTEGER NOT NULL DEFAULT 0");
 }
 
 }  // namespace pzt::core::db
