@@ -132,6 +132,21 @@ std::string msg_browse_exited();
 std::string export_current_success(const std::string& output_path, bool created_folder);
 std::string export_current_skipped(const std::string& file_name, pzt::core::SkipReason reason);
 
+// M3：`:` 键触发的审美评分。placeholder 按了冒号之后立刻显示，用户一开
+// 始输入就整个让位给输入内容(见 read_text_line_with_placeholder)；没有
+// 分数/点评时统一显示 "-"。
+std::string msg_ai_prompt_placeholder();
+std::string ai_score_label(std::optional<int> score);
+// 紧跟在 ai_score_label 下面显示,位置已经说明这是点评了,不再重复一个
+// "AI Comment:"标题——跟 ai_score_label 不同,这个不是"标签: 值"的形
+// 状,没有点评时也是直接返回 "-",不是 "AI Comment: -"。
+std::string ai_score_comment_text(std::optional<std::string> comment);
+// 命名跟内容一样刻意不提"评分"——审美评分只是 `:` 这个 AI 入口目前唯一
+// 的能力，以后加别的能力(比如自动修图建议)会复用同一条"处理中"/"已提
+// 交"反馈，不是新开一套文案。
+std::string msg_ai_processing_pending();
+std::string msg_ai_processing_submitted();
+
 // Tag Menu
 std::string tag_menu_cap_zero();
 std::string tag_menu_full(int cap);

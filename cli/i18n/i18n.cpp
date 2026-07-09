@@ -632,6 +632,8 @@ std::vector<MenuLine> menu_lines() {
         {'e', menu_item("e", "导出")},
         {0, ""},
         {'r', menu_item("r", "风格")},
+        {0, ""},
+        {':', menu_item(":", "AI 控制台")},
     };
   } else {
     return {
@@ -642,6 +644,8 @@ std::vector<MenuLine> menu_lines() {
         {'e', menu_item("e", "Export")},
         {0, ""},
         {'r', menu_item("r", "Recipe")},
+        {0, ""},
+        {':', menu_item(":", "AI Console")},
     };
   }
 }
@@ -833,6 +837,43 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
     return " '" + file_name + "' 未导出:" + export_skip_reason(reason) + " ";
   } else {
     return " '" + file_name + "' not exported: " + export_skip_reason(reason) + " ";
+  }
+}
+
+std::string msg_ai_prompt_placeholder() {
+  if (g_lang == Lang::zh) {
+    return "输入针对本次 AI 处理的额外指引，或直接按回车提交";
+  } else {
+    return "Enter extra guidance for the AI processing, or press Enter to submit";
+  }
+}
+
+std::string ai_score_label(std::optional<int> score) {
+  std::string value = score ? std::to_string(*score) : "-";
+  if (g_lang == Lang::zh) {
+    return "AI 评分: " + value;
+  } else {
+    return "AI Score: " + value;
+  }
+}
+
+std::string ai_score_comment_text(std::optional<std::string> comment) {
+  return comment ? *comment : "-";
+}
+
+std::string msg_ai_processing_pending() {
+  if (g_lang == Lang::zh) {
+    return " AI 处理中，请稍后 ";
+  } else {
+    return " AI request already in progress, please wait ";
+  }
+}
+
+std::string msg_ai_processing_submitted() {
+  if (g_lang == Lang::zh) {
+    return " AI 处理请求已提交 ";
+  } else {
+    return " AI processing request submitted ";
   }
 }
 

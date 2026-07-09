@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 namespace pzt::cli::text {
 
@@ -75,6 +76,36 @@ std::string truncate_text(const std::string& s, std::size_t max_width) {
     pos += static_cast<std::size_t>(len);
   }
   return out;
+}
+
+// 按显示宽度硬换行(宽字符占 2 列)，超出 max_width 就另起一行接着放,不
+// 是截断丢字——AI 点评、debug 日志这些内容不能说没就没。不做单词边界折
+// 行,中英文混排场景下没有统一的分词规则,硬换行简单且够用,真出现体验
+// 问题再改。max_width 为 0 时退化成把整个字符串当一行,不做特殊处理
+// (调用方目前都保证传正数,不为这个防御性分支单独写测试)。
+std::vector<std::string> wrap_text(const std::string& s, std::size_t max_width) {
+  std::vector<std::string> lines;
+  if (max_width == 0) {
+    lines.push_back(s);
+    return lines;
+  }
+  std::string current;
+  std::size_t current_w = 0;
+  std::size_t pos = 0;
+  while (pos < s.size()) {
+    auto [cp, len] = decode_utf8_at(s, pos);
+    std::size_t w = is_wide_codepoint(cp) ? 2 : 1;
+    if (current_w + w > max_width && !current.empty()) {
+      lines.push_back(current);
+      current.clear();
+      current_w = 0;
+    }
+    current += s.substr(pos, static_cast<std::size_t>(len));
+    current_w += w;
+    pos += static_cast<std::size_t>(len);
+  }
+  if (!current.empty() || lines.empty()) lines.push_back(current);
+  return lines;
 }
 
 std::size_t display_width(const std::string& s) {

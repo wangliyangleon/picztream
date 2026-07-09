@@ -195,7 +195,7 @@ std::optional<std::string> read_text_line_with_placeholder(const std::string& pl
 **`cli/commands/browse.cpp`**：
 
 * `ScoreWorker` 实例的生命周期跟 `PrefetchCache` 一样，声明在 `cmd_open` 的同一个块里（`AltScreen`/`CbreakMode` 内部），程序退出时自然析构（析构会等还在跑的请求完成——这是 `jthread` 正确管理生命周期的直接代价，接受这个行为：用户主动发起过评分再退出，等一下是合理的，不做 detach 之类放弃生命周期管理的取巧方案）。
-* 接受键集合加 `':'`。处理逻辑：`read_text_line_with_placeholder(msg_ai_prompt_placeholder(), banner_row, start_col, content_cols)`；`nullopt`（Esc）静默取消；否则不管拿到的字符串是空还是非空、是否以 `/` 开头都要往下走一步判断——`/` 开头这次不处理，直接静默忽略（PRD 已经明确这次不定义行为，只留分支占位）；其余情况（含空字符串）调 `score_worker.request(current_ref->id, Provider::Claude, text)`——返回 `false` 时 `status_override` 提示"AI 处理中，请稍后"，返回 `true` 时给一句简短确认，不等结果、不阻塞。
+* 接受键集合加 `':'`。处理逻辑：`read_text_line_with_placeholder(msg_ai_prompt_placeholder(), banner_row, start_col, content_cols)`；`nullopt`（Esc）静默取消；否则不管拿到的字符串是空还是非空、是否以 `/` 开头都要往下走一步判断——`/` 开头这次不处理，直接静默忽略（PRD 已经明确这次不定义行为，只留分支占位）；其余情况（含空字符串）调 `score_worker.request(current_ref->id, Provider::Gemini, text)`——返回 `false` 时 `status_override` 提示"AI 处理中，请稍后"，返回 `true` 时给一句简短确认，不等结果、不阻塞。固定供应商这次用 Gemini（写死在这一行代码里，不是类型层面的决策），跟哪个供应商是无关紧要的细节，取决于开发时手头有哪家的 key，多供应商切换本来就是待定项。
 * 内层读键循环的 poll 逻辑扩展：现在只有 `debug_mode` 才会 `stdin_ready(300)` 轮询；这次加一个 `score_worker.has_pending()` 分支——有请求在跑时也 `stdin_ready(300)`，但超时之后**先检查 `consume_new_result(...)` 有没有真的变化**，没有就继续内层循环再等（不触发外层重绘、不算一次超时事件），有变化才当作超时事件 `break` 出去重绘。这是满足"poll 重绘只在真正需要时才发生"的关键点。
 * 信息栏（metadata block）在"风格"那一段之后加两行，复用现有 `emit_line` 的越界裁剪逻辑（同一个 `meta_bottom_row` 边界）：`AI 评分: 85` / `AI 评分: -`（没有分数时），紧跟一行 `AI 点评: <comment>`（没有时同样显示 `-`；`comment` 本身的长度已经被模板限制过，正常情况下不需要额外的多行换行处理，太长时按现有 `pad_to` 的截断行为处理，不需要跟"拍摄时间"那样特别做标题行+缩进值行）。
 

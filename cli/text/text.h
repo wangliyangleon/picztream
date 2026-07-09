@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 // cli 层的纯文本工具:UTF-8 解码、终端显示宽度计算、按显示宽度截断/补齐、
 // 文件大小格式化、`~` 路径展开。全部是确定性纯函数,不碰终端 io、不依赖
@@ -30,6 +31,9 @@ std::size_t display_width(const std::string& s);
 
 // 截断/补空格到固定的显示宽度。
 std::string pad_to(const std::string& s, std::size_t width);
+
+// 按显示宽度硬换行(宽字符占 2 列)，超出的部分接到下一行，不丢字。
+std::vector<std::string> wrap_text(const std::string& s, std::size_t max_width);
 
 // 文件大小格式化成 B/KB/MB/GB。
 std::string format_size(std::int64_t bytes);

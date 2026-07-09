@@ -138,4 +138,85 @@ std::optional<std::string> read_text_line(const std::string& prompt, int banner_
   }
 }
 
+// M3：跟 read_text_line 同一套阻塞按字节读 + UTF-8 码点缓冲 + 退格删一个
+// 完整码点的逻辑，唯一的区别是 redraw：没有常驻前缀，buffer 为空时显示
+// placeholder，一旦开始输入 placeholder 整个让位给 buffer 本身。
+std::optional<std::string> read_text_line_with_placeholder(const std::string& placeholder,
+                                                             int banner_row, int start_col,
+                                                             int content_cols) {
+  std::string buffer;
+  int pending_needed = 0;
+
+  // 显示内容统一加一个前导空格,跟其它 banner 提示(比如" 新标签名称: "、
+  // " AI 处理中，请稍后 ")的留白风格一致,不然这一行会紧贴左边框,显得跟别
+  // 处不一样。第二行(banner_row+1)顶层空闲状态时是"q:[退出]"——这个函数
+  // 只用一行的话那行提示会在输入过程中一直杵在那,跟正在输入的内容不搭,
+  // 先清空;超出第一行宽度的内容也会用到这一行(见 redraw 里的换行处理),
+  // 不管哪种情况都需要先清干净。
+  move_cursor(banner_row + 1, start_col + 1);
+  write_stdout(pad_to("", content_cols));
+
+  auto redraw = [&] {
+    std::string display_content = " " + (buffer.empty() ? placeholder : buffer);
+    std::string line1 = truncate_text(display_content, static_cast<std::size_t>(content_cols));
+    std::string line2 = truncate_text(display_content.substr(line1.size()),
+                                       static_cast<std::size_t>(content_cols));
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(line1, content_cols));
+    move_cursor(banner_row + 1, start_col + 1);
+    write_stdout(pad_to(line2, content_cols));
+
+    // 光标跟着实际输入内容(前导空格 + buffer)走,不理会 placeholder——哪
+    // 怕当前画面上显示的是 placeholder,光标也应该停在"即将开始输入"的位
+    // 置,不会被更长的 placeholder 文案推到后面去。内容超出第一行宽度时
+    // 光标跟着换到第二行。
+    std::string cursor_content = " " + buffer;
+    std::string cursor_line1 = truncate_text(cursor_content, static_cast<std::size_t>(content_cols));
+    if (cursor_line1.size() == cursor_content.size()) {
+      move_cursor(banner_row, start_col + 1 + static_cast<int>(display_width(cursor_line1)));
+    } else {
+      std::string cursor_line2 = truncate_text(cursor_content.substr(cursor_line1.size()),
+                                                 static_cast<std::size_t>(content_cols));
+      move_cursor(banner_row + 1, start_col + 1 + static_cast<int>(display_width(cursor_line2)));
+    }
+  };
+
+  // AltScreen 进入时把光标整个隐藏了(浏览图片期间没有意义的光标位置),这
+  // 里是唯一需要用户看清"输入到哪了"的地方,临时显示,函数返回前(不管是
+  // Esc 取消还是 Enter 提交)都要还原,不能让光标一直显示着回到浏览状态。
+  write_stdout("\x1b[?25h");
+  redraw();
+
+  while (true) {
+    char c = read_one_byte();
+    if (c == 0x1B) {
+      write_stdout("\x1b[?25l");
+      return std::nullopt;
+    }
+    if (c == '\r' || c == '\n') {
+      write_stdout("\x1b[?25l");
+      return buffer;
+    }
+    if (c == 0x7F || c == 0x08) {
+      if (!buffer.empty()) {
+        std::size_t pos = buffer.size() - 1;
+        while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
+        buffer.erase(pos);
+      }
+      pending_needed = 0;
+      redraw();
+      continue;
+    }
+    if (static_cast<unsigned char>(c) < 0x20) continue;
+
+    buffer += c;
+    if (pending_needed > 0) {
+      --pending_needed;
+    } else {
+      pending_needed = utf8_continuation_bytes(static_cast<unsigned char>(c));
+    }
+    if (pending_needed == 0) redraw();
+  }
+}
+
 }  // namespace pzt::cli::ui

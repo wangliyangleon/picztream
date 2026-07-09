@@ -20,7 +20,7 @@ namespace {
 // 的东西。真实调通验证留给真机验收（没有 API key 的环境下测不出型号是
 // 不是还有效）。
 constexpr const char* kClaudeModel = "claude-sonnet-4-5-20250929";
-constexpr const char* kGeminiModel = "gemini-2.0-flash";
+constexpr const char* kGeminiModel = "gemini-2.5-flash";
 constexpr const char* kClaudeUrl = "https://api.anthropic.com/v1/messages";
 
 std::optional<std::string> get_api_key(Provider provider) {
@@ -193,6 +193,26 @@ std::size_t write_callback(char* ptr, std::size_t size, std::size_t nmemb, void*
   return size * nmemb;
 }
 
+// debug 面板一次只滚动显示固定的最后几行(见 cli/commands/browse.cpp 的
+// kDebugRows)——prompt/response 原文经常自带换行(模板本身用 "\n\n" 分
+// 段)，一条日志展开成十几行会把整个面板刷屏，刷掉刚才 prefetch/按键那些
+// 更想看的日志，等于"根本看不到什么"。这里把换行压成空格、长度砍到一
+// 个上限，保证一条日志固定只占一行，还留有用信息，不是单纯截断到看不
+// 出内容的程度。
+std::string compact_for_debug_log(const std::string& text) {
+  constexpr std::size_t kMaxLen = 240;
+  std::string flat;
+  flat.reserve(text.size());
+  for (char c : text) {
+    flat += (c == '\n' || c == '\r') ? ' ' : c;
+  }
+  if (flat.size() > kMaxLen) {
+    flat.resize(kMaxLen);
+    flat += "...";
+  }
+  return flat;
+}
+
 }  // namespace
 
 Result<HttpResponse, RequestError> perform_curl_post(
@@ -267,20 +287,28 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
 
   // 跟 core/browse/prefetch.cpp 往 stderr 打 hit/miss/wait_ms 同一个惯
   // 例——`pzt open --debug` 会把 stderr 收进屏幕底部的 debug 面板，不开
-  // --debug 时静默丢弃，不是新的日志机制。这里特意打 instruction_text
-  // (人话 prompt)而不是 request_body.dump()（那个里面混着几十/几百 KB
-  // 的 base64 图片数据，糊一屏没法看)。
+  // --debug 时静默丢弃，不是新的日志机制。这里特意打人话 prompt 而不是
+  // request_body.dump()（那个里面混着几十/几百 KB 的 base64 图片数据，
+  // 糊一屏没法看)。debug 面板一行的可见宽度(终端一行的显示列数)比
+  // compact_for_debug_log 的 240 字符上限窄得多——instruction_text 是
+  // schema_instruction 在前、user_prompt(实际任务描述)在后拼出来的(这
+  // 个顺序是发给模型的真实 prompt 的一部分,不因为日志好不好看而改)，如
+  // 果直接把 instruction_text 整个丢进日志，schema_instruction 这段几
+  // 乎每次都一样的固定文案就能把这一行唯一可见的部分占满，真正随请求变
+  // 化、更想看的 user_prompt 反而一个字都露不出来。日志里单独换个顺序
+  // (user_prompt 在前)，不影响真实发给模型的 instruction_text。
   const char* provider_name = to_string(provider);
-  std::fprintf(stderr, "[pzt ai] request (%s) prompt:\n%s\n", provider_name,
-               instruction_text.c_str());
+  std::string debug_prompt = "task: " + user_prompt + " | schema: " + schema_instruction;
+  std::fprintf(stderr, "[pzt ai] request (%s) prompt: %s\n", provider_name,
+               compact_for_debug_log(debug_prompt).c_str());
   std::fflush(stderr);
 
   auto http_result = http_post(url, headers, request_body.dump());
   if (!http_result.ok()) return Result<nlohmann::json, RequestError>::Err(http_result.error());
 
   const auto& response = http_result.value();
-  std::fprintf(stderr, "[pzt ai] response (%s) status=%ld body:\n%s\n", provider_name,
-               response.status_code, response.body.c_str());
+  std::fprintf(stderr, "[pzt ai] response (%s) status=%ld body: %s\n", provider_name,
+               response.status_code, compact_for_debug_log(response.body).c_str());
   std::fflush(stderr);
 
   if (response.status_code < 200 || response.status_code >= 300) {

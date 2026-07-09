@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
@@ -73,6 +74,33 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
   const auto& r = result.value();
   if (!r.exported) return pzt::cli::i18n::export_current_skipped(file_name, *r.skip_reason);
   return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
+}
+
+// 顶层 `:` 键:vim 风格的额外指引输入,提交给 core::ai::ScoreWorker 异步
+// 评分,不等结果、不阻塞。空字符串是合法输入(用固定模板,不加额外指
+// 引),只有 Esc 才是取消。`/` 开头这次不处理,静默忽略——docs/M3_PRD.md
+// 明确留给以后的命令扩展占位,这次不定义行为。固定供应商用 Gemini(手头
+// 只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)——多供应商切换本来就是
+// docs/M3_PRD.md 明确留到以后的开放问题,这次只是换了一下写死的默认值,
+// 不是新决策。
+std::string handle_ai_prompt_flow(pzt::core::ScoreWorker& score_worker, pzt::core::ImageId image_id,
+                                   int banner_row, int start_col, int content_cols) {
+  auto guidance = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
+                                                    banner_row, start_col, content_cols);
+  if (!guidance) return "";  // Esc,静默取消
+  if (!guidance->empty() && (*guidance)[0] == '/') return "";  // `/` 前缀预留,静默忽略
+  bool accepted = score_worker.request(image_id, pzt::core::Provider::Gemini, *guidance);
+  if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
+
+  // 提交成功只是个轻量的确认,不需要用户额外按键才能回到浏览——结果本身
+  // 是异步落地、靠 poll 逻辑自动重绘的,这条提示只是"确实提交了"，跟 x 键
+  // "闪一下"反馈同一个思路,只是这里是完整的一句话,停留久一点方便看
+  // 清,然后直接回到顶层空闲状态,不占用一次额外按键。返回空字符串,外
+  // 层不会进入"按任意键继续"那个分支。
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(pzt::cli::i18n::msg_ai_processing_submitted(), content_cols));
+  usleep(800000);
+  return "";
 }
 
 // space/x/g/r/e 这几个键要阻塞读一整套 banner 交互(prompt_and_read_key/
@@ -184,7 +212,12 @@ int cmd_open(const std::vector<std::string>& args) {
     // --debug 开没开,DebugLogRedirect 的析构函数才是真正把 stderr 换回真
     // 实终端的地方)——缩小到这个块的作用域,块结束时 debug_log 先析构、
     // stderr 先换回来,后面的打印才真的能看见。
-    pzt::cli::term::DebugLogRedirect debug_log(debug_mode, static_cast<std::size_t>(kDebugRows));
+    // 存的是原始日志条目(一次 fprintf 一条),不是画到屏幕上的行——现在每
+    // 条会按显示宽度换行,一条可能占好几个屏幕行,存的原始条目数得比
+    // kDebugRows 多几倍,不然换行一展开,面板一开始就没几条真实历史可
+    // 看。倍数是拍脑袋定的,不是量出来的精确值,够用就行。
+    pzt::cli::term::DebugLogRedirect debug_log(debug_mode,
+                                                static_cast<std::size_t>(kDebugRows) * 4);
 
     // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
     // 受这次影响,调优留给以后有真实使用数据再说。
@@ -192,6 +225,14 @@ int cmd_open(const std::vector<std::string>& args) {
                                        pzt::core::decode_preview_file);
     pzt::core::ImageId current_id = images.front().id;
     prefetch.set_current(images, current_id);
+
+    // M3：审美评分,`:` 键触发,见 handle_ai_prompt_flow。生命周期跟
+    // prefetch 一样声明在这个块里——退出时析构会等还在跑的请求完成(这是
+    // jthread 正确管理生命周期的直接代价,接受这个行为,不做 detach 之类
+    // 放弃生命周期管理的取巧方案)。默认参数(真实数据库路径 + 真实
+    // request_score),不需要额外传参。
+    pzt::core::ScoreWorker score_worker;
+    std::uint64_t ai_last_seen_generation = 0;
 
     // AltScreen 在 CbreakMode 前构造、后析构:退出时先把输入模式还原、再离
     // 开备用缓冲区,这样即便中途出异常,用户的主屏幕内容也不会被半途切走
@@ -282,13 +323,17 @@ int cmd_open(const std::vector<std::string>& args) {
 
       int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
 
-      // 右侧面板纵向平均分成两个 block:上半 metadata(跟原来一样)、下半
-      // 菜单(顶层按键提示,一行一条),中间一条横线分隔——左右宽度比例
-      // (图片:信息栏)不变,只是把原来整块信息栏的高度对半切开。具体怎
-      // 么分配这两块的高度是这一步刻意先做成对半分,后续再细化。
+      // 右侧面板纵向分成两个 block:上半 metadata、下半菜单(顶层按键提
+      // 示,一行一条),中间一条横线分隔——左右宽度比例(图片:信息栏)不
+      // 变。菜单 block 内容固定(menu_lines 长度不随图片状态变化),只需要
+      // 刚好够显示这些行的高度;metadata 这边标签/风格/AI 点评这些内容经
+      // 常需要更多行(点评还会按宽度换行),五五分会让 metadata 在标签多、
+      // 点评长的时候被截断,而菜单 block 却总有一截空着没用——改成菜单
+      // block 只拿它需要的行数,剩下的全部给 metadata。
       int menu_divider_rows = 1;
-      int meta_rows = std::max(1, (top_rows - menu_divider_rows) / 2);
-      int menu_rows = std::max(1, top_rows - menu_divider_rows - meta_rows);
+      int menu_content_rows = static_cast<int>(menu_lines.size());
+      int menu_rows = std::max(1, std::min(top_rows - menu_divider_rows, menu_content_rows));
+      int meta_rows = std::max(1, top_rows - menu_divider_rows - menu_rows);
       int meta_bottom_row = image_top_row + meta_rows;  // 不含,metadata 内容到这一行(不含)为止
       int menu_divider_row = meta_bottom_row;
       int menu_top_row = menu_divider_row + 1;
@@ -330,9 +375,31 @@ int cmd_open(const std::vector<std::string>& args) {
       // 下半 block(菜单)内容固定不随图片变化,每帧原样整行覆盖写就是自
       // 己的清空,不需要额外清空这一段。
       {
+        // M3 之前这里是先整块清空(每一行一次 move_cursor+write_stdout)、
+        // 再逐行画内容(又是一轮各自独立的 move_cursor+write_stdout)——
+        // metadata block 拉高之后(这块之前只有 top_rows 的一半,现在占
+        // 了绝大部分)两轮加起来一帧要发出去几十次独立的写系统调用,真机
+        // 反馈能看出明显的"先闪一片空白、再画出内容"的闪烁。改成两轮都
+        // 拼进同一个字符串、最后一次性 write_stdout——闪烁的成因是"两轮
+        // 独立的系统调用之间终端有机会先渲染出中间那个空白状态",不是
+        // "分两轮画"这件事本身,拼进同一次系统调用发出去,终端不会有机
+        // 会停在中间态。
+        //
+        // 这两轮缺一不可:emit_line/emit_style_line 只在"这一行本帧确实
+        // 有内容"时才写(节省无意义的字节拼接)，"row++; // 空一行"这种
+        // 段落之间的分隔行本帧完全不会被写到——如果只清"最后一行内容之
+        // 后"的尾部(之前一版这么写过，是个 bug)，标签数、点评长度这些
+        // 会改变行位置的内容一旦跨帧变化，之前帧遗留在这些"空一行"位置
+        // 上的字符永远没人覆盖，会一直显示着（真机反馈过"看到两个
+        // score"，就是这么来的——上一次点评占的行数跟这一次不一样，AI
+        // Score 那一行的残影跟这一帧新画的重叠在了一起）。这里老老实实
+        // 把 [image_top_row, meta_bottom_row) 整个范围都清一遍,再把内容
+        // 紧接着写进同一个缓冲区(处理顺序上晚于清空,同一个位置以后写
+        // 的生效),不留任何一行是"这两轮都没碰过"的。
+        std::string out;
         for (int r = image_top_row; r < meta_bottom_row; ++r) {
-          move_cursor(r, info_col);
-          write_stdout(pad_to("", info_cols));
+          out += "\x1b[" + std::to_string(r) + ";" + std::to_string(info_col) + "H";
+          out += pad_to("", info_cols);
         }
         int row = image_top_row;
         // metadata 现在只有信息栏上半 block 的高度可用(meta_bottom_row 之
@@ -341,8 +408,8 @@ int cmd_open(const std::vector<std::string>& args) {
         // 一步先保证不会画穿到下半的菜单 block 里。
         auto emit_line = [&](const std::string& text) {
           if (row < meta_bottom_row) {
-            move_cursor(row, info_col);
-            write_stdout(pad_to(text, info_cols));
+            out += "\x1b[" + std::to_string(row) + ";" + std::to_string(info_col) + "H";
+            out += pad_to(text, info_cols);
           }
           ++row;
         };
@@ -414,8 +481,8 @@ int cmd_open(const std::vector<std::string>& args) {
             if (row < meta_bottom_row) {
               std::string marker = active ? indent.substr(0, indent.size() - 2) + "* " : indent;
               std::string padded = pad_to(marker + text, info_cols);
-              move_cursor(row, info_col);
-              write_stdout(active ? "\x1b[1m" + padded + "\x1b[0m" : padded);
+              out += "\x1b[" + std::to_string(row) + ";" + std::to_string(info_col) + "H";
+              out += active ? "\x1b[1m" + padded + "\x1b[0m" : padded;
             }
             ++row;
           };
@@ -424,6 +491,24 @@ int cmd_open(const std::vector<std::string>& args) {
             emit_style_line("    ", *style->version_name);
           }
         }
+
+        // M3：`:` 键触发的审美评分结果,复用上面已经查过的 info,不需要
+        // 再查一次库。没有值(还没评过分/评分请求失败)时统一显示 "-"。
+        // 点评是模型自由生成的文字,长度不像其它字段那样可控,单行会经常
+        // 被截断看不全——按显示宽度硬换行,跟标签/风格一样受 meta_bottom_
+        // row 的越界裁剪保护,装不下的部分直接不画。
+        row++;  // 空一行
+        emit_line(pzt::cli::i18n::ai_score_label(info ? info->ai_score : std::nullopt));
+        // 点评紧跟在"AI Score:"下面,位置已经说明了这是什么,不用再重复
+        // 一个"AI Comment:"标题占地方——点评本身经常已经要换行了,标题
+        // 只会让本来就紧张的行数更紧张。没有点评时统一显示 "-",跟分数
+        // 那一行"没有就是 -"的惯例一致。
+        auto comment_lines = wrap_text(
+            pzt::cli::i18n::ai_score_comment_text(info ? info->ai_score_comment : std::nullopt),
+            static_cast<std::size_t>(info_cols));
+        for (const auto& line : comment_lines) emit_line(line);
+
+        write_stdout(out);
       }
 
       // 右侧面板下半 block:顶层按键菜单,一行一条,静态内容(不依赖当前
@@ -437,17 +522,25 @@ int cmd_open(const std::vector<std::string>& args) {
 
       // --debug 时,图片/信息栏下方专门留出来的滚动 debug 区——按帧重画最
       // 新的 kDebugRows 行,不是真正的终端滚动区域,但对用户来说效果一样:
-      // 新日志进来,老的自然被挤出显示范围。
+      // 新日志进来,老的自然被挤出显示范围。每条原始日志先按显示宽度换
+      // 行展开成若干屏幕行,再对展开后的结果取最后 kDebugRows 行——这样
+      // 一条长日志(比如完整的 AI 请求/响应)会占多行显示,不是硬截断成
+      // 一行看不全。
       if (debug_mode) {
         auto lines = debug_log.snapshot();
+        std::vector<std::string> display_rows;
+        for (const auto& line : lines) {
+          auto wrapped = wrap_text(line, static_cast<std::size_t>(content_cols));
+          display_rows.insert(display_rows.end(), wrapped.begin(), wrapped.end());
+        }
         std::size_t begin =
-            lines.size() > static_cast<std::size_t>(kDebugRows)
-                ? lines.size() - static_cast<std::size_t>(kDebugRows)
+            display_rows.size() > static_cast<std::size_t>(kDebugRows)
+                ? display_rows.size() - static_cast<std::size_t>(kDebugRows)
                 : 0;
         for (int i = 0; i < kDebugRows; ++i) {
           move_cursor(debug_top_row + i, start_col + 1);
           std::size_t idx = begin + static_cast<std::size_t>(i);
-          write_stdout(pad_to(idx < lines.size() ? lines[idx] : "", content_cols));
+          write_stdout(pad_to(idx < display_rows.size() ? display_rows[idx] : "", content_cols));
         }
       }
 
@@ -583,11 +676,18 @@ int cmd_open(const std::vector<std::string>& args) {
       // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。--debug 模式下例
       // 外:每一轮先 poll 一次,超时(没有任何按键)就直接 continue 回外层
       // 重画,刷新 debug 面板;不开 --debug 时维持原来单纯阻塞 read 的写
-      // 法,不引入 poll 的额外开销。
+      // 法,不引入 poll 的额外开销。M3:有 AI 请求在跑时也要 poll,但超时
+      // 不能无条件当成重绘理由——那样会退化成 debug 模式那种"每 300ms 闪
+      // 一下"的行为,先查 consume_new_result 有没有真的拿到新结果,没有
+      // 就当没发生过,继续等,不触发外层重绘("poll 重绘只在真正需要时才
+      // 发生"这条要求)。debug_mode 保持原有的无条件重绘行为不变。
       bool timed_out = false;
       while (true) {
-        if (debug_mode) {
+        if (debug_mode || score_worker.has_pending()) {
           if (!stdin_ready(300)) {
+            if (!debug_mode && !score_worker.consume_new_result(ai_last_seen_generation)) {
+              continue;
+            }
             timed_out = true;
             break;
           }
@@ -598,12 +698,12 @@ int cmd_open(const std::vector<std::string>& args) {
           break;
         }
         if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x' ||
-            c == 'g' || c == 'r' || c == 'e') {
+            c == 'g' || c == 'r' || c == 'e' || c == ':') {
           break;
         }
       }
       if (timed_out) {
-        suppress_latency_log = true;  // 没有按键,只是刷新 debug 面板,不处理导航
+        suppress_latency_log = true;  // 没有按键,只是刷新画面(debug 面板或者 AI 新结果),不处理导航
         continue;
       }
       suppress_latency_log = false;  // 这一轮确实读到了真实按键
@@ -751,6 +851,15 @@ int cmd_open(const std::vector<std::string>& args) {
           highlight_active_menu_key('e', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
           status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
                                                          banner_row, start_col, content_cols);
+        }
+      } else if (c == ':') {
+        // M3:vim 风格的额外指引输入,提交给 ScoreWorker 异步评分。
+        // current_id 不变,跟 space/x/r/e 一样只走 status_override 原地
+        // 刷新——结果落地由上面的 poll 逻辑触发重绘,不是这里同步等待。
+        if (current_ref) {
+          highlight_active_menu_key(':', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
+          status_override = handle_ai_prompt_flow(score_worker, current_ref->id, banner_row,
+                                                   start_col, content_cols);
         }
       }
       prefetch.set_current(images, current_id);

@@ -52,4 +52,12 @@ bool stdin_ready(int timeout_ms);
 std::optional<std::string> read_text_line(const std::string& prompt, int banner_row, int start_col,
                                            int content_cols);
 
+// buffer 为空时整行显示 placeholder，用户一开始输入(buffer 非空)
+// placeholder 就整个让位给 buffer 本身，不像 read_text_line 那样有个常
+// 驻前缀。Esc 仍然返回 nullopt(取消)；buffer 为空时按 Enter 返回空字符
+// 串(不是取消)——调用方决定空字符串是不是合法输入。
+std::optional<std::string> read_text_line_with_placeholder(const std::string& placeholder,
+                                                             int banner_row, int start_col,
+                                                             int content_cols);
+
 }  // namespace pzt::cli::ui
