@@ -1,0 +1,80 @@
+#pragma once
+
+#include <condition_variable>
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
+#include <vector>
+
+#include "core/ai/ai.h"
+#include "core/ai/score.h"
+#include "core/db/database.h"
+#include "core/project/project.h"
+
+// 把 core::ai::request_score 接到后台线程上：CLI 按 `:` 提交请求立即返
+// 回，不阻塞任何按键；同一张图重复请求会被去重；结果（无论成功失败）直
+// 接落库，不在内存里保留，调用方靠 consume_new_result 轮询"有没有新结果
+// 落地"来决定要不要重绘。骨架照抄 core::browse::PrefetchCache（同一个
+// jthread+mutex+condition_variable_any 的先例），关键差别是 PrefetchCache
+// 有一个阻塞等结果的 get()，这里不需要——结果直接写库，没有调用方需要
+// 阻塞等待的场景。
+namespace pzt::core::ai {
+
+class ScoreWorker {
+ public:
+  using ScoreFn = std::function<Result<ScoreResult, ScoreError>(const decode::DecodedImage&,
+                                                                 const std::string&, Provider)>;
+
+  // db_path 默认真实的全局数据库路径；测试传一个临时路径，跟仓库里其它
+  // 所有测试统一用 Database::open_at(fresh_db_path(...)) 的写法一致，不
+  // 需要摆弄 XDG_CONFIG_HOME。score_fn 默认真实调用 AI(request_score)；
+  // 测试注入假函数，不连真实网络。
+  explicit ScoreWorker(std::string db_path = db::default_db_path(),
+                        ScoreFn score_fn = request_score);
+  ~ScoreWorker();
+
+  ScoreWorker(const ScoreWorker&) = delete;
+  ScoreWorker& operator=(const ScoreWorker&) = delete;
+
+  // 提交一个评分请求，立即返回，不阻塞。同一张图已经有请求在排队/处理
+  // 中时返回 false（去重——调用方据此提示"正在处理"，不是报错）。
+  bool request(project::ImageId image_id, Provider provider, const std::string& extra_guidance);
+
+  // 有没有请求正在排队或者处理中——跟 request() 的去重判断是两回事，这个
+  // 是给"要不要显示一个全局的处理中提示"这类场景用的。
+  bool has_pending() const;
+
+  // 轮询用：每完成一个请求（无论成功失败）内部计数器就 +1。调用方保存
+  // 上一次看到的值传进来比较，跟当前值不一样就说明有新结果落地了，函数
+  // 返回 true 并把调用方持有的值更新到最新——调用方据此决定要不要重绘，
+  // 不是每次 poll 都重绘。
+  bool consume_new_result(std::uint64_t& last_seen_generation) const;
+
+ private:
+  struct PendingRequest {
+    project::ImageId image_id;
+    Provider provider;
+    std::string extra_guidance;
+  };
+
+  void worker_loop(std::stop_token stop);
+  void process_request(const PendingRequest& req);
+
+  std::string db_path_;
+  ScoreFn score_fn_;
+
+  mutable std::mutex mu_;
+  std::condition_variable_any cv_;
+  std::vector<PendingRequest> queue_;
+  std::unordered_set<project::ImageId> in_flight_;
+  std::uint64_t generation_ = 0;
+
+  // 声明在最后，保证析构时先于其它成员被销毁——它的析构自动
+  // request_stop()+join()，worker 线程在其它成员真正被销毁之前已经彻底
+  // 退出，不会访问悬空引用(照抄 PrefetchCache)。
+  std::jthread worker_;
+};
+
+}  // namespace pzt::core::ai

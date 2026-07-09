@@ -10,6 +10,10 @@
 
 namespace pzt::core::ai {
 
+const char* to_string(Provider provider) {
+  return provider == Provider::Claude ? "claude" : "gemini";
+}
+
 namespace {
 
 // 具体型号按需更新——只保证是一个支持图片输入的型号，不是这份代码要锁死
@@ -266,7 +270,7 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
   // --debug 时静默丢弃，不是新的日志机制。这里特意打 instruction_text
   // (人话 prompt)而不是 request_body.dump()（那个里面混着几十/几百 KB
   // 的 base64 图片数据，糊一屏没法看)。
-  const char* provider_name = provider == Provider::Claude ? "claude" : "gemini";
+  const char* provider_name = to_string(provider);
   std::fprintf(stderr, "[pzt ai] request (%s) prompt:\n%s\n", provider_name,
                instruction_text.c_str());
   std::fflush(stderr);

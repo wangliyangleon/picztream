@@ -19,6 +19,10 @@ namespace pzt::core::ai {
 
 enum class Provider { Claude, Gemini };
 
+// "claude" | "gemini"——落库(images.ai_score_provider)和 debug 日志共用同
+// 一份映射，不在两个地方各写一遍容易失步的三元表达式。
+const char* to_string(Provider provider);
+
 enum class RequestError {
   MissingApiKey,  // 对应的环境变量没设(ANTHROPIC_API_KEY / GEMINI_API_KEY)
   NetworkError,   // curl 请求本身失败(超时/连不上)
