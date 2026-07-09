@@ -25,7 +25,10 @@ struct GKeyDecision {
   pzt::core::TagId tag_id{};  // 只有 action == ApplyFilter 时有意义
   std::string tag_name;       // 同上,顺便带出来给信息栏筛选提示用,不用每
                               // 帧再查一次 tags_for_menu 只为了显示名字
-  std::string status;         // 只有 action == Handled 时有意义
+  // action == Handled 时是导出结果这类反馈;action == Cancel 时,Esc 取消
+  // 是空字符串(静默),按了个不认识的键则带一句"无效按键"提示(跟
+  // handle_r_key 保持一致)。其它 action 下没有意义,恒为空。
+  std::string status;
 };
 
 // g 键入口:显示筛选/导出/清除选项,返回一个"意图"(GKeyDecision)交给

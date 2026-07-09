@@ -93,13 +93,29 @@ std::string err_recipe_unknown_subcommand(const std::string& verb);
 std::string err_open_project_not_found();
 std::string err_open_project_no_images(const std::string& name);
 std::string err_open_tmux_passthrough();
-std::string banner_text();
+
+// 右侧菜单区(下半 block)逐行显示的顶层按键提示，一行一条——只收会派生二
+// 级菜单的键(' '/'x'/'g'/'e'/'r'，跟按键本身一致)，不派生二级菜单的
+// h/l、j/k、q 挪到底部导航栏(见 nav_bar_text)。空行分隔符用 key=0 表
+// 示、text 是空字符串——cli/commands/browse.cpp 触发某个二级菜单前,靠这
+// 个 key 字段找到对应行做加粗高亮,不依赖硬编码下标。见
+// cli/commands/browse.cpp 的布局说明。
+struct MenuLine {
+  char key;
+  std::string text;
+};
+std::vector<MenuLine> menu_lines();
+// 底部导航栏空闲时的常驻内容:h/l、j/k、q。
+std::string nav_bar_text();
 std::string info_filter_label(const std::string& tag_name);
 std::string info_tags_label();
 std::string info_none_label();
 std::string info_size_label(const std::string& size_str);
 std::string info_source_label(bool is_raw);
-std::string info_captured_at_label(std::optional<std::int64_t> captured_at);
+// 标题行 + 缩进值行两行展示(跟 info_style_label 一样的模式)，见 i18n.cpp
+// 里的说明。
+std::string info_captured_at_heading();
+std::string format_captured_at(std::optional<std::int64_t> captured_at);
 std::string info_style_label();
 std::string info_style_none_label();
 std::string msg_press_any_key_to_continue(const std::string& status);

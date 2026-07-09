@@ -619,15 +619,43 @@ std::string err_open_tmux_passthrough() {
   }
 }
 
-std::string banner_text() {
+// h/l、j/k、q 不在这里——它们是不会派生二级菜单的一次性动作(导航/退
+// 出),挪到底部导航栏常驻显示(见 nav_bar_text),右侧这个 block 只保留
+// "按下去会打开二级菜单"的那几个键,逻辑上更一致。
+std::vector<MenuLine> menu_lines() {
   if (g_lang == Lang::zh) {
-    return " h/l:[上一张/下一张]   j/k:[下一张/上一张未打标签]   "
-           "space:[打标签]   x:[标记废片]   e:[导出]"
-           "   g:[筛选]   r:[风格]   q:[退出] ";
+    return {
+        {' ', menu_item("space", "打标签")},
+        {'x', menu_item("x", "标记废片")},
+        {0, ""},
+        {'g', menu_item("g", "筛选")},
+        {'e', menu_item("e", "导出")},
+        {0, ""},
+        {'r', menu_item("r", "风格")},
+    };
   } else {
-    return " h/l:[Prev/Next]   j/k:[Next/Prev Untagged]   space:[Tag]   "
-           "x:[Toggle Reject]   e:[Export]"
-           "   g:[Filter]   r:[Recipe]   q:[Quit] ";
+    return {
+        {' ', menu_item("space", "Tag")},
+        {'x', menu_item("x", "Toggle Reject")},
+        {0, ""},
+        {'g', menu_item("g", "Filter")},
+        {'e', menu_item("e", "Export")},
+        {0, ""},
+        {'r', menu_item("r", "Recipe")},
+    };
+  }
+}
+
+// 底部导航栏空闲时的常驻内容:h/l、j/k 这两组不会派生二级菜单的导航键,
+// 加上 q 退出——三者放一起,跟右侧 menu_lines()(都是会派生二级菜单的
+// 键)分开,两块各自逻辑一致。
+std::string nav_bar_text() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("h/l", "上一张/下一张") + "   " +
+           menu_item("j/k", "下一张/上一张未打标签") + "   " + menu_item("q", "退出") + " ";
+  } else {
+    return " " + menu_item("h/l", "Prev/Next") + "   " +
+           menu_item("j/k", "Next/Prev Untagged") + "   " + menu_item("q", "Quit") + " ";
   }
 }
 
@@ -671,26 +699,31 @@ std::string info_source_label(bool is_raw) {
   }
 }
 
-std::string info_captured_at_label(std::optional<std::int64_t> captured_at) {
-  std::string formatted = "-";
-  if (captured_at) {
-    // localtime_r 是 mktime 的逆运算——core::decode::read_jpeg_capture_time/
-    // core::raw::read_capture_time 存进去的 epoch 都是按本地时区的
-    // mktime() 语义算出来的，这里用 localtime_r 转回去，精确到分钟，正
-    // 好能还原出跟拍摄时相机屏幕上、或者 EXIF 里原始字符串一致的墙钟时
-    // 间，不会因为时区换算错位。
-    time_t t = static_cast<time_t>(*captured_at);
-    std::tm tm{};
-    localtime_r(&t, &tm);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
-    formatted = buf;
-  }
+// "拍摄时间: 2025-05-11 19:24" 这一整行经常超出信息栏这种窄列的宽度（比
+// "大小:"/"来源:"那两行长不少），会被截断——改成跟"风格:"一样的"标题行 +
+// 缩进值行"两行展示，标题（本函数）和格式化后的值（format_captured_at）
+// 分开，调用方各自 emit 一行。
+std::string info_captured_at_heading() {
   if (g_lang == Lang::zh) {
-    return "拍摄时间: " + formatted;
+    return "拍摄时间:";
   } else {
-    return "Captured: " + formatted;
+    return "Captured:";
   }
+}
+
+std::string format_captured_at(std::optional<std::int64_t> captured_at) {
+  if (!captured_at) return "-";
+  // localtime_r 是 mktime 的逆运算——core::decode::read_jpeg_capture_time/
+  // core::raw::read_capture_time 存进去的 epoch 都是按本地时区的
+  // mktime() 语义算出来的，这里用 localtime_r 转回去，精确到分钟，正
+  // 好能还原出跟拍摄时相机屏幕上、或者 EXIF 里原始字符串一致的墙钟时
+  // 间，不会因为时区换算错位。
+  time_t t = static_cast<time_t>(*captured_at);
+  std::tm tm{};
+  localtime_r(&t, &tm);
+  char buf[32];
+  std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
+  return buf;
 }
 
 std::string info_style_label() {

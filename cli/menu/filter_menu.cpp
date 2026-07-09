@@ -103,7 +103,10 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
     const auto& t = tags[static_cast<std::size_t>(c - '1')];
     return {GKeyAction::ApplyFilter, t.id, t.name, ""};
   }
-  return {GKeyAction::Cancel, {}, "", ""};  // 取消,静默,跟其它菜单一致
+  if (c == 0x1B) return {GKeyAction::Cancel, {}, "", ""};  // Esc,静默
+  // 不是 Esc,也不对应任何选项——跟 handle_r_key 一致,给一句反馈而不是
+  // 完全没反应(真机反馈:直接退回一级菜单,分不清是没按对还是没反应)。
+  return {GKeyAction::Cancel, {}, "", pzt::cli::i18n::recipe_menu_invalid_key()};
 }
 
 }  // namespace pzt::cli::menu

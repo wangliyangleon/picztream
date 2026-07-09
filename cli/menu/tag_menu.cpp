@@ -205,10 +205,14 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
   if (c == '0') {
     return handle_add_tag_result(reject_tag_id, image_id, banner_row, start_col, content_cols);
   }
-  if (c < '1' || c > static_cast<char>('0' + tags.size())) return "";  // 取消,静默
-
-  const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
-  return handle_add_tag_result(chosen.id, image_id, banner_row, start_col, content_cols);
+  if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
+    const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
+    return handle_add_tag_result(chosen.id, image_id, banner_row, start_col, content_cols);
+  }
+  if (c == 0x1B) return "";  // Esc,静默
+  // 不是 Esc,也不对应任何选项——跟 handle_r_key 一致,给一句反馈而不是完
+  // 全没反应(真机反馈:直接退回一级菜单,分不清是没按对还是没反应)。
+  return pzt::cli::i18n::recipe_menu_invalid_key();
 }
 
 }  // namespace pzt::cli::menu

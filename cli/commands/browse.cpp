@@ -75,6 +75,22 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
   return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
 }
 
+// space/x/g/r/e 这几个键要阻塞读一整套 banner 交互(prompt_and_read_key/
+// read_text_line 内部自己的循环),不会回到外层主循环顶部,所以右侧菜单栏
+// 那一帧画出来之后,整个子菜单流程期间都不会重画。这里在真正调用对应的
+// handle_* 之前,对已经画好的那一帧做一次局部覆写:按 key 在 menu_lines
+// 里找到那一行,加粗重画。子菜单流程结束、回到外层循环顶部之后,下一帧
+// 的整屏重绘会自然画回非加粗状态,不需要额外的"取消加粗"逻辑。
+void highlight_active_menu_key(char key, const std::vector<pzt::cli::i18n::MenuLine>& lines,
+                                int menu_top_row, int menu_rows, int info_col, int info_cols) {
+  for (std::size_t i = 0; i < lines.size() && static_cast<int>(i) < menu_rows; ++i) {
+    if (lines[i].key != key) continue;
+    move_cursor(menu_top_row + static_cast<int>(i), info_col);
+    write_stdout("\x1b[1m" + pad_to(lines[i].text, info_cols) + "\x1b[0m");
+    return;
+  }
+}
+
 }  // namespace
 
 // increment 6.4.2:三面板固定布局(图片区左上约 80% 宽、信息栏右上、
@@ -130,9 +146,12 @@ int cmd_open(const std::vector<std::string>& args) {
   std::size_t frame = 0;
   const int kImageId = 1;
   const int kBannerRows = 1;
-  std::string banner_text = pzt::cli::i18n::banner_text();
+  // 顶层按键菜单挪到右侧面板下半 block,一行一条,取代原来挤在底部 banner
+  // 里的一整行文案。q 退出单独留在 banner 那一行常驻显示,不占右侧菜单的
+  // 位置,也避免空闲时底部整行空着。
+  std::vector<pzt::cli::i18n::MenuLine> menu_lines = pzt::cli::i18n::menu_lines();
   // j/k 转一整圈都没找到未打标签的图片时,不静默无反应——banner 这一帧显示
-  // 这条提示而不是 kBannerText,显示完就清空,下一次不管按什么键都恢复正
+  // 这条提示而不是空闲内容,显示完就清空,下一次不管按什么键都恢复正
   // 常提示。跟 current_id 一样是这个函数作用域内的纯局部状态,不需要额外
   // 的状态机或定时器。
   std::string status_override;
@@ -256,12 +275,30 @@ int cmd_open(const std::vector<std::string>& args) {
       int fixed_rows = border_rows + divider_rows + kBannerRows + (debug_mode ? kDebugRows : 0);
       int top_rows = std::max(1, total_rows - fixed_rows);
 
-      // 画边框:单个外框 + 图片/信息栏之间的竖线分隔,风格照抄设计阶段讨论
-      // 过的 ASCII 示意图,不是四个各自独立的小方框。
+      int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
+
+      // 右侧面板纵向平均分成两个 block:上半 metadata(跟原来一样)、下半
+      // 菜单(顶层按键提示,一行一条),中间一条横线分隔——左右宽度比例
+      // (图片:信息栏)不变,只是把原来整块信息栏的高度对半切开。具体怎
+      // 么分配这两块的高度是这一步刻意先做成对半分,后续再细化。
+      int menu_divider_rows = 1;
+      int meta_rows = std::max(1, (top_rows - menu_divider_rows) / 2);
+      int menu_rows = std::max(1, top_rows - menu_divider_rows - meta_rows);
+      int meta_bottom_row = image_top_row + meta_rows;  // 不含,metadata 内容到这一行(不含)为止
+      int menu_divider_row = meta_bottom_row;
+      int menu_top_row = menu_divider_row + 1;
+
+      // 画边框:单个外框 + 图片/信息栏之间的竖线分隔 + 信息栏内部
+      // metadata/菜单分隔,风格照抄设计阶段讨论过的 ASCII 示意图,不是四个
+      // 各自独立的小方框。
       {
         int row = 1;
         draw_hline(row++, start_col, ui_cols, "┌", "┐", mid_offset, "┬");
         for (int i = 0; i < top_rows; ++i) draw_vlines(row + i, start_col, ui_cols, mid_offset);
+        // 只在信息栏那一侧画一条局部横线(从中间竖线到右边框),图片那一侧
+        // 这一行还是图片显示区域的一部分,不画线。左端跟中间竖线的交汇处
+        // 用"├"(竖线上下都还在延伸,只往右边分支),不是"┼"或"┬"。
+        draw_hline(menu_divider_row, start_col + mid_offset, ui_cols - mid_offset, "├", "┤");
         row += top_rows;
         draw_hline(row++, start_col, ui_cols, "├", "┤", mid_offset, "┴");
         if (debug_mode) {
@@ -273,57 +310,70 @@ int cmd_open(const std::vector<std::string>& args) {
         row++;
         draw_hline(row, start_col, ui_cols, "└", "┘");
       }
-      int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
       int debug_top_row = 2 + top_rows + 1;  // 图片区 + 分隔线之后
       int banner_row = debug_top_row + (debug_mode ? kDebugRows + 1 : 0);
 
-      // 信息栏:编号、文件名、标签、文件大小,固定在图片区右侧。内容行数
-      // 随标签数量变化(标签越多占的行越多)——真机测试发现,标签数变少之
-      // 后,上一帧比较靠下的内容(比如"大小:"那一行)不会被这一帧覆盖到,
-      // 会一直重影在那。先把整个信息栏区域清空,再画这一帧实际用到的内
-      // 容,不管行数怎么变都不会留下上一帧的残留。
+      // 信息栏上半 block(metadata):编号、文件名、标签、文件大小。内容行
+      // 数随标签数量变化(标签越多占的行越多)——真机测试发现,标签数变少
+      // 之后,上一帧比较靠下的内容(比如"大小:"那一行)不会被这一帧覆盖
+      // 到,会一直重影在那。先把这个 block 自己的行清空,再画这一帧实际
+      // 用到的内容,不管行数怎么变都不会留下上一帧的残留。清空范围只到
+      // meta_bottom_row(不含)为止,不能沿用以前"清整个 top_rows"的写
+      // 法——那样会把 meta_bottom_row 那一行的分隔线(边框绘制那段代码画
+      // 的,横线中间落在 info_col 这段范围内的部分)每帧又拿空格盖掉,只剩
+      // 左右两端的"├""┤"看得见,是真机反馈的那个"分割线显示不全"的成因。
+      // 下半 block(菜单)内容固定不随图片变化,每帧原样整行覆盖写就是自
+      // 己的清空,不需要额外清空这一段。
       {
-        for (int r = 0; r < top_rows; ++r) {
-          move_cursor(image_top_row + r, info_col);
+        for (int r = image_top_row; r < meta_bottom_row; ++r) {
+          move_cursor(r, info_col);
           write_stdout(pad_to("", info_cols));
         }
         int row = image_top_row;
-        move_cursor(row++, info_col);
+        // metadata 现在只有信息栏上半 block 的高度可用(meta_bottom_row 之
+        // 前)——标签多、风格层级深的时候可能装不下,超出的部分直接不画,
+        // 不做省略号提示或者滚动,这属于"具体分布下一步再优化"的范围,这
+        // 一步先保证不会画穿到下半的菜单 block 里。
+        auto emit_line = [&](const std::string& text) {
+          if (row < meta_bottom_row) {
+            move_cursor(row, info_col);
+            write_stdout(pad_to(text, info_cols));
+          }
+          ++row;
+        };
+
         // increment 6.4.6:筛选状态拼在这一行后面,不新增一行——这样下面
         // 每一行(文件名、标签、大小)不管是不是在筛选视图里都是完全一样
         // 的行号计算,切换筛选状态时不会有内容跳动。
         std::string index_line =
             "[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]";
         if (active_filter_tag_id) index_line += pzt::cli::i18n::info_filter_label(active_filter_tag_name);
-        write_stdout(pad_to(index_line, info_cols));
+        emit_line(index_line);
 
-        move_cursor(row++, info_col);
-        write_stdout(pad_to(current_ref ? current_ref->file_name : "?", info_cols));
+        emit_line(current_ref ? current_ref->file_name : "?");
 
         row++;  // 空一行
-        move_cursor(row++, info_col);
-        write_stdout(pad_to(pzt::cli::i18n::info_tags_label(), info_cols));
+        emit_line(pzt::cli::i18n::info_tags_label());
         auto tags = current_ref ? pzt::core::tags_for_image(current_ref->id)
                                  : std::vector<pzt::core::TagSummary>{};
         if (tags.empty()) {
-          move_cursor(row++, info_col);
-          write_stdout(pad_to(pzt::cli::i18n::info_none_label(), info_cols));
+          emit_line(pzt::cli::i18n::info_none_label());
         } else {
           for (const auto& t : tags) {
-            move_cursor(row++, info_col);
-            write_stdout(pad_to(pzt::cli::i18n::tag_display_name(t), info_cols));
+            emit_line(pzt::cli::i18n::tag_display_name(t));
           }
         }
 
         row++;  // 空一行
         auto info = current_ref ? pzt::core::get_image(current_ref->id) : std::nullopt;
         if (info) {
-          move_cursor(row++, info_col);
-          write_stdout(pad_to(pzt::cli::i18n::info_size_label(format_size(info->file_size)), info_cols));
-          move_cursor(row++, info_col);
-          write_stdout(pad_to(pzt::cli::i18n::info_source_label(info->kind == "raw"), info_cols));
-          move_cursor(row++, info_col);
-          write_stdout(pad_to(pzt::cli::i18n::info_captured_at_label(info->captured_at), info_cols));
+          emit_line(pzt::cli::i18n::info_size_label(format_size(info->file_size)));
+          emit_line(pzt::cli::i18n::info_source_label(info->kind == "raw"));
+          // 拍摄时间这一行经常超出信息栏窄列的宽度被截断,改成跟"风格:"一
+          // 样的标题行 + 缩进值行,见 i18n.cpp 里 info_captured_at_heading/
+          // format_captured_at 的说明。
+          emit_line(pzt::cli::i18n::info_captured_at_heading());
+          emit_line("  " + pzt::cli::i18n::format_captured_at(info->captured_at));
         }
 
         // M1 increment 3:在真正的 `r` 交互(increment 6)和预览渲染
@@ -334,13 +384,11 @@ int cmd_open(const std::vector<std::string>& args) {
         // 被截断,例如"风格: Standard: MyStandard"就被切成了"风格:
         // Standard: MyStanda",看不全。
         row++;  // 空一行
-        move_cursor(row++, info_col);
-        write_stdout(pad_to(pzt::cli::i18n::info_style_label(), info_cols));
+        emit_line(pzt::cli::i18n::info_style_label());
         auto recipe_id = current_ref ? pzt::core::get_image_recipe(current_ref->id) : std::nullopt;
         auto style = recipe_id ? pzt::core::describe_recipe(*recipe_id) : std::nullopt;
         if (!style) {
-          move_cursor(row++, info_col);
-          write_stdout(pad_to(pzt::cli::i18n::info_style_none_label(), info_cols));
+          emit_line(pzt::cli::i18n::info_style_none_label());
         } else {
           // M1 increment 5:当前实际渲染的是风格化效果时标出来(`r v` 切
           // 到原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个
@@ -353,19 +401,32 @@ int cmd_open(const std::vector<std::string>& args) {
           // 缩进空格等宽替换,不破坏两级缩进的对齐。粗体转义码要包在
           // pad_to 算完显示宽度之后的结果外层,不能传给 pad_to 之前就
           // 包——不然转义字节会被 display_width 当成可见字符,算错截断/
-          // 补空格的位置。
+          // 补空格的位置。row 的边界检查跟 emit_line 一样,自己做 move_
+          // cursor/递增,不复用 emit_line——多了个粗体转义包装,写成单独
+          // 一份比塞参数进 emit_line 更直接。
           bool active = !show_original;
           auto emit_style_line = [&](const std::string& indent, const std::string& text) {
-            std::string marker = active ? indent.substr(0, indent.size() - 2) + "* " : indent;
-            std::string padded = pad_to(marker + text, info_cols);
-            write_stdout(active ? "\x1b[1m" + padded + "\x1b[0m" : padded);
+            if (row < meta_bottom_row) {
+              std::string marker = active ? indent.substr(0, indent.size() - 2) + "* " : indent;
+              std::string padded = pad_to(marker + text, info_cols);
+              move_cursor(row, info_col);
+              write_stdout(active ? "\x1b[1m" + padded + "\x1b[0m" : padded);
+            }
+            ++row;
           };
-          move_cursor(row++, info_col);
           emit_style_line("  ", style->preset_name);
           if (style->version_name) {
-            move_cursor(row++, info_col);
             emit_style_line("    ", *style->version_name);
           }
+        }
+      }
+
+      // 右侧面板下半 block:顶层按键菜单,一行一条,静态内容(不依赖当前
+      // 图片状态),超出可用行数的部分直接不画。
+      {
+        for (std::size_t i = 0; i < menu_lines.size() && static_cast<int>(i) < menu_rows; ++i) {
+          move_cursor(menu_top_row + static_cast<int>(i), info_col);
+          write_stdout(pad_to(menu_lines[i].text, info_cols));
         }
       }
 
@@ -385,19 +446,23 @@ int cmd_open(const std::vector<std::string>& args) {
         }
       }
 
-      // Banner:固定在图片/信息栏下方最后一行,边框内全宽。
+      // Banner:固定在图片/信息栏下方最后一行,边框内全宽。顶层按键提示大
+      // 部分挪到右侧菜单 block 了,但 q(退出)单独留在这一行常驻显示——
+      // 避免右侧菜单栏显示的时候,这一整行空着没有内容。有状态提示、或者
+      // space/g/r 这些次级菜单需要临时输入/确认时,内容临时换成那些(那
+      // 些调用点直接往这一行 move_cursor+write_stdout,不需要这次改动)。
       move_cursor(banner_row, start_col + 1);
       showing_status = !status_override.empty();
       if (showing_status) {
-        // status_override 里的消息大多自带一个尾随空格(跟 kBannerText 的
-        // 视觉留白风格一致),直接拼接"  按任意键继续"会在两者之间留出一大
-        // 段空白,看起来像隔得很远——先去掉消息自己的尾随空格,用逗号衔接
-        // 而不是额外的空格。
+        // status_override 里的消息大多自带一个尾随空格(原来是跟banner
+        // 默认提示的视觉留白风格一致,现在这条只是延续同样的拼接方式),
+        // 直接拼接"  按任意键继续"会在两者之间留出一大段空白,看起来像隔
+        // 得很远——先去掉消息自己的尾随空格,用逗号衔接而不是额外的空格。
         std::string trimmed = status_override;
         while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
         write_stdout(pad_to(pzt::cli::i18n::msg_press_any_key_to_continue(trimmed), content_cols));
       } else {
-        write_stdout(pad_to(banner_text, content_cols));
+        write_stdout(pad_to(pzt::cli::i18n::nav_bar_text(), content_cols));
       }
       status_override.clear();  // 只显示这一帧,不管接下来按了什么键都恢复正常提示
 
@@ -565,6 +630,7 @@ int cmd_open(const std::vector<std::string>& args) {
         }
       } else if (c == ' ') {
         if (current_ref) {
+          highlight_active_menu_key(' ', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
           status_override = handle_space_key(*id, reject_tag_id, current_ref->id, banner_row,
                                               start_col, content_cols);
         }
@@ -576,6 +642,14 @@ int cmd_open(const std::vector<std::string>& args) {
         // 关切换(已经标了就摘掉):误按一下能直接再按一次撤销,不需要先
         // 开 space 菜单走摘除流程。
         if (current_ref) {
+          // x 是瞬时切换,不像 space/g/r 那样会停在一个交互提示上等用
+          // 户——加粗写出去之后如果立刻继续执行、下一帧又整屏重绘恢复正
+          // 常,这一下"闪"太快,人眼基本看不出来(真机反馈"按 x 没反应")。
+          // 主动停一小段时间,让这次加粗有机会被看见,再继续实际的打标
+          // 签/摘标签动作。
+          highlight_active_menu_key('x', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
+          usleep(150000);  // 150ms,肉眼可感知的"闪一下",但不会让人觉得卡顿
+
           auto current_tags = pzt::core::tags_for_image(current_ref->id);
           bool already_tagged = std::any_of(
               current_tags.begin(), current_tags.end(),
@@ -591,6 +665,7 @@ int cmd_open(const std::vector<std::string>& args) {
       } else if (c == 'g') {
         // g + 数字切换到只浏览该标签下图片的筛选视图,g + g 清除筛选回到
         // 完整项目——数字编号复用跟 space 菜单同一套 tags_for_menu。
+        highlight_active_menu_key('g', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
         auto tags = tags_for_menu(*id);
         auto decision = handle_g_key_prompt(reject_tag_id, tags, active_filter_tag_id,
                                              active_filter_tag_name, banner_row, start_col,
@@ -635,14 +710,19 @@ int cmd_open(const std::vector<std::string>& args) {
           }
           // 不在筛选中时 g+g 是空操作:不查库、不提示,静默——避免每次误
           // 按 g+g 在未筛选状态下也触发一次不必要的 list_images 查询。
+        } else if (decision.action == GKeyAction::Cancel) {
+          // decision.status 在 Esc 时是空字符串(静默),按了个不认识的
+          // 键时带一句"无效按键"提示——跟 r 键的 handle_r_key 保持一致,
+          // 见 handle_g_key_prompt 的说明。
+          status_override = decision.status;
         }
-        // Cancel:什么都不做,静默
       } else if (c == 'r') {
         // increment 6:完整的 `r` 前缀键交互,见 handle_r_key。应用/清除
         // 需要重新走一遍渲染(recipe_id 变了或者切到原图预览),交给
         // style_toggled 触发;创建/删除不影响当前图片的 recipe_id,不需
         // 要强制重画。
         if (current_ref) {
+          highlight_active_menu_key('r', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
           auto outcome =
               handle_r_key(current_ref->id, banner_row, start_col, content_cols);
           status_override = outcome.status;
@@ -658,6 +738,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // 顶层导出快捷键:就导出当前这一张,不需要标签。current_id 不变,
         // 跟 space/x/r 一样只走 status_override 原地刷新。
         if (current_ref) {
+          highlight_active_menu_key('e', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
           status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
                                                          banner_row, start_col, content_cols);
         }

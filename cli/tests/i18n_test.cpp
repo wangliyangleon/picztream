@@ -40,11 +40,17 @@ TEST_CASE("i18n localized text strings") {
   // 例之间重置它——测试结束前必须显式还原成默认值,不然这个用例执行顺序
   // 之后的任何东西都会意外看到 en。
   g_lang = Lang::zh;
-  CHECK(banner_text().find("上一张") != std::string::npos);
+  CHECK(!menu_lines().empty());
+  CHECK(menu_lines()[0].text.find("打标签") != std::string::npos);
+  CHECK(nav_bar_text().find("上一张") != std::string::npos);
+  CHECK(nav_bar_text().find("退出") != std::string::npos);
   CHECK(info_tags_label() == "标签:");
 
   g_lang = Lang::en;
-  CHECK(banner_text().find("Prev") != std::string::npos);
+  CHECK(!menu_lines().empty());
+  CHECK(menu_lines()[0].text.find("Tag") != std::string::npos);
+  CHECK(nav_bar_text().find("Prev") != std::string::npos);
+  CHECK(nav_bar_text().find("Quit") != std::string::npos);
   CHECK(info_tags_label() == "Tags:");
 
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例
