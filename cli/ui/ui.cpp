@@ -64,6 +64,18 @@ char prompt_and_read_key(const std::string& line, int banner_row, int start_col,
   return read_one_byte();
 }
 
+// space/g/r 顶层菜单选项一多(标签/预设列表长了)容易把字母/Esc 这些固定
+// 操作挤到看不见的地方——两行版本,line1(带编号的选项)/line2(字母/Esc)
+// 分开画,再读一个字节,语义跟单行版本一样。
+char prompt_and_read_key_2line(const std::string& line1, const std::string& line2, int banner_row,
+                                int start_col, int content_cols) {
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(line1, content_cols));
+  move_cursor(banner_row + 1, start_col + 1);
+  write_stdout(pad_to(line2, content_cols));
+  return read_one_byte();
+}
+
 // --debug 模式下,debug 面板的内容来自后台 prefetch 线程往 stderr 打的日
 // 志,不依附于任何按键——主循环原本完全阻塞在 read() 上,刚 open 一个项目
 // 时,当前这张图的解码日志还没写出来就已经画完这一帧,debug 面板要等用户

@@ -203,8 +203,11 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
     // 用户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变
     // (之前试过跟着状态变文案,反而更难读)。
     bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
-    std::string line = pzt::cli::i18n::recipe_menu_main_prompt(has_recipe, presets);
-    char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
+    // 预设一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
+    // 作,见 prompt_and_read_key_2line 的说明。
+    char c = prompt_and_read_key_2line(pzt::cli::i18n::recipe_menu_options_line(presets),
+                                        pzt::cli::i18n::recipe_menu_actions_line(has_recipe),
+                                        banner_row, start_col, content_cols);
     if (c == 'r' || c == '0') {
       auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
       if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_clear_failed()};

@@ -200,8 +200,11 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
   while (true) {
     auto tags = tags_for_menu(project_id);  // 每轮重新查,加/摘/删三个分支共用
 
-    std::string line = pzt::cli::i18n::tag_menu_main_prompt(tags);
-    char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
+    // 标签一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
+    // 作,见 prompt_and_read_key_2line 的说明。
+    char c = prompt_and_read_key_2line(pzt::cli::i18n::tag_menu_options_line(tags),
+                                        pzt::cli::i18n::tag_menu_actions_line(), banner_row,
+                                        start_col, content_cols);
     if (c == 'c') {
       std::string result = handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
       if (!result.empty()) {

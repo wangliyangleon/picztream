@@ -646,16 +646,24 @@ std::vector<MenuLine> menu_lines() {
   }
 }
 
-// 底部导航栏空闲时的常驻内容:h/l、j/k 这两组不会派生二级菜单的导航键,
-// 加上 q 退出——三者放一起,跟右侧 menu_lines()(都是会派生二级菜单的
-// 键)分开,两块各自逻辑一致。
-std::string nav_bar_text() {
+// 底部导航栏空闲时的常驻内容,分两行:h/l、j/k 这两组不会派生二级菜单的
+// 导航键放第一行,q 退出单独占第二行——不然第二行一直空着不好看,跟右侧
+// menu_lines()(都是会派生二级菜单的键)分开,两块各自逻辑一致。
+std::string nav_bar_line1() {
   if (g_lang == Lang::zh) {
     return " " + menu_item("h/l", "上一张/下一张") + "   " +
-           menu_item("j/k", "下一张/上一张未打标签") + "   " + menu_item("q", "退出") + " ";
+           menu_item("j/k", "下一张/上一张未打标签") + " ";
   } else {
     return " " + menu_item("h/l", "Prev/Next") + "   " +
-           menu_item("j/k", "Next/Prev Untagged") + "   " + menu_item("q", "Quit") + " ";
+           menu_item("j/k", "Next/Prev Untagged") + " ";
+  }
+}
+
+std::string nav_bar_line2() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("q", "退出") + " ";
+  } else {
+    return " " + menu_item("q", "Quit") + " ";
   }
 }
 
@@ -1004,31 +1012,25 @@ std::string tag_menu_add_failed() {
 }
 
 std::string
-tag_menu_main_prompt(const std::vector<pzt::core::TagSummary> &tags) {
+tag_menu_options_line(const std::vector<pzt::core::TagSummary> &tags) {
+  std::string line = " " + menu_item("0", reject_tag_label());
+  for (size_t i = 0; i < tags.size(); ++i) {
+    line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
+    if (tags[i].cap) {
+      line += "(" + std::to_string(tags[i].tagged_count) + "/" +
+              std::to_string(*tags[i].cap) + ")";
+    }
+  }
+  return line;
+}
+
+std::string tag_menu_actions_line() {
   if (g_lang == Lang::zh) {
-    std::string line = " " + menu_item("0", reject_tag_label());
-    for (size_t i = 0; i < tags.size(); ++i) {
-      line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
-      if (tags[i].cap) {
-        line += "(" + std::to_string(tags[i].tagged_count) + "/" +
-                std::to_string(*tags[i].cap) + ")";
-      }
-    }
-    line += "  " + menu_item("c", "新建") + "  " + menu_item("d", "删除") +
-            "  " + menu_item("-", "摘除") + "  " + menu_item("Esc", "取消");
-    return line;
+    return " " + menu_item("c", "新建") + "  " + menu_item("d", "删除") + "  " +
+           menu_item("-", "摘除") + "  " + menu_item("Esc", "取消");
   } else {
-    std::string line = " " + menu_item("0", reject_tag_label());
-    for (size_t i = 0; i < tags.size(); ++i) {
-      line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
-      if (tags[i].cap) {
-        line += "(" + std::to_string(tags[i].tagged_count) + "/" +
-                std::to_string(*tags[i].cap) + ")";
-      }
-    }
-    line += "  " + menu_item("c", "New") + "  " + menu_item("d", "Delete") +
-            "  " + menu_item("-", "Remove") + "  " + menu_item("Esc", "Cancel");
-    return line;
+    return " " + menu_item("c", "New") + "  " + menu_item("d", "Delete") + "  " +
+           menu_item("-", "Remove") + "  " + menu_item("Esc", "Cancel");
   }
 }
 
@@ -1115,25 +1117,21 @@ std::string filter_menu_export_success(int count, const std::string &name,
 }
 
 std::string
-filter_menu_main_prompt(const std::vector<pzt::core::TagSummary> &tags) {
+filter_menu_options_line(const std::vector<pzt::core::TagSummary> &tags) {
+  std::string line = " " + menu_item("0", reject_tag_label());
+  for (size_t i = 0; i < tags.size(); ++i) {
+    line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
+  }
+  return line;
+}
+
+std::string filter_menu_actions_line() {
   if (g_lang == Lang::zh) {
-    std::string line = " " + menu_item("g", "清除筛选") + "  " +
-                       menu_item("e", "导出") + "  " +
-                       menu_item("0", reject_tag_label());
-    for (size_t i = 0; i < tags.size(); ++i) {
-      line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
-    }
-    line += "  " + menu_item("Esc", "取消");
-    return line;
+    return " " + menu_item("g", "清除筛选") + "  " + menu_item("e", "导出") + "  " +
+           menu_item("Esc", "取消");
   } else {
-    std::string line = " " + menu_item("g", "Clear Filter") + "  " +
-                       menu_item("e", "Export") + "  " +
-                       menu_item("0", reject_tag_label());
-    for (size_t i = 0; i < tags.size(); ++i) {
-      line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
-    }
-    line += "  " + menu_item("Esc", "Cancel");
-    return line;
+    return " " + menu_item("g", "Clear Filter") + "  " + menu_item("e", "Export") + "  " +
+           menu_item("Esc", "Cancel");
   }
 }
 
@@ -1268,27 +1266,27 @@ std::string recipe_menu_create_success(const std::string &preset_name) {
 }
 
 std::string
-recipe_menu_main_prompt(bool has_recipe,
-                        const std::vector<pzt::core::PresetSummary> &presets) {
+recipe_menu_options_line(const std::vector<pzt::core::PresetSummary> &presets) {
+  std::string line;
+  for (size_t i = 0; i < presets.size(); ++i) {
+    if (i > 0) line += "  ";
+    line += menu_item(std::to_string(i + 1), presets[i].name);
+  }
+  return " " + line;
+}
+
+std::string recipe_menu_actions_line(bool has_recipe) {
   if (g_lang == Lang::zh) {
     std::string line = " " + menu_item("r", "清除");
-    if (has_recipe)
-      line += "  " + menu_item("v", "切换原图/风格化");
-    line += "  " + menu_item("c", "新建") + "  " + menu_item("d", "删除");
-    for (size_t i = 0; i < presets.size(); ++i) {
-      line += "  " + menu_item(std::to_string(i + 1), presets[i].name);
-    }
-    line += "  " + menu_item("Esc", "取消");
+    if (has_recipe) line += "  " + menu_item("v", "切换原图/风格化");
+    line += "  " + menu_item("c", "新建") + "  " + menu_item("d", "删除") + "  " +
+            menu_item("Esc", "取消");
     return line;
   } else {
     std::string line = " " + menu_item("r", "Clear");
-    if (has_recipe)
-      line += "  " + menu_item("v", "Toggle Original/Style");
-    line += "  " + menu_item("c", "New") + "  " + menu_item("d", "Delete");
-    for (size_t i = 0; i < presets.size(); ++i) {
-      line += "  " + menu_item(std::to_string(i + 1), presets[i].name);
-    }
-    line += "  " + menu_item("Esc", "Cancel");
+    if (has_recipe) line += "  " + menu_item("v", "Toggle Original/Style");
+    line += "  " + menu_item("c", "New") + "  " + menu_item("d", "Delete") + "  " +
+            menu_item("Esc", "Cancel");
     return line;
   }
 }

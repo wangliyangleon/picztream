@@ -42,15 +42,15 @@ TEST_CASE("i18n localized text strings") {
   g_lang = Lang::zh;
   CHECK(!menu_lines().empty());
   CHECK(menu_lines()[0].text.find("打标签") != std::string::npos);
-  CHECK(nav_bar_text().find("上一张") != std::string::npos);
-  CHECK(nav_bar_text().find("退出") != std::string::npos);
+  CHECK(nav_bar_line1().find("上一张") != std::string::npos);
+  CHECK(nav_bar_line2().find("退出") != std::string::npos);
   CHECK(info_tags_label() == "标签:");
 
   g_lang = Lang::en;
   CHECK(!menu_lines().empty());
   CHECK(menu_lines()[0].text.find("Tag") != std::string::npos);
-  CHECK(nav_bar_text().find("Prev") != std::string::npos);
-  CHECK(nav_bar_text().find("Quit") != std::string::npos);
+  CHECK(nav_bar_line1().find("Prev") != std::string::npos);
+  CHECK(nav_bar_line2().find("Quit") != std::string::npos);
   CHECK(info_tags_label() == "Tags:");
 
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例

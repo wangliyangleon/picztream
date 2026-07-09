@@ -105,8 +105,11 @@ struct MenuLine {
   std::string text;
 };
 std::vector<MenuLine> menu_lines();
-// 底部导航栏空闲时的常驻内容:h/l、j/k、q。
-std::string nav_bar_text();
+// 底部导航栏空闲时的常驻内容,分两行画(跟 space/g/r 的顶层二级菜单借用
+// 同一块两行的 banner 区域):第一行 h/l、j/k,第二行 q——不这样分的话第
+// 二行会一直空着,不好看。
+std::string nav_bar_line1();
+std::string nav_bar_line2();
 std::string info_filter_label(const std::string& tag_name);
 std::string info_tags_label();
 std::string info_none_label();
@@ -151,7 +154,11 @@ std::string tag_menu_delete_confirm(const std::string& name, long long count);
 std::string tag_menu_deleted(const std::string& name);
 std::string tag_menu_delete_failed();
 std::string tag_menu_add_failed();
-std::string tag_menu_main_prompt(const std::vector<pzt::core::TagSummary>& tags);
+// space 顶层菜单拆成两行(见 prompt_and_read_key_2line):第一行带编号的
+// 标签选项(0:废片 + 1-9 动态标签),第二行是固定的字母操作。标签一多,
+// 单行版本会把第二行这几个操作挤到看不见的地方。
+std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags);
+std::string tag_menu_actions_line();
 
 // Filter Menu
 std::string filter_menu_export_prefix();
@@ -162,7 +169,9 @@ std::string filter_menu_export_io_error(const std::string& path);
 std::string filter_menu_export_failed();
 std::string filter_menu_export_no_images(const std::string& name);
 std::string filter_menu_export_success(int count, const std::string& name, const std::string& path, bool created_folder, size_t skipped_count);
-std::string filter_menu_main_prompt(const std::vector<pzt::core::TagSummary>& tags);
+// g 顶层菜单拆成两行,跟 tag_menu_options_line/actions_line 同样的理由。
+std::string filter_menu_options_line(const std::vector<pzt::core::TagSummary>& tags);
+std::string filter_menu_actions_line();
 
 // Recipe Menu
 std::string recipe_menu_select_preset_prefix();
@@ -181,7 +190,9 @@ std::string recipe_menu_input_wb_b();
 std::string recipe_menu_input_name();
 std::string recipe_menu_create_failed();
 std::string recipe_menu_create_success(const std::string& preset_name);
-std::string recipe_menu_main_prompt(bool has_recipe, const std::vector<pzt::core::PresetSummary>& presets);
+// r 顶层菜单拆成两行,跟 tag_menu_options_line/actions_line 同样的理由。
+std::string recipe_menu_options_line(const std::vector<pzt::core::PresetSummary>& presets);
+std::string recipe_menu_actions_line(bool has_recipe);
 std::string recipe_menu_clear_failed();
 std::string recipe_menu_apply_failed();
 std::string recipe_menu_invalid_key();

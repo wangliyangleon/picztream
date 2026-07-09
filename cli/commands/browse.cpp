@@ -145,7 +145,12 @@ int cmd_open(const std::vector<std::string>& args) {
   const int kDebugRows = 8;
   std::size_t frame = 0;
   const int kImageId = 1;
-  const int kBannerRows = 1;
+  // 平时(空闲提示/单行状态提示)只用第一行(banner_row);space/g/r 这三
+  // 个顶层选项多、容易一行放不下的二级菜单,拆成两行——第一行放带编号的
+  // 选项,第二行放字母/Esc 这些固定操作,见 tag_menu.cpp/filter_menu.cpp/
+  // recipe_menu.cpp 里对应的 prompt_and_read_key_2line 调用。第二行不用
+  // 的时候留空,不常驻显示任何东西。
+  const int kBannerRows = 2;
   // 顶层按键菜单挪到右侧面板下半 block,一行一条,取代原来挤在底部 banner
   // 里的一整行文案。q 退出单独留在 banner 那一行常驻显示,不占右侧菜单的
   // 位置,也避免空闲时底部整行空着。
@@ -306,8 +311,8 @@ int cmd_open(const std::vector<std::string>& args) {
           row += kDebugRows;
           draw_hline(row++, start_col, ui_cols, "├", "┤");
         }
-        draw_vlines(row, start_col, ui_cols);
-        row++;
+        for (int i = 0; i < kBannerRows; ++i) draw_vlines(row + i, start_col, ui_cols);
+        row += kBannerRows;
         draw_hline(row, start_col, ui_cols, "└", "┘");
       }
       int debug_top_row = 2 + top_rows + 1;  // 图片区 + 分隔线之后
@@ -446,11 +451,11 @@ int cmd_open(const std::vector<std::string>& args) {
         }
       }
 
-      // Banner:固定在图片/信息栏下方最后一行,边框内全宽。顶层按键提示大
-      // 部分挪到右侧菜单 block 了,但 q(退出)单独留在这一行常驻显示——
-      // 避免右侧菜单栏显示的时候,这一整行空着没有内容。有状态提示、或者
-      // space/g/r 这些次级菜单需要临时输入/确认时,内容临时换成那些(那
-      // 些调用点直接往这一行 move_cursor+write_stdout,不需要这次改动)。
+      // Banner:固定在图片/信息栏下方最后两行,边框内全宽。顶层按键提示大
+      // 部分挪到右侧菜单 block 了,导航键(h/l、j/k)和 q 退出分两行常驻显
+      // 示在这里——避免第二行一直空着不好看。有状态提示、或者 space/g/r
+      // 这些次级菜单需要临时输入/确认时,两行的内容临时换成那些(那些调
+      // 用点直接往这两行 move_cursor+write_stdout,不需要这次改动)。
       move_cursor(banner_row, start_col + 1);
       showing_status = !status_override.empty();
       if (showing_status) {
@@ -458,11 +463,16 @@ int cmd_open(const std::vector<std::string>& args) {
         // 默认提示的视觉留白风格一致,现在这条只是延续同样的拼接方式),
         // 直接拼接"  按任意键继续"会在两者之间留出一大段空白,看起来像隔
         // 得很远——先去掉消息自己的尾随空格,用逗号衔接而不是额外的空格。
+        // 状态提示本身就是单行,第二行照样清空,不跟着凑一行内容。
         std::string trimmed = status_override;
         while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
         write_stdout(pad_to(pzt::cli::i18n::msg_press_any_key_to_continue(trimmed), content_cols));
+        move_cursor(banner_row + 1, start_col + 1);
+        write_stdout(pad_to("", content_cols));
       } else {
-        write_stdout(pad_to(pzt::cli::i18n::nav_bar_text(), content_cols));
+        write_stdout(pad_to(pzt::cli::i18n::nav_bar_line1(), content_cols));
+        move_cursor(banner_row + 1, start_col + 1);
+        write_stdout(pad_to(pzt::cli::i18n::nav_bar_line2(), content_cols));
       }
       status_override.clear();  // 只显示这一帧,不管接下来按了什么键都恢复正常提示
 

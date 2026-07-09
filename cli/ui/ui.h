@@ -36,6 +36,14 @@ char read_one_byte();
 // 把提示行画到 banner 那一行(补齐到 content_cols),再读一个字节。
 char prompt_and_read_key(const std::string& line, int banner_row, int start_col, int content_cols);
 
+// 两行版本:line1 画在 banner_row,line2 画在 banner_row+1(调用方所在的
+// 布局要预留这第二行,见 cli/commands/browse.cpp 的 kBannerRows),读一个
+// 字节的语义跟单行版本一样。用于选项太多、一行放不下的顶层二级菜单(带
+// 编号的选项 + 字母/Esc 这些固定操作分两行放),不是所有 prompt 都需要
+// 这个,大多数子菜单/确认提示继续用单行版本。
+char prompt_and_read_key_2line(const std::string& line1, const std::string& line2, int banner_row,
+                                int start_col, int content_cols);
+
 // poll() stdin,timeout_ms 内有可读数据返回 true(--debug 面板刷新用)。
 bool stdin_ready(int timeout_ms);
 

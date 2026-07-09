@@ -87,8 +87,11 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
                                   std::optional<pzt::core::TagId> active_filter_tag_id,
                                   const std::string& active_filter_tag_name, int banner_row,
                                   int start_col, int content_cols) {
-  std::string line = pzt::cli::i18n::filter_menu_main_prompt(tags);
-  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
+  // 标签一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
+  // 作,见 prompt_and_read_key_2line 的说明。
+  char c = prompt_and_read_key_2line(pzt::cli::i18n::filter_menu_options_line(tags),
+                                      pzt::cli::i18n::filter_menu_actions_line(), banner_row,
+                                      start_col, content_cols);
   if (c == 'g') return {GKeyAction::ClearFilter, {}, "", ""};
   if (c == 'e') {
     std::string status = handle_g_export_flow(reject_tag_id, tags, active_filter_tag_id,
