@@ -192,27 +192,45 @@ std::string handle_add_tag_result(pzt::core::TagId tag_id, pzt::core::ImageId im
 std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId reject_tag_id,
                               pzt::core::ImageId image_id, int banner_row, int start_col,
                               int content_cols) {
-  auto tags = tags_for_menu(project_id);  // 只查一次,加/摘/删三个分支共用
+  // `c` 新建标签之后留在这个循环里,不管成功/失败/中途 Esc 取消都回到标签
+  // 列表重新显示(新建成功的话,tags_for_menu 下一轮就能查到、直接出现在
+  // 可选列表里)——用户建完一个新标签,大概率是想紧接着把它打上去,不该
+  // 被退回一级菜单还得重新按一次 space。其它分支(加/摘/删标签)维持原
+  // 样,做完就返回,不留在这个循环里。
+  while (true) {
+    auto tags = tags_for_menu(project_id);  // 每轮重新查,加/摘/删三个分支共用
 
-  std::string line = pzt::cli::i18n::tag_menu_main_prompt(tags);
-  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
-  if (c == 'c') return handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
-  if (c == '-') {
-    return handle_remove_tag_submenu(tags, reject_tag_id, image_id, banner_row, start_col,
-                                      content_cols);
+    std::string line = pzt::cli::i18n::tag_menu_main_prompt(tags);
+    char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
+    if (c == 'c') {
+      std::string result = handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
+      if (!result.empty()) {
+        // 跟 cmd_open 里 status_override 的处理逻辑一致:消息自带尾随空
+        // 格,先去掉再拼"，按任意键继续"，不然中间会留一大段空白。
+        std::string trimmed = result;
+        while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+        prompt_and_read_key(pzt::cli::i18n::msg_press_any_key_to_continue(trimmed), banner_row,
+                             start_col, content_cols);
+      }
+      continue;
+    }
+    if (c == '-') {
+      return handle_remove_tag_submenu(tags, reject_tag_id, image_id, banner_row, start_col,
+                                        content_cols);
+    }
+    if (c == 'd') return handle_delete_tag_submenu(tags, banner_row, start_col, content_cols);
+    if (c == '0') {
+      return handle_add_tag_result(reject_tag_id, image_id, banner_row, start_col, content_cols);
+    }
+    if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
+      const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
+      return handle_add_tag_result(chosen.id, image_id, banner_row, start_col, content_cols);
+    }
+    if (c == 0x1B) return "";  // Esc,静默
+    // 不是 Esc,也不对应任何选项——跟 handle_r_key 一致,给一句反馈而不是完
+    // 全没反应(真机反馈:直接退回一级菜单,分不清是没按对还是没反应)。
+    return pzt::cli::i18n::recipe_menu_invalid_key();
   }
-  if (c == 'd') return handle_delete_tag_submenu(tags, banner_row, start_col, content_cols);
-  if (c == '0') {
-    return handle_add_tag_result(reject_tag_id, image_id, banner_row, start_col, content_cols);
-  }
-  if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
-    const auto& chosen = tags[static_cast<std::size_t>(c - '1')];
-    return handle_add_tag_result(chosen.id, image_id, banner_row, start_col, content_cols);
-  }
-  if (c == 0x1B) return "";  // Esc,静默
-  // 不是 Esc,也不对应任何选项——跟 handle_r_key 一致,给一句反馈而不是完
-  // 全没反应(真机反馈:直接退回一级菜单,分不清是没按对还是没反应)。
-  return pzt::cli::i18n::recipe_menu_invalid_key();
 }
 
 }  // namespace pzt::cli::menu

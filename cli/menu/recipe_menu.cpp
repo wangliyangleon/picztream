@@ -191,46 +191,62 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
 
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
                          int content_cols) {
-  auto presets = presets_for_menu();
-  // `v`(原图/风格化切换)只在这张图确实应用了风格时才有意义、才显示这个
-  // 选项——没有风格可言时,切换没有任何视觉效果,不该占一个选项误导用
-  // 户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变(之
-  // 前试过跟着状态变文案,反而更难读)。
-  bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
-  std::string line = pzt::cli::i18n::recipe_menu_main_prompt(has_recipe, presets);
-  char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
-  if (c == 'r' || c == '0') {
-    auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
-    if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_clear_failed()};
-    return {RKeyAction::Cleared, ""};
+  // `c` 新建 version 之后留在这个循环里,不管成功/失败/中途 Esc 取消都回
+  // 到预设列表重新显示(跟 handle_space_key 的 `c` 分支同一个理由:建完
+  // 一个新 version,大概率是想紧接着把它应用上去,不该被退回一级菜单)。
+  // 其它分支(应用/清除/切换/删除)维持原样,做完就返回,不留在这个循环
+  // 里。
+  while (true) {
+    auto presets = presets_for_menu();
+    // `v`(原图/风格化切换)只在这张图确实应用了风格时才有意义、才显示这
+    // 个选项——没有风格可言时,切换没有任何视觉效果,不该占一个选项误导
+    // 用户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变
+    // (之前试过跟着状态变文案,反而更难读)。
+    bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
+    std::string line = pzt::cli::i18n::recipe_menu_main_prompt(has_recipe, presets);
+    char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
+    if (c == 'r' || c == '0') {
+      auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
+      if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_clear_failed()};
+      return {RKeyAction::Cleared, ""};
+    }
+    if (c == 'v' && has_recipe) {
+      return {RKeyAction::Toggled, ""};
+    }
+    if (c == 'c') {
+      std::string result = handle_r_create_flow(banner_row, start_col, content_cols);
+      if (!result.empty()) {
+        // 跟 cmd_open 里 status_override 的处理逻辑一致:消息自带尾随空
+        // 格,先去掉再拼"，按任意键继续"，不然中间会留一大段空白。
+        std::string trimmed = result;
+        while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+        prompt_and_read_key(pzt::cli::i18n::msg_press_any_key_to_continue(trimmed), banner_row,
+                             start_col, content_cols);
+      }
+      continue;
+    }
+    if (c == 'd') {
+      std::string message;
+      auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols, &message);
+      if (!preset) return {RKeyAction::Cancelled, message};
+      return {RKeyAction::Handled,
+              handle_pick_version_to_delete_prompt(*preset, banner_row, start_col, content_cols)};
+    }
+    if (c == 0x1B) return {RKeyAction::Cancelled, ""};  // Esc,静默
+    if (c >= '1' && c <= static_cast<char>('0' + presets.size())) {
+      const auto& preset = presets[static_cast<std::size_t>(c - '1')];
+      std::string message;
+      auto recipe_id = handle_pick_version_to_apply_prompt(preset, banner_row, start_col,
+                                                            content_cols, &message);
+      if (!recipe_id) return {RKeyAction::Cancelled, message};
+      auto result = pzt::core::set_image_recipe(image_id, *recipe_id);
+      if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_apply_failed()};
+      return {RKeyAction::Applied, ""};
+    }
+    // 不是 Esc,也不对应任何选项(比如按了个字母、或者超出预设编号范围)——
+    // 跟上面几个子菜单一致,给一句反馈而不是完全没反应。
+    return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_invalid_key()};
   }
-  if (c == 'v' && has_recipe) {
-    return {RKeyAction::Toggled, ""};
-  }
-  if (c == 'c') {
-    return {RKeyAction::Handled, handle_r_create_flow(banner_row, start_col, content_cols)};
-  }
-  if (c == 'd') {
-    std::string message;
-    auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols, &message);
-    if (!preset) return {RKeyAction::Cancelled, message};
-    return {RKeyAction::Handled,
-            handle_pick_version_to_delete_prompt(*preset, banner_row, start_col, content_cols)};
-  }
-  if (c == 0x1B) return {RKeyAction::Cancelled, ""};  // Esc,静默
-  if (c >= '1' && c <= static_cast<char>('0' + presets.size())) {
-    const auto& preset = presets[static_cast<std::size_t>(c - '1')];
-    std::string message;
-    auto recipe_id = handle_pick_version_to_apply_prompt(preset, banner_row, start_col,
-                                                          content_cols, &message);
-    if (!recipe_id) return {RKeyAction::Cancelled, message};
-    auto result = pzt::core::set_image_recipe(image_id, *recipe_id);
-    if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_apply_failed()};
-    return {RKeyAction::Applied, ""};
-  }
-  // 不是 Esc,也不对应任何选项(比如按了个字母、或者超出预设编号范围)——
-  // 跟上面几个子菜单一致,给一句反馈而不是完全没反应。
-  return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_invalid_key()};
 }
 
 }  // namespace pzt::cli::menu
