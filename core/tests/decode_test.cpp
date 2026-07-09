@@ -14,9 +14,11 @@
 #include "core/decode/decode.h"
 
 namespace fs = std::filesystem;
+using pzt::core::decode::decode_jpeg_bytes;
 using pzt::core::decode::decode_jpeg_file;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
+using pzt::core::decode::encode_jpeg_bytes;
 using pzt::core::decode::encode_jpeg_file;
 using pzt::core::decode::read_jpeg_capture_time;
 using pzt::core::decode::resize_rgba;
@@ -234,6 +236,33 @@ TEST_CASE("encode_jpeg_file reports EncodeFailed for non-positive dimensions") {
   img.height = 0;
   auto path = fresh_tmp_dir() / "should_not_exist.jpg";
   CHECK(!encode_jpeg_file(img, path.string()).ok());
+}
+
+TEST_CASE("encode_jpeg_bytes round-trips through decode_jpeg_bytes") {
+  // M3:core::ai 把预览图编码成字节直接塞进 HTTP body,不落地临时文件——
+  // 跟 encode_jpeg_file 同一套 CGImage 构造逻辑,只是终点换成内存,这里验
+  // 证的是那条路径本身能正确来回,不是重新验证 JPEG 编码正确性(上面的
+  // encode_jpeg_file 测试已经覆盖过)。
+  auto src = make_solid(40, 30, 10, 200, 100);
+
+  auto encoded = encode_jpeg_bytes(src);
+  REQUIRE(encoded.ok());
+  CHECK(!encoded.value().empty());
+
+  auto decoded = decode_jpeg_bytes(encoded.value());
+  REQUIRE(decoded.ok());
+  CHECK(decoded.value().width == 40);
+  CHECK(decoded.value().height == 30);
+  CHECK(std::abs(static_cast<int>(decoded.value().rgba[0]) - 10) <= 5);
+  CHECK(std::abs(static_cast<int>(decoded.value().rgba[1]) - 200) <= 5);
+  CHECK(std::abs(static_cast<int>(decoded.value().rgba[2]) - 100) <= 5);
+}
+
+TEST_CASE("encode_jpeg_bytes reports EncodeFailed for non-positive dimensions") {
+  DecodedImage img;
+  img.width = 0;
+  img.height = 0;
+  CHECK(!encode_jpeg_bytes(img).ok());
 }
 
 TEST_CASE("read_jpeg_capture_time parses EXIF DateTimeOriginal using local-time semantics") {

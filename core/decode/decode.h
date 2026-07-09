@@ -60,6 +60,13 @@ enum class EncodeError {
 Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::string& path,
                                             double quality = 0.9);
 
+// M3：跟 encode_jpeg_file 同一套 CGImage 构造逻辑，只是终点从
+// CGImageDestinationCreateWithURL(写文件)换成 CGImageDestinationCreateWithData
+// (写内存)，供 core::ai 把预览图编码成字节直接塞进 HTTP body，不用为了
+// 传给 AI 单独落地一个临时文件。
+Result<std::vector<std::uint8_t>, EncodeError> encode_jpeg_bytes(const DecodedImage& img,
+                                                                   double quality = 0.9);
+
 // EXIF DateTimeOriginal，只读容器 metadata 不解码像素
 // （CGImageSourceCopyPropertiesAtIndex 实测几毫秒量级）。文件打不开、没
 // 有 EXIF、没有这个字段，统一返回 nullopt——跟 raw::read_capture_time 是

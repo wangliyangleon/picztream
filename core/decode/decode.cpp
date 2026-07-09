@@ -166,6 +166,60 @@ Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::s
   return Result<void, EncodeError>::Ok();
 }
 
+Result<std::vector<std::uint8_t>, EncodeError> encode_jpeg_bytes(const DecodedImage& img,
+                                                                   double quality) {
+  using BytesResult = Result<std::vector<std::uint8_t>, EncodeError>;
+  if (img.width <= 0 || img.height <= 0) {
+    return BytesResult::Err(EncodeError::EncodeFailed);
+  }
+
+  CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+  const auto bitmap_info = static_cast<CGBitmapInfo>(
+      static_cast<std::uint32_t>(kCGImageAlphaNoneSkipLast) |
+      static_cast<std::uint32_t>(kCGBitmapByteOrder32Big));
+  CGDataProviderRef provider =
+      CGDataProviderCreateWithData(nullptr, img.rgba.data(), img.rgba.size(), nullptr);
+  CGImageRef cg_img = CGImageCreate(img.width, img.height, 8, 32, img.width * 4, cs, bitmap_info,
+                                     provider, nullptr, false, kCGRenderingIntentDefault);
+  CGDataProviderRelease(provider);
+  CGColorSpaceRelease(cs);
+  if (!cg_img) return BytesResult::Err(EncodeError::EncodeFailed);
+
+  CFMutableDataRef data = CFDataCreateMutable(nullptr, 0);
+  CGImageDestinationRef dest = CGImageDestinationCreateWithData(data, CFSTR("public.jpeg"), 1, nullptr);
+  if (!dest) {
+    CFRelease(data);
+    CGImageRelease(cg_img);
+    return BytesResult::Err(EncodeError::EncodeFailed);
+  }
+
+  CFNumberRef quality_value = CFNumberCreate(nullptr, kCFNumberDoubleType, &quality);
+  const void* keys[] = {kCGImageDestinationLossyCompressionQuality};
+  const void* values[] = {quality_value};
+  CFDictionaryRef options =
+      CFDictionaryCreate(nullptr, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+                          &kCFTypeDictionaryValueCallBacks);
+  CFRelease(quality_value);
+
+  CGImageDestinationAddImage(dest, cg_img, options);
+  bool ok = CGImageDestinationFinalize(dest);
+
+  CFRelease(options);
+  CFRelease(dest);
+  CGImageRelease(cg_img);
+
+  if (!ok) {
+    CFRelease(data);
+    return BytesResult::Err(EncodeError::EncodeFailed);
+  }
+
+  const std::uint8_t* bytes = CFDataGetBytePtr(data);
+  CFIndex length = CFDataGetLength(data);
+  std::vector<std::uint8_t> out(bytes, bytes + length);
+  CFRelease(data);
+  return BytesResult::Ok(std::move(out));
+}
+
 std::optional<std::int64_t> read_jpeg_capture_time(const std::string& path) {
   CFStringRef cf_path = CFStringCreateWithCString(nullptr, path.c_str(), kCFStringEncodingUTF8);
   CFURLRef url = CFURLCreateWithFileSystemPath(nullptr, cf_path, kCFURLPOSIXPathStyle, false);
