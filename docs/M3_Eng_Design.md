@@ -104,15 +104,17 @@ struct ScoreResult {
 
 // extra_guidance:用户在 `:` 里输入的原始文本，可能是空字符串(用户直接
 // 回车，没有额外指引，这也是合法输入，不是错误)。内部先拼出完整的评分
-// 任务描述——固定模板("从色彩、构图等多个维度评价这张照片的审美……")
-// 后面跟一段"额外指引：{extra_guidance}"(extra_guidance 为空时省略这一
-// 段，不留一个空的"额外指引："在 prompt 里)——作为 user_prompt 传给
-// request_json；schema_instruction 相应描述两个字段(score、comment)。
-// 从结果 JSON 里取这两个字段、校验 score 落在 1-100——取不到字段、类型
-// 不对、或者 score 越界，都算失败，不写库。RequestError 直接映射到同名
-// 的 ScoreError，加一个 request_json 那层不知道的 OutOfRange。模板文案
-// 跟着 g_lang 走(呼应项目其它所有 UI 文案的 zh/en 双语惯例)，具体措辞是
-// 实现细节，这份文档不锁定逐字文本。
+// 任务描述——固定模板("evaluate this photo's aesthetics across color,
+// composition, ……")后面跟一段"Additional guidance: {extra_guidance}"
+// (extra_guidance 为空时省略这一段，不留一个空标签在 prompt 里)——作为
+// user_prompt 传给 request_json；schema_instruction 相应描述两个字段
+// (score、comment)。从结果 JSON 里取这两个字段、校验 score 落在
+// 1-100——取不到字段、类型不对、或者 score 越界，都算失败，不写库。
+// RequestError 直接映射到同名的 ScoreError，加一个 request_json 那层不
+// 知道的 OutOfRange。模板本身是发给 AI 的系统层指令，不会展示给用户看，
+// 固定用英文，不跟着 cli::i18n 的 zh/en 走（用户的额外指引本身可以是任
+// 何语言，模型能处理，只是包住它的固定框架文案是英文）；具体措辞是实现
+// 细节，这份文档不锁定逐字文本。
 Result<ScoreResult, ScoreError> request_score(const decode::DecodedImage& image,
                                                const std::string& extra_guidance,
                                                Provider provider);
