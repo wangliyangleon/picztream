@@ -85,6 +85,12 @@ struct ImageInfo {
   std::string kind;                              // "jpeg" | "raw"
   std::optional<std::string> preview_cache_path;  // kind="raw" 且缓存已生成时有值(绝对路径)
   std::optional<std::int64_t> captured_at;        // 拍摄时间(Unix 秒数)，提取失败/没有这个信息时为空
+  // M3 审美评分结果，见 docs/M3_Eng_Design.md"数据库 Schema 设计"一节。
+  // 四个字段同生共死——评过分就都有值，没评过/评分失败就都是 nullopt。
+  std::optional<int> ai_score;                    // 1-100
+  std::optional<std::string> ai_score_comment;    // 简短点评
+  std::optional<std::string> ai_score_prompt;     // 用户输入的"额外指引"原文，可能是空字符串
+  std::optional<std::string> ai_score_provider;   // "claude" | "gemini"
 };
 
 // 给 cli 调试命令把"图片相对路径"翻译成内部 id 用。

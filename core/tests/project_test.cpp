@@ -364,6 +364,51 @@ TEST_CASE("rescan_project backfills captured_at only for rows that don't already
   sqlite3_finalize(check_stmt);
 }
 
+TEST_CASE("get_image returns nullopt ai_score fields by default, reads them back once set") {
+  // M3：这一步只打通 images 表的四个新列 + ImageInfo/get_image 的读写通
+  // 道，谁来写(core::ai::ScoreWorker)是下一个 increment 的事，这里直接
+  // 用 SQL 摆数据，不依赖真实 AI 调用。
+  auto db = Database::open_at(fresh_db_path("ai_score_fields"));
+  auto photos = fresh_photo_dir("ai_score_fields");
+  touch(photos / "a.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto a_id = find_image_by_path(db, created.value(), "a.jpg");
+  REQUIRE(a_id.has_value());
+
+  auto before = get_image(db, *a_id);
+  REQUIRE(before.has_value());
+  CHECK(!before->ai_score.has_value());
+  CHECK(!before->ai_score_comment.has_value());
+  CHECK(!before->ai_score_prompt.has_value());
+  CHECK(!before->ai_score_provider.has_value());
+
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(),
+                      "UPDATE images SET ai_score = ?, ai_score_comment = ?, ai_score_prompt = ?, "
+                      "ai_score_provider = ? WHERE id = ?;",
+                      -1, &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, 87);
+  sqlite3_bind_text(stmt, 2, "Warm tones, slightly soft focus.", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, "focus on the crop", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, "claude", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, *a_id);
+  REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+
+  auto after = get_image(db, *a_id);
+  REQUIRE(after.has_value());
+  REQUIRE(after->ai_score.has_value());
+  CHECK(*after->ai_score == 87);
+  REQUIRE(after->ai_score_comment.has_value());
+  CHECK(*after->ai_score_comment == "Warm tones, slightly soft focus.");
+  REQUIRE(after->ai_score_prompt.has_value());
+  CHECK(*after->ai_score_prompt == "focus on the crop");
+  REQUIRE(after->ai_score_provider.has_value());
+  CHECK(*after->ai_score_provider == "claude");
+}
+
 TEST_CASE("rescan_project is idempotent - rescanning again with no new files adds nothing") {
   auto db = Database::open_at(fresh_db_path("rescan_idempotent"));
   auto photos = fresh_photo_dir("rescan_idempotent");

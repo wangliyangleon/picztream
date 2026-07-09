@@ -383,7 +383,8 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   Stmt stmt(db.handle(),
             "SELECT id, project_id, file_path, file_name, file_size, kind, preview_cache_path, "
-            "captured_at FROM images WHERE id = ?;");
+            "captured_at, ai_score, ai_score_comment, ai_score_prompt, ai_score_provider "
+            "FROM images WHERE id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, id);
   if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
 
@@ -399,6 +400,18 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   }
   if (sqlite3_column_type(stmt.get(), 7) != SQLITE_NULL) {
     info.captured_at = sqlite3_column_int64(stmt.get(), 7);
+  }
+  if (sqlite3_column_type(stmt.get(), 8) != SQLITE_NULL) {
+    info.ai_score = static_cast<int>(sqlite3_column_int64(stmt.get(), 8));
+  }
+  if (sqlite3_column_type(stmt.get(), 9) != SQLITE_NULL) {
+    info.ai_score_comment = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 9));
+  }
+  if (sqlite3_column_type(stmt.get(), 10) != SQLITE_NULL) {
+    info.ai_score_prompt = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 10));
+  }
+  if (sqlite3_column_type(stmt.get(), 11) != SQLITE_NULL) {
+    info.ai_score_provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 11));
   }
   return info;
 }

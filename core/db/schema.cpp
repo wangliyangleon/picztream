@@ -158,6 +158,14 @@ void initialize_schema(sqlite3* conn) {
   // 在 0（未开启），跟 M0/M1 时代"没有 RAW 概念"的项目语义一致。一旦被
   // 打开过就不会自动关闭，没有对应的取消开关。
   ensure_column(conn, "projects", "support_raw", "support_raw INTEGER NOT NULL DEFAULT 0");
+  // M3：审美评分结果，见 docs/M3_Eng_Design.md"数据库 Schema 设计"一节。四
+  // 列都可空——没评过分、或者评分请求失败，都落在 NULL，不是错误状态；四
+  // 列同生共死，要么都有值要么都没有，不会出现只有 ai_score 没有其它三个
+  // 的情况(core::ai::ScoreWorker 写库时会一起写)。
+  ensure_column(conn, "images", "ai_score", "ai_score INTEGER");
+  ensure_column(conn, "images", "ai_score_comment", "ai_score_comment TEXT");
+  ensure_column(conn, "images", "ai_score_prompt", "ai_score_prompt TEXT");
+  ensure_column(conn, "images", "ai_score_provider", "ai_score_provider TEXT");
 }
 
 }  // namespace pzt::core::db
