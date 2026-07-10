@@ -13,6 +13,7 @@ add_executable(core_tests
   ai_test.cpp
   evaluation_test.cpp
   evaluation_worker_test.cpp
+  dedup_test.cpp
 )
 
 target_include_directories(core_tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/doctest)

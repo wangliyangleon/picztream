@@ -46,12 +46,17 @@ using DedupProgressFn = std::function<void(int done, int total)>;
 // 在给定的一批图片里找重复组(只包含真正找到重复的组，落单的图片不会出
 // 现在返回值里)。image_ids 是调用方已经解析好的范围——"整个项目"还是
 // "带某个标签"由调用方决定(core::list_images/core::filter_by_tag)，这
-// 个函数不知道、也不需要知道范围是怎么来的。
+// 个函数不知道、也不需要知道范围是怎么来的。root_path 是这批图片所属项
+// 目的根目录(project::ProjectSummary::root_path)——images 表的
+// file_path 是相对路径，要解码出像素才能算哈希，必须先拼出绝对路径，跟
+// core::ai::EvaluationWorker 里 resolve_path 是同一个逻辑，各自维护一份
+// (就几行，不共享)。
 //
 // 算法：
-// 1. 查询这批图片的(image_id, captured_at, file_size)，按 captured_at
-//    排序；captured_at 为 NULL 的图片直接跳过，不参与任何分组(没有时间
-//    信息就没法判断"是不是紧挨着拍的"，硬要全量比对代价太高)。
+// 1. 查询这批图片的(image_id, captured_at, file_path, kind,
+//    preview_cache_path)，按 captured_at 排序；captured_at 为 NULL 的图
+//    片直接跳过，不参与任何分组(没有时间信息就没法判断"是不是紧挨着拍
+//    的"，硬要全量比对代价太高)。
 // 2. 滑动窗口分候选簇：相邻两张图片的 captured_at 差值超过
 //    time_window_seconds 就切一个新簇——候选簇是"presumably 同一次连
 //    拍/包围曝光"的粗筛，不是最终分组结果。
@@ -59,20 +64,25 @@ using DedupProgressFn = std::function<void(int done, int total)>;
 //    (union-find)合并——用并查集而不是简单的"每张只跟第一张比"，是为
 //    了处理 A 像 B、B 像 C、但 A 跟 C 的距离刚好超过阈值这种传递性情
 //    况，仍然应该归成一组。
+//    单张图片解码失败时跳过(不参与任何合并，日志打到 stderr)，不让一
+//    张坏图拖垮整簇的比对——这一点原设计没写，实现阶段补上：真实照片解
+//    码失败不该是个未定义行为。
 // 4. 并查集结果里，成员数 >= 2 的集合才算一个"重复组"输出；成员数
-//    1(没有跟任何其它图片凑到一起)的不输出。
+//    1(没有跟任何其它图片凑到一起，或者解码失败被跳过后只剩自己)的不
+//    输出。
 // 5. 组内选 keep_id：只有这一组内**所有**成员都跑过选片辅助评估
 //    (core::project::get_image(...).evaluation 对组里每一张都有值)时，
 //    才按 overall_score() 最高的选——"选质量最高的"这个判断本身依赖评
 //    估结果，只要这一组里有一张没评估过就不比较分数。这一组里有任意一
 //    张没评估过(不管是这一组全没评估还是部分没评估)，退化成按
-//    captured_at 最新的选；captured_at 也相等的极端情况(理论上不该发
-//    生，两张不同的照片时间戳精确到秒相同)兜底选 image_id 最小的，保证
-//    确定性。**这个规则按组独立判断**——同一次调用里，有的组因为全员评
-//    估过按分数选，有的组因为缺评估退化成按时间选，互不影响。
+//    captured_at 最新的选；分数/captured_at 也相等的极端情况兜底选
+//    image_id 最小的，保证确定性。**这个规则按组独立判断**——同一次调
+//    用里，有的组因为全员评估过按分数选，有的组因为缺评估退化成按时间
+//    选，互不影响。
 //
-// on_progress 在每完成一个候选簇的处理时回调一次，用于 CLI 展示进度。
-std::vector<DuplicateGroup> find_duplicates(db::Database& db,
+// on_progress 在每处理完一个候选簇(不论是否成簇)时回调一次，done/total
+// 是候选簇的处理进度，用于 CLI 展示进度。
+std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string& root_path,
                                              const std::vector<project::ImageId>& image_ids,
                                              int time_window_seconds = 10, int hash_threshold = 5,
                                              DedupProgressFn on_progress = nullptr);
@@ -82,10 +92,12 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db,
 
 `time_window_seconds`/`hash_threshold` 的默认值（10 秒、5 bit）是经验值，没有用真实照片数据验证过——见"风险与待确认问题"。做成函数参数而不是写死的常量，方便以后需要调参或者做成用户可配置时不用改函数签名。
 
+**实现阶段补的一处设计**（原设计没覆盖）：`find_duplicates` 的解码依赖（内部调什么函数把文件路径变成像素）是可注入的——真实实现是 `namespace detail { find_duplicates_impl(..., PreviewDecodeFn decode_fn) }`，`find_duplicates` 只是拿默认 `decode_fn`（跟 `core::decode_preview_file` 同一套 JPEG/RAW 分发逻辑，`core/dedup/dedup.cpp` 内部单独维护一份，不能反向 `#include "core/api.h"`，见文件内注释）调一层薄封装。这是跟 `core/ai/evaluation.h` 的 `detail::request_evaluation_impl(..., HttpPostFn)` 同一个模式：单元测试要验证时间聚类边界、并查集传递性合并、keep_id 选择这些逻辑，如果每个用例都要造出真实 JPEG 文件走一遍有损压缩，像素级精确控制会变得很脆弱（压缩伪影可能改变相邻像素的大小关系，进而改变 dHash 的具体 bit），不值得为了"更像端到端"而牺牲测试的确定性——注入一个假的 `decode_fn`（直接返回构造好的 `DecodedImage`）就能精确控制每张"图片"对应的 dHash，聚类/并查集/keep_id 这些纯逻辑因此可以在完全确定性的条件下验证。
+
 ### `core/tagging`：新增 `ensure_duplicate_tag`
 
 ```cpp
-constexpr const char* kDuplicateTagName = "duplicate";  // 跟 kRejectTagName 同一个惯例
+constexpr const char* kDuplicateTagName = "重复";  // 跟 kRejectTagName("废片")同一个惯例,中文,用户在 pzt open 里直接看到这个名字
 TagId ensure_duplicate_tag(db::Database& db, ProjectId project_id);
 ```
 实现照抄 `ensure_reject_tag`，只换标签名字。
@@ -114,7 +126,7 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
 
 1. 遍历 `image_ids`，统计有多少张 `evaluation` 是 `nullopt`，记进 `unevaluated_image_count`（这一步只统计、不阻塞、不代为触发评估——`docs/M3_Dedup_PRD.md`"非目标"一节明确规定）。
 2. **清空旧标记**：找到 `duplicate` 系统标签（`ensure_duplicate_tag`），只把 `image_ids` 这个范围内、带这个标签的图片摘掉标签——**不是清空整个项目**，范围外的图片（比如全项目扫描之后又单独对某个标签跑了一次）不受影响，见 `docs/M3_Dedup_PRD.md`"重新运行"一节。第一次运行时这批图片可能都还没有标签，这一步对没打过标签的图片是空操作，不需要特殊分支。
-3. 调 `dedup::find_duplicates(db, image_ids, ...)` 拿到分组结果。
+3. `project::open_project(db, project_id)` 拿 `root_path`，调 `dedup::find_duplicates(db, root_path, image_ids, ...)` 拿到分组结果。
 4. 对每个组里除 `keep_id` 之外的每张图调 `tagging::add_tag`，累加 `tagged_count`。
 
 第 2 步"先摘光再重新打"和第 3-4 步"重新分组打标签"都在同一次调用里完成，中间不会有"标签已经被清空、但新的还没打上"这种状态被外部看到太久——`pzt open` 这类只读查询不会撞上这个中间态（SQLite 默认隔离级别下，读操作看到的是已经提交的行，`add_tag`/`remove_tag` 各自是独立的小事务，理论上确实存在极短的窗口读到"标签被清空但还没打回来"的中间状态，可接受，见"风险与待确认问题"）。

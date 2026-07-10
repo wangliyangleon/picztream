@@ -39,6 +39,7 @@ add_library(core STATIC
   ai/ai.cpp
   ai/evaluation.cpp
   ai/evaluation_worker.cpp
+  dedup/dedup.cpp
 )
 
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR})
