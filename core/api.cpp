@@ -119,6 +119,12 @@ TagId ensure_reject_tag(ProjectId project_id) {
   return tagging::ensure_reject_tag(db, project_id);
 }
 
+Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
+    ProjectId project_id, const std::vector<ImageId>& image_ids, dedup::DedupProgressFn on_progress) {
+  db::Database db = db::Database::open_default();
+  return dedup::find_and_tag_duplicates(db, project_id, image_ids, std::move(on_progress));
+}
+
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
                                                              bool support_raw,
                                                              ScanProgressFn on_progress) {

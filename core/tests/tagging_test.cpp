@@ -389,3 +389,39 @@ TEST_CASE("ensure_reject_tag is scoped to its own project") {
   CHECK(list_tags(fx.db, fx.project_id).size() == 1);
   CHECK(list_tags(fx.db, other_project.value()).size() == 1);
 }
+
+// M3：core/dedup 用的重复标记系统标签，见 docs/M3_Dedup_Eng_Design.md。
+// 跟 ensure_reject_tag 是同一套逻辑，测试也照抄同一套。
+TEST_CASE("ensure_duplicate_tag creates a conformant system tag when none exists") {
+  auto fx = make_fixture("ensure_duplicate_fresh", 1);
+
+  auto tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+
+  auto tags = list_tags(fx.db, fx.project_id);
+  REQUIRE(tags.size() == 1);
+  CHECK(tags[0].id == tag_id);
+  CHECK(tags[0].name == kDuplicateTagName);
+  CHECK(tags[0].is_system);
+  CHECK(!tags[0].cap.has_value());
+  CHECK(!tags[0].is_ordered);
+}
+
+TEST_CASE("ensure_duplicate_tag is a no-op when the tag already exists") {
+  auto fx = make_fixture("ensure_duplicate_noop", 1);
+
+  auto first = ensure_duplicate_tag(fx.db, fx.project_id);
+  auto second = ensure_duplicate_tag(fx.db, fx.project_id);
+
+  CHECK(first == second);
+  CHECK(list_tags(fx.db, fx.project_id).size() == 1);
+}
+
+TEST_CASE("ensure_reject_tag and ensure_duplicate_tag coexist as two distinct system tags") {
+  auto fx = make_fixture("ensure_both_system_tags", 1);
+
+  auto reject_id = ensure_reject_tag(fx.db, fx.project_id);
+  auto duplicate_id = ensure_duplicate_tag(fx.db, fx.project_id);
+
+  CHECK(reject_id != duplicate_id);
+  CHECK(list_tags(fx.db, fx.project_id).size() == 2);
+}

@@ -75,6 +75,27 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
                                              int time_window_seconds = 10, int hash_threshold = 5,
                                              DedupProgressFn on_progress = nullptr);
 
+struct DedupSummary {
+  int group_count;
+  int tagged_count;             // 被打上 duplicate 标签的图片总数(不含每组里被保留的那一张)
+  int unevaluated_image_count;  // 这次范围内还没跑过选片辅助评估的图片数(不分是否在重复组里)
+};
+
+// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签：统计未评
+// 估数 -> 清空 image_ids 范围内的旧 duplicate 标记 -> find_duplicates
+// 分组 -> 给每组除 keep_id 外的成员打标签。放在同一个 core/dedup 模块
+// 里，不是违反"纯算法层"的说法——跟 core/export 的 export_tag(db::
+// Database&, ...) 同一个先例：模块以功能命名(dedup/export)，内部按需
+// 组合其它模块(tagging/project)完成一次完整的用户可见操作，"纯算法层"
+// 说的是 find_duplicates 这一个函数，不是整个模块。project_id 只用来
+// 定位 duplicate 标签所在的项目(标签按项目隔离)和取 root_path，不代表
+// 扫描范围——扫描范围是 image_ids，由调用方自己解析好(整个项目还是某
+// 个标签的子集)再传进来。core/api.h 的同名门面函数只是开默认库、转调
+// 这个函数的一层薄封装，方便单元测试指向临时测试库。
+Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
+    db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
+    DedupProgressFn on_progress = nullptr);
+
 // 仅供单元测试使用——decode_fn 可注入，不需要真的解码 JPEG 文件就能验证
 // 时间聚类、hamming 距离分组、keep_id 选择这些逻辑，规避真实 JPEG 有损
 // 压缩给像素级精确控制带来的不确定性。跟 core/ai/evaluation.h 的

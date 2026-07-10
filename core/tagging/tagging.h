@@ -124,4 +124,14 @@ constexpr const char* kRejectTagName = "废片";
 // 不需要额外的迁移/归一化逻辑。
 TagId ensure_reject_tag(db::Database& db, ProjectId project_id);
 
+// M3：近似重复检测(core/dedup)标记重复项用的系统标签，见
+// docs/M3_Dedup_Eng_Design.md"core/tagging：新增 ensure_duplicate_tag"一
+// 节。跟 kRejectTagName 同一个惯例——中文，用户在 pzt open 里直接看到
+// 这个名字。
+constexpr const char* kDuplicateTagName = "重复";
+
+// 幂等：查不到就创建，逻辑跟 ensure_reject_tag 完全一致，只换了标签名
+// 字——不共享实现，两行代码不值得为此抽一层。
+TagId ensure_duplicate_tag(db::Database& db, ProjectId project_id);
+
 }  // namespace pzt::core::tagging

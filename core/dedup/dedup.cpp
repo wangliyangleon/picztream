@@ -13,6 +13,7 @@
 #include "core/ai/evaluation.h"
 #include "core/db/stmt.h"
 #include "core/raw/raw.h"
+#include "core/tagging/tagging.h"
 
 namespace pzt::core::dedup {
 
@@ -206,6 +207,46 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
                                              DedupProgressFn on_progress) {
   return detail::find_duplicates_impl(db, root_path, image_ids, time_window_seconds, hash_threshold,
                                        std::move(on_progress), default_decode_preview);
+}
+
+Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
+    db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
+    DedupProgressFn on_progress) {
+  auto project_summary = project::open_project(db, project_id);
+  if (!project_summary.ok()) {
+    return Result<DedupSummary, project::ProjectNotFoundError>::Err(project_summary.error());
+  }
+
+  int unevaluated_image_count = 0;
+  for (project::ImageId id : image_ids) {
+    auto info = project::get_image(db, id);
+    if (!info || !info->evaluation) ++unevaluated_image_count;
+  }
+
+  // 先摘光再重新打：只清 image_ids 这个范围内的旧标记，范围外的图片(比
+  // 如全项目扫描之后又单独对某个标签跑了一次)不受影响，见
+  // docs/M3_Dedup_PRD.md"重新运行"一节。remove_tag 是幂等的，图片本来
+  // 没打过标签也不算错，不需要先查一遍"这张图有没有这个标签"。
+  tagging::TagId duplicate_tag_id = tagging::ensure_duplicate_tag(db, project_id);
+  for (project::ImageId id : image_ids) {
+    tagging::remove_tag(db, id, duplicate_tag_id);
+  }
+
+  auto groups = find_duplicates(db, project_summary.value().root_path, image_ids,
+                                 /*time_window_seconds=*/10, /*hash_threshold=*/5,
+                                 std::move(on_progress));
+
+  int tagged_count = 0;
+  for (const auto& group : groups) {
+    for (project::ImageId id : group.image_ids) {
+      if (id == group.keep_id) continue;
+      tagging::add_tag(db, id, duplicate_tag_id);
+      ++tagged_count;
+    }
+  }
+
+  return Result<DedupSummary, project::ProjectNotFoundError>::Ok(
+      DedupSummary{static_cast<int>(groups.size()), tagged_count, unevaluated_image_count});
 }
 
 namespace detail {

@@ -11,17 +11,21 @@
 #include "core/dedup/dedup.h"
 #include "core/db/database.h"
 #include "core/project/project.h"
+#include "core/tagging/tagging.h"
 
 namespace fs = std::filesystem;
 using pzt::core::Result;
 using pzt::core::db::Database;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
+using pzt::core::decode::encode_jpeg_file;
 using pzt::core::project::create_project;
 using pzt::core::project::find_image_by_path;
 using pzt::core::project::ImageId;
 using pzt::core::project::ProjectId;
+using pzt::core::project::ProjectNotFoundError;
 using namespace pzt::core::dedup;
+using namespace pzt::core::tagging;
 
 namespace {
 
@@ -352,4 +356,106 @@ TEST_CASE("find_duplicates (public entry point) wires the real decode path witho
   auto fx = make_fixture("public_entry_empty", 1);
   auto groups = find_duplicates(fx.db, fx.root_path, {});
   CHECK(groups.empty());
+}
+
+// ---------------------------------------------------------------------
+// find_and_tag_duplicates：编排层，走真实的默认 decode_fn(不注入假的)，
+// 所以这几个用例需要真的 JPEG 字节——make_fixture 的 touch() 只建空文
+// 件，这里用 encode_jpeg_file 覆盖成一张真正能解码的纯色图。两张字节完
+// 全相同的 JPEG 解码结果必然逐像素相同，dHash 距离必然是 0，不需要精确
+// 控制压缩细节就能稳定制造"这是一组重复"的场景——跟
+// core/tests/decode_test.cpp 的思路一致，只是换成 encode_jpeg_file 而不
+// 是手写 CGImageDestination。
+bool write_solid_jpeg(const fs::path& path, int width, int height, unsigned char gray) {
+  DecodedImage img;
+  img.width = width;
+  img.height = height;
+  img.rgba.assign(static_cast<std::size_t>(width) * height * 4, gray);
+  return encode_jpeg_file(img, path.string()).ok();
+}
+
+bool has_duplicate_tag(Database& db, ImageId id, TagId duplicate_tag_id) {
+  for (const auto& t : tags_for_image(db, id)) {
+    if (t.id == duplicate_tag_id) return true;
+  }
+  return false;
+}
+
+TEST_CASE("find_and_tag_duplicates tags non-keep members and reports a correct summary") {
+  auto fx = make_fixture("facade_basic", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));  // 字节相同,必然判为重复
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);  // 更新,全组都没评估时应该被保留
+
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(result.ok());
+  CHECK(result.value().group_count == 1);
+  CHECK(result.value().tagged_count == 1);
+  CHECK(result.value().unevaluated_image_count == 2);
+
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));  // 保留的那张不该被打标签
+  CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
+}
+
+TEST_CASE("find_and_tag_duplicates only clears old marks inside the requested scope") {
+  auto fx = make_fixture("facade_scope", 4);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 200));
+  REQUIRE(write_solid_jpeg(dir / "d.jpg", 16, 16, 200));
+  set_captured_at(fx.db, fx.images[0], 1000);  // a,b:一簇
+  set_captured_at(fx.db, fx.images[1], 1002);
+  set_captured_at(fx.db, fx.images[2], 5000);  // c,d:另一簇,时间上跟 a,b 离得远
+  set_captured_at(fx.db, fx.images[3], 5002);
+
+  // 模拟"上一次某个更大范围/不同范围的运行"给 c 留下的标记——这次的 scope
+  // 不包含 c,d,不该动它。
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[2], duplicate_tag_id).ok());
+
+  std::vector<ImageId> scope = {fx.images[0], fx.images[1]};  // 只有 a,b
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, scope);
+  REQUIRE(result.ok());
+  CHECK(result.value().group_count == 1);      // 只看到 a,b 这一组
+  CHECK(result.value().tagged_count == 1);
+  CHECK(result.value().unevaluated_image_count == 2);  // 只统计 scope 内的
+
+  CHECK(has_duplicate_tag(fx.db, fx.images[2], duplicate_tag_id));  // c 在 scope 外,标记原样保留
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[3], duplicate_tag_id));  // d 从没被碰过
+}
+
+TEST_CASE("find_and_tag_duplicates clears stale marks before re-tagging on re-run") {
+  auto fx = make_fixture("facade_rerun", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);  // b 更新,第一次跑应该保留 b
+
+  auto first = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(first.ok());
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));
+
+  // 反转拍摄时间,这次 a 应该变成被保留的那张——差值仍然在默认 10 秒时间
+  // 窗口内,不能像 1000 vs 2000 那样把两张图直接拆进两个不同候选簇。
+  set_captured_at(fx.db, fx.images[0], 1005);
+  set_captured_at(fx.db, fx.images[1], 1000);
+
+  auto second = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(second.ok());
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));  // 旧标记被清掉了
+  CHECK(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));        // 新一轮的非保留项
+}
+
+TEST_CASE("find_and_tag_duplicates returns ProjectNotFoundError for an unknown project") {
+  auto fx = make_fixture("facade_missing_project", 1);
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id + 999999, fx.images);
+  REQUIRE_FALSE(result.ok());
+  CHECK(result.error() == ProjectNotFoundError::NotFound);
 }

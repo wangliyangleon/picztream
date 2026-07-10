@@ -9,6 +9,7 @@
 #include "core/browse/browse.h"
 #include "core/browse/prefetch.h"
 #include "core/decode/decode.h"
+#include "core/dedup/dedup.h"
 #include "core/export/export.h"
 #include "core/project/project.h"
 #include "core/recipe/recipe.h"
@@ -129,6 +130,18 @@ Result<void, RemoveTagError> remove_tag(ImageId image_id, TagId tag_id);
 Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image, ImageId new_image);
 Result<void, DeleteTagError> delete_tag(TagId tag_id);
 TagId ensure_reject_tag(ProjectId project_id);
+
+// M3：近似重复检测，见 docs/M3_Dedup_Eng_Design.md"core/dedup：编排层"一
+// 节。project_id 只用来找 duplicate 标签所在的项目(标签按项目隔离)，
+// 不代表扫描范围——扫描范围是 image_ids，可以是整个项目也可以是一个子
+// 集(比如某个标签下的图片)，由调用方(`/dedup` 控制台命令的
+// handle_dedup_command)自己解析好再传进来。真正的编排逻辑在
+// core::dedup::find_and_tag_duplicates(db::Database&, ...)里，这里只是
+// 开默认库转调一层，方便单元测试指向临时测试库。
+using DedupSummary = dedup::DedupSummary;
+Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
+    ProjectId project_id, const std::vector<ImageId>& image_ids,
+    dedup::DedupProgressFn on_progress = nullptr);
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见

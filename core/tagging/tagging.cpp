@@ -337,4 +337,14 @@ TagId ensure_reject_tag(db::Database& db, ProjectId project_id) {
   return created.value();
 }
 
+TagId ensure_duplicate_tag(db::Database& db, ProjectId project_id) {
+  auto existing = find_tag_by_name(db, project_id, kDuplicateTagName);
+  if (existing) return *existing;
+
+  auto created =
+      create_tag(db, project_id, kDuplicateTagName, std::nullopt, /*is_ordered=*/false,
+                 /*is_system=*/true);
+  return created.value();
+}
+
 }  // namespace pzt::core::tagging

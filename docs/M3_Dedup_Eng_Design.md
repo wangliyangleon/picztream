@@ -15,11 +15,11 @@
 * **`core::decode_preview_file`**：解码这一步复用跟浏览、AI 评估同一条路径（core/api.h 的门面函数），不为了算哈希单独实现一套解码。
 * **`core/project/project.h` 的 `ImageInfo`/`ai::EvaluationInfo`**：选保留哪一张要用到 `overall_score()`，这个函数已经在 `core/ai/evaluation.h` 里，直接复用，不重新实现一遍平均值计算。
 
-不需要新的数据库表——"重复组"本身不持久化（一组照片除了都被打上 duplicate 标签之外，组内成员关系不单独存一份），"保留哪张"的判断只在跑 `pzt dedup` 这一次运行期间用到，跑完就不需要再查。这是一个刻意的简化，见"风险与待确认问题"。
+不需要新的数据库表——"重复组"本身不持久化（一组照片除了都被打上 duplicate 标签之外，组内成员关系不单独存一份），"保留哪张"的判断只在跑一次 `/dedup` 期间用到，跑完就不需要再查。这是一个刻意的简化，见"风险与待确认问题"。
 
-## core/api 接口设计
+## core/dedup 接口设计
 
-### `core/dedup/dedup.h`/`.cpp`：纯算法层，不碰数据库/标签
+### `core/dedup/dedup.h`/`.cpp`：算法层 + 编排层
 
 ```cpp
 namespace pzt::core::dedup {
@@ -102,7 +102,7 @@ TagId ensure_duplicate_tag(db::Database& db, ProjectId project_id);
 ```
 实现照抄 `ensure_reject_tag`，只换标签名字。
 
-### `core/api.h`：门面函数
+### `core/dedup`：编排层 `find_and_tag_duplicates`
 
 ```cpp
 struct DedupSummary {
@@ -112,26 +112,27 @@ struct DedupSummary {
 };
 
 // project_id 只用来找 duplicate 标签所在的项目(标签是按项目隔离的，见
-// core/tagging)，不代表扫描范围——扫描范围是 image_ids 参数，可以是这
-// 个项目的全部图片，也可以是一个子集(比如某个标签下的图片)，由调用方
-// 自己解析好再传进来。project_id 理论上可以从 image_ids[0] 反查，但要
-// 求调用方显式传，语义更直接，也不用处理"image_ids 为空、查不到
-// project_id"这种边界情况。
-Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
-    ProjectId project_id, const std::vector<ImageId>& image_ids,
-    dedup::DedupProgressFn on_progress = nullptr);
+// core/tagging)和取 root_path，不代表扫描范围——扫描范围是 image_ids
+// 参数，可以是这个项目的全部图片，也可以是一个子集(比如某个标签下的图
+// 片)，由调用方自己解析好再传进来。
+Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
+    db::Database& db, project::ProjectId project_id,
+    const std::vector<project::ImageId>& image_ids, DedupProgressFn on_progress = nullptr);
 ```
+
+**放在 `core/dedup` 里，不是 `core/api.h` 里**——这是实现阶段对原设计的一处修正：原设计把这个函数的编排逻辑直接写在 `core/api.h`/`api.cpp`，但 `api.cpp` 里的门面函数一律是"开默认库(`db::Database::open_default()`)、转调一层"的薄封装，没有直接承载多步骤编排逻辑的先例——这样写出来的函数没法用临时测试库单元测试(会直接碰真实的 `~/.config/pzt/pzt.db`)。改成跟 `core/export` 的 `export_tag(db::Database&, TagId, ...)` 同一个先例：模块以功能命名(export/dedup)，内部按需组合其它模块(tagging/project)完成一次完整的用户可见操作，`core/api.h` 的同名门面函数只是开默认库转调一层。"纯算法层"这个说法只适用于 `find_duplicates`，不是整个 `core/dedup` 模块的定位。
 
 内部执行顺序：
 
-1. 遍历 `image_ids`，统计有多少张 `evaluation` 是 `nullopt`，记进 `unevaluated_image_count`（这一步只统计、不阻塞、不代为触发评估——`docs/M3_Dedup_PRD.md`"非目标"一节明确规定）。
-2. **清空旧标记**：找到 `duplicate` 系统标签（`ensure_duplicate_tag`），只把 `image_ids` 这个范围内、带这个标签的图片摘掉标签——**不是清空整个项目**，范围外的图片（比如全项目扫描之后又单独对某个标签跑了一次）不受影响，见 `docs/M3_Dedup_PRD.md`"重新运行"一节。第一次运行时这批图片可能都还没有标签，这一步对没打过标签的图片是空操作，不需要特殊分支。
-3. `project::open_project(db, project_id)` 拿 `root_path`，调 `dedup::find_duplicates(db, root_path, image_ids, ...)` 拿到分组结果。
-4. 对每个组里除 `keep_id` 之外的每张图调 `tagging::add_tag`，累加 `tagged_count`。
+1. `project::open_project(db, project_id)` 拿 `root_path`，项目不存在直接返回 `ProjectNotFoundError`。
+2. 遍历 `image_ids`，统计有多少张 `evaluation` 是 `nullopt`，记进 `unevaluated_image_count`（这一步只统计、不阻塞、不代为触发评估——`docs/M3_Dedup_PRD.md`"非目标"一节明确规定）。
+3. **清空旧标记**：`ensure_duplicate_tag` 拿到 `duplicate` 系统标签，只把 `image_ids` 这个范围内的图片摘掉这个标签——**不是清空整个项目**，范围外的图片（比如全项目扫描之后又单独对某个标签跑了一次）不受影响，见 `docs/M3_Dedup_PRD.md`"重新运行"一节。第一次运行时这批图片可能都还没有标签，这一步对没打过标签的图片是空操作(`remove_tag` 本身幂等)，不需要特殊分支。
+4. 调 `find_duplicates(db, root_path, image_ids, ...)` 拿到分组结果。
+5. 对每个组里除 `keep_id` 之外的每张图调 `tagging::add_tag`，累加 `tagged_count`。
 
-第 2 步"先摘光再重新打"和第 3-4 步"重新分组打标签"都在同一次调用里完成，中间不会有"标签已经被清空、但新的还没打上"这种状态被外部看到太久——`pzt open` 这类只读查询不会撞上这个中间态（SQLite 默认隔离级别下，读操作看到的是已经提交的行，`add_tag`/`remove_tag` 各自是独立的小事务，理论上确实存在极短的窗口读到"标签被清空但还没打回来"的中间状态，可接受，见"风险与待确认问题"）。
+第 3 步"先摘光再重新打"和第 4-5 步"重新分组打标签"都在同一次调用里完成，中间不会有"标签已经被清空、但新的还没打上"这种状态被外部看到太久——`pzt open` 这类只读查询不会撞上这个中间态（SQLite 默认隔离级别下，读操作看到的是已经提交的行，`add_tag`/`remove_tag` 各自是独立的小事务，理论上确实存在极短的窗口读到"标签被清空但还没打回来"的中间状态，可接受，见"风险与待确认问题"）。
 
-**唯一调用方 `handle_dedup_command` 怎么用这个门面**：`*` 时自己先 `list_images(project_id)` 拿到全项目的图片列表，`<标签名>` 时用 `find_tag_by_name`+`filter_by_tag` 拿到子集，再把解析好的 `image_ids` 传给 `find_and_tag_duplicates`——"范围怎么来的"这个语义完全是 CLI 层的约定，这个门面函数本身不知道、也不需要知道。
+**唯一调用方 `handle_dedup_command` 怎么用这个函数**：`*` 时自己先 `list_images(project_id)` 拿到全项目的图片列表，`<标签名>` 时用 `find_tag_by_name`+`filter_by_tag` 拿到子集，再把解析好的 `image_ids` 传给 `core::find_and_tag_duplicates`(`core/api.h` 转调 `dedup::find_and_tag_duplicates` 的那层薄封装)——"范围怎么来的"这个语义完全是 CLI 层的约定，这个函数本身不知道、也不需要知道。
 
 ## CLI 接线
 
