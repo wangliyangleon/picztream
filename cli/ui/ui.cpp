@@ -3,6 +3,8 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <algorithm>
+
 #include "cli/text/text.h"
 
 // pad_to / utf8_continuation_bytes 来自 cli/text,用 using-directive 让下
@@ -101,50 +103,113 @@ bool stdin_ready(int timeout_ms) {
 // 串,调用方决定空值是否合法)。退格(DEL `0x7F` 或 BS `0x08`,两个都处
 // 理)整个删掉最后一个 UTF-8 码点,不是只删一个字节——因为 `ICANON` 关了,
 // 内核不会自动处理退格。
+namespace {
+
+enum class LineEditResult { Continue, Submit, Cancel };
+
+// 光标感知的单步编辑：读一个字节(方向键要为了跟裸 Esc 消歧再多读几
+// 个)，更新 buffer/cursor，返回这一步的结果。read_text_line/
+// read_text_line_with_placeholder 共用——两者的差异只在 redraw(有没有
+// placeholder、要不要两行换行)，编辑状态机完全一样，不值得分别写一遍。
+//
+// 左右方向键是 "\x1b" "[" "C"/"D" 三字节序列，前缀跟裸 Esc(0x1B)撞车
+// ——原来的实现直接把任何 0x1B 都当成取消，按左方向键会被误判成 Esc，
+// 直接退出整个输入(真实反馈过的 bug)。用 stdin_ready 探测紧跟着有没有
+// 更多字节区分两者：本地 pty 场景下，终端一次性把整个序列写进来，后续
+// 字节几乎立即可读；真正单独按 Esc 不会有紧跟着的字节。20ms 是经验
+// 值，给终端一点余量又不会让用户感觉到延迟。探测到是转义序列但不认识
+// 具体是哪个键(方向键之外的功能键/Alt+字符)时，直接吞掉、什么都不做
+// ——"其它键处理不了的就无事发生"，不是也当成 Esc 处理掉。
+LineEditResult read_line_edit_step(std::string& buffer, std::size_t& cursor, int& pending_needed) {
+  char c = read_one_byte();
+  if (c == 0x1B) {
+    if (!stdin_ready(20)) return LineEditResult::Cancel;  // 裸 Esc,没有紧跟着的字节
+    char c2 = read_one_byte();
+    if (c2 == '[') {
+      char c3 = read_one_byte();
+      if (c3 == 'D') {  // 左
+        if (cursor > 0) {
+          std::size_t pos = cursor - 1;
+          while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
+          cursor = pos;
+        }
+      } else if (c3 == 'C') {  // 右
+        if (cursor < buffer.size()) {
+          std::size_t pos = cursor + 1;
+          while (pos < buffer.size() && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) ++pos;
+          cursor = pos;
+        }
+      }
+      // 其它 CSI 序列(Home/End/Delete/功能键...)这次不识别，吞掉已经读
+      // 到的这几个字节就算处理完，不做任何事。
+    }
+    // 不是 '[' 开头的序列(比如 Alt+字符)，同样不认识，吞掉这一个字节。
+    return LineEditResult::Continue;
+  }
+  if (c == '\r' || c == '\n') return LineEditResult::Submit;
+  if (c == 0x7F || c == 0x08) {
+    if (cursor > 0) {
+      std::size_t pos = cursor - 1;
+      while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
+      buffer.erase(pos, cursor - pos);
+      cursor = pos;
+    }
+    pending_needed = 0;
+    return LineEditResult::Continue;
+  }
+  if (static_cast<unsigned char>(c) < 0x20) return LineEditResult::Continue;  // 其它控制字节,忽略
+
+  // 普通字节:插入到光标位置(不是永远追加到末尾)。UTF-8 续字节紧跟着上
+  // 一个字节插入,光标顺着往后移,插入点天然保持连续,不需要特殊处理。
+  buffer.insert(cursor, 1, c);
+  ++cursor;
+  if (pending_needed > 0) {
+    --pending_needed;
+  } else {
+    pending_needed = utf8_continuation_bytes(static_cast<unsigned char>(c));
+  }
+  return LineEditResult::Continue;
+}
+
+}  // namespace
+
 std::optional<std::string> read_text_line(const std::string& prompt, int banner_row,
                                            int start_col, int content_cols) {
   std::string buffer;
+  std::size_t cursor = 0;
   int pending_needed = 0;  // 还差几个续字节才能凑成当前码点
 
   auto redraw = [&] {
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(prompt + buffer, content_cols));
+    std::string up_to_cursor = prompt + buffer.substr(0, cursor);
+    move_cursor(banner_row, start_col + 1 + static_cast<int>(display_width(up_to_cursor)));
   };
+  write_stdout("\x1b[?25h");
   redraw();
 
   while (true) {
-    char c = read_one_byte();
-    if (c == 0x1B) return std::nullopt;
-    if (c == '\r' || c == '\n') return buffer;
-    if (c == 0x7F || c == 0x08) {
-      if (!buffer.empty()) {
-        std::size_t pos = buffer.size() - 1;
-        while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
-        buffer.erase(pos);
-      }
-      pending_needed = 0;
-      redraw();
-      continue;
+    auto result = read_line_edit_step(buffer, cursor, pending_needed);
+    if (result == LineEditResult::Cancel) {
+      write_stdout("\x1b[?25l");
+      return std::nullopt;
     }
-    if (static_cast<unsigned char>(c) < 0x20) continue;  // 其它控制字节,忽略
-
-    buffer += c;
-    if (pending_needed > 0) {
-      --pending_needed;
-    } else {
-      pending_needed = utf8_continuation_bytes(static_cast<unsigned char>(c));
+    if (result == LineEditResult::Submit) {
+      write_stdout("\x1b[?25l");
+      return buffer;
     }
     if (pending_needed == 0) redraw();
   }
 }
 
-// M3：跟 read_text_line 同一套阻塞按字节读 + UTF-8 码点缓冲 + 退格删一个
-// 完整码点的逻辑，唯一的区别是 redraw：没有常驻前缀，buffer 为空时显示
-// placeholder，一旦开始输入 placeholder 整个让位给 buffer 本身。
+// M3：跟 read_text_line 共用 read_line_edit_step，唯一的区别是 redraw：
+// 没有常驻前缀，buffer 为空时显示 placeholder，一旦开始输入 placeholder
+// 整个让位给 buffer 本身。
 std::optional<std::string> read_text_line_with_placeholder(const std::string& placeholder,
                                                              int banner_row, int start_col,
                                                              int content_cols) {
   std::string buffer;
+  std::size_t cursor = 0;
   int pending_needed = 0;
 
   // 显示内容统一加一个前导空格,跟其它 banner 提示(比如" 新标签名称: "、
@@ -166,18 +231,23 @@ std::optional<std::string> read_text_line_with_placeholder(const std::string& pl
     move_cursor(banner_row + 1, start_col + 1);
     write_stdout(pad_to(line2, content_cols));
 
-    // 光标跟着实际输入内容(前导空格 + buffer)走,不理会 placeholder——哪
-    // 怕当前画面上显示的是 placeholder,光标也应该停在"即将开始输入"的位
-    // 置,不会被更长的 placeholder 文案推到后面去。内容超出第一行宽度时
-    // 光标跟着换到第二行。
+    // 光标位置跟着 cursor(buffer 内的字节偏移)走,不理会 placeholder
+    // ——哪怕当前画面上显示的是 placeholder,光标也应该停在"即将开始输
+    // 入"的位置,不会被更长的 placeholder 文案推到后面去。前导空格占一
+    // 个字节,所以光标对应的字节位置是 1 + cursor;内容超出第一行宽度
+    // 时光标跟着换到第二行。
     std::string cursor_content = " " + buffer;
+    std::size_t cursor_byte_pos = 1 + cursor;
     std::string cursor_line1 = truncate_text(cursor_content, static_cast<std::size_t>(content_cols));
-    if (cursor_line1.size() == cursor_content.size()) {
-      move_cursor(banner_row, start_col + 1 + static_cast<int>(display_width(cursor_line1)));
+    if (cursor_byte_pos <= cursor_line1.size()) {
+      std::string up_to_cursor = cursor_content.substr(0, cursor_byte_pos);
+      move_cursor(banner_row, start_col + 1 + static_cast<int>(display_width(up_to_cursor)));
     } else {
-      std::string cursor_line2 = truncate_text(cursor_content.substr(cursor_line1.size()),
-                                                 static_cast<std::size_t>(content_cols));
-      move_cursor(banner_row + 1, start_col + 1 + static_cast<int>(display_width(cursor_line2)));
+      std::string rest = cursor_content.substr(cursor_line1.size());
+      std::size_t rest_cursor_pos = cursor_byte_pos - cursor_line1.size();
+      std::string cursor_line2 = truncate_text(rest, static_cast<std::size_t>(content_cols));
+      std::string up_to_cursor_line2 = rest.substr(0, std::min(rest_cursor_pos, cursor_line2.size()));
+      move_cursor(banner_row + 1, start_col + 1 + static_cast<int>(display_width(up_to_cursor_line2)));
     }
   };
 
@@ -188,32 +258,14 @@ std::optional<std::string> read_text_line_with_placeholder(const std::string& pl
   redraw();
 
   while (true) {
-    char c = read_one_byte();
-    if (c == 0x1B) {
+    auto result = read_line_edit_step(buffer, cursor, pending_needed);
+    if (result == LineEditResult::Cancel) {
       write_stdout("\x1b[?25l");
       return std::nullopt;
     }
-    if (c == '\r' || c == '\n') {
+    if (result == LineEditResult::Submit) {
       write_stdout("\x1b[?25l");
       return buffer;
-    }
-    if (c == 0x7F || c == 0x08) {
-      if (!buffer.empty()) {
-        std::size_t pos = buffer.size() - 1;
-        while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
-        buffer.erase(pos);
-      }
-      pending_needed = 0;
-      redraw();
-      continue;
-    }
-    if (static_cast<unsigned char>(c) < 0x20) continue;
-
-    buffer += c;
-    if (pending_needed > 0) {
-      --pending_needed;
-    } else {
-      pending_needed = utf8_continuation_bytes(static_cast<unsigned char>(c));
     }
     if (pending_needed == 0) redraw();
   }
