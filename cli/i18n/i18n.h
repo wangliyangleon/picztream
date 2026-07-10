@@ -44,6 +44,10 @@ std::string msg_raw_preview_progress(int done, int total);
 std::string msg_export_raw_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
 std::string msg_project_created_simple(const std::string& name);
+// `pzt new` 成功之后，交互终端下追问"要不要直接打开"——见
+// cli/commands/commands.cpp 的 cmd_new，非 tty(脚本调用)时不会显示这
+// 条、也不会阻塞等按键。
+std::string msg_new_press_any_key_to_open();
 std::string err_archive_missing_name();
 std::string err_archive_failed(const std::string& name);
 std::string msg_project_archived(const std::string& name);

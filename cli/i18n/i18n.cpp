@@ -191,6 +191,14 @@ std::string msg_project_created_simple(const std::string &name) {
   }
 }
 
+std::string msg_new_press_any_key_to_open() {
+  if (g_lang == Lang::zh) {
+    return "按任意键打开项目...\n";
+  } else {
+    return "Press any key to open the project...\n";
+  }
+}
+
 std::string err_archive_missing_name() {
   if (g_lang == Lang::zh) {
     return "pzt archive: 缺少 <project_name>\n";

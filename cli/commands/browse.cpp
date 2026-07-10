@@ -47,6 +47,42 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
   return new_images.front().id;
 }
 
+// 信息栏"标签:"这一行——原来一行一个标签太占竖直空间，改成
+// "标签: #A #B" 全挤在一行，宽度不够再换行。带空格的标签名用引号包起
+// 来(`#"Some Other"`)，不然拆词时会被误判成两个 token。
+std::string tag_token(const pzt::core::TagSummary& t) {
+  std::string name = pzt::cli::i18n::tag_display_name(t);
+  if (name.find(' ') != std::string::npos) return "#\"" + name + "\"";
+  return "#" + name;
+}
+
+// 跟 cli/text/text.h 的 wrap_text 不同——那个按字符硬换行，这里的换行
+// 只能发生在 token 之间的空格上，不能把一个 token(标签)从中间切断。宽
+// 度用 display_width 算，CJK 标签名占两列。单个 token 本身就比
+// max_width 还宽这种极端情况，让它单独占一行、可能超出边框——比强行切
+// 断标签名更不容易让人误解内容，这次不特殊处理。
+std::vector<std::string> wrap_tokens(const std::vector<std::string>& tokens, std::size_t max_width) {
+  std::vector<std::string> lines;
+  std::string current;
+  std::size_t current_w = 0;
+  for (const auto& tok : tokens) {
+    std::size_t tok_w = display_width(tok);
+    if (!current.empty() && current_w + 1 + tok_w > max_width) {
+      lines.push_back(current);
+      current.clear();
+      current_w = 0;
+    }
+    if (!current.empty()) {
+      current += " ";
+      ++current_w;
+    }
+    current += tok;
+    current_w += tok_w;
+  }
+  if (!current.empty() || lines.empty()) lines.push_back(current);
+  return lines;
+}
+
 // 顶层 `e` 键:直接导出当前正在看的这一张,不需要先建标签。流程照抄
 // filter_menu.cpp 里 handle_g_export_flow 的结构(读路径 -> 校验空 ->
 // expand_home_path -> 调导出 -> 拼状态文案),但进度回调不能用 cmd_export
@@ -573,15 +609,16 @@ int cmd_open(const std::vector<std::string>& args) {
         emit_line(current_ref ? current_ref->file_name : "?");
 
         row++;  // 空一行
-        emit_line(pzt::cli::i18n::info_tags_label());
         auto tags = current_ref ? pzt::core::tags_for_image(current_ref->id)
                                  : std::vector<pzt::core::TagSummary>{};
+        std::vector<std::string> tag_line_tokens = {pzt::cli::i18n::info_tags_label()};
         if (tags.empty()) {
-          emit_line(pzt::cli::i18n::info_none_label());
+          tag_line_tokens.push_back(pzt::cli::i18n::info_none_label());
         } else {
-          for (const auto& t : tags) {
-            emit_line(pzt::cli::i18n::tag_display_name(t));
-          }
+          for (const auto& t : tags) tag_line_tokens.push_back(tag_token(t));
+        }
+        for (const auto& line : wrap_tokens(tag_line_tokens, static_cast<std::size_t>(info_cols))) {
+          emit_line(line);
         }
 
         row++;  // 空一行

@@ -10,8 +10,12 @@
 #include <utility>
 #include <vector>
 
-#include "cli/text/text.h"
+#include <unistd.h>
+
 #include "cli/i18n/i18n.h"
+#include "cli/term/cbreak_mode.h"
+#include "cli/text/text.h"
+#include "cli/ui/ui.h"
 #include "core/api.h"
 
 // cmd_export 里用到 expand_home_path(cli/text),用 using-directive 让搬过
@@ -62,6 +66,24 @@ void print_export_progress(int done, int total) {
   if (done == total) std::printf("\n");
 }
 
+// `pzt new` 成功之后，交互终端下追问"要不要直接打开"——用户反馈过 new
+// 完了还得再手动敲一遍 `pzt open <name>` 太麻烦。只在 stdin/stdout 都是
+// 真实 tty 时才提示、才阻塞等按键：非交互场景（脚本里调 `pzt new`、
+// stdin 被重定向）不能凭空多出一个会一直等键盘输入的阻塞点，这次直接
+// 返回，行为跟以前一样。真是 tty 时任意键（不分是哪个键，包括 Esc）都
+// 直接打开，不提供"取消"这个选项——这个提示本身就是"按任意键打开"，不
+// 是一次需要用户明确表态的确认。
+int maybe_open_after_new(const std::string& name) {
+  if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) return 0;
+  std::printf("%s", pzt::cli::i18n::msg_new_press_any_key_to_open().c_str());
+  std::fflush(stdout);
+  {
+    pzt::cli::term::CbreakMode cbreak;
+    pzt::cli::ui::read_one_byte();
+  }
+  return cmd_open({name});
+}
+
 int cmd_new(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_missing_name().c_str());
@@ -108,11 +130,11 @@ int cmd_new(const std::vector<std::string>& args) {
   for (const auto& p : pzt::core::list_projects()) {
     if (p.id == result.value()) {
       std::printf("%s", pzt::cli::i18n::msg_project_created(p.name, p.root_path, p.image_count).c_str());
-      return 0;
+      return maybe_open_after_new(p.name);
     }
   }
   std::printf("%s", pzt::cli::i18n::msg_project_created_simple(name).c_str());
-  return 0;
+  return maybe_open_after_new(name);
 }
 
 int cmd_list(const std::vector<std::string>& args) {
