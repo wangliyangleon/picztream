@@ -19,8 +19,8 @@ namespace pzt::core::ai {
 
 enum class Provider { Claude, Gemini };
 
-// "claude" | "gemini"——落库(images.ai_score_provider)和 debug 日志共用同
-// 一份映射，不在两个地方各写一遍容易失步的三元表达式。
+// "claude" | "gemini"——落库(image_evaluations.provider)和 debug 日志共用
+// 同一份映射，不在两个地方各写一遍容易失步的三元表达式。
 const char* to_string(Provider provider);
 
 enum class RequestError {
@@ -39,7 +39,8 @@ struct HttpResponse {
 // (status_code, body);curl 层面的失败(连不上、超时)才是 NetworkError,
 // HTTP 状态码是不是 2xx 由 request_json 自己判断,不是这个函数的职责。默
 // 认指向下面真实的 curl 实现,单元测试注入假函数,不需要真的连网络——照抄
-// core::raw::RawDecodeFn/core::ai::ScoreFn 的依赖注入先例。
+// core::raw::RawDecodeFn/core::ai::EvaluationWorker::EvaluationFn 的依赖
+// 注入先例。
 using HttpPostFn = std::function<Result<HttpResponse, RequestError>(
     const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
     const std::string& body)>;

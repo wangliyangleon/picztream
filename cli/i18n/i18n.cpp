@@ -746,14 +746,6 @@ std::string info_style_label() {
   }
 }
 
-std::string info_style_none_label() {
-  if (g_lang == Lang::zh) {
-    return "  (无)";
-  } else {
-    return "  (None)";
-  }
-}
-
 std::string msg_press_any_key_to_continue(const std::string &status) {
   if (g_lang == Lang::zh) {
     return status + ",按任意键继续 ";
@@ -848,17 +840,75 @@ std::string msg_ai_prompt_placeholder() {
   }
 }
 
-std::string ai_score_label(std::optional<int> score) {
-  std::string value = score ? std::to_string(*score) : "-";
+namespace {
+
+// "+15%"/"-10%"这种带符号的百分比，%+ 格式说明符保证正数也带 "+" 号。
+std::string format_signed_percent(double value) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%+.0f%%", value);
+  return buf;
+}
+
+// "+2.5°"这种带符号的角度，保留一位小数——旋转角度这种量级下整数会丢掉
+// 有意义的精度。
+std::string format_signed_degrees(double value) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%+.1f\xC2\xB0", value);  // \xC2\xB0 是 ° 的 UTF-8 编码
+  return buf;
+}
+
+}  // namespace
+
+std::string evaluation_none_label() {
   if (g_lang == Lang::zh) {
-    return "AI 评分: " + value;
+    return "选片评估: 尚未评估";
   } else {
-    return "AI Score: " + value;
+    return "Culling: not evaluated";
   }
 }
 
-std::string ai_score_comment_text(std::optional<std::string> comment) {
-  return comment ? *comment : "-";
+std::string evaluation_summary_label(int overall_score, bool passes_gate) {
+  std::string score_text = std::to_string(overall_score);
+  if (g_lang == Lang::zh) {
+    return "选片评估: " + score_text + "/10 · " + (passes_gate ? "达标" : "不达标");
+  } else {
+    return "Culling: " + score_text + "/10 · " + (passes_gate ? "PASS" : "FAIL");
+  }
+}
+
+std::string evaluation_exposure_line(int score, const std::string& note,
+                                      std::optional<double> fix_percent) {
+  std::string suffix = fix_percent ? (g_lang == Lang::zh
+                                           ? "（建议 " + format_signed_percent(*fix_percent) + "）"
+                                           : " (suggest " + format_signed_percent(*fix_percent) + ")")
+                                    : "";
+  if (g_lang == Lang::zh) {
+    return "曝光 " + std::to_string(score) + "/10: " + note + suffix;
+  } else {
+    return "Exposure " + std::to_string(score) + "/10: " + note + suffix;
+  }
+}
+
+std::string evaluation_composition_line(int score, const std::string& note,
+                                         std::optional<double> rotate_degrees) {
+  std::string suffix =
+      rotate_degrees ? (g_lang == Lang::zh
+                             ? "（建议旋转 " + format_signed_degrees(*rotate_degrees) + "）"
+                             : " (suggest rotate " + format_signed_degrees(*rotate_degrees) + ")")
+                      : "";
+  if (g_lang == Lang::zh) {
+    return "构图 " + std::to_string(score) + "/10: " + note + suffix;
+  } else {
+    return "Composition " + std::to_string(score) + "/10: " + note + suffix;
+  }
+}
+
+std::string evaluation_focus_line(int score, const std::string& note) {
+  if (g_lang == Lang::zh) {
+    return "对焦 " + std::to_string(score) + "/10: " + note;
+  } else {
+    return "Focus " + std::to_string(score) + "/10: " + note;
+  }
 }
 
 std::string msg_ai_processing_pending() {

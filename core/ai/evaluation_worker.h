@@ -9,36 +9,35 @@
 #include <vector>
 
 #include "core/ai/ai.h"
-#include "core/ai/score.h"
+#include "core/ai/evaluation.h"
 #include "core/db/database.h"
 #include "core/project/project.h"
 
-// 把 core::ai::request_score 接到后台线程上：CLI 按 `:` 提交请求立即返
-// 回，不阻塞任何按键；同一张图重复请求会被去重；结果（无论成功失败）直
-// 接落库，不在内存里保留，调用方靠 consume_new_result 轮询"有没有新结果
-// 落地"来决定要不要重绘。骨架照抄 core::browse::PrefetchCache（同一个
-// jthread+mutex+condition_variable_any 的先例），关键差别是 PrefetchCache
-// 有一个阻塞等结果的 get()，这里不需要——结果直接写库，没有调用方需要
-// 阻塞等待的场景。
+// 把 core::ai::request_evaluation 接到后台线程上：CLI 按 `:` 提交请求立
+// 即返回，不阻塞任何按键；同一张图重复请求会被去重；结果（无论成功失
+// 败）直接落库，不在内存里保留，调用方靠 consume_new_result 轮询"有没有
+// 新结果落地"来决定要不要重绘。骨架照抄 core::browse::PrefetchCache（同
+// 一个 jthread+mutex+condition_variable_any 的先例），取代了 M3 增量一最
+// 初那版的 core::ai::ScoreWorker（已删除）。
 namespace pzt::core::ai {
 
-class ScoreWorker {
+class EvaluationWorker {
  public:
-  using ScoreFn = std::function<Result<ScoreResult, ScoreError>(const decode::DecodedImage&,
-                                                                 const std::string&, Provider)>;
+  using EvaluationFn = std::function<Result<EvaluationResult, EvaluationError>(
+      const decode::DecodedImage&, const std::string&, Provider)>;
 
   // db_path 默认真实的全局数据库路径；测试传一个临时路径，跟仓库里其它
   // 所有测试统一用 Database::open_at(fresh_db_path(...)) 的写法一致，不
-  // 需要摆弄 XDG_CONFIG_HOME。score_fn 默认真实调用 AI(request_score)；
-  // 测试注入假函数，不连真实网络。
-  explicit ScoreWorker(std::string db_path = db::default_db_path(),
-                        ScoreFn score_fn = request_score);
-  ~ScoreWorker();
+  // 需要摆弄 XDG_CONFIG_HOME。evaluation_fn 默认真实调用 AI
+  // (request_evaluation)；测试注入假函数，不连真实网络。
+  explicit EvaluationWorker(std::string db_path = db::default_db_path(),
+                             EvaluationFn evaluation_fn = request_evaluation);
+  ~EvaluationWorker();
 
-  ScoreWorker(const ScoreWorker&) = delete;
-  ScoreWorker& operator=(const ScoreWorker&) = delete;
+  EvaluationWorker(const EvaluationWorker&) = delete;
+  EvaluationWorker& operator=(const EvaluationWorker&) = delete;
 
-  // 提交一个评分请求，立即返回，不阻塞。同一张图已经有请求在排队/处理
+  // 提交一个评估请求，立即返回，不阻塞。同一张图已经有请求在排队/处理
   // 中时返回 false（去重——调用方据此提示"正在处理"，不是报错）。
   bool request(project::ImageId image_id, Provider provider, const std::string& extra_guidance);
 
@@ -63,7 +62,7 @@ class ScoreWorker {
   void process_request(const PendingRequest& req);
 
   std::string db_path_;
-  ScoreFn score_fn_;
+  EvaluationFn evaluation_fn_;
 
   mutable std::mutex mu_;
   std::condition_variable_any cv_;

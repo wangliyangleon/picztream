@@ -178,7 +178,7 @@ Result<nlohmann::json, RequestError> parse_gemini_response(const std::string& bo
   return parse_inner_json(part["text"].get<std::string>());
 }
 
-// curl_global_init 不是线程安全的，ScoreWorker 的后台线程会调
+// curl_global_init 不是线程安全的，EvaluationWorker 的后台线程会调
 // perform_curl_post，不能假设只有一个线程在用——用一个函数内 static 变
 // 量的立即调用 lambda 触发一次，C++ 保证 magic static 的初始化本身是线
 // 程安全的。

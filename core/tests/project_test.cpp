@@ -364,12 +364,13 @@ TEST_CASE("rescan_project backfills captured_at only for rows that don't already
   sqlite3_finalize(check_stmt);
 }
 
-TEST_CASE("get_image returns nullopt ai_score fields by default, reads them back once set") {
-  // M3：这一步只打通 images 表的四个新列 + ImageInfo/get_image 的读写通
-  // 道，谁来写(core::ai::ScoreWorker)是下一个 increment 的事，这里直接
-  // 用 SQL 摆数据，不依赖真实 AI 调用。
-  auto db = Database::open_at(fresh_db_path("ai_score_fields"));
-  auto photos = fresh_photo_dir("ai_score_fields");
+TEST_CASE("get_image returns nullopt evaluation by default, reads it back once set") {
+  // M3 增量一修订版：这一步只打通 image_evaluations 表 + ImageInfo/
+  // get_image 的读写通道（LEFT JOIN），谁来写
+  // (core::ai::EvaluationWorker)是另一个文件的事，这里直接用 SQL 摆数
+  // 据，不依赖真实 AI 调用。
+  auto db = Database::open_at(fresh_db_path("evaluation_fields"));
+  auto photos = fresh_photo_dir("evaluation_fields");
   touch(photos / "a.jpg");
   auto created = create_project(db, "trip", photos.string());
   REQUIRE(created.ok());
@@ -379,34 +380,55 @@ TEST_CASE("get_image returns nullopt ai_score fields by default, reads them back
 
   auto before = get_image(db, *a_id);
   REQUIRE(before.has_value());
-  CHECK(!before->ai_score.has_value());
-  CHECK(!before->ai_score_comment.has_value());
-  CHECK(!before->ai_score_prompt.has_value());
-  CHECK(!before->ai_score_provider.has_value());
+  CHECK(!before->evaluation.has_value());
 
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db.handle(),
-                      "UPDATE images SET ai_score = ?, ai_score_comment = ?, ai_score_prompt = ?, "
-                      "ai_score_provider = ? WHERE id = ?;",
+                      "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
+                      "exposure_fix_percent, composition_score, composition_note, "
+                      "composition_fix_rotate_degrees, composition_fix_crop_left_percent, "
+                      "composition_fix_crop_right_percent, composition_fix_crop_top_percent, "
+                      "composition_fix_crop_bottom_percent, focus_score, focus_note, comment, "
+                      "extra_guidance, provider) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
                       -1, &stmt, nullptr);
-  sqlite3_bind_int64(stmt, 1, 87);
-  sqlite3_bind_text(stmt, 2, "Warm tones, slightly soft focus.", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 3, "focus on the crop", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 4, "claude", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int64(stmt, 5, *a_id);
+  sqlite3_bind_int64(stmt, 1, *a_id);
+  sqlite3_bind_int(stmt, 2, 7);
+  sqlite3_bind_text(stmt, 3, "slightly underexposed", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 4, 15.0);
+  sqlite3_bind_int(stmt, 5, 4);
+  sqlite3_bind_text(stmt, 6, "horizon is tilted", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 7, 2.5);
+  sqlite3_bind_double(stmt, 8, 0.0);
+  sqlite3_bind_double(stmt, 9, 0.0);
+  sqlite3_bind_double(stmt, 10, 0.0);
+  sqlite3_bind_double(stmt, 11, 5.0);
+  sqlite3_bind_int(stmt, 12, 9);
+  sqlite3_bind_text(stmt, 13, "sharp", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 14, "overall solid, mainly the tilted horizon", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 15, "focus on the crop", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 16, "gemini", -1, SQLITE_TRANSIENT);
   REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
   sqlite3_finalize(stmt);
 
   auto after = get_image(db, *a_id);
   REQUIRE(after.has_value());
-  REQUIRE(after->ai_score.has_value());
-  CHECK(*after->ai_score == 87);
-  REQUIRE(after->ai_score_comment.has_value());
-  CHECK(*after->ai_score_comment == "Warm tones, slightly soft focus.");
-  REQUIRE(after->ai_score_prompt.has_value());
-  CHECK(*after->ai_score_prompt == "focus on the crop");
-  REQUIRE(after->ai_score_provider.has_value());
-  CHECK(*after->ai_score_provider == "claude");
+  REQUIRE(after->evaluation.has_value());
+  const auto& eval = *after->evaluation;
+  CHECK(eval.exposure.score == 7);
+  CHECK(eval.exposure.note == "slightly underexposed");
+  REQUIRE(eval.exposure_fix.has_value());
+  CHECK(eval.exposure_fix->adjust_percent == doctest::Approx(15.0));
+  CHECK(eval.composition.score == 4);
+  CHECK(eval.composition.note == "horizon is tilted");
+  REQUIRE(eval.composition_fix.has_value());
+  CHECK(eval.composition_fix->rotate_degrees == doctest::Approx(2.5));
+  CHECK(eval.composition_fix->crop_bottom_percent == doctest::Approx(5.0));
+  CHECK(eval.focus.score == 9);
+  CHECK(eval.focus.note == "sharp");
+  CHECK(eval.comment == "overall solid, mainly the tilted horizon");
+  CHECK(eval.extra_guidance == "focus on the crop");
+  CHECK(eval.provider == "gemini");
 }
 
 TEST_CASE("rescan_project is idempotent - rescanning again with no new files adds nothing") {

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "core/ai/score_worker.h"
+#include "core/ai/evaluation_worker.h"
 #include "core/browse/browse.h"
 #include "core/browse/prefetch.h"
 #include "core/decode/decode.h"
@@ -72,12 +72,17 @@ using SetImageRecipeError = recipe::SetImageRecipeError;
 using RecipeDescription = recipe::RecipeDescription;
 using RenderRecipeError = recipe::RenderRecipeError;
 
-// M3：`pzt open` 按 `:` 触发的审美评分，见 core/ai/score_worker.h。这次
-// 固定用一个供应商(docs/M3_PRD.md 明确不做多供应商切换 UI，具体固定哪
-// 一家是 cli/commands/browse.cpp 里的一行代码，不是这里的类型层面决
-// 策)，类型本身整个重导出,不单独摘出一个值。
-using ScoreWorker = ai::ScoreWorker;
+// M3：`pzt open` 按 `:` 触发的选片辅助评估，见 core/ai/evaluation_worker.h。
+// 这次固定用一个供应商(docs/M3_PRD.md 明确不做多供应商切换 UI，具体固
+// 定哪一家是 cli/commands/browse.cpp 里的一行代码，不是这里的类型层面
+// 决策)，类型本身整个重导出,不单独摘出一个值。
+using EvaluationWorker = ai::EvaluationWorker;
+using EvaluationInfo = ai::EvaluationInfo;
 using Provider = ai::Provider;
+// 综合分数/达标判断不入库，现算——CLI 展示时直接调这两个函数，不在 cli/
+// 层重新实现一遍算法，见 core/ai/evaluation.h 的说明。
+using ai::overall_score;
+using ai::passes_gate;
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it

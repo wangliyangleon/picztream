@@ -37,8 +37,8 @@ add_library(core STATIC
   color/color.cpp
   raw/raw.cpp
   ai/ai.cpp
-  ai/score.cpp
-  ai/score_worker.cpp
+  ai/evaluation.cpp
+  ai/evaluation_worker.cpp
 )
 
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR})

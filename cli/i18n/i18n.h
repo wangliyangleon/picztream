@@ -115,12 +115,13 @@ std::string info_tags_label();
 std::string info_none_label();
 std::string info_size_label(const std::string& size_str);
 std::string info_source_label(bool is_raw);
-// 标题行 + 缩进值行两行展示(跟 info_style_label 一样的模式)，见 i18n.cpp
-// 里的说明。
+// 标题行 + 缩进值行两行展示，见 i18n.cpp 里的说明。
 std::string info_captured_at_heading();
 std::string format_captured_at(std::optional<std::int64_t> captured_at);
+// 标签本身("风格:"/"Recipe:")，值部分(预设名，或者没有 recipe 时复用
+// info_none_label())在 browse.cpp 里跟标签拼在同一行——两部分分开是因
+// 为只有值那部分需要加粗，标签本身不加粗，见 browse.cpp 的说明。
 std::string info_style_label();
-std::string info_style_none_label();
 std::string msg_press_any_key_to_continue(const std::string& status);
 std::string err_open_render_failed();
 std::string err_open_decode_failed();
@@ -132,20 +133,27 @@ std::string msg_browse_exited();
 std::string export_current_success(const std::string& output_path, bool created_folder);
 std::string export_current_skipped(const std::string& file_name, pzt::core::SkipReason reason);
 
-// M3：`:` 键触发的审美评分。placeholder 按了冒号之后立刻显示，用户一开
-// 始输入就整个让位给输入内容(见 read_text_line_with_placeholder)；没有
-// 分数/点评时统一显示 "-"。
+// M3：`:` 键触发的选片辅助评估。placeholder 按了冒号之后立刻显示，用户
+// 一开始输入就整个让位给输入内容(见 read_text_line_with_placeholder)。
 std::string msg_ai_prompt_placeholder();
-std::string ai_score_label(std::optional<int> score);
-// 紧跟在 ai_score_label 下面显示,位置已经说明这是点评了,不再重复一个
-// "AI Comment:"标题——跟 ai_score_label 不同,这个不是"标签: 值"的形
-// 状,没有点评时也是直接返回 "-",不是 "AI Comment: -"。
-std::string ai_score_comment_text(std::optional<std::string> comment);
-// 命名跟内容一样刻意不提"评分"——审美评分只是 `:` 这个 AI 入口目前唯一
-// 的能力，以后加别的能力(比如自动修图建议)会复用同一条"处理中"/"已提
-// 交"反馈，不是新开一套文案。
+// 命名刻意不提具体能力——`:` 这个 AI 入口目前只有选片评估这一个能力，以
+// 后加别的能力会复用同一条"处理中"/"已提交"反馈，不是新开一套文案。
 std::string msg_ai_processing_pending();
 std::string msg_ai_processing_submitted();
+
+// 还没评估过/评估失败时统一显示的占位。
+std::string evaluation_none_label();
+// 头部一行：综合分数(overall_score，三项平均四舍五入)+ 是否达标
+// (passes_gate，三项都 >= 6)——这两个值不是模型给的，是 core::ai 算出来
+// 的，见 core/ai/evaluation.h。
+std::string evaluation_summary_label(int overall_score, bool passes_gate);
+// 每个维度一行，note 是模型给的原因，fix 相关参数是可选的修正建议(可能
+// 是 nullopt——分数已经够高、模型判断不需要修正建议时)。
+std::string evaluation_exposure_line(int score, const std::string& note,
+                                      std::optional<double> fix_percent);
+std::string evaluation_composition_line(int score, const std::string& note,
+                                         std::optional<double> rotate_degrees);
+std::string evaluation_focus_line(int score, const std::string& note);
 
 // Tag Menu
 std::string tag_menu_cap_zero();

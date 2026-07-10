@@ -99,6 +99,37 @@ constexpr const char* kCreateRecipesPresetNameIndex = R"sql(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_preset_name ON recipes(name) WHERE parent_id IS NULL;
 )sql";
 
+// M3 增量一修订版：选片辅助评估（曝光/构图/对焦），见
+// docs/M3_Eng_Design.md"数据库 Schema 设计"一节。跟 images 表分开建一张
+// 表而不是继续加列——上一版只有 4 列时挤在 images 上还说得过去，这次三
+// 个维度各自的分数/原因/修正建议加起来十几列，继续堆在 images 上会把
+// "文件本身的元数据"和"AI 评估结果"这两个不同职责混在一起。image_id 直
+// 接当主键(一对一关系，不单独设自增 id)，ON DELETE CASCADE 跟
+// tags/image_tags 现有的级联删除惯例一致。这张表要么整行存在(评估完整
+// 成功)要么整行不存在(没评估过/评估失败)，不是"整行都在、单个字段可
+// 空"的语义——所以除了两个修正建议各自四五个字段允许 NULL(模型判断不
+// 需要修正建议时不给)之外，其它列都是 NOT NULL。
+constexpr const char* kCreateImageEvaluations = R"sql(
+CREATE TABLE IF NOT EXISTS image_evaluations (
+  image_id                              INTEGER PRIMARY KEY REFERENCES images(id) ON DELETE CASCADE,
+  exposure_score                        INTEGER NOT NULL,
+  exposure_note                         TEXT NOT NULL,
+  exposure_fix_percent                  REAL,
+  composition_score                     INTEGER NOT NULL,
+  composition_note                      TEXT NOT NULL,
+  composition_fix_rotate_degrees        REAL,
+  composition_fix_crop_left_percent     REAL,
+  composition_fix_crop_right_percent    REAL,
+  composition_fix_crop_top_percent      REAL,
+  composition_fix_crop_bottom_percent   REAL,
+  focus_score                           INTEGER NOT NULL,
+  focus_note                            TEXT NOT NULL,
+  comment                               TEXT NOT NULL,
+  extra_guidance                        TEXT NOT NULL,
+  provider                              TEXT NOT NULL
+);
+)sql";
+
 // 本项目第一次需要处理"给已存在的表加列"——之前 initialize_schema 全是
 // 幂等的 CREATE TABLE IF NOT EXISTS，从来没遇到过这种情况。column_exists
 // 是幂等性的保证：新库和 M0 时代建的老库都统一走这条路径，不需要区分
@@ -128,6 +159,18 @@ void ensure_column(sqlite3* conn, const char* table, const char* column,
   exec(conn, sql.c_str());
 }
 
+// ensure_column 反过来的写法——`DROP COLUMN` 不像 `ADD COLUMN` 那样"列已
+// 经存在就是安全的重复操作"，列已经不存在时再 DROP 会报错，所以幂等性靠
+// 这个函数自己判断，不是靠 SQL 本身天然幂等。`ALTER TABLE ... DROP
+// COLUMN` 是 SQLite 3.35.0（2021）才有的原生语法，见
+// docs/M3_Eng_Design.md"风险与待确认问题"一节——这个项目实测链接的是
+// macOS 系统 SQLite 3.43.2，够新。
+void ensure_column_dropped(sqlite3* conn, const char* table, const char* column) {
+  if (!column_exists(conn, table, column)) return;
+  std::string sql = std::string("ALTER TABLE ") + table + " DROP COLUMN " + column + ";";
+  exec(conn, sql.c_str());
+}
+
 }  // namespace
 
 void initialize_schema(sqlite3* conn) {
@@ -139,6 +182,7 @@ void initialize_schema(sqlite3* conn) {
   exec(conn, kCreateImageTagsTagIdIndex);
   exec(conn, kCreateRecipes);
   exec(conn, kCreateRecipesPresetNameIndex);
+  exec(conn, kCreateImageEvaluations);
   ensure_column(conn, "images", "recipe_id",
                 "recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL");
   // M2: 图片来源类型 + RAW 预览缓存路径。见 docs/M2_Eng_Design.md"数据库
@@ -158,14 +202,15 @@ void initialize_schema(sqlite3* conn) {
   // 在 0（未开启），跟 M0/M1 时代"没有 RAW 概念"的项目语义一致。一旦被
   // 打开过就不会自动关闭，没有对应的取消开关。
   ensure_column(conn, "projects", "support_raw", "support_raw INTEGER NOT NULL DEFAULT 0");
-  // M3：审美评分结果，见 docs/M3_Eng_Design.md"数据库 Schema 设计"一节。四
-  // 列都可空——没评过分、或者评分请求失败，都落在 NULL，不是错误状态；四
-  // 列同生共死，要么都有值要么都没有，不会出现只有 ai_score 没有其它三个
-  // 的情况(core::ai::ScoreWorker 写库时会一起写)。
-  ensure_column(conn, "images", "ai_score", "ai_score INTEGER");
-  ensure_column(conn, "images", "ai_score_comment", "ai_score_comment TEXT");
-  ensure_column(conn, "images", "ai_score_prompt", "ai_score_prompt TEXT");
-  ensure_column(conn, "images", "ai_score_provider", "ai_score_provider TEXT");
+  // M3 增量一修订：原来"审美评分"用的四列（1-100 综合分+点评）已经被
+  // image_evaluations 表（上面 kCreateImageEvaluations）取代，删掉——这
+  // 几列上的数据都是这一路开发过程里测出来的测试数据，没有需要保留的
+  // 真实用户数据，不写迁移逻辑。见 docs/M3_Eng_Design.md"数据库 Schema
+  // 设计"一节。
+  ensure_column_dropped(conn, "images", "ai_score");
+  ensure_column_dropped(conn, "images", "ai_score_comment");
+  ensure_column_dropped(conn, "images", "ai_score_prompt");
+  ensure_column_dropped(conn, "images", "ai_score_provider");
 }
 
 }  // namespace pzt::core::db

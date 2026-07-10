@@ -76,20 +76,21 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
   return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
 }
 
-// 顶层 `:` 键:vim 风格的额外指引输入,提交给 core::ai::ScoreWorker 异步
-// 评分,不等结果、不阻塞。空字符串是合法输入(用固定模板,不加额外指
+// 顶层 `:` 键:vim 风格的额外指引输入,提交给 core::ai::EvaluationWorker 异
+// 步评估,不等结果、不阻塞。空字符串是合法输入(用固定模板,不加额外指
 // 引),只有 Esc 才是取消。`/` 开头这次不处理,静默忽略——docs/M3_PRD.md
 // 明确留给以后的命令扩展占位,这次不定义行为。固定供应商用 Gemini(手头
 // 只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)——多供应商切换本来就是
 // docs/M3_PRD.md 明确留到以后的开放问题,这次只是换了一下写死的默认值,
 // 不是新决策。
-std::string handle_ai_prompt_flow(pzt::core::ScoreWorker& score_worker, pzt::core::ImageId image_id,
-                                   int banner_row, int start_col, int content_cols) {
+std::string handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
+                                   pzt::core::ImageId image_id, int banner_row, int start_col,
+                                   int content_cols) {
   auto guidance = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
                                                     banner_row, start_col, content_cols);
   if (!guidance) return "";  // Esc,静默取消
   if (!guidance->empty() && (*guidance)[0] == '/') return "";  // `/` 前缀预留,静默忽略
-  bool accepted = score_worker.request(image_id, pzt::core::Provider::Gemini, *guidance);
+  bool accepted = evaluation_worker.request(image_id, pzt::core::Provider::Gemini, *guidance);
   if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
 
   // 提交成功只是个轻量的确认,不需要用户额外按键才能回到浏览——结果本身
@@ -226,12 +227,12 @@ int cmd_open(const std::vector<std::string>& args) {
     pzt::core::ImageId current_id = images.front().id;
     prefetch.set_current(images, current_id);
 
-    // M3：审美评分,`:` 键触发,见 handle_ai_prompt_flow。生命周期跟
+    // M3：选片辅助评估,`:` 键触发,见 handle_ai_prompt_flow。生命周期跟
     // prefetch 一样声明在这个块里——退出时析构会等还在跑的请求完成(这是
     // jthread 正确管理生命周期的直接代价,接受这个行为,不做 detach 之类
     // 放弃生命周期管理的取巧方案)。默认参数(真实数据库路径 + 真实
-    // request_score),不需要额外传参。
-    pzt::core::ScoreWorker score_worker;
+    // request_evaluation),不需要额外传参。
+    pzt::core::EvaluationWorker evaluation_worker;
     std::uint64_t ai_last_seen_generation = 0;
 
     // AltScreen 在 CbreakMode 前构造、后析构:退出时先把输入模式还原、再离
@@ -456,57 +457,104 @@ int cmd_open(const std::vector<std::string>& args) {
         // 被截断,例如"风格: Standard: MyStandard"就被切成了"风格:
         // Standard: MyStanda",看不全。
         row++;  // 空一行
-        emit_line(pzt::cli::i18n::info_style_label());
+        // M3 修订：Recipe 标签跟值(预设名/(无))合并一行，不再各占一行——
+        // 给下面的选片评估腾地方。只有真的选了一个具体保存的 version(不
+        // 是直接用预设本身，见 style->version_name 是不是有值)才多占一
+        // 行——用预设默认状态是最常见的情况，这种情况下没有多余信息要
+        // 展示，不该白占一行。
         auto recipe_id = current_ref ? pzt::core::get_image_recipe(current_ref->id) : std::nullopt;
         auto style = recipe_id ? pzt::core::describe_recipe(*recipe_id) : std::nullopt;
-        if (!style) {
-          emit_line(pzt::cli::i18n::info_style_none_label());
-        } else {
-          // M1 increment 5:当前实际渲染的是风格化效果时标出来(`r v` 切
-          // 到原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个
-          // 状态。真机测试发现单靠 ANSI 粗体(`\x1b[1m`)不可靠——很多终端
-          // 的中文字体没有配置独立的粗体字重,ASCII 文本(比如预设名
-          // "Origin")会正常加粗,但中文 version 名字(比如"亮一点")的字
-          // 重不会变,两行看起来不一致,不是代码逻辑的问题,是终端/字体限
-          // 制。改用不依赖字重的文字标记(`*`)当主要信号,粗体转义码还留
-          // 着(在支持的终端上锦上添花),但不再是唯一的指示方式。标记跟
-          // 缩进空格等宽替换,不破坏两级缩进的对齐。粗体转义码要包在
-          // pad_to 算完显示宽度之后的结果外层,不能传给 pad_to 之前就
-          // 包——不然转义字节会被 display_width 当成可见字符,算错截断/
-          // 补空格的位置。row 的边界检查跟 emit_line 一样,自己做 move_
-          // cursor/递增,不复用 emit_line——多了个粗体转义包装,写成单独
-          // 一份比塞参数进 emit_line 更直接。
-          bool active = !show_original;
-          auto emit_style_line = [&](const std::string& indent, const std::string& text) {
-            if (row < meta_bottom_row) {
-              std::string marker = active ? indent.substr(0, indent.size() - 2) + "* " : indent;
-              std::string padded = pad_to(marker + text, info_cols);
-              out += "\x1b[" + std::to_string(row) + ";" + std::to_string(info_col) + "H";
-              out += active ? "\x1b[1m" + padded + "\x1b[0m" : padded;
-            }
-            ++row;
-          };
-          emit_style_line("  ", style->preset_name);
-          if (style->version_name) {
-            emit_style_line("    ", *style->version_name);
+        // M1 increment 5:当前实际渲染的是风格化效果时标出来(`r v` 切到
+        // 原图预览时取消),直接呼应"现在看到的是不是风格化效果"这个状
+        // 态。真机测试发现单靠 ANSI 粗体(`\x1b[1m`)不可靠——很多终端的
+        // 中文字体没有配置独立的粗体字重,ASCII 文本(比如预设名"Origin")
+        // 会正常加粗,但中文 version 名字(比如"亮一点")的字重不会变,不
+        // 是代码逻辑的问题,是终端/字体限制。改用不依赖字重的文字标记
+        // (`*`)当主要信号,粗体转义码还留着(在支持的终端上锦上添花),
+        // 但不再是唯一的指示方式。星号不显示时换成等宽的空格而不是整个
+        // 去掉——真机反馈过直接去掉会导致名字的列位置随着 `r v` 切换来
+        // 回跳动，看着很别扭。标签本身("风格:"/"Recipe:")不加粗，只加
+        // 粗星号+名字这一段——两段分开各自 pad_to 再拼起来，不是对整行
+        // 结果做字符串切片插入转义码(那样要精确计算标签的字节长度，容
+        // 易因为中英文标签宽度不同出 bug)。
+        bool style_active = style.has_value() && !show_original;
+        {
+          std::string label = pzt::cli::i18n::info_style_label() + " ";
+          std::size_t label_width = display_width(label);
+          std::size_t value_width =
+              static_cast<std::size_t>(info_cols) > label_width
+                  ? static_cast<std::size_t>(info_cols) - label_width
+                  : 0;
+          std::string value_text;
+          if (!style) {
+            value_text = pzt::cli::i18n::info_none_label();
+          } else {
+            value_text = (style_active ? "* " : "  ") + style->preset_name;
           }
+          if (row < meta_bottom_row) {
+            std::string padded_value = pad_to(value_text, value_width);
+            out += "\x1b[" + std::to_string(row) + ";" + std::to_string(info_col) + "H";
+            out += label;
+            out += style_active ? "\x1b[1m" + padded_value + "\x1b[0m" : padded_value;
+          }
+          ++row;
+        }
+        if (style && style->version_name) {
+          if (row < meta_bottom_row) {
+            std::string marker = style_active ? "  * " : "    ";
+            std::string padded = pad_to(marker + *style->version_name, info_cols);
+            out += "\x1b[" + std::to_string(row) + ";" + std::to_string(info_col) + "H";
+            out += style_active ? "\x1b[1m" + padded + "\x1b[0m" : padded;
+          }
+          ++row;
         }
 
-        // M3：`:` 键触发的审美评分结果,复用上面已经查过的 info,不需要
-        // 再查一次库。没有值(还没评过分/评分请求失败)时统一显示 "-"。
-        // 点评是模型自由生成的文字,长度不像其它字段那样可控,单行会经常
-        // 被截断看不全——按显示宽度硬换行,跟标签/风格一样受 meta_bottom_
-        // row 的越界裁剪保护,装不下的部分直接不画。
+        // M3：`:` 键触发的选片辅助评估结果,复用上面已经查过的 info,不需
+        // 要再查一次库。综合分数(overall_score)和达标状态(passes_gate)
+        // 不是模型给的,是从三项分数算出来的(core::ai 那两个函数,见
+        // docs/M3_Eng_Design.md),这里直接调,不在 CLI 层重新算一遍。每
+        // 一行内容长度不可控(尤其是模型给的 note/comment)——按显示宽度
+        // 硬换行,跟标签/风格一样受 meta_bottom_row 的越界裁剪保护,装不
+        // 下的部分直接不画。
         row++;  // 空一行
-        emit_line(pzt::cli::i18n::ai_score_label(info ? info->ai_score : std::nullopt));
-        // 点评紧跟在"AI Score:"下面,位置已经说明了这是什么,不用再重复
-        // 一个"AI Comment:"标题占地方——点评本身经常已经要换行了,标题
-        // 只会让本来就紧张的行数更紧张。没有点评时统一显示 "-",跟分数
-        // 那一行"没有就是 -"的惯例一致。
-        auto comment_lines = wrap_text(
-            pzt::cli::i18n::ai_score_comment_text(info ? info->ai_score_comment : std::nullopt),
-            static_cast<std::size_t>(info_cols));
-        for (const auto& line : comment_lines) emit_line(line);
+        if (!info || !info->evaluation) {
+          emit_line(pzt::cli::i18n::evaluation_none_label());
+        } else {
+          const auto& eval = *info->evaluation;
+          for (const auto& line : wrap_text(pzt::cli::i18n::evaluation_summary_label(
+                                                 pzt::core::overall_score(eval),
+                                                 pzt::core::passes_gate(eval)),
+                                             static_cast<std::size_t>(info_cols))) {
+            emit_line(line);
+          }
+          std::optional<double> exposure_fix =
+              eval.exposure_fix ? std::optional<double>(eval.exposure_fix->adjust_percent)
+                                 : std::nullopt;
+          std::optional<double> composition_fix =
+              eval.composition_fix ? std::optional<double>(eval.composition_fix->rotate_degrees)
+                                    : std::nullopt;
+          for (const auto& line :
+               wrap_text(pzt::cli::i18n::evaluation_exposure_line(eval.exposure.score,
+                                                                    eval.exposure.note, exposure_fix),
+                         static_cast<std::size_t>(info_cols))) {
+            emit_line(line);
+          }
+          for (const auto& line : wrap_text(pzt::cli::i18n::evaluation_composition_line(
+                                                 eval.composition.score, eval.composition.note,
+                                                 composition_fix),
+                                             static_cast<std::size_t>(info_cols))) {
+            emit_line(line);
+          }
+          for (const auto& line :
+               wrap_text(pzt::cli::i18n::evaluation_focus_line(eval.focus.score, eval.focus.note),
+                         static_cast<std::size_t>(info_cols))) {
+            emit_line(line);
+          }
+          row++;  // 空一行
+          for (const auto& line : wrap_text(eval.comment, static_cast<std::size_t>(info_cols))) {
+            emit_line(line);
+          }
+        }
 
         write_stdout(out);
       }
@@ -683,9 +731,9 @@ int cmd_open(const std::vector<std::string>& args) {
       // 发生"这条要求)。debug_mode 保持原有的无条件重绘行为不变。
       bool timed_out = false;
       while (true) {
-        if (debug_mode || score_worker.has_pending()) {
+        if (debug_mode || evaluation_worker.has_pending()) {
           if (!stdin_ready(300)) {
-            if (!debug_mode && !score_worker.consume_new_result(ai_last_seen_generation)) {
+            if (!debug_mode && !evaluation_worker.consume_new_result(ai_last_seen_generation)) {
               continue;
             }
             timed_out = true;
@@ -853,12 +901,12 @@ int cmd_open(const std::vector<std::string>& args) {
                                                          banner_row, start_col, content_cols);
         }
       } else if (c == ':') {
-        // M3:vim 风格的额外指引输入,提交给 ScoreWorker 异步评分。
+        // M3:vim 风格的额外指引输入,提交给 EvaluationWorker 异步评估。
         // current_id 不变,跟 space/x/r/e 一样只走 status_override 原地
         // 刷新——结果落地由上面的 poll 逻辑触发重绘,不是这里同步等待。
         if (current_ref) {
           highlight_active_menu_key(':', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          status_override = handle_ai_prompt_flow(score_worker, current_ref->id, banner_row,
+          status_override = handle_ai_prompt_flow(evaluation_worker, current_ref->id, banner_row,
                                                    start_col, content_cols);
         }
       }
