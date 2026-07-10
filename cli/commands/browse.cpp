@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -125,11 +124,34 @@ std::pair<std::string, std::string> split_console_command(const std::string& inp
   return {body.substr(0, space), start == std::string::npos ? "" : rest.substr(start)};
 }
 
+// 从字符串最前面取一个"范围 token"：普通情况下按第一个空白切；
+// `#"..."` 这种带引号的标签名整体当一个 token，引号内的空格不算分界——
+// 输入语法照抄 tag_token(browse.cpp 顶部，信息栏展示标签用的那个)的输
+// 出语法，用户不需要为"怎么打带空格的标签名"另外学一套写法。返回值保
+// 留开头的 `#` 和引号，解引号交给 resolve_console_scope。没有找到闭合
+// 引号时(用户漏打了后一个引号)放弃引号语义，退化成普通按空格切，交给
+// resolve_console_scope 报"范围写法不对"，不是这个函数的职责。
+std::pair<std::string, std::string> take_scope_token(const std::string& s) {
+  std::size_t start = s.find_first_not_of(' ');
+  if (start == std::string::npos) return {"", ""};
+  if (s.compare(start, 2, "#\"") == 0) {
+    std::size_t close = s.find('"', start + 2);
+    if (close != std::string::npos) {
+      std::string token = s.substr(start, close - start + 1);
+      std::size_t rest_start = s.find_first_not_of(' ', close + 1);
+      return {token, rest_start == std::string::npos ? "" : s.substr(rest_start)};
+    }
+  }
+  std::size_t space = s.find(' ', start);
+  if (space == std::string::npos) return {s.substr(start), ""};
+  std::size_t rest_start = s.find_first_not_of(' ', space);
+  return {s.substr(start, space - start), rest_start == std::string::npos ? "" : s.substr(rest_start)};
+}
+
 // `/dedup`/`/ai_eval` 共用的批量范围解析：`*` 整个项目、`#标签名` 带指
-// 定标签的图片——两边统一用同一套写法，不各自维护一套解析和错误文案。
-// 标签名里带空格这种边界情况这次不处理(见 docs/M3_PRD.md"风险与待确认
-// 问题")。scope 不是 `*` 也不以 `#` 开头时，error_message 给一条"范围
-// 写法不对"的提示，不静默当成标签名。
+// 定标签的图片，标签名带空格时用 `#"标签名"` 包起来——两边统一用同一
+// 套写法，不各自维护一套解析和错误文案。scope 不是 `*` 也不以 `#` 开
+// 头时，error_message 给一条"范围写法不对"的提示，不静默当成标签名。
 struct ScopeResolution {
   std::vector<pzt::core::ImageId> image_ids;
   std::string error_message;  // 非空表示解析失败，caller 直接把它当结果返回
@@ -146,6 +168,9 @@ ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std
     return result;
   }
   std::string tag_name = scope.substr(1);
+  if (tag_name.size() >= 2 && tag_name.front() == '"' && tag_name.back() == '"') {
+    tag_name = tag_name.substr(1, tag_name.size() - 2);
+  }
   auto tag_id = pzt::core::find_tag_by_name(project_id, tag_name);
   if (!tag_id) {
     result.error_message = pzt::cli::i18n::err_console_tag_not_found(tag_name);
@@ -238,15 +263,9 @@ std::string handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_wo
     return handle_tasks_command(evaluation_worker);
   }
   if (command == "ai_eval") {
-    std::istringstream iss(rest);
-    std::string first_token;
-    iss >> first_token;
+    auto [first_token, extra_guidance] = take_scope_token(rest);
     bool is_batch_scope = first_token == "*" || (!first_token.empty() && first_token[0] == '#');
     if (is_batch_scope) {
-      std::string extra_guidance;
-      std::getline(iss, extra_guidance);
-      std::size_t start = extra_guidance.find_first_not_of(' ');
-      extra_guidance = start == std::string::npos ? "" : extra_guidance.substr(start);
       return handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance);
     }
     // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——固
