@@ -265,6 +265,11 @@ class EvaluationWorker {
 
 ### `cli/commands/browse.cpp`：`/` 命令解析
 
+**现状更新**：这一节设计的 `handle_ai_console_command` 分发器直到 `docs/M3_Dedup_Eng_Design.md` 的近似重复检测增量落地才第一次真正实现（`/ai_eval`/`/tasks` 到目前为止仍然停留在设计阶段，没有排进任何实现任务）。实现出来的分发器和这里的设计有两处出入，以后真正做 `/ai_eval`/`/tasks` 时要在已有代码上改，不是照这份设计另起一个：
+
+* 已实现的 `handle_ai_console_command(pzt::core::ProjectId project_id, const std::string& input, int banner_row, int start_col, int content_cols)` **不带** `EvaluationWorker&` 参数——`dedup` 这个分支不需要它。真要接 `ai_eval`/`tasks` 分支，需要给这个函数补上 `EvaluationWorker&` 参数（调用点 `handle_ai_prompt_flow` 本来就有这个引用，多传一个不难），而不是假装现在就有。
+* `msg_ai_unknown_command()` 实现成了带一个参数的 `msg_ai_unknown_command(const std::string& command)`，把具体命令名回显进提示（"Unknown command: /ai_eval"），比不带名字的版本更好定位问题，真机验证过。
+
 `handle_ai_prompt_flow` 现在需要多接一个 `project_id` 参数（批量命令要拿 `project_id` 去查 `list_images`/`find_tag_by_name`，之前这个函数只知道当前这一张图的 `image_id`；调用点已经有 `*id` 在作用域里，直接多传一个参数，不需要额外查询）。逻辑分叉：
 
 ```cpp

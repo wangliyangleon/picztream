@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <unistd.h>
@@ -76,20 +77,89 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
   return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
 }
 
+// `/` 开头的输入解析成命令名(不含前导 `/`) + 剩余参数——第一个空白就是
+// 命令名和参数的分界，tag_name 里带空格这种边界情况这次不处理(见
+// docs/M3_PRD.md"风险与待确认问题")。命令名和参数之间允许多个空格。
+std::pair<std::string, std::string> split_console_command(const std::string& input) {
+  std::string body = input.substr(1);  // 去掉前导 '/'
+  auto space = body.find(' ');
+  if (space == std::string::npos) return {body, ""};
+  std::string rest = body.substr(space + 1);
+  std::size_t start = rest.find_first_not_of(' ');
+  return {body.substr(0, space), start == std::string::npos ? "" : rest.substr(start)};
+}
+
+// `/dedup * | <标签名>`——近似重复检测唯一的触发入口，见
+// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。scope == "*" 时整个项
+// 目，否则按标签名解析成子集。范围内有图片还没跑过选片辅助评估时先问
+// 一句 y/N——不代为触发评估，只是提醒"这次的保留判断可能会退化成按拍
+// 摄时间选"；按其它任何键(含 Esc)都算取消，跟 tag_menu.cpp 里
+// "是否有序"那个 y/N 确认同一个约定。真正比对这一步是阻塞的:
+// find_and_tag_duplicates 内部可能跑几秒到几十秒，这段时间 pzt open 冻
+// 结、不接受任何输入——刻意的简化，见 docs/M3_Dedup_PRD.md"非目标"一
+// 节，不传 on_progress 是因为这段时间主循环没有机会重绘，传了也没地方
+// 画。
+std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& scope,
+                                  int banner_row, int start_col, int content_cols) {
+  std::vector<pzt::core::ImageId> image_ids;
+  if (scope == "*") {
+    for (const auto& ref : pzt::core::list_images(project_id)) image_ids.push_back(ref.id);
+  } else {
+    auto tag_id = pzt::core::find_tag_by_name(project_id, scope);
+    if (!tag_id) return pzt::cli::i18n::err_dedup_tag_not_found(scope);
+    auto filtered = pzt::core::filter_by_tag(*tag_id);
+    if (!filtered.ok()) return pzt::cli::i18n::err_filter_failed();
+    for (const auto& ref : filtered.value()) image_ids.push_back(ref.id);
+  }
+
+  int unevaluated = 0;
+  for (auto id : image_ids) {
+    auto info = pzt::core::get_image(id);
+    if (!info || !info->evaluation) ++unevaluated;
+  }
+  if (unevaluated > 0) {
+    // 拆两行,跟 tag_menu.cpp 里"是否有序"那个确认同一个先例——见
+    // msg_dedup_confirm_unevaluated_line1/2 的说明。
+    char c = prompt_and_read_key_2line(pzt::cli::i18n::msg_dedup_confirm_unevaluated_line1(unevaluated),
+                                        pzt::cli::i18n::msg_dedup_confirm_unevaluated_line2(),
+                                        banner_row, start_col, content_cols);
+    if (c != 'y' && c != 'Y') return "";  // 取消,静默
+  }
+
+  auto result = pzt::core::find_and_tag_duplicates(project_id, image_ids, /*on_progress=*/nullptr);
+  if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
+  return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count);
+}
+
+// `:` 输入以 `/` 开头时的命令分发。目前只有 dedup 一个已识别的命令(之
+// 前设计过的 ai_eval/tasks 还没实现)，其它一律走"未知命令"——跟
+// docs/M3_PRD.md"触发入口"一节一致，不再像最初那样静默忽略，以后加新
+// 命令直接在这加一个分支。
+std::string handle_ai_console_command(pzt::core::ProjectId project_id, const std::string& input,
+                                       int banner_row, int start_col, int content_cols) {
+  auto [command, rest] = split_console_command(input);
+  if (command == "dedup") {
+    return handle_dedup_command(project_id, rest, banner_row, start_col, content_cols);
+  }
+  return pzt::cli::i18n::msg_ai_unknown_command(command);
+}
+
 // 顶层 `:` 键:vim 风格的额外指引输入,提交给 core::ai::EvaluationWorker 异
 // 步评估,不等结果、不阻塞。空字符串是合法输入(用固定模板,不加额外指
-// 引),只有 Esc 才是取消。`/` 开头这次不处理,静默忽略——docs/M3_PRD.md
-// 明确留给以后的命令扩展占位,这次不定义行为。固定供应商用 Gemini(手头
-// 只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)——多供应商切换本来就是
-// docs/M3_PRD.md 明确留到以后的开放问题,这次只是换了一下写死的默认值,
-// 不是新决策。
+// 引),只有 Esc 才是取消。`/` 开头解析成控制台命令(见
+// handle_ai_console_command),不再当成额外指引提交。固定供应商用
+// Gemini(手头只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)——多供应商切
+// 换本来就是 docs/M3_PRD.md 明确留到以后的开放问题,这次只是换了一下写
+// 死的默认值,不是新决策。
 std::string handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
-                                   pzt::core::ImageId image_id, int banner_row, int start_col,
-                                   int content_cols) {
+                                   pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
+                                   int banner_row, int start_col, int content_cols) {
   auto guidance = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
                                                     banner_row, start_col, content_cols);
   if (!guidance) return "";  // Esc,静默取消
-  if (!guidance->empty() && (*guidance)[0] == '/') return "";  // `/` 前缀预留,静默忽略
+  if (!guidance->empty() && (*guidance)[0] == '/') {
+    return handle_ai_console_command(project_id, *guidance, banner_row, start_col, content_cols);
+  }
   bool accepted = evaluation_worker.request(image_id, pzt::core::Provider::Gemini, *guidance);
   if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
 
@@ -906,7 +976,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // 刷新——结果落地由上面的 poll 逻辑触发重绘,不是这里同步等待。
         if (current_ref) {
           highlight_active_menu_key(':', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          status_override = handle_ai_prompt_flow(evaluation_worker, current_ref->id, banner_row,
+          status_override = handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, banner_row,
                                                    start_col, content_cols);
         }
       }

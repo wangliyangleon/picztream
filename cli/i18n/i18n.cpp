@@ -927,6 +927,57 @@ std::string msg_ai_processing_submitted() {
   }
 }
 
+std::string msg_ai_unknown_command(const std::string &command) {
+  if (g_lang == Lang::zh) {
+    return " 未知命令: /" + command + " ";
+  } else {
+    return " Unknown command: /" + command + " ";
+  }
+}
+
+std::string err_dedup_tag_not_found(const std::string &tag_name) {
+  if (g_lang == Lang::zh) {
+    return " 找不到标签 '" + tag_name + "' ";
+  } else {
+    return " Tag '" + tag_name + "' not found ";
+  }
+}
+
+std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count) {
+  if (g_lang == Lang::zh) {
+    return " " + std::to_string(unevaluated_count) + " 张照片还没评估，保留判断会退化成按拍摄时间选 ";
+  } else {
+    return " " + std::to_string(unevaluated_count) +
+           " image(s) not evaluated, keep-selection falls back to capture time ";
+  }
+}
+
+std::string msg_dedup_confirm_unevaluated_line2() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("y", "继续") + " / " + menu_item("其它键", "取消") + " ";
+  } else {
+    return " " + menu_item("y", "Continue") + " / " + menu_item("other keys", "Cancel") + " ";
+  }
+}
+
+std::string msg_dedup_result(int group_count, int tagged_count) {
+  if (g_lang == Lang::zh) {
+    return " 找到 " + std::to_string(group_count) + " 组重复，标记了 " + std::to_string(tagged_count) +
+           " 张 ";
+  } else {
+    return " Found " + std::to_string(group_count) + " duplicate group(s), tagged " +
+           std::to_string(tagged_count) + " image(s) ";
+  }
+}
+
+std::string err_dedup_failed() {
+  if (g_lang == Lang::zh) {
+    return " 重复检测失败，请重试 ";
+  } else {
+    return " Duplicate detection failed, please try again ";
+  }
+}
+
 std::string tag_menu_cap_zero() {
   if (g_lang == Lang::zh) {
     return " 标签上限为 0,无法添加 ";

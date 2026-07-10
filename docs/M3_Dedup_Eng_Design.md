@@ -136,15 +136,26 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
 
 ## CLI 接线
 
-`cli/commands/browse.cpp` 的 `/dedup` 分支，接到 `docs/M3_Eng_Design.md`"CLI 接线"一节定的 `handle_ai_console_command` 分发器上，跟 `ai_eval`/`tasks` 平级多一个分支：
+**实现阶段发现原设计的一个前提不成立**：原设计假设 `handle_ai_console_command` 分发器已经由 `docs/M3_Eng_Design.md` 的 `/ai_eval`/`/tasks` 增量建好，这次只是"多加一个分支"。实际动手时发现 `/ai_eval`/`/tasks` 从来没有实现过（那一轮讨论到最后是文档定稿、没有排进实现任务），`cli/commands/browse.cpp` 里 `:` 键的处理还停在"`/` 前缀静默忽略"的占位状态。这次改成由 dedup 增量**从零建这个分发器**，只认 `dedup` 一个命令，其它任何 `/` 输入（包括 `ai_eval`/`tasks`，也包括手误）统一走"未知命令"分支——不是缺失功能，是老实反映当前状态。以后 `/ai_eval`/`/tasks` 真的要实现时，应该在这个已有的分发器上加分支，不是重新设计一遍。
+
+`cli/commands/browse.cpp` 新增的分发器：
 
 ```cpp
-if (command == "dedup") {
-  std::string scope;
-  iss >> scope;
-  return handle_dedup_command(project_id, scope, banner_row, start_col, content_cols);
+// `/` 开头的输入解析成命令名(不含前导 `/`) + 剩余参数——第一个空白就是
+// 命令名和参数的分界。
+std::pair<std::string, std::string> split_console_command(const std::string& input);
+
+std::string handle_ai_console_command(pzt::core::ProjectId project_id, const std::string& input,
+                                       int banner_row, int start_col, int content_cols) {
+  auto [command, rest] = split_console_command(input);
+  if (command == "dedup") {
+    return handle_dedup_command(project_id, rest, banner_row, start_col, content_cols);
+  }
+  return pzt::cli::i18n::msg_ai_unknown_command(command);
 }
 ```
+
+`handle_ai_prompt_flow`（`:` 键的主流程）里，原来"`/` 前缀静默忽略"那一行改成调用这个分发器；这个函数因此多了一个 `project_id` 参数（原来只有 `image_id`，`/dedup` 的范围解析需要项目而不是单张图片）。
 
 `handle_dedup_command`：
 
@@ -156,7 +167,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     for (const auto& ref : pzt::core::list_images(project_id)) image_ids.push_back(ref.id);
   } else {
     auto tag_id = pzt::core::find_tag_by_name(project_id, scope);
-    if (!tag_id) return pzt::cli::i18n::msg_ai_eval_tag_not_found(scope);  // 复用同一条"标签不存在"文案
+    if (!tag_id) return pzt::cli::i18n::err_dedup_tag_not_found(scope);
     auto filtered = pzt::core::filter_by_tag(*tag_id);
     if (!filtered.ok()) return pzt::cli::i18n::err_filter_failed();
     for (const auto& ref : filtered.value()) image_ids.push_back(ref.id);
@@ -168,8 +179,14 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     if (!info || !info->evaluation) ++unevaluated;
   }
   if (unevaluated > 0) {
-    char c = prompt_and_read_key(pzt::cli::i18n::msg_dedup_confirm_unevaluated(unevaluated),
-                                  banner_row, start_col, content_cols);
+    // 拆两行，不是原设计里的单行 prompt_and_read_key——真机验证时发现单
+    // 行版本在正常终端宽度下会被 pad_to 截断，"(y/N)"这个关键提示直接被
+    // 切掉，用户看不出这是个需要按键确认的问题。改成跟 tag_menu.cpp 里
+    // "是否有序"那个确认同一个先例：prompt_and_read_key_2line，第一行
+    // 说明、第二行按键提示。
+    char c = prompt_and_read_key_2line(pzt::cli::i18n::msg_dedup_confirm_unevaluated_line1(unevaluated),
+                                        pzt::cli::i18n::msg_dedup_confirm_unevaluated_line2(),
+                                        banner_row, start_col, content_cols);
     if (c != 'y' && c != 'Y') return "";  // 取消,静默
   }
 
@@ -183,6 +200,8 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 ```
 
 **这里没有传 `on_progress` 回调**——`/dedup` 是阻塞 `pzt open` 主循环的，主循环本身在这段时间内没有机会重绘（跟其它所有 `handle_*` 子流程一样，读键循环阻塞期间画面不会更新，见 `docs/M3_Eng_Design.md`"CLI 接线"一节里 `space`/`g`/`r` 这些子菜单的既有说明），传一个进度回调也没地方画，不如不传，省一次白跑的开销。真机验收阶段如果发现"用户等太久以为卡死"是个真问题，再考虑要不要在这个阻塞期间画点什么。
+
+**真机验证**（pty 驱动 `pzt open`，两张字节完全相同的合成 JPEG、`captured_at` 相差 2 秒、都没跑过评估）：`/ai_eval foo` 这类未识别命令正确显示"Unknown command: /ai_eval"；`/dedup *` 正确显示两行 y/N 确认且都在终端宽度内完整可读；按其它键（用 `n` 验证）取消、不产生任何标签改动；按 `y` 确认后正确显示"Found 1 duplicate group(s), tagged 1 image(s)"，且数据库里确认是拍摄时间更早的那张被打上"重复"标签（两张都没评估，退化成按 `captured_at` 最新保留）；`/dedup <不存在的标签>` 正确显示"Tag 'xxx' not found"；不带 `/` 前缀的普通额外指引文本仍然照常提交给 `EvaluationWorker`（确认没有破坏原有的单图评估流程）。
 
 ## 任务分解
 

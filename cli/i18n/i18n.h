@@ -140,6 +140,23 @@ std::string msg_ai_prompt_placeholder();
 // 后加别的能力会复用同一条"处理中"/"已提交"反馈，不是新开一套文案。
 std::string msg_ai_processing_pending();
 std::string msg_ai_processing_submitted();
+// `:` 输入以 `/` 开头但不是已识别的命令名(目前只有 dedup)时统一显示，
+// 见 docs/M3_PRD.md"触发入口"一节——不再像最初那样静默忽略。
+std::string msg_ai_unknown_command(const std::string& command);
+
+// M3：近似重复检测,`/dedup * | <标签名>` 触发,见
+// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。命名不带 ai_eval 前缀——
+// 这条"标签不存在"文案目前只有 dedup 在用，以后 /ai_eval 落地时如果形状
+// 一样可以直接复用，不需要现在就假装两边共用同一个 ai_eval 专属名字。
+std::string err_dedup_tag_not_found(const std::string& tag_name);
+// 拆成两行(跟 tag_menu_order_prompt/tag_menu_ordered_keys_help 同一个
+// 先例)——prompt_and_read_key 单行版本用 pad_to 截断不换行,英文原文加上
+// "(y/N)"提示很容易在正常终端宽度下被截断掉,拆成"说明"+"按键提示"两
+// 行更稳妥。
+std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count);
+std::string msg_dedup_confirm_unevaluated_line2();
+std::string msg_dedup_result(int group_count, int tagged_count);
+std::string err_dedup_failed();
 
 // 还没评估过/评估失败时统一显示的占位。
 std::string evaluation_none_label();
