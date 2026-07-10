@@ -22,6 +22,8 @@ void init_lang();
 // 模式下会漏出裸的中文标签名。目前 is_system 只用在这一个标签上,所以直接
 // 按 is_system 判断,不需要比较 tag_id。
 std::string reject_tag_label();
+// M3：`core::dedup` 用的"重复"系统标签，见 tag_display_name 的说明。
+std::string duplicate_tag_label();
 std::string tag_display_name(const pzt::core::TagSummary& tag);
 
 // 所有菜单里"按键 -> 可选项"统一格式:"key:[label]"。数量/状态这类附加

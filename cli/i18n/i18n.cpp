@@ -47,9 +47,25 @@ std::string reject_tag_label() {
   }
 }
 
+std::string duplicate_tag_label() {
+  if (g_lang == Lang::zh) {
+    return "重复";
+  } else {
+    return "Duplicate";
+  }
+}
+
+// M3 之前只有"废片"一个系统标签，`is_system` 就足够当判断依据；`重复`
+// 标签(core::dedup)加进来之后，`is_system` 不再能唯一确定是哪个系统标
+// 签——两个都是 is_system=1，这里必须再按 tag.name 精确匹配区分，不然
+// 所有系统标签在界面上都会被误显示成"废片"(这就是实际发生过的 bug：
+// 重复检测正确把图片打上了"重复"标签，界面却把它显示成"废片"，数据库
+// 里的数据是对的，只是这个函数认错了)。
 std::string tag_display_name(const pzt::core::TagSummary &tag) {
-  if (tag.is_system)
+  if (tag.is_system) {
+    if (tag.name == pzt::core::tagging::kDuplicateTagName) return duplicate_tag_label();
     return reject_tag_label();
+  }
   return tag.name;
 }
 
