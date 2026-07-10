@@ -148,12 +148,33 @@ project::ImageId pick_keep_id(db::Database& db, const std::vector<ImageMeta>& cl
 
   project::ImageId keep_id = 0;
   if (all_evaluated) {
+    // 三级择优：分数优先；分数打平时不再随意兜底成 image_id 最小，改成
+    // 按 captured_at 更新的那张——用户实测反馈过，几张构图几乎相同的照
+    // 片模型经常给出完全相同的三项分数，image_id 是插入顺序的产物，跟
+    // "哪张更值得留"毫无关系，拍摄时间好歹是个有意义的信号，同一次连
+    // 拍里更靠后按下快门的那张更可能是最终定格的那次。captured_at 也打
+    // 平的极端情况(理论上不该发生)最后才兜底选 image_id 最小的，保证
+    // 确定性。
     std::optional<int> best_score;
+    std::optional<std::int64_t> best_time;
     for (std::size_t k = 0; k < members.size(); ++k) {
       int score = ai::overall_score(*infos[k]->evaluation);
+      std::int64_t captured_at = cluster[members[k]].captured_at;
       project::ImageId id = cluster[members[k]].id;
-      if (!best_score || score > *best_score || (score == *best_score && id < keep_id)) {
+
+      bool better;
+      if (!best_score) {
+        better = true;
+      } else if (score != *best_score) {
+        better = score > *best_score;
+      } else if (captured_at != *best_time) {
+        better = captured_at > *best_time;
+      } else {
+        better = id < keep_id;
+      }
+      if (better) {
         best_score = score;
+        best_time = captured_at;
         keep_id = id;
       }
     }

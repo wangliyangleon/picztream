@@ -265,6 +265,24 @@ TEST_CASE("keep_id picks the highest overall_score when every group member is ev
   CHECK(groups[0].keep_id == fx.images[0]);
 }
 
+TEST_CASE("keep_id breaks a score tie by keeping the most recently captured image") {
+  auto fx = make_fixture("keep_by_score_tie", 3);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1004);  // 分数并列最高的两张里,时间更新的这张应该被选中
+  set_captured_at(fx.db, fx.images[2], 1002);
+
+  insert_evaluation(fx.db, fx.images[0], 7, 7, 7);
+  insert_evaluation(fx.db, fx.images[1], 7, 7, 7);  // 跟 a 同分,但更新,应该保留这张
+  insert_evaluation(fx.db, fx.images[2], 3, 3, 3);
+
+  ImageHash h = 0x5A5A5A5A5A5A5A5AULL;
+  auto decoder = hash_map_decoder({{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}, {path_for(fx, 'c'), h}});
+
+  auto groups = detail::find_duplicates_impl(fx.db, fx.root_path, fx.images, 10, 5, nullptr, decoder);
+  REQUIRE(groups.size() == 1);
+  CHECK(groups[0].keep_id == fx.images[1]);
+}
+
 TEST_CASE("keep_id falls back to captured_at when even one group member is unevaluated") {
   auto fx = make_fixture("keep_by_time_fallback", 3);
   set_captured_at(fx.db, fx.images[0], 1000);  // 评分最高，但时间最老
