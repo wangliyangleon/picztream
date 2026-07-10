@@ -47,6 +47,11 @@ bool EvaluationWorker::consume_new_result(std::uint64_t& last_seen_generation) c
   return true;
 }
 
+EvaluationWorker::QueueStatus EvaluationWorker::queue_status() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  return QueueStatus{queue_.size(), in_flight_.size() > queue_.size()};
+}
+
 void EvaluationWorker::worker_loop(std::stop_token stop) {
   while (true) {
     std::unique_lock<std::mutex> lock(mu_);

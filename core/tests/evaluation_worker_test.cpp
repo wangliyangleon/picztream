@@ -1,7 +1,9 @@
 #include <doctest.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -208,6 +210,83 @@ TEST_CASE("re-evaluating an image overwrites the previous result") {
   REQUIRE(info.has_value());
   REQUIRE(info->evaluation.has_value());
   CHECK(info->evaluation->exposure.score == 2);
+}
+
+// M3:`/tasks` 用的聚合状态查询。单个 worker 线程一次只处理一个请求，
+// "queued>0 但 processing 还是 false"这个状态在真实运行中只存在于请求
+// 刚提交、worker 线程还没被调度醒来的极短窗口内，没法确定性地测——三个
+// 有意义、能稳定复现的状态是:全空闲、只有一个在处理(没有排队积压)、一
+// 个在处理+还有积压排队。用一个会阻塞在条件变量上的假 EvaluationFn 精
+// 确控制"正在处理中"这个状态持续多久，见 docs/M3_Eng_Design.md 任务 6
+// 的交叉检查说明。
+TEST_CASE("queue_status reflects idle, processing-alone, and processing-with-backlog") {
+  auto db_path = fresh_db_path("evaluation_worker_queue_status");
+  auto photos = fresh_photo_dir("evaluation_worker_queue_status");
+  write_real_jpeg(photos / "a.jpg");
+  write_real_jpeg(photos / "b.jpg");
+  write_real_jpeg(photos / "c.jpg");
+  auto db = Database::open_at(db_path);
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+  auto id_a = find_image_by_path(db, created.value(), "a.jpg");
+  auto id_b = find_image_by_path(db, created.value(), "b.jpg");
+  auto id_c = find_image_by_path(db, created.value(), "c.jpg");
+  REQUIRE(id_a.has_value());
+  REQUIRE(id_b.has_value());
+  REQUIRE(id_c.has_value());
+
+  std::mutex block_mu;
+  std::condition_variable block_cv;
+  bool release = false;
+  bool entered_processing = false;
+
+  auto blocking_evaluation = [&](const decode::DecodedImage&, const std::string&,
+                                  Provider) -> Result<EvaluationResult, EvaluationError> {
+    std::unique_lock<std::mutex> lock(block_mu);
+    entered_processing = true;
+    block_cv.notify_all();
+    block_cv.wait(lock, [&] { return release; });
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
+  };
+  EvaluationWorker worker(db_path, blocking_evaluation);
+
+  auto idle = worker.queue_status();
+  CHECK(idle.queued == 0);
+  CHECK(idle.processing == false);
+
+  CHECK(worker.request(*id_a, Provider::Claude, ""));
+  {
+    std::unique_lock<std::mutex> lock(block_mu);
+    block_cv.wait(lock, [&] { return entered_processing; });
+  }
+  auto processing_alone = worker.queue_status();
+  CHECK(processing_alone.queued == 0);
+  CHECK(processing_alone.processing == true);
+
+  CHECK(worker.request(*id_b, Provider::Claude, ""));
+  CHECK(worker.request(*id_c, Provider::Claude, ""));
+  auto with_backlog = worker.queue_status();
+  CHECK(with_backlog.queued == 2);
+  CHECK(with_backlog.processing == true);
+
+  {
+    std::lock_guard<std::mutex> lock(block_mu);
+    release = true;
+  }
+  block_cv.notify_all();
+
+  // 三个请求可能在两次 poll 之间就全部处理完(consume_new_result 只能告
+  // 诉你"有没有新结果"，不是"这次具体完成了几个")，直接轮询目标状态本
+  // 身，而不是假设每次 wait_for_result 恰好对应一个请求完成。
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  EvaluationWorker::QueueStatus done{1, true};
+  while (std::chrono::steady_clock::now() < deadline) {
+    done = worker.queue_status();
+    if (done.queued == 0 && !done.processing) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  CHECK(done.queued == 0);
+  CHECK(done.processing == false);
 }
 
 TEST_CASE("a request for a nonexistent image completes without crashing or getting stuck") {

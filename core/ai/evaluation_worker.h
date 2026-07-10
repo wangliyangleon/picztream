@@ -51,6 +51,19 @@ class EvaluationWorker {
   // 不是每次 poll 都重绘。
   bool consume_new_result(std::uint64_t& last_seen_generation) const;
 
+  // `/tasks` 用：排队中有几个、有没有正在处理中的一个。不展示具体是哪
+  // 几张图片，只要数量和状态，见 docs/M3_PRD.md"批量评估与任务状态"一
+  // 节。
+  struct QueueStatus {
+    std::size_t queued;
+    bool processing;
+  };
+  // processing 靠 in_flight_.size() > queue_.size() 推出来，不需要单独
+  // 一个"当前正在处理哪一个"的状态——worker_loop 是单线程的，任意时刻最
+  // 多只有一个请求处于"已经从 queue_ 弹出、还没处理完"的状态，
+  // in_flight_ 比 queue_ 多出来的那一个就是它。
+  QueueStatus queue_status() const;
+
  private:
   struct PendingRequest {
     project::ImageId image_id;

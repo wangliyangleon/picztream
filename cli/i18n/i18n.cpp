@@ -633,7 +633,7 @@ std::vector<MenuLine> menu_lines() {
         {0, ""},
         {'r', menu_item("r", "风格")},
         {0, ""},
-        {':', menu_item(":", "AI 控制台")},
+        {':', menu_item(":", "控制台")},
     };
   } else {
     return {
@@ -645,7 +645,7 @@ std::vector<MenuLine> menu_lines() {
         {0, ""},
         {'r', menu_item("r", "Recipe")},
         {0, ""},
-        {':', menu_item(":", "AI Console")},
+        {':', menu_item(":", "Console")},
     };
   }
 }
@@ -834,9 +834,9 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
 
 std::string msg_ai_prompt_placeholder() {
   if (g_lang == Lang::zh) {
-    return "输入针对本次 AI 处理的额外指引，或直接按回车提交";
+    return "命令必须以 / 开头: /ai_eval [指引] | /ai_eval * | /ai_eval #标签 | /tasks | /dedup * | /dedup #标签";
   } else {
-    return "Enter extra guidance for the AI processing, or press Enter to submit";
+    return "Commands must start with /: /ai_eval [note] | /ai_eval * | /ai_eval #tag | /tasks | /dedup * | /dedup #tag";
   }
 }
 
@@ -935,11 +935,54 @@ std::string msg_ai_unknown_command(const std::string &command) {
   }
 }
 
-std::string err_dedup_tag_not_found(const std::string &tag_name) {
+std::string err_console_tag_not_found(const std::string &tag_name) {
   if (g_lang == Lang::zh) {
     return " 找不到标签 '" + tag_name + "' ";
   } else {
     return " Tag '" + tag_name + "' not found ";
+  }
+}
+
+std::string err_console_invalid_scope() {
+  if (g_lang == Lang::zh) {
+    return " 范围必须是 * 或 #标签名 ";
+  } else {
+    return " Scope must be * or #tag ";
+  }
+}
+
+std::string msg_console_requires_slash() {
+  if (g_lang == Lang::zh) {
+    return " 命令必须以 / 开头，例如 /ai_eval ";
+  } else {
+    return " Commands must start with /, e.g. /ai_eval ";
+  }
+}
+
+std::string msg_ai_eval_submitted(int count) {
+  if (count == 0) {
+    if (g_lang == Lang::zh) {
+      return " 没有需要评估的图片(都已经评估过了) ";
+    } else {
+      return " No images need evaluation (all already evaluated) ";
+    }
+  }
+  if (g_lang == Lang::zh) {
+    return " 已提交 " + std::to_string(count) + " 张图片的评估请求 ";
+  } else {
+    return " Submitted " + std::to_string(count) + " image(s) for evaluation ";
+  }
+}
+
+std::string msg_ai_tasks_status(std::size_t queued, bool processing) {
+  if (g_lang == Lang::zh) {
+    std::string line = " 排队中: " + std::to_string(queued) + " 张";
+    line += processing ? "，有一张正在处理 " : "，当前没有正在处理的 ";
+    return line;
+  } else {
+    std::string line = " Queued: " + std::to_string(queued);
+    line += processing ? ", one in progress " : ", nothing in progress ";
+    return line;
   }
 }
 

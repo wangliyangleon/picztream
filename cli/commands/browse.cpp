@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -78,8 +79,7 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
 }
 
 // `/` 开头的输入解析成命令名(不含前导 `/`) + 剩余参数——第一个空白就是
-// 命令名和参数的分界，tag_name 里带空格这种边界情况这次不处理(见
-// docs/M3_PRD.md"风险与待确认问题")。命令名和参数之间允许多个空格。
+// 命令名和参数的分界。命令名和参数之间允许多个空格。
 std::pair<std::string, std::string> split_console_command(const std::string& input) {
   std::string body = input.substr(1);  // 去掉前导 '/'
   auto space = body.find(' ');
@@ -89,31 +89,57 @@ std::pair<std::string, std::string> split_console_command(const std::string& inp
   return {body.substr(0, space), start == std::string::npos ? "" : rest.substr(start)};
 }
 
-// `/dedup * | <标签名>`——近似重复检测唯一的触发入口，见
-// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。scope == "*" 时整个项
-// 目，否则按标签名解析成子集。范围内有图片还没跑过选片辅助评估时先问
-// 一句 y/N——不代为触发评估，只是提醒"这次的保留判断可能会退化成按拍
-// 摄时间选"；按其它任何键(含 Esc)都算取消，跟 tag_menu.cpp 里
-// "是否有序"那个 y/N 确认同一个约定。真正比对这一步是阻塞的:
-// find_and_tag_duplicates 内部可能跑几秒到几十秒，这段时间 pzt open 冻
-// 结、不接受任何输入——刻意的简化，见 docs/M3_Dedup_PRD.md"非目标"一
-// 节，不传 on_progress 是因为这段时间主循环没有机会重绘，传了也没地方
-// 画。
+// `/dedup`/`/ai_eval` 共用的批量范围解析：`*` 整个项目、`#标签名` 带指
+// 定标签的图片——两边统一用同一套写法，不各自维护一套解析和错误文案。
+// 标签名里带空格这种边界情况这次不处理(见 docs/M3_PRD.md"风险与待确认
+// 问题")。scope 不是 `*` 也不以 `#` 开头时，error_message 给一条"范围
+// 写法不对"的提示，不静默当成标签名。
+struct ScopeResolution {
+  std::vector<pzt::core::ImageId> image_ids;
+  std::string error_message;  // 非空表示解析失败，caller 直接把它当结果返回
+};
+
+ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std::string& scope) {
+  ScopeResolution result;
+  if (scope == "*") {
+    for (const auto& ref : pzt::core::list_images(project_id)) result.image_ids.push_back(ref.id);
+    return result;
+  }
+  if (scope.empty() || scope[0] != '#') {
+    result.error_message = pzt::cli::i18n::err_console_invalid_scope();
+    return result;
+  }
+  std::string tag_name = scope.substr(1);
+  auto tag_id = pzt::core::find_tag_by_name(project_id, tag_name);
+  if (!tag_id) {
+    result.error_message = pzt::cli::i18n::err_console_tag_not_found(tag_name);
+    return result;
+  }
+  auto filtered = pzt::core::filter_by_tag(*tag_id);
+  if (!filtered.ok()) {
+    result.error_message = pzt::cli::i18n::err_filter_failed();
+    return result;
+  }
+  for (const auto& ref : filtered.value()) result.image_ids.push_back(ref.id);
+  return result;
+}
+
+// `/dedup * | #标签名`——近似重复检测唯一的触发入口，见
+// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。范围内有图片还没跑过选
+// 片辅助评估时先问一句 y/N——不代为触发评估，只是提醒"这次的保留判断可
+// 能会退化成按拍摄时间选"；按其它任何键(含 Esc)都算取消，跟
+// tag_menu.cpp 里"是否有序"那个 y/N 确认同一个约定。真正比对这一步是
+// 阻塞的:find_and_tag_duplicates 内部可能跑几秒到几十秒，这段时间
+// pzt open 冻结、不接受任何输入——刻意的简化，见
+// docs/M3_Dedup_PRD.md"非目标"一节，不传 on_progress 是因为这段时间主
+// 循环没有机会重绘，传了也没地方画。
 std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& scope,
                                   int banner_row, int start_col, int content_cols) {
-  std::vector<pzt::core::ImageId> image_ids;
-  if (scope == "*") {
-    for (const auto& ref : pzt::core::list_images(project_id)) image_ids.push_back(ref.id);
-  } else {
-    auto tag_id = pzt::core::find_tag_by_name(project_id, scope);
-    if (!tag_id) return pzt::cli::i18n::err_dedup_tag_not_found(scope);
-    auto filtered = pzt::core::filter_by_tag(*tag_id);
-    if (!filtered.ok()) return pzt::cli::i18n::err_filter_failed();
-    for (const auto& ref : filtered.value()) image_ids.push_back(ref.id);
-  }
+  auto resolved = resolve_console_scope(project_id, scope);
+  if (!resolved.error_message.empty()) return resolved.error_message;
 
   int unevaluated = 0;
-  for (auto id : image_ids) {
+  for (auto id : resolved.image_ids) {
     auto info = pzt::core::get_image(id);
     if (!info || !info->evaluation) ++unevaluated;
   }
@@ -126,52 +152,103 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     if (c != 'y' && c != 'Y') return "";  // 取消,静默
   }
 
-  auto result = pzt::core::find_and_tag_duplicates(project_id, image_ids, /*on_progress=*/nullptr);
+  auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids, /*on_progress=*/nullptr);
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
   return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count);
 }
 
-// `:` 输入以 `/` 开头时的命令分发。目前只有 dedup 一个已识别的命令(之
-// 前设计过的 ai_eval/tasks 还没实现)，其它一律走"未知命令"——跟
-// docs/M3_PRD.md"触发入口"一节一致，不再像最初那样静默忽略，以后加新
-// 命令直接在这加一个分支。
-std::string handle_ai_console_command(pzt::core::ProjectId project_id, const std::string& input,
+// `/ai_eval * | #标签名 [额外指引]`——批量提交，见
+// docs/M3_PRD.md"批量评估与任务状态"一节。已经评估过的直接跳过，不重
+// 新评估（哪怕这次带了不同的额外指引）；单张重新评估只能走
+// `/ai_eval [额外指引]`(当前图片)那条路径，逐张手动做。提交立即返回，
+// 不等这一批全部完成——`request()` 本身的去重(`in_flight_`)保证批量提
+// 交跟单张手动触发不会互相冲突，不需要在这里额外处理。
+std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worker,
+                                    pzt::core::ProjectId project_id, const std::string& scope,
+                                    const std::string& extra_guidance) {
+  auto resolved = resolve_console_scope(project_id, scope);
+  if (!resolved.error_message.empty()) return resolved.error_message;
+
+  int submitted = 0;
+  for (auto id : resolved.image_ids) {
+    auto info = pzt::core::get_image(id);
+    if (info && info->evaluation) continue;  // 已经评估过,跳过
+    if (evaluation_worker.request(id, pzt::core::Provider::Gemini, extra_guidance)) ++submitted;
+  }
+  return pzt::cli::i18n::msg_ai_eval_submitted(submitted);
+}
+
+// `/tasks`——查看评估队列的状态，不需要参数。
+std::string handle_tasks_command(pzt::core::EvaluationWorker& evaluation_worker) {
+  auto status = evaluation_worker.queue_status();
+  return pzt::cli::i18n::msg_ai_tasks_status(status.queued, status.processing);
+}
+
+// `:` 输入以 `/` 开头时的命令分发。`ai_eval` 一条命令兼顾三种用法——
+// 第一个 token 是范围标记(`*` 或 `#标签名`)时走批量提交；不是的话，说
+// 明用户没写范围，整段剩余文本都当成对**当前图片**的额外指引，直接提
+// 交单图评估(原来 handle_ai_prompt_flow 里那条路径搬到这里)。用范围标
+// 记来判断走哪条路径，而不是猜测第一个词是不是标签名——这正是要求整个
+// 控制台必须以 `/` 开头的同一个理由:显式标记，不猜。
+std::string handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_worker,
+                                       pzt::core::ProjectId project_id,
+                                       pzt::core::ImageId current_image_id, const std::string& input,
                                        int banner_row, int start_col, int content_cols) {
   auto [command, rest] = split_console_command(input);
   if (command == "dedup") {
     return handle_dedup_command(project_id, rest, banner_row, start_col, content_cols);
   }
+  if (command == "tasks") {
+    return handle_tasks_command(evaluation_worker);
+  }
+  if (command == "ai_eval") {
+    std::istringstream iss(rest);
+    std::string first_token;
+    iss >> first_token;
+    bool is_batch_scope = first_token == "*" || (!first_token.empty() && first_token[0] == '#');
+    if (is_batch_scope) {
+      std::string extra_guidance;
+      std::getline(iss, extra_guidance);
+      std::size_t start = extra_guidance.find_first_not_of(' ');
+      extra_guidance = start == std::string::npos ? "" : extra_guidance.substr(start);
+      return handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance);
+    }
+    // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——固
+    // 定供应商用 Gemini(手头只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)
+    // ——多供应商切换本来就是 docs/M3_PRD.md 明确留到以后的开放问题,这
+    // 次只是换了一下写死的默认值,不是新决策。
+    bool accepted = evaluation_worker.request(current_image_id, pzt::core::Provider::Gemini, rest);
+    if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
+    // 提交成功只是个轻量的确认,不需要用户额外按键才能回到浏览——结果本
+    // 身是异步落地、靠 poll 逻辑自动重绘的,这条提示只是"确实提交了"，跟
+    // x 键"闪一下"反馈同一个思路,只是这里是完整的一句话,停留久一点方
+    // 便看清,然后直接回到顶层空闲状态,不占用一次额外按键。返回空字符
+    // 串,外层不会进入"按任意键继续"那个分支。
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(pzt::cli::i18n::msg_ai_processing_submitted(), content_cols));
+    usleep(800000);
+    return "";
+  }
   return pzt::cli::i18n::msg_ai_unknown_command(command);
 }
 
-// 顶层 `:` 键:vim 风格的额外指引输入,提交给 core::ai::EvaluationWorker 异
-// 步评估,不等结果、不阻塞。空字符串是合法输入(用固定模板,不加额外指
-// 引),只有 Esc 才是取消。`/` 开头解析成控制台命令(见
-// handle_ai_console_command),不再当成额外指引提交。固定供应商用
-// Gemini(手头只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)——多供应商切
-// 换本来就是 docs/M3_PRD.md 明确留到以后的开放问题,这次只是换了一下写
-// 死的默认值,不是新决策。
+// 顶层 `:` 键:vim 风格的控制台输入口,提交给 handle_ai_console_command
+// 分发。控制台现在要求所有输入必须以 `/` 开头——不再有"裸文本=对当前
+// 图片的额外指引"这条隐藏路径，这是这次改动明确要解决的问题:用户忘了
+// 打 `/`（哪怕只是直接按了回车）不会再被无声当成提交了一次对当前图片
+// 的评估请求。空输入、非空但不以 `/` 开头，统一提示"必须以 / 开头"；
+// Esc 依然是唯一真正的取消。
 std::string handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
                                    pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
                                    int banner_row, int start_col, int content_cols) {
-  auto guidance = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
-                                                    banner_row, start_col, content_cols);
-  if (!guidance) return "";  // Esc,静默取消
-  if (!guidance->empty() && (*guidance)[0] == '/') {
-    return handle_ai_console_command(project_id, *guidance, banner_row, start_col, content_cols);
+  auto input = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
+                                                 banner_row, start_col, content_cols);
+  if (!input) return "";  // Esc,静默取消
+  if (input->empty() || (*input)[0] != '/') {
+    return pzt::cli::i18n::msg_console_requires_slash();
   }
-  bool accepted = evaluation_worker.request(image_id, pzt::core::Provider::Gemini, *guidance);
-  if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
-
-  // 提交成功只是个轻量的确认,不需要用户额外按键才能回到浏览——结果本身
-  // 是异步落地、靠 poll 逻辑自动重绘的,这条提示只是"确实提交了"，跟 x 键
-  // "闪一下"反馈同一个思路,只是这里是完整的一句话,停留久一点方便看
-  // 清,然后直接回到顶层空闲状态,不占用一次额外按键。返回空字符串,外
-  // 层不会进入"按任意键继续"那个分支。
-  move_cursor(banner_row, start_col + 1);
-  write_stdout(pad_to(pzt::cli::i18n::msg_ai_processing_submitted(), content_cols));
-  usleep(800000);
-  return "";
+  return handle_ai_console_command(evaluation_worker, project_id, image_id, *input, banner_row,
+                                    start_col, content_cols);
 }
 
 // space/x/g/r/e 这几个键要阻塞读一整套 banner 交互(prompt_and_read_key/
