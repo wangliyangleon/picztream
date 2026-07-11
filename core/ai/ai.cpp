@@ -264,6 +264,15 @@ Result<HttpResponse, RequestError> perform_curl_post(
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+  // F-21：这个函数会在 EvaluationWorker 的后台线程上被调用，不是单线
+  // 程场景——libcurl 默认可能用信号中断 DNS 解析超时，多线程进程里给
+  // 一个不受自己管理的线程发信号是经典的崩溃/未定义行为来源，NOSIGNAL
+  // 关掉这个行为(curl 自己的文档建议多线程程序始终设置这个选项)。
+  // CONNECTTIMEOUT 单独给一个远小于总超时(60s)的上限——断网/DNS 卡住
+  // 时不该让用户等一分钟才等到"网络失败"这个反馈，10s 对建立 TCP 连
+  // 接这一步来说已经足够宽松。
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 
   CURLcode res = curl_easy_perform(curl);
   if (header_list) curl_slist_free_all(header_list);
