@@ -78,14 +78,15 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
 struct DedupSummary {
   int group_count;
   int tagged_count;  // 被打上 duplicate 标签的图片总数(不含每组里被保留的那一张)
+  // F-08：范围内 captured_at 为 NULL、完全没有参与任何分组比较的图片
+  // 数(微信图/截图/编辑过的导出件常见)。以前这批图片被静默排除，用户
+  // 分组结果不如预期时无从判断是这批图片拖累的还是参数问题。
+  int skipped_no_capture_time;
 };
 
 // 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签：清空
 // image_ids 范围内的旧 duplicate 标记 -> find_duplicates 分组 -> 给每
-// 组除 keep_id 外的成员打标签。"这次范围内有多少张还没评估过"这个统
-// 计不在这里做(F-07：唯一调用方 handle_dedup_command 自己在调用这个
-// 函数之前，用 core::evaluated_image_ids 批量查好了，不需要这个函数
-// 重复统计一遍再塞进 DedupSummary 里却没人读)。放在同一个 core/dedup 模块
+// 组除 keep_id 外的成员打标签。放在同一个 core/dedup 模块
 // 里，不是违反"纯算法层"的说法——跟 core/export 的 export_tag(db::
 // Database&, ...) 同一个先例：模块以功能命名(dedup/export)，内部按需
 // 组合其它模块(tagging/project)完成一次完整的用户可见操作，"纯算法层"
@@ -94,9 +95,15 @@ struct DedupSummary {
 // 扫描范围——扫描范围是 image_ids，由调用方自己解析好(整个项目还是某
 // 个标签的子集)再传进来。core/api.h 的同名门面函数只是开默认库、转调
 // 这个函数的一层薄封装，方便单元测试指向临时测试库。
+//
+// F-08：time_window_seconds/hash_threshold 默认值维持 10/5(等价旧行
+// 为)，真正的调参入口是 F-12 的 Settings.dedup_time_window_seconds/
+// dedup_hash_threshold——`/dedup` 控制台命令本身不接受内联参数覆盖，
+// 想调参改配置文件，调用方(cli/commands/browse.cpp 的
+// handle_dedup_command)负责读 Settings 显式传进来。
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
-    DedupProgressFn on_progress = nullptr);
+    int time_window_seconds = 10, int hash_threshold = 5, DedupProgressFn on_progress = nullptr);
 
 // 仅供单元测试使用——decode_fn 可注入，不需要真的解码 JPEG 文件就能验证
 // 时间聚类、hamming 距离分组、keep_id 选择这些逻辑，规避真实 JPEG 有损

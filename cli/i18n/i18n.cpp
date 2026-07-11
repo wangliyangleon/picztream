@@ -1092,16 +1092,25 @@ std::string msg_dedup_confirm_unevaluated_line2() {
   }
 }
 
-std::string msg_dedup_result(int group_count, int tagged_count) {
+std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time) {
   // F-11：标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
   // 示——用户按 g 9 只会看到空列表，反而更困惑。
   std::string hint = tagged_count > 0 ? (g_lang == Lang::zh ? "，按 g 9 查看" : ", press g 9 to view") : "";
+  // F-08：以前这批图片被静默排除在比对之外，分组结果不如预期时用户无
+  // 从判断原因——只在真的有跳过时才提一句，不干扰最常见的"全部图片都
+  // 有拍摄时间"路径。
+  std::string skipped_note =
+      skipped_no_capture_time > 0
+          ? (g_lang == Lang::zh
+                 ? "，" + std::to_string(skipped_no_capture_time) + " 张因无拍摄时间未参与比对"
+                 : ", " + std::to_string(skipped_no_capture_time) + " image(s) skipped (no capture time)")
+          : "";
   if (g_lang == Lang::zh) {
     return " 找到 " + std::to_string(group_count) + " 组重复，标记了 " + std::to_string(tagged_count) +
-           " 张" + hint + " ";
+           " 张" + skipped_note + hint + " ";
   } else {
     return " Found " + std::to_string(group_count) + " duplicate group(s), tagged " +
-           std::to_string(tagged_count) + " image(s)" + hint + " ";
+           std::to_string(tagged_count) + " image(s)" + skipped_note + hint + " ";
   }
 }
 

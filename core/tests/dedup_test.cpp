@@ -495,6 +495,60 @@ TEST_CASE("find_and_tag_duplicates clears stale marks before re-tagging on re-ru
   CHECK(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));        // 新一轮的非保留项
 }
 
+// F-08：范围内 captured_at 为 NULL 的图片(微信图/截图/编辑过的导出件常
+// 见)完全不参与任何比较,以前被静默忽略,现在要如实报数量。
+TEST_CASE("find_and_tag_duplicates reports skipped_no_capture_time for images with no captured_at") {
+  auto fx = make_fixture("facade_skipped", 3);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 120));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+  // fx.images[2] 故意不设置 captured_at,保持 NULL。
+
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(result.ok());
+  CHECK(result.value().skipped_no_capture_time == 1);
+}
+
+TEST_CASE("find_and_tag_duplicates skipped_no_capture_time is 0 when every image has a capture time") {
+  auto fx = make_fixture("facade_skipped_zero", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(result.ok());
+  CHECK(result.value().skipped_no_capture_time == 0);
+}
+
+// F-08：time_window_seconds/hash_threshold 以前在 find_and_tag_duplicates
+// 里写死 10/5,这次改成显式参数——用时间窗口的边界验证参数真的从门面
+// 一路传到了算法层,不是摆设。两张字节相同的图(hamming 距离必为 0,
+// hash_threshold 不是这里的变量)拍摄时间差 20 秒:默认 10 秒时间窗把
+// 它们拆进两个候选簇,谁都不跟谁比较,不成组;显式传 30 秒时间窗则落进
+// 同一簇,成组。
+TEST_CASE("find_and_tag_duplicates honors an explicit time_window_seconds instead of the old hardcoded 10") {
+  auto fx = make_fixture("facade_time_window_param", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1020);  // 差 20 秒
+
+  auto default_window = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(default_window.ok());
+  CHECK(default_window.value().group_count == 0);  // 默认 10 秒,拆进两个候选簇
+
+  auto wider_window =
+      find_and_tag_duplicates(fx.db, fx.project_id, fx.images, /*time_window_seconds=*/30);
+  REQUIRE(wider_window.ok());
+  CHECK(wider_window.value().group_count == 1);  // 显式传 30 秒,落进同一候选簇
+}
+
 TEST_CASE("find_and_tag_duplicates returns ProjectNotFoundError for an unknown project") {
   auto fx = make_fixture("facade_missing_project", 1);
   auto result = find_and_tag_duplicates(fx.db, fx.project_id + 999999, fx.images);

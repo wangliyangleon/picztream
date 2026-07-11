@@ -60,20 +60,41 @@ TEST_CASE("i18n localized text strings") {
 // 示；标记数为 0 时不带（范围内没有新重复组，提示了也是空列表）。
 TEST_CASE("msg_dedup_result includes entry hint only when images were tagged") {
   g_lang = Lang::zh;
-  auto zh_tagged = msg_dedup_result(2, 4);
+  auto zh_tagged = msg_dedup_result(2, 4, 0);
   CHECK(zh_tagged.find("2") != std::string::npos);
   CHECK(zh_tagged.find("4") != std::string::npos);
   CHECK(zh_tagged.find("g 9") != std::string::npos);
 
-  auto zh_empty = msg_dedup_result(0, 0);
+  auto zh_empty = msg_dedup_result(0, 0, 0);
   CHECK(zh_empty.find("g 9") == std::string::npos);
 
   g_lang = Lang::en;
-  auto en_tagged = msg_dedup_result(2, 4);
+  auto en_tagged = msg_dedup_result(2, 4, 0);
   CHECK(en_tagged.find("g 9") != std::string::npos);
 
-  auto en_empty = msg_dedup_result(0, 0);
+  auto en_empty = msg_dedup_result(0, 0, 0);
   CHECK(en_empty.find("g 9") == std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// F-08：范围内有图片因为没有拍摄时间被跳过时,结果文案带一句提示;
+// 没有跳过的常见路径不受影响,不多带一句空话。
+TEST_CASE("msg_dedup_result mentions skipped-no-capture-time count only when nonzero") {
+  g_lang = Lang::zh;
+  auto zh_skipped = msg_dedup_result(1, 2, 3);
+  CHECK(zh_skipped.find("3") != std::string::npos);
+  CHECK(zh_skipped.find("拍摄时间") != std::string::npos);
+
+  auto zh_none = msg_dedup_result(1, 2, 0);
+  CHECK(zh_none.find("拍摄时间") == std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_skipped = msg_dedup_result(1, 2, 3);
+  CHECK(en_skipped.find("capture time") != std::string::npos);
+
+  auto en_none = msg_dedup_result(1, 2, 0);
+  CHECK(en_none.find("capture time") == std::string::npos);
 
   g_lang = Lang::zh;  // 还原
 }

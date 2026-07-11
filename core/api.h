@@ -155,9 +155,12 @@ TagId ensure_reject_tag(ProjectId project_id);
 // core::dedup::find_and_tag_duplicates(db::Database&, ...)里，这里只是
 // 开默认库转调一层，方便单元测试指向临时测试库。
 using DedupSummary = dedup::DedupSummary;
+// F-08：time_window_seconds/hash_threshold 默认 10/5(等价旧行为)，
+// handle_dedup_command 显式传 Settings.dedup_time_window_seconds/
+// dedup_hash_threshold。
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
-    ProjectId project_id, const std::vector<ImageId>& image_ids,
-    dedup::DedupProgressFn on_progress = nullptr);
+    ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds = 10,
+    int hash_threshold = 5, dedup::DedupProgressFn on_progress = nullptr);
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见

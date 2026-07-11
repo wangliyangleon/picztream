@@ -183,7 +183,9 @@ std::string err_console_invalid_scope();
 // 行更稳妥。
 std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count);
 std::string msg_dedup_confirm_unevaluated_line2();
-std::string msg_dedup_result(int group_count, int tagged_count);
+// F-08：skipped_no_capture_time 是范围内因为没有拍摄时间(captured_at
+// 为 NULL)完全没参与比较的图片数,>0 时带一句提示,不静默排除。
+std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time);
 std::string err_dedup_failed();
 
 // M3：`/ai_eval * | #标签名 [额外指引]` 批量提交，见

@@ -242,10 +242,10 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
 
-  // F-26：默认排除废片，除非范围本身就是 #废片(用户已经明确要处理
-  // 它)。开关走 F-12 的 Settings，现读不缓存，跟 resolve_ai_provider()
-  // 同一个先例。
-  if (!pzt::core::load_settings().dedup_reject) {
+  // F-12/F-26：一次读全,时间窗/哈希阈值(F-08)和废片排除开关都来自
+  // 同一份 Settings,现读不缓存,跟 resolve_ai_provider() 同一个先例。
+  auto settings = pzt::core::load_settings();
+  if (!settings.dedup_reject) {
     exclude_scope_by_tag(resolved,
                           pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
   }
@@ -263,14 +263,17 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     if (c != 'y' && c != 'Y') return "";  // 取消,静默
   }
 
-  auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids, /*on_progress=*/nullptr);
+  auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids,
+                                                     settings.dedup_time_window_seconds,
+                                                     settings.dedup_hash_threshold, /*on_progress=*/nullptr);
   // F-25：这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
   // 缓冲区里——不清掉的话，接下来继续读键时会一次性回放，可能连按出
   // 误标签/误退出。见 docs/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
   // 条一直没收口的风险。
   flush_pending_input();
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
-  return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count);
+  return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count,
+                                           result.value().skipped_no_capture_time);
 }
 
 // `/ai_eval * | #标签名 [额外指引]`——批量提交，见

@@ -232,11 +232,17 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
 
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
-    DedupProgressFn on_progress) {
+    int time_window_seconds, int hash_threshold, DedupProgressFn on_progress) {
   auto project_summary = project::open_project(db, project_id);
   if (!project_summary.ok()) {
     return Result<DedupSummary, project::ProjectNotFoundError>::Err(project_summary.error());
   }
+
+  // F-08：跟 find_duplicates 内部(经 find_duplicates_impl)会做的查询重
+  // 复一遍——load_metas 只是一条按 id IN (...) 的索引查询，不是 N+1，
+  // 多查一次换来"结果为什么比预期少"这个问题有观测手段，值得。
+  int skipped_no_capture_time =
+      static_cast<int>(image_ids.size()) - static_cast<int>(load_metas(db, image_ids).size());
 
   // 先摘光再重新打：只清 image_ids 这个范围内的旧标记，范围外的图片(比
   // 如全项目扫描之后又单独对某个标签跑了一次)不受影响，见
@@ -252,9 +258,8 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     (void)tagging::remove_tag(db, id, duplicate_tag_id);
   }
 
-  auto groups = find_duplicates(db, project_summary.value().root_path, image_ids,
-                                 /*time_window_seconds=*/10, /*hash_threshold=*/5,
-                                 std::move(on_progress));
+  auto groups = find_duplicates(db, project_summary.value().root_path, image_ids, time_window_seconds,
+                                 hash_threshold, std::move(on_progress));
 
   int tagged_count = 0;
   for (const auto& group : groups) {
@@ -270,7 +275,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   }
 
   return Result<DedupSummary, project::ProjectNotFoundError>::Ok(
-      DedupSummary{static_cast<int>(groups.size()), tagged_count});
+      DedupSummary{static_cast<int>(groups.size()), tagged_count, skipped_no_capture_time});
 }
 
 namespace detail {
@@ -314,7 +319,17 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
       if (!valid[i]) continue;
       for (std::size_t j = i + 1; j < cluster.size(); ++j) {
         if (!valid[j]) continue;
-        if (hamming_distance(hashes[i], hashes[j]) <= hash_threshold) {
+        int distance = hamming_distance(hashes[i], hashes[j]);
+        // F-08：候选簇内每一对比较都打一行明细，不管有没有结成组——调
+        // 参(时间窗/哈希阈值)时唯一能看到"差多少"的地方。走跟
+        // core/browse/prefetch.cpp 同一个先例：无条件写 stderr，`pzt
+        // open --debug` 才会把它路由进调试面板(cli/term/debug_log.h)，
+        // 默认路径下 stderr 整个被重定向到 /dev/null，不产生任何可见
+        // 开销。
+        std::fprintf(stderr, "[pzt dedup] compare image_id=%lld image_id=%lld distance=%d threshold=%d\n",
+                     static_cast<long long>(cluster[i].id), static_cast<long long>(cluster[j].id),
+                     distance, hash_threshold);
+        if (distance <= hash_threshold) {
           uf.unite(static_cast<int>(i), static_cast<int>(j));
         }
       }

@@ -127,9 +127,11 @@ TagId ensure_reject_tag(ProjectId project_id) {
 }
 
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
-    ProjectId project_id, const std::vector<ImageId>& image_ids, dedup::DedupProgressFn on_progress) {
+    ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds,
+    int hash_threshold, dedup::DedupProgressFn on_progress) {
   db::Database db = db::Database::open_default();
-  return dedup::find_and_tag_duplicates(db, project_id, image_ids, std::move(on_progress));
+  return dedup::find_and_tag_duplicates(db, project_id, image_ids, time_window_seconds, hash_threshold,
+                                         std::move(on_progress));
 }
 
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
