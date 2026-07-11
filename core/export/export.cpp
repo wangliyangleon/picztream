@@ -121,6 +121,82 @@ std::string target_file_name(const std::string& file_name, const std::string& ki
   return kind == "raw" ? fs::path(file_name).replace_extension(".jpg").string() : file_name;
 }
 
+// export_tag/export_images 共用的写出循环：目录准备 -> raw 总数统计 ->
+// 逐张命名(is_ordered 决定要不要加零填充序号前缀)/冲突消歧/写出/进度
+// 回调。两个调用方唯一的区别是"images 从哪来、要不要按 position 编
+// 号"，这段循环本身跟来源无关，抽出来避免两份几乎一样的代码分叉维
+// 护。IoError 用 bool 传出而不是重新抛异常——调用方各自有自己的错误
+// 枚举类型(ExportTagError/ExportImagesError)，这里不假设是哪一个。
+struct WriteExportBatchResult {
+  ExportResult result;
+  bool io_error = false;
+};
+
+WriteExportBatchResult write_export_batch(db::Database& db, const fs::path& root_path,
+                                           const std::vector<browse::ImageRef>& images, bool is_ordered,
+                                           const fs::path& out_dir, ExportProgressFn on_progress,
+                                           const RawDecodeFn& raw_decode_fn) {
+  const int width = zero_pad_width(images.size());
+
+  WriteExportBatchResult out;
+  out.result.exported_count = 0;
+  out.result.created_output_folder = false;
+
+  // M2：这批图片里有多少张 kind="raw"（不管有没有 recipe，两条 raw 分支
+  // 都要走 raw_decode_fn），作为进度回调的分母。纯 JPEG 批次 raw_total==0，
+  // on_progress 全程不会被调用。
+  int raw_total = 0;
+  for (const auto& img : images) {
+    if (img.kind == "raw") ++raw_total;
+  }
+  int raw_done = 0;
+
+  // 目标文件夹无法创建/写入(权限不足、路径某一段已经是个普通文件、磁盘写
+  // 满等)时,std::filesystem 的抛异常重载会往外抛 filesystem_error——不
+  // 捕获的话会直接终止调用方(包括 cli 全键盘交互循环那个长时间运行的进
+  // 程),这里统一转成 io_error=true，让调用方各自把它当成自己的 Result
+  // 错误处理。
+  try {
+    // 导出前先看一眼目标是否已存在,再调用 create_directories——用这个结
+    // 果告诉调用方"是不是新建的",不然用户拿到一句"已导出"完全看不出目标
+    // 文件夹是本来就有的、还是这次顺手建的,容易以为自己打错了路径。
+    out.result.created_output_folder = !fs::exists(out_dir);
+    fs::create_directories(out_dir);
+
+    int index = 0;
+    for (const auto& img : images) {
+      ++index;
+      fs::path source = root_path / img.file_path;
+      if (!fs::exists(source)) {
+        out.result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::SourceMissing});
+        continue;
+      }
+
+      std::string file_name_for_target = target_file_name(img.file_name, img.kind);
+      std::string base_name =
+          is_ordered ? ordered_name(index, width, file_name_for_target) : file_name_for_target;
+      fs::path target = resolve_collision(out_dir, base_name);
+
+      // 进度回调要在解码开始前触发，不是完成后——全量解码单张就要几秒，
+      // 完成后才报进度的话，批次里第一张(单张导出时是唯一一张)在解码期
+      // 间界面上什么都不显示，看起来像卡住了，真机使用中被发现过。
+      if (img.kind == "raw") {
+        ++raw_done;
+        if (on_progress) on_progress(raw_done, raw_total);
+      }
+      auto skip_reason = write_one_export(db, img.id, img.kind, source, target, raw_decode_fn);
+      if (skip_reason) {
+        out.result.skipped.push_back(ExportSkipped{img.id, img.file_name, *skip_reason});
+        continue;
+      }
+      ++out.result.exported_count;
+    }
+  } catch (const fs::filesystem_error&) {
+    out.io_error = true;
+  }
+  return out;
+}
+
 }  // namespace
 
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
@@ -162,66 +238,63 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   fs::path root_path = get_project_root_path(conn, tag_info->project_id);
   fs::path out_dir(output_folder);
 
-  const int width = zero_pad_width(images.size());
-
-  ExportResult result;
-  result.exported_count = 0;
-  result.created_output_folder = false;
-
-  // M2：这批图片里有多少张 kind="raw"（不管有没有 recipe，两条 raw 分支
-  // 都要走 raw_decode_fn），作为进度回调的分母。纯 JPEG 批次 raw_total==0，
-  // on_progress 全程不会被调用。
-  int raw_total = 0;
-  for (const auto& img : images) {
-    if (img.kind == "raw") ++raw_total;
-  }
-  int raw_done = 0;
-
-  // 目标文件夹无法创建/写入(权限不足、路径某一段已经是个普通文件、磁盘写
-  // 满等)时,std::filesystem 的抛异常重载会往外抛 filesystem_error——不
-  // 捕获的话会直接终止调用方(包括 cli 全键盘交互循环那个长时间运行的进
-  // 程),这里统一转成 IoError,让调用方能把它当成普通的 Result 错误处理。
-  try {
-    // 导出前先看一眼目标是否已存在,再调用 create_directories——用这个结
-    // 果告诉调用方"是不是新建的",不然用户拿到一句"已导出"完全看不出目标
-    // 文件夹是本来就有的、还是这次顺手建的,容易以为自己打错了路径。
-    result.created_output_folder = !fs::exists(out_dir);
-    fs::create_directories(out_dir);
-
-    int index = 0;
-    for (const auto& img : images) {
-      ++index;
-      fs::path source = root_path / img.file_path;
-      if (!fs::exists(source)) {
-        result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::SourceMissing});
-        continue;
-      }
-
-      std::string file_name_for_target = target_file_name(img.file_name, img.kind);
-      std::string base_name = tag_info->is_ordered
-                                   ? ordered_name(index, width, file_name_for_target)
-                                   : file_name_for_target;
-      fs::path target = resolve_collision(out_dir, base_name);
-
-      // 进度回调要在解码开始前触发，不是完成后——全量解码单张就要几秒，
-      // 完成后才报进度的话，批次里第一张(单张导出时是唯一一张)在解码期
-      // 间界面上什么都不显示，看起来像卡住了，真机使用中被发现过。
-      if (img.kind == "raw") {
-        ++raw_done;
-        if (on_progress) on_progress(raw_done, raw_total);
-      }
-      auto skip_reason = write_one_export(db, img.id, img.kind, source, target, raw_decode_fn);
-      if (skip_reason) {
-        result.skipped.push_back(ExportSkipped{img.id, img.file_name, *skip_reason});
-        continue;
-      }
-      ++result.exported_count;
-    }
-  } catch (const fs::filesystem_error&) {
+  auto batch = write_export_batch(db, root_path, images, tag_info->is_ordered, out_dir, on_progress,
+                                   raw_decode_fn);
+  if (batch.io_error) {
     return Result<ExportResult, ExportTagError>::Err(ExportTagError::IoError);
   }
+  return Result<ExportResult, ExportTagError>::Ok(std::move(batch.result));
+}
 
-  return Result<ExportResult, ExportTagError>::Ok(std::move(result));
+// 二级筛选/g 层筛选导出的目标不是一个单一标签，而是调用方(cmd_open)
+// 手上已经解析好的一批 image_id——"是否要包含废片/重复"这个判断(目
+// 标本身就是废片/重复标签、或者 Settings 里显式打开了 include)已经
+// 由调用方折算成 include_reject/include_dup 两个布尔值，这里不重新
+// 判断"目标是不是系统标签"(没有单一 target 这个概念可比)。project_id
+// 只用来定位系统标签和项目根目录，不代表这批图片一定覆盖整个项目。
+Result<ExportResult, ExportImagesError> export_images(db::Database& db, project::ProjectId project_id,
+                                                        const std::vector<ImageId>& image_ids,
+                                                        const std::string& output_folder,
+                                                        ExportProgressFn on_progress,
+                                                        RawDecodeFn raw_decode_fn, bool include_reject,
+                                                        bool include_dup) {
+  sqlite3* conn = db.handle();
+
+  std::vector<browse::ImageRef> images;
+  images.reserve(image_ids.size());
+  for (auto id : image_ids) {
+    auto info = project::get_image(db, id);
+    if (!info) continue;  // 图片在调用方解析之后被删除这类罕见竞态，跳过而不是报错
+    images.push_back(browse::ImageRef{info->id, info->file_path, info->file_name, info->kind,
+                                       info->preview_cache_path});
+  }
+
+  auto exclude_by_tag = [&](const char* system_tag_name) {
+    auto system_tag_id = tagging::find_tag_by_name(db, project_id, system_tag_name);
+    if (!system_tag_id) return;
+    std::vector<ImageId> ids;
+    ids.reserve(images.size());
+    for (const auto& img : images) ids.push_back(img.id);
+    auto matched = tagging::images_with_tag(db, ids, *system_tag_id);
+    if (matched.empty()) return;
+    images.erase(std::remove_if(images.begin(), images.end(),
+                                 [&](const auto& img) { return matched.count(img.id) > 0; }),
+                 images.end());
+  };
+  if (!include_reject) exclude_by_tag(tagging::kRejectTagName);
+  if (!include_dup) exclude_by_tag(tagging::kDuplicateTagName);
+
+  fs::path root_path = get_project_root_path(conn, project_id);
+  fs::path out_dir(output_folder);
+
+  // 没有标签，不存在"有序编号"这个概念——跟 export_image 单张导出同一
+  // 个先例，直接用原文件名，只走冲突消歧。
+  auto batch = write_export_batch(db, root_path, images, /*is_ordered=*/false, out_dir, on_progress,
+                                   raw_decode_fn);
+  if (batch.io_error) {
+    return Result<ExportResult, ExportImagesError>::Err(ExportImagesError::IoError);
+  }
+  return Result<ExportResult, ExportImagesError>::Ok(std::move(batch.result));
 }
 
 Result<ExportImageResult, ExportImageError> export_image(db::Database& db, ImageId image_id,

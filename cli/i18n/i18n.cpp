@@ -1409,19 +1409,17 @@ std::string tag_menu_actions_line() {
   }
 }
 
-std::string filter_menu_export_prefix() {
+// 点 2/3：`e` 键的二级菜单——只在当前有 active filter(g 层标签筛选和/
+// 或控制台二级筛选)时才出现,没有筛选时 `e` 保持原来的单键直接导出当
+// 前照片。`f` 导出的是"当前 active filter 范围"(g 层 ∘ 二级筛选叠加
+// 之后 cmd_open 手上的 images),不是某个具体标签,所以这里不带标签名。
+std::string msg_export_submenu_prompt() {
   if (g_lang == Lang::zh) {
-    return " 导出:";
+    return " " + menu_item("e", "导出当前") + "  " + menu_item("f", "导出筛选结果") + "  " +
+           menu_item("Esc", "取消");
   } else {
-    return " Export:";
-  }
-}
-
-std::string filter_menu_export_current(const std::string &name) {
-  if (g_lang == Lang::zh) {
-    return menu_item("e", "当前筛选") + "(" + name + ")  ";
-  } else {
-    return menu_item("e", "Current filter") + "(" + name + ")  ";
+    return " " + menu_item("e", "Export current") + "  " + menu_item("f", "Export filtered") +
+           "  " + menu_item("Esc", "Cancel");
   }
 }
 
@@ -1458,21 +1456,21 @@ std::string filter_menu_export_failed() {
   }
 }
 
-std::string filter_menu_export_no_images(const std::string &name) {
+// 点 2：以前带标签名(`filter_menu_export_no_images(name)`)是因为 g+e
+// 导出的目标永远是某个标签；现在 `f` 导出的是"当前筛选范围"这批图
+// 片，不对应单一标签名，改成不带名字的通用文案。
+std::string filter_menu_export_no_images() {
   if (g_lang == Lang::zh) {
-    return " 标签 '" + name + "' 下没有图片,未导出 ";
+    return " 没有图片可导出 ";
   } else {
-    return " No images found under tag '" + name + "', not exported ";
+    return " No images to export ";
   }
 }
 
-std::string filter_menu_export_success(int count, const std::string &name,
-                                       const std::string &path,
-                                       bool created_folder,
+std::string filter_menu_export_success(int count, const std::string &path, bool created_folder,
                                        size_t skipped_count) {
   if (g_lang == Lang::zh) {
-    std::string status = " 已导出 " + std::to_string(count) + " 张 '" + name +
-                         "' 到 '" + path + "'";
+    std::string status = " 已导出 " + std::to_string(count) + " 张到 '" + path + "'";
     if (created_folder)
       status += "(目录不存在,已新建)";
     if (skipped_count > 0)
@@ -1480,8 +1478,7 @@ std::string filter_menu_export_success(int count, const std::string &name,
     status += " ";
     return status;
   } else {
-    std::string status = " Exported " + std::to_string(count) + " of '" + name +
-                         "' to '" + path + "'";
+    std::string status = " Exported " + std::to_string(count) + " to '" + path + "'";
     if (created_folder)
       status += " (created directory)";
     if (skipped_count > 0)
@@ -1504,12 +1501,12 @@ filter_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool sh
 }
 
 std::string filter_menu_actions_line() {
+  // 点 1：g+e"挑任意标签导出"这条路径已经退休(交互起来太诡异)——`e`
+  // 键的导出入口挪到顶层 `e`(见 msg_export_submenu_prompt 的说明)。
   if (g_lang == Lang::zh) {
-    return " " + menu_item("g", "清除筛选") + "  " + menu_item("e", "导出") + "  " +
-           menu_item("Esc", "取消");
+    return " " + menu_item("g", "清除筛选") + "  " + menu_item("Esc", "取消");
   } else {
-    return " " + menu_item("g", "Clear Filter") + "  " + menu_item("e", "Export") + "  " +
-           menu_item("Esc", "Cancel");
+    return " " + menu_item("g", "Clear Filter") + "  " + menu_item("Esc", "Cancel");
   }
 }
 

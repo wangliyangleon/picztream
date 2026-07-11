@@ -193,6 +193,36 @@ TEST_CASE("err_help_unknown_command includes the command name and follows langua
   g_lang = Lang::zh;  // 还原
 }
 
+// 点 2：`e` 二级子菜单只提供"当前照片"/"当前筛选"两个选项，不带任何
+// 标签名——跟被退休的 g+e 流程不同，没有单一 target 概念。
+TEST_CASE("msg_export_submenu_prompt offers exactly e (current) and f (filtered), no tag name") {
+  g_lang = Lang::zh;
+  auto prompt = msg_export_submenu_prompt();
+  CHECK(prompt.find("e") != std::string::npos);
+  CHECK(prompt.find("f") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(msg_export_submenu_prompt().find("Export current") != std::string::npos);
+  CHECK(msg_export_submenu_prompt().find("Export filtered") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+TEST_CASE("filter_menu_export_no_images/success no longer take a tag name") {
+  g_lang = Lang::zh;
+  CHECK(!filter_menu_export_no_images().empty());
+  auto success = filter_menu_export_success(3, "/tmp/out", true, 1);
+  CHECK(success.find("3") != std::string::npos);
+  CHECK(success.find("/tmp/out") != std::string::npos);
+  CHECK(success.find("1") != std::string::npos);  // skipped count
+
+  g_lang = Lang::en;
+  CHECK(!filter_menu_export_no_images().empty());
+  CHECK(filter_menu_export_success(3, "/tmp/out", false, 0).find("3") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
 // 点 7：`/` 前缀仍然强制要求，但错误提示要指路到 /help。
 TEST_CASE("msg_console_requires_slash points users at /help") {
   g_lang = Lang::zh;

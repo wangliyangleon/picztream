@@ -181,6 +181,16 @@ Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string&
                                 include_reject, include_dup);
 }
 
+Result<ExportResult, ExportImagesError> export_images(ProjectId project_id,
+                                                        const std::vector<ImageId>& image_ids,
+                                                        const std::string& output_folder,
+                                                        ExportProgressFn on_progress, bool include_reject,
+                                                        bool include_dup) {
+  db::Database db = db::Database::open_default();
+  return exporting::export_images(db, project_id, image_ids, output_folder, std::move(on_progress),
+                                   raw::decode_full, include_reject, include_dup);
+}
+
 Result<ExportImageResult, ExportImageError> export_image(ImageId image_id,
                                                            const std::string& output_folder,
                                                            ExportProgressFn on_progress) {

@@ -262,14 +262,15 @@ std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags
 std::string tag_menu_actions_line();
 
 // Filter Menu
-std::string filter_menu_export_prefix();
-std::string filter_menu_export_current(const std::string& name);
+// 点 2：`e` 键的二级子菜单提示——只在有 active filter 时用，见
+// browse.cpp 顶层 `e` 键处理的说明。
+std::string msg_export_submenu_prompt();
 std::string filter_menu_export_to_prompt();
 std::string filter_menu_export_path_empty();
 std::string filter_menu_export_io_error(const std::string& path);
 std::string filter_menu_export_failed();
-std::string filter_menu_export_no_images(const std::string& name);
-std::string filter_menu_export_success(int count, const std::string& name, const std::string& path, bool created_folder, size_t skipped_count);
+std::string filter_menu_export_no_images();
+std::string filter_menu_export_success(int count, const std::string& path, bool created_folder, size_t skipped_count);
 // g 顶层菜单拆成两行,跟 tag_menu_options_line/actions_line 同样的理由。
 // show_duplicate 见 tag_menu_options_line 的说明,同一条 F-01 规则。
 std::string filter_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,

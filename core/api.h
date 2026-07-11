@@ -57,6 +57,7 @@ using SkipReason = exporting::SkipReason;
 using ExportSkipped = exporting::ExportSkipped;
 using ExportResult = exporting::ExportResult;
 using ExportTagError = exporting::ExportTagError;
+using ExportImagesError = exporting::ExportImagesError;
 using ExportProgressFn = exporting::ExportProgressFn;
 using ExportImageError = exporting::ExportImageError;
 using ExportImageResult = exporting::ExportImageResult;
@@ -190,6 +191,17 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
                                                  ExportProgressFn on_progress = nullptr,
                                                  bool include_reject = false, bool include_dup = false);
+
+// 导出 cmd_open 里"当前 active filter 范围"这批图片(g 层筛选 ∘ 控制台
+// 二级筛选叠加之后的结果)，不是按标签查——见 core/export/export.h 的
+// export_images 说明。include_reject/include_dup 的"目标本身就是废
+// 片/重复"例外由调用方(cmd_open)折算好再传进来。
+Result<ExportResult, ExportImagesError> export_images(ProjectId project_id,
+                                                        const std::vector<ImageId>& image_ids,
+                                                        const std::string& output_folder,
+                                                        ExportProgressFn on_progress = nullptr,
+                                                        bool include_reject = false,
+                                                        bool include_dup = false);
 
 // 导出单张图片，不需要标签——`pzt open` 里按 `e` 键"就导出当前这张"专
 // 用，见 core/export/export.h。

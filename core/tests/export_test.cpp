@@ -379,6 +379,58 @@ TEST_CASE("export_tag reports IoError when the output path can't be created as a
   CHECK(result.error() == ExportTagError::IoError);
 }
 
+// export_images：cmd_open"导出当前 active filter 范围"用的入口，不是
+// 按标签查——直接给一批 image_id，跟 export_tag 不同没有"有序编号"这
+// 个概念，也没有"目标本身就是废片/重复"这个内部例外(由调用方折算好
+// 再传 include_reject/include_dup)。
+TEST_CASE("export_images exports the given ids using original file names, no ordering") {
+  auto fx = make_fixture("export_images_basic", 3);
+  auto out_dir = fresh_output_dir("export_images_basic");
+  auto result =
+      export_images(fx.db, fx.project_id, {fx.images[0], fx.images[2]}, out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 2);
+  CHECK(fs::exists(out_dir / "img_000.jpg"));
+  CHECK(fs::exists(out_dir / "img_002.jpg"));
+  CHECK_FALSE(fs::exists(out_dir / "img_001.jpg"));  // 不在 id 列表里的那张不该被导出
+}
+
+TEST_CASE("export_images excludes reject/duplicate images by default like export_tag") {
+  auto fx = make_fixture("export_images_exclude", 3);
+  auto reject_id = ensure_reject_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[0], reject_id).ok());
+
+  auto out_dir = fresh_output_dir("export_images_exclude");
+  auto result = export_images(fx.db, fx.project_id, fx.images, out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 2);
+  CHECK_FALSE(fs::exists(out_dir / "img_000.jpg"));
+  CHECK(fs::exists(out_dir / "img_001.jpg"));
+  CHECK(fs::exists(out_dir / "img_002.jpg"));
+}
+
+TEST_CASE("export_images includes reject/duplicate images when include flags are set") {
+  auto fx = make_fixture("export_images_include", 2);
+  auto reject_id = ensure_reject_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[0], reject_id).ok());
+
+  auto out_dir = fresh_output_dir("export_images_include");
+  auto result = export_images(fx.db, fx.project_id, fx.images, out_dir.string(),
+                               /*on_progress=*/nullptr, pzt::core::raw::decode_full,
+                               /*include_reject=*/true);
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 2);
+}
+
+TEST_CASE("export_images silently skips an id that no longer resolves to an image") {
+  auto fx = make_fixture("export_images_missing_id", 1);
+  auto out_dir = fresh_output_dir("export_images_missing_id");
+  auto result = export_images(fx.db, fx.project_id, {fx.images[0], fx.images[0] + 999999},
+                               out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 1);
+}
+
 TEST_CASE("export_tag bakes a non-identity recipe into the exported image's bytes") {
   auto fx = make_real_photo_fixture("export_bake", 1);
   auto warm_id = list_presets(fx.db)[1].id;  // presets[0] 是 Origin(没有 LUT),[1] 是 Warm

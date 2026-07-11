@@ -138,6 +138,45 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
   return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
 }
 
+// 点 2：`e` 二级菜单里的 `f`——导出当前 active filter 范围(g 层 ∘ 二级
+// 筛选叠加之后 cmd_open 手上的 images，不是某个具体标签)。include_
+// reject/include_dup 由调用方(cmd_open)算好传进来——"当前筛选本身就
+// 是废片/重复"这个对称例外只有调用方知道(既可能来自 g 层标签、也可
+// 能来自控制台二级筛选criterion)，这个函数不重新判断。
+std::string handle_export_filtered_flow(pzt::core::ProjectId project_id,
+                                         const std::vector<pzt::core::ImageRef>& images,
+                                         bool include_reject, bool include_dup, int banner_row,
+                                         int start_col, int content_cols) {
+  auto path = read_text_line(pzt::cli::i18n::filter_menu_export_to_prompt(), banner_row, start_col,
+                              content_cols);
+  if (!path) return "";  // Esc,静默取消
+  if (path->empty()) return pzt::cli::i18n::filter_menu_export_path_empty();
+  std::string resolved_path = expand_home_path(*path);
+
+  auto on_progress = [&](int done, int total) {
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
+  };
+  std::vector<pzt::core::ImageId> ids;
+  ids.reserve(images.size());
+  for (const auto& ref : images) ids.push_back(ref.id);
+  auto result = pzt::core::export_images(project_id, ids, resolved_path, on_progress, include_reject,
+                                          include_dup);
+  // F-25：大批量导出(尤其是带 RAW 图片的批次)可能冻结主循环几秒到几十
+  // 秒——见 handle_dedup_command 里同一处修复的说明。
+  flush_pending_input();
+  if (!result.ok()) {
+    return pzt::cli::i18n::filter_menu_export_io_error(resolved_path);  // 唯一的失败原因就是 IoError
+  }
+
+  const auto& r = result.value();
+  if (r.exported_count == 0 && r.skipped.empty()) {
+    return pzt::cli::i18n::filter_menu_export_no_images();
+  }
+  return pzt::cli::i18n::filter_menu_export_success(r.exported_count, resolved_path,
+                                                     r.created_output_folder, r.skipped.size());
+}
+
 // `/` 开头的输入解析成命令名(不含前导 `/`) + 剩余参数——第一个空白就是
 // 命令名和参数的分界。命令名和参数之间允许多个空格。
 std::pair<std::string, std::string> split_console_command(const std::string& input) {
@@ -1257,13 +1296,10 @@ int cmd_open(const std::vector<std::string>& args) {
         // F-01：跟 space 分支同样的现查逻辑,见那边的说明。
         auto duplicate_tag_id =
             pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
-        auto decision = handle_g_key_prompt(reject_tag_id, duplicate_tag_id, tags,
-                                             active_filter_tag_id, active_filter_tag_name,
-                                             banner_row, start_col, content_cols);
+        auto decision =
+            handle_g_key_prompt(reject_tag_id, duplicate_tag_id, tags, banner_row, start_col, content_cols);
 
-        if (decision.action == GKeyAction::Handled) {
-          status_override = decision.status;
-        } else if (decision.action == GKeyAction::ApplyFilter) {
+        if (decision.action == GKeyAction::ApplyFilter) {
           // 真机测试反馈 g + 数字筛选有明显卡顿,查出来是 image_tags 按
           // tag_id 过滤没有索引可用(见 core/db/schema.cpp 的说明,已经
           // 补上索引)——这里打一下查询本身的耗时,debug 面板能直接看到
@@ -1333,12 +1369,46 @@ int cmd_open(const std::vector<std::string>& args) {
           }
         }
       } else if (c == 'e') {
-        // 顶层导出快捷键:就导出当前这一张,不需要标签。current_id 不变,
-        // 跟 space/x/r 一样只走 status_override 原地刷新。
+        // 顶层导出快捷键。没有 active filter(g 层标签筛选和控制台二级
+        // 筛选都没生效)时保持原样:单键直接导出当前这一张。有筛选生效
+        // 时弹一个二级菜单再选"当前照片"还是"当前筛选范围"——点 2：
+        // 以前"导出任意标签"挂在 g+e 下面,交互起来很诡异,已经退休；
+        // "导出全部"和"导出某个标签组"也刻意不共用同一个快捷键,避免
+        // 手滑导出了不想要的范围。
         if (current_ref) {
           highlight_active_menu_key('e', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
-                                                         banner_row, start_col, content_cols);
+          bool filter_active = active_filter_tag_id.has_value() || active_console_filter.has_value();
+          if (!filter_active) {
+            status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
+                                                           banner_row, start_col, content_cols);
+          } else {
+            char sub = prompt_and_read_key(pzt::cli::i18n::msg_export_submenu_prompt(), banner_row,
+                                            start_col, content_cols);
+            if (sub == 'e') {
+              status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
+                                                             banner_row, start_col, content_cols);
+            } else if (sub == 'f') {
+              // 目标本身就是废片/重复时不排除——跟 /ai_eval、/dedup、
+              // pzt export 的对称例外规则一致，只是这里"目标"可能来自
+              // g 层标签，也可能来自控制台二级筛选 criterion。
+              auto duplicate_tag_id =
+                  pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
+              bool target_is_reject =
+                  (active_filter_tag_id && *active_filter_tag_id == reject_tag_id) ||
+                  (active_console_filter && *active_console_filter == ConsoleFilterCriterion::Reject);
+              bool target_is_dup =
+                  (active_filter_tag_id && duplicate_tag_id &&
+                   *active_filter_tag_id == *duplicate_tag_id) ||
+                  (active_console_filter && *active_console_filter == ConsoleFilterCriterion::Dup);
+              status_override = handle_export_filtered_flow(
+                  *id, images, target_is_reject || settings.export_reject,
+                  target_is_dup || settings.export_dup, banner_row, start_col, content_cols);
+            } else if (sub != 0x1B) {
+              // 不是 Esc,也不是 e/f 里的任何一个——给一句反馈而不是完全
+              // 没反应,跟这个文件里其它子菜单同样的约定。Esc 静默取消。
+              status_override = pzt::cli::i18n::recipe_menu_invalid_key();
+            }
+          }
         }
       } else if (c == ':') {
         // M3:vim 风格的额外指引输入,提交给 EvaluationWorker 异步评估。

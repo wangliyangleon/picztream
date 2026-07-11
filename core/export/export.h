@@ -87,6 +87,27 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  bool include_reject = false,
                                                  bool include_dup = false);
 
+enum class ExportImagesError {
+  IoError,  // 目标文件夹无法创建/写入，跟 ExportTagError::IoError 是同一类问题——这
+            // 里没有"标签找不到"这个失败模式，image_ids 里查不到的图片单张跳过，不
+            // 让整个调用失败。
+};
+
+// cli 层"导出当前 active filter 范围"用的入口(见 core/api.h 的说
+// 明)——跟 export_tag 不同，这批图片不是靠单一 tag_id 查出来的，是调
+// 用方(cmd_open)已经解析好的一批 image_id(g 层筛选 ∘ 控制台二级筛选
+// 叠加之后的结果)。命名规则跟单张导出一样直接用原文件名，没有"有序
+// 编号"这个概念——这批图片不对应任何一个标签的 position。include_
+// reject/include_dup 的语义跟 export_tag 一样，但"目标本身就是废片/
+// 重复"这个例外由调用方折算好再传进来，这里不重新判断。
+Result<ExportResult, ExportImagesError> export_images(db::Database& db, project::ProjectId project_id,
+                                                        const std::vector<ImageId>& image_ids,
+                                                        const std::string& output_folder,
+                                                        ExportProgressFn on_progress = nullptr,
+                                                        RawDecodeFn raw_decode_fn = raw::decode_full,
+                                                        bool include_reject = false,
+                                                        bool include_dup = false);
+
 enum class ExportImageError {
   ImageNotFound,
   IoError,  // 目标文件夹无法创建/写入，跟 ExportTagError::IoError 是同一类问题
