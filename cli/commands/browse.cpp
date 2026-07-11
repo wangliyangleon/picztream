@@ -50,11 +50,12 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
 
 // F-10：AI 供应商固定写死 Gemini 只是因为开发时手头只有 Gemini 的
 // key，不是经过设计的选择(docs/M3_PRD.md"风险与待确认问题"一节的
-// TODO 原话)。读一次 PZT_AI_PROVIDER 环境变量(claude/gemini，大小写
-// 不敏感)，没设或者值不认识都保持原来的 Gemini 默认值——交互式切换 UI
-// 这次不做(PRD 已经明确排除)，环境变量是够用的最小版本。不缓存，每次
-// 调用现读——getenv 是个廉价的进程内查表，不值得为了省这几次调用专门
-// 传参或加个全局变量。
+// TODO 原话)。优先级:PZT_AI_PROVIDER 环境变量(claude/gemini，大小写
+// 不敏感)> F-12 的 Settings.ai_provider(config.json)> 硬编码 Gemini
+// (Settings 自己的默认值)。不缓存，每次调用现读——这不是热路径(只在
+// 用户真的提交一次 /ai_eval 相关命令时才会走到)，config.json 和
+// getenv 都是廉价操作，不值得为了省这几次调用专门传参或加个全局变量；
+// 现读还有个好处:用户中途改了 config.json 不需要重启 pzt open。
 pzt::core::Provider resolve_ai_provider() {
   const char* env = std::getenv("PZT_AI_PROVIDER");
   if (env) {
@@ -64,7 +65,7 @@ pzt::core::Provider resolve_ai_provider() {
     if (value == "claude") return pzt::core::Provider::Claude;
     if (value == "gemini") return pzt::core::Provider::Gemini;
   }
-  return pzt::core::Provider::Gemini;
+  return pzt::core::load_settings().ai_provider;
 }
 
 // 信息栏"标签:"这一行——原来一行一个标签太占竖直空间，改成
@@ -396,6 +397,12 @@ int cmd_open(const std::vector<std::string>& args) {
   // 不是通过更新后的 pzt new 建的"这种边界情况,避免后面用这个 id 时崩溃。
   pzt::core::TagId reject_tag_id = pzt::core::ensure_reject_tag(*id);
 
+  // F-12：一次会话读一次就够——界面宽度比例、预取窗口这两个值一旦这个
+  // 函数开始跑起来(边框已经按某个比例画出来、PrefetchCache 已经用某个
+  // 窗口大小构造完)就没法中途换,不像 resolve_ai_provider() 那样每次调
+  // 用都现读也没关系。
+  pzt::core::Settings settings = pzt::core::load_settings();
+
   auto mode = pzt::cli::kitty::detect_terminal_mode();
   if (mode.inside_tmux && !mode.passthrough_ok) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_tmux_passthrough().c_str());
@@ -451,9 +458,10 @@ int cmd_open(const std::vector<std::string>& args) {
     pzt::cli::term::DebugLogRedirect debug_log(debug_mode,
                                                 static_cast<std::size_t>(kDebugRows) * 4);
 
-    // window 先给个保守默认值——PRD 里"合理默认值待真实素材测出"这个待办不
-    // 受这次影响,调优留给以后有真实使用数据再说。
-    pzt::core::PrefetchCache prefetch(project.root_path, /*window=*/3,
+    // window 默认值 3——PRD 里"合理默认值待真实素材测出"这个待办不受这次
+    // 影响,调优留给以后有真实使用数据再说;F-12 之后这个值可以在
+    // config.json 里覆盖(prefetch_window),不用改代码重新编译。
+    pzt::core::PrefetchCache prefetch(project.root_path, settings.prefetch_window,
                                        pzt::core::decode_preview_file);
     pzt::core::ImageId current_id = images.front().id;
     prefetch.set_current(images, current_id);
@@ -536,10 +544,9 @@ int cmd_open(const std::vector<std::string>& args) {
       int cell_px_w = term_size.valid ? std::max(1, term_size.pixel_width / term_size.cols) : 8;
       int cell_px_h = term_size.valid ? std::max(1, term_size.pixel_height / term_size.rows) : 16;
 
-      // 整个界面默认只占终端宽度的 70%、居中显示,不铺满整个窗口——以后加
-      // 了冒号命令再考虑让这个比例可调。
-      const double kWidthRatio = 0.7;
-      int ui_cols = std::max(20, static_cast<int>(total_cols * kWidthRatio));
+      // 界面默认只占终端宽度的 70%、居中显示,不铺满整个窗口——F-12 之后
+      // 这个比例可以在 config.json 里用 ui_width_ratio 覆盖。
+      int ui_cols = std::max(20, static_cast<int>(total_cols * settings.ui_width_ratio));
       int start_col = std::max(1, (total_cols - ui_cols) / 2 + 1);
 
       int content_cols = std::max(1, ui_cols - 2);  // 减去左右各一列边框

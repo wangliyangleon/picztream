@@ -15,6 +15,7 @@
 #include "core/project/project.h"
 #include "core/recipe/recipe.h"
 #include "core/result.h"
+#include "core/settings/settings.h"
 #include "core/tagging/tagging.h"
 
 // Facade `cli` calls into. See docs/M0_Eng_Design.md for the full interface
@@ -88,6 +89,12 @@ using EvaluationError = ai::EvaluationError;
 // 层重新实现一遍算法，见 core/ai/evaluation.h 的说明。
 using ai::overall_score;
 using ai::passes_gate;
+
+// F-12：静态全局设置(供应商/dedup 参数/批量默认排除策略/界面偏好)，见
+// core/settings/settings.h 的完整设计说明。cli 需要直接引用这个类型
+// (存局部变量、传参),整个重导出。
+using Settings = settings::Settings;
+Settings load_settings();
 
 // Opens the default global database (~/.config/pzt/pzt.db, created on first
 // use) internally. `folder_path` is resolved by the caller (cli defaults it

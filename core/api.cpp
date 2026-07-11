@@ -25,6 +25,8 @@ bool has_raw_extension(const std::string& path) {
 
 }  // namespace
 
+Settings load_settings() { return settings::load(); }
+
 Result<ProjectId, CreateProjectError> create_project(const std::string& name,
                                                       const std::string& folder_path,
                                                       bool support_raw,

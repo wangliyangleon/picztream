@@ -22,6 +22,20 @@ void init_lang() {
     }
   }
 
+  // F-12：config.json 的 lang 字段——比系统 LANG 更明确的信号(用户特意为
+  // PZT 配置过),但仍然可以被上面的 PZT_LANG 环境变量临时覆盖。nullopt
+  // 表示配置文件里没写这个字段,继续往下走系统 LANG 检测,不当成"用户
+  // 配置成了某个值"。
+  auto configured_lang = pzt::core::load_settings().lang;
+  if (configured_lang == "en") {
+    g_lang = Lang::en;
+    return;
+  }
+  if (configured_lang == "zh") {
+    g_lang = Lang::zh;
+    return;
+  }
+
   const char *lang = std::getenv("LANG");
   if (lang != nullptr) {
     std::string l(lang);
