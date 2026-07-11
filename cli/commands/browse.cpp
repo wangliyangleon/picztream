@@ -173,6 +173,24 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s) {
   return {s.substr(start, space - start), rest_start == std::string::npos ? "" : s.substr(rest_start)};
 }
 
+// 系统标签(废片/重复)在数据库里永远存中文名(见 kRejectTagName/
+// kDuplicateTagName 的说明)，但展示层的名字跟着当前 UI 语言走——英文
+// 界面下用户在信息栏/菜单里看到的是"Reject"/"Duplicate"，很自然地会
+// 拿这个词去打 `#Reject`，如果只按存库的中文名精确匹配就会得到"标签
+// 不存在"，语言相关的行为反而成了 bug。这里两种拼法都认，不管当前
+// g_lang 是什么；普通用户自己建的标签不受影响，仍然是精确字符串匹
+// 配，不做任何模糊/大小写处理。
+std::optional<pzt::core::TagId> resolve_tag_name_language_independent(pzt::core::ProjectId project_id,
+                                                                       const std::string& name) {
+  if (name == pzt::core::tagging::kRejectTagName || name == "Reject") {
+    return pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName);
+  }
+  if (name == pzt::core::tagging::kDuplicateTagName || name == "Duplicate") {
+    return pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kDuplicateTagName);
+  }
+  return pzt::core::find_tag_by_name(project_id, name);
+}
+
 // `/dedup`/`/ai_eval` 共用的批量范围解析：`*` 整个项目、`#标签名` 带指
 // 定标签的图片，标签名带空格时用 `#"标签名"` 包起来——两边统一用同一
 // 套写法，不各自维护一套解析和错误文案。scope 不是 `*` 也不以 `#` 开
@@ -199,7 +217,7 @@ ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std
   if (tag_name.size() >= 2 && tag_name.front() == '"' && tag_name.back() == '"') {
     tag_name = tag_name.substr(1, tag_name.size() - 2);
   }
-  auto tag_id = pzt::core::find_tag_by_name(project_id, tag_name);
+  auto tag_id = resolve_tag_name_language_independent(project_id, tag_name);
   if (!tag_id) {
     result.error_message = pzt::cli::i18n::err_console_tag_not_found(tag_name);
     return result;
