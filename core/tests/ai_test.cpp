@@ -168,6 +168,28 @@ TEST_CASE("request_json builds a request body containing the image, prompt and s
   CHECK(captured_body.find("\"data\"") != std::string::npos);
 }
 
+// F-02：request_json 内部在编码上传之前会把图片降采样，纯色测试图片压
+// 缩后几乎不随分辨率变化，没法从 base64 载荷大小反推有没有真的缩小，
+// 直接测 detail::downscale_for_upload 的输出宽高更准确、更稳定。
+TEST_CASE("downscale_for_upload shrinks large images to the upload cap, preserving aspect ratio") {
+  auto wide = make_image(4000, 2000);  // 长边 4000，2:1
+  auto scaled = detail::downscale_for_upload(wide);
+  CHECK(scaled.width == 1024);
+  CHECK(scaled.height == 512);  // 长边缩到 1024，短边按同样比例缩小
+}
+
+TEST_CASE("downscale_for_upload leaves images at or under the cap untouched") {
+  auto small = make_image(800, 600);
+  auto scaled = detail::downscale_for_upload(small);
+  CHECK(scaled.width == 800);
+  CHECK(scaled.height == 600);
+
+  auto exact = make_image(1024, 768);
+  auto scaled_exact = detail::downscale_for_upload(exact);
+  CHECK(scaled_exact.width == 1024);
+  CHECK(scaled_exact.height == 768);
+}
+
 TEST_CASE("request_json reports MissingApiKey without calling http_post") {
   EnvVarGuard claude_key("ANTHROPIC_API_KEY", nullptr);
   auto img = make_image(4, 4);

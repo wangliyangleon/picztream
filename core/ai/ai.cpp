@@ -215,6 +215,32 @@ std::string compact_for_debug_log(const std::string& text) {
 
 }  // namespace
 
+namespace detail {
+
+// F-02：发送前把图片降采样到长边不超过这个上限——`decode_preview_file`
+// 拿到的预览图在纯 JPEG 项目里经常就是原图分辨率(24MP+)，未经缩放直
+// 接 base64 编码上传，既让每次请求的 token 成本/延迟成倍膨胀，又可能
+// 直接撞上 Claude 单张图片 5MB 的上限；视觉模型本身也会在输入端把图缩
+// 到自己的工作分辨率，原图更大不会换来更准的判断。1024px 是 Claude 官
+// 方文档给出的视觉输入常见尺寸下限之上、Gemini 同样能舒服处理的经验
+// 值，不是精确调出来的最优值——真机测试如果发现评分质量明显下降，再
+// 回头调大。
+constexpr int kMaxUploadEdge = 1024;
+
+decode::DecodedImage downscale_for_upload(const decode::DecodedImage& image) {
+  if (image.width <= kMaxUploadEdge && image.height <= kMaxUploadEdge) return image;
+  double scale = static_cast<double>(kMaxUploadEdge) / std::max(image.width, image.height);
+  int target_w = std::max(1, static_cast<int>(image.width * scale));
+  int target_h = std::max(1, static_cast<int>(image.height * scale));
+  auto resized = decode::resize_rgba(image, target_w, target_h);
+  // resize_rgba 只在宽高非法时才会失败——image 是已经解码成功的预览图，
+  // 失败是"不该发生"的场景；退回原图而不是让整个请求失败，跟这个函数
+  // "只是省流量/省成本的优化，不是正确性前提"的定位一致。
+  return resized.ok() ? resized.value() : image;
+}
+
+}  // namespace detail
+
 Result<HttpResponse, RequestError> perform_curl_post(
     const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
     const std::string& body) {
@@ -262,10 +288,13 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
   if (!api_key) return Result<nlohmann::json, RequestError>::Err(RequestError::MissingApiKey);
 
   std::string instruction_text = build_instruction_text(user_prompt, schema_instruction);
-  // encode_jpeg_bytes 只在宽高非法时才会失败——image 是已经解码成功的预览
-  // 图，宽高非法是编程错误而不是运行时该处理的结果，.value() 内部的
-  // assert(ok()) 就是这个契约，跟项目里 Result<> 的既有约定一致。
-  std::string image_base64 = base64_encode(decode::encode_jpeg_bytes(image).value());
+  // F-02：编码上传之前先降采样，见 detail::downscale_for_upload 的说明。
+  decode::DecodedImage upload_image = detail::downscale_for_upload(image);
+  // encode_jpeg_bytes 只在宽高非法时才会失败——upload_image 是已经解码
+  // 成功的预览图(降采样失败时退回原图，同样合法)，宽高非法是编程错误
+  // 而不是运行时该处理的结果，.value() 内部的 assert(ok()) 就是这个契
+  // 约，跟项目里 Result<> 的既有约定一致。
+  std::string image_base64 = base64_encode(decode::encode_jpeg_bytes(upload_image).value());
 
   std::string url;
   std::vector<std::pair<std::string, std::string>> headers;

@@ -59,4 +59,14 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
                                                     Provider provider,
                                                     HttpPostFn http_post = perform_curl_post);
 
+// 仅供单元测试使用——request_json 内部在编码上传之前会调用这个函数把图
+// 片降采样到一个合理的上限(见 ai.cpp 里的说明:纯色测试图片压缩后几乎
+// 不随分辨率变化，没法从 base64 载荷大小反推有没有真的缩小，直接测这
+// 个函数的输出宽高更准确)。
+namespace detail {
+
+decode::DecodedImage downscale_for_upload(const decode::DecodedImage& image);
+
+}  // namespace detail
+
 }  // namespace pzt::core::ai
