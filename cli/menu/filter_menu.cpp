@@ -66,6 +66,10 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
     write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
   };
   auto result = pzt::core::export_tag(target_id, resolved_path, on_progress);
+  // F-25：大批量导出(尤其是带 RAW 图片的批次)可能冻结主循环几秒到几十
+  // 秒——见 cli/commands/browse.cpp 的 handle_dedup_command 里同一处修
+  // 复的说明，同一个风险，这里是另一个长阻塞入口。
+  flush_pending_input();
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
       return pzt::cli::i18n::filter_menu_export_io_error(resolved_path);

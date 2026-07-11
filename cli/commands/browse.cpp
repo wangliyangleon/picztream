@@ -122,6 +122,9 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
     write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
   };
   auto result = pzt::core::export_image(image_id, resolved_path, on_progress);
+  // F-25：单张 RAW 全量解码是秒级耗时，同样可能冻结主循环——见
+  // handle_dedup_command 里同一处修复的说明。
+  flush_pending_input();
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportImageError::IoError) {
       return pzt::cli::i18n::filter_menu_export_io_error(resolved_path);
@@ -235,6 +238,11 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   }
 
   auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids, /*on_progress=*/nullptr);
+  // F-25：这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
+  // 缓冲区里——不清掉的话，接下来继续读键时会一次性回放，可能连按出
+  // 误标签/误退出。见 docs/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
+  // 条一直没收口的风险。
+  flush_pending_input();
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
   return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count);
 }

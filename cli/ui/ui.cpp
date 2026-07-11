@@ -1,6 +1,7 @@
 #include "cli/ui/ui.h"
 
 #include <poll.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -90,6 +91,8 @@ bool stdin_ready(int timeout_ms) {
   int ret = poll(&pfd, 1, timeout_ms);
   return ret > 0;
 }
+
+void flush_pending_input() { tcflush(STDIN_FILENO, TCIFLUSH); }
 
 // increment 6.4.4.5:从 banner 那一行读一整行 UTF-8 文本(新建标签要输入
 // 名称,这是这个项目第一次需要真正的多字节文本输入,其它菜单都只读一个字

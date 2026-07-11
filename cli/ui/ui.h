@@ -47,6 +47,14 @@ char prompt_and_read_key_2line(const std::string& line1, const std::string& line
 // poll() stdin,timeout_ms 内有可读数据返回 true(--debug 面板刷新用)。
 bool stdin_ready(int timeout_ms);
 
+// F-25：`/dedup`、大批量导出这类长阻塞操作(几秒到几十秒)冻结主循环期
+// 间,用户习惯性按的键会一直留在 tty 的输入缓冲区里,操作结束、循环继
+// 续读键时会被一次性回放、当成正常按键处理(可能连按出误标签/误退
+// 出)——见 docs/M3_Dedup_PRD.md"风险与待确认问题"里"阻塞期间的输入
+// 缓冲行为"那一条,一直没收口。长阻塞调用返回之后、继续读键之前调用
+// 这个函数清空缓冲区,把冻结期间的按键当成没发生过处理。
+void flush_pending_input();
+
 // 从 banner 那一行读一整行 UTF-8 文本。Esc/EOF 返回 nullopt(取消);Enter
 // 返回缓冲区内容(可能是空串,调用方决定空值是否合法)。
 std::optional<std::string> read_text_line(const std::string& prompt, int banner_row, int start_col,
