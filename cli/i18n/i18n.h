@@ -125,6 +125,11 @@ std::vector<MenuLine> menu_lines();
 std::string nav_bar_line1();
 std::string nav_bar_line2();
 std::string info_filter_label(const std::string& tag_name);
+// F-09：控制台 `/filter` 二级筛选生效时的信息栏标注,keyword 是
+// "unevaluated"/"fail"/"reject"/"dup" 之一,跟解析 `/filter <criterion>`
+// 用的是同一套关键字——这个函数不需要认识 cli 内部的 ConsoleFilterCriterion
+// 枚举类型,只接字符串。
+std::string info_console_filter_label(const std::string& keyword);
 std::string info_tags_label();
 std::string info_none_label();
 std::string info_size_label(const std::string& size_str);
@@ -143,6 +148,10 @@ std::string msg_all_tagged();
 std::string err_remove_tag_failed();
 std::string err_filter_failed();
 std::string msg_filter_no_images();
+// F-09：`/filter <criterion>` 计算结果为空时显示——跟 msg_filter_no_images
+// 分开，那条是"这个标签下没有图片"(标签语义)，这条是"没有满足这个
+// 状态条件的图片"(评估/去重状态语义)。
+std::string msg_console_filter_no_images();
 std::string msg_browse_exited();
 std::string export_current_success(const std::string& output_path, bool created_folder);
 std::string export_current_skipped(const std::string& file_name, pzt::core::SkipReason reason);
@@ -177,6 +186,9 @@ std::string err_console_tag_not_found(const std::string& tag_name);
 // 范围参数既不是 `*` 也不以 `#` 开头时统一提示——不静默把它当成裸标签
 // 名解析，见 docs/M3_PRD.md"触发入口"一节。
 std::string err_console_invalid_scope();
+// F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
+// 示——控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
+std::string err_console_invalid_filter_criterion();
 // 拆成两行(跟 tag_menu_order_prompt/tag_menu_ordered_keys_help 同一个
 // 先例)——prompt_and_read_key 单行版本用 pad_to 截断不换行,英文原文加上
 // "(y/N)"提示很容易在正常终端宽度下被截断掉,拆成"说明"+"按键提示"两

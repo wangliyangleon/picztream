@@ -99,6 +99,48 @@ TEST_CASE("msg_dedup_result mentions skipped-no-capture-time count only when non
   g_lang = Lang::zh;  // 还原
 }
 
+// F-09：控制台二级筛选四个关键字各自映射到对应的中文标签,英文路径原
+// 样透出关键字(不额外维护一份英文词表)。
+TEST_CASE("info_console_filter_label maps each keyword to the agreed vocabulary") {
+  g_lang = Lang::zh;
+  CHECK(info_console_filter_label("unevaluated").find("未评估") != std::string::npos);
+  CHECK(info_console_filter_label("fail").find("评估不达标") != std::string::npos);
+  CHECK(info_console_filter_label("reject").find("废片") != std::string::npos);
+  CHECK(info_console_filter_label("dup").find("重复") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(info_console_filter_label("unevaluated").find("unevaluated") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// F-09：`/filter` 计算结果为空、以及非法筛选条件这两条独立文案,分别跟
+// msg_filter_no_images(标签语义)和 err_console_invalid_scope(范围语
+// 法)区分开,不复用。
+TEST_CASE("msg_console_filter_no_images and err_console_invalid_filter_criterion follow language") {
+  g_lang = Lang::zh;
+  CHECK(msg_console_filter_no_images().find("符合条件") != std::string::npos);
+  CHECK(err_console_invalid_filter_criterion().find("unevaluated") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(msg_console_filter_no_images().find("match this filter") != std::string::npos);
+  CHECK(err_console_invalid_filter_criterion().find("unevaluated") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// F-09：placeholder 提示要包含新命令的用法,不然用户按 `:` 之后完全不
+// 知道 /filter 存在。
+TEST_CASE("msg_ai_prompt_placeholder mentions /filter usage") {
+  g_lang = Lang::zh;
+  CHECK(msg_ai_prompt_placeholder().find("/filter") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(msg_ai_prompt_placeholder().find("/filter") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
 // F-05:main() 的异常边界兜底提示——只验证文案本身正确拼接、跟着语言切
 // 换,异常真正被捕获、终端状态被正确还原这件事只能靠真机验证(main()
 // 本身不是单元测试能覆盖的粒度)。

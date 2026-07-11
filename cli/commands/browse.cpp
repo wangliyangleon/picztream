@@ -310,35 +310,129 @@ std::string handle_tasks_command(pzt::core::EvaluationWorker& evaluation_worker)
   return pzt::cli::i18n::msg_ai_tasks_status(status.queued, status.processing);
 }
 
+// F-09：控制台 `/filter <criterion>` 二级筛选——在当前 g 筛选结果之上
+// (没有 g 筛选时就是全项目)再筛一层，不是 g 菜单的第三种选项，可以
+// 跟 g 标签筛选同时生效。词汇表(拍板已定):未评估/评估不达标/废片/重
+// 复，不做 `/sort`/`/reject_failed` 这类原方案里被否掉的其它变体。
+enum class ConsoleFilterCriterion { Unevaluated, Fail, Reject, Dup };
+
+// `handle_ai_console_command` 原来只需要"发起动作、报个状态"，返回纯
+// `std::string` 就够；`/filter` 要改 cmd_open 主循环的浏览池状态，所
+// 以分发层的返回类型升级成这个小结构体。其它命令分支只填 status，
+// action 留默认 NoChange，行为跟以前完全一样。
+struct ConsoleCommandResult {
+  std::string status;
+  enum class FilterAction { NoChange, Clear, Apply } action = FilterAction::NoChange;
+  ConsoleFilterCriterion criterion{};  // 仅 action == Apply 时有意义
+};
+
+// 把 ConsoleFilterCriterion 转回控制台原本的关键字——info_console_filter_label
+// 之类的 i18n 函数只接字符串，不需要认识这个 cli 内部枚举类型。
+const char* console_filter_criterion_keyword(ConsoleFilterCriterion criterion) {
+  switch (criterion) {
+    case ConsoleFilterCriterion::Unevaluated:
+      return "unevaluated";
+    case ConsoleFilterCriterion::Fail:
+      return "fail";
+    case ConsoleFilterCriterion::Reject:
+      return "reject";
+    case ConsoleFilterCriterion::Dup:
+      return "dup";
+  }
+  return "";
+}
+
+// `/filter` 真正的筛选计算——只在 cmd_open 收到 Apply 意图之后才调用
+// (跟 g 键"handle_g_key_prompt 只返回意图，cmd_open 自己算"同一个既
+// 有模式)，base 是当前 g 层的结果(cmd_open 的 g_filtered_images)。
+// reject/dup 复用 F-26 的 images_with_tag(一条查询)；unevaluated/fail
+// 逐张 get_image() 判断——已知 N+1，量级跟 handle_ai_eval_command 现
+// 有实现一致，这轮不顺带优化(那是 F-07 的范围)。
+std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId project_id,
+                                                       const std::vector<pzt::core::ImageRef>& base,
+                                                       pzt::core::TagId reject_tag_id,
+                                                       ConsoleFilterCriterion criterion) {
+  std::vector<pzt::core::ImageRef> result;
+  if (criterion == ConsoleFilterCriterion::Reject || criterion == ConsoleFilterCriterion::Dup) {
+    std::optional<pzt::core::TagId> tag_id =
+        criterion == ConsoleFilterCriterion::Reject
+            ? std::optional(reject_tag_id)
+            : pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kDuplicateTagName);
+    if (!tag_id) return result;  // 项目还没有"重复"系统标签(没跑过 /dedup)
+    std::vector<pzt::core::ImageId> ids;
+    ids.reserve(base.size());
+    for (const auto& r : base) ids.push_back(r.id);
+    auto matched = pzt::core::images_with_tag(ids, *tag_id);
+    for (const auto& r : base) {
+      if (matched.count(r.id)) result.push_back(r);
+    }
+    return result;
+  }
+  for (const auto& r : base) {
+    auto info = pzt::core::get_image(r.id);
+    if (!info) continue;
+    bool match = criterion == ConsoleFilterCriterion::Unevaluated
+                     ? !info->evaluation.has_value()
+                     : (info->evaluation.has_value() && !pzt::core::passes_gate(*info->evaluation));
+    if (match) result.push_back(r);
+  }
+  return result;
+}
+
 // `:` 输入以 `/` 开头时的命令分发。`ai_eval` 一条命令兼顾三种用法——
 // 第一个 token 是范围标记(`*` 或 `#标签名`)时走批量提交；不是的话，说
 // 明用户没写范围，整段剩余文本都当成对**当前图片**的额外指引，直接提
 // 交单图评估(原来 handle_ai_prompt_flow 里那条路径搬到这里)。用范围标
 // 记来判断走哪条路径，而不是猜测第一个词是不是标签名——这正是要求整个
 // 控制台必须以 `/` 开头的同一个理由:显式标记，不猜。
-std::string handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_worker,
-                                       pzt::core::ProjectId project_id,
-                                       pzt::core::ImageId current_image_id, const std::string& input,
-                                       int banner_row, int start_col, int content_cols) {
+ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_worker,
+                                                pzt::core::ProjectId project_id,
+                                                pzt::core::ImageId current_image_id,
+                                                const std::string& input, int banner_row, int start_col,
+                                                int content_cols) {
   auto [command, rest] = split_console_command(input);
   if (command == "dedup") {
-    return handle_dedup_command(project_id, rest, banner_row, start_col, content_cols);
+    return ConsoleCommandResult{handle_dedup_command(project_id, rest, banner_row, start_col, content_cols)};
   }
   if (command == "tasks") {
-    return handle_tasks_command(evaluation_worker);
+    return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};
+  }
+  if (command == "filter") {
+    // 只负责解析,不碰数据库/不算筛选结果——真正的计算放在 cmd_open 里
+    // 执行,见 apply_console_filter 的说明。
+    if (rest == "clear") {
+      return ConsoleCommandResult{"", ConsoleCommandResult::FilterAction::Clear};
+    }
+    std::optional<ConsoleFilterCriterion> criterion;
+    if (rest == "unevaluated") {
+      criterion = ConsoleFilterCriterion::Unevaluated;
+    } else if (rest == "fail") {
+      criterion = ConsoleFilterCriterion::Fail;
+    } else if (rest == "reject") {
+      criterion = ConsoleFilterCriterion::Reject;
+    } else if (rest == "dup") {
+      criterion = ConsoleFilterCriterion::Dup;
+    }
+    if (!criterion) {
+      return ConsoleCommandResult{pzt::cli::i18n::err_console_invalid_filter_criterion()};
+    }
+    return ConsoleCommandResult{"", ConsoleCommandResult::FilterAction::Apply, *criterion};
   }
   if (command == "ai_eval") {
     auto [first_token, extra_guidance] = take_scope_token(rest);
     bool is_batch_scope = first_token == "*" || (!first_token.empty() && first_token[0] == '#');
     if (is_batch_scope) {
-      return handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance);
+      return ConsoleCommandResult{
+          handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance)};
     }
     // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——供
     // 应商见 resolve_ai_provider()(F-10:读 PZT_AI_PROVIDER 环境变量，
     // 默认 Gemini)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
     // 的开放问题,这次不做。
     bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest);
-    if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
+    if (!accepted) {
+      return ConsoleCommandResult{pzt::cli::i18n::msg_ai_processing_pending()};  // 走 status_override,等按键确认
+    }
     // 提交成功只是个轻量的确认,不需要用户额外按键才能回到浏览——结果本
     // 身是异步落地、靠 poll 逻辑自动重绘的,这条提示只是"确实提交了"，跟
     // x 键"闪一下"反馈同一个思路,只是这里是完整的一句话,停留久一点方
@@ -347,9 +441,9 @@ std::string handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_wo
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(pzt::cli::i18n::msg_ai_processing_submitted(), content_cols));
     usleep(800000);
-    return "";
+    return ConsoleCommandResult{};
   }
-  return pzt::cli::i18n::msg_ai_unknown_command(command);
+  return ConsoleCommandResult{pzt::cli::i18n::msg_ai_unknown_command(command)};
 }
 
 // 顶层 `:` 键:vim 风格的控制台输入口,提交给 handle_ai_console_command
@@ -358,14 +452,15 @@ std::string handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_wo
 // 打 `/`（哪怕只是直接按了回车）不会再被无声当成提交了一次对当前图片
 // 的评估请求。空输入、非空但不以 `/` 开头，统一提示"必须以 / 开头"；
 // Esc 依然是唯一真正的取消。
-std::string handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
-                                   pzt::core::ProjectId project_id, pzt::core::ImageId image_id,
-                                   int banner_row, int start_col, int content_cols) {
+ConsoleCommandResult handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
+                                            pzt::core::ProjectId project_id,
+                                            pzt::core::ImageId image_id, int banner_row, int start_col,
+                                            int content_cols) {
   auto input = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
                                                  banner_row, start_col, content_cols);
-  if (!input) return "";  // Esc,静默取消
+  if (!input) return ConsoleCommandResult{};  // Esc,静默取消
   if (input->empty() || (*input)[0] != '/') {
-    return pzt::cli::i18n::msg_console_requires_slash();
+    return ConsoleCommandResult{pzt::cli::i18n::msg_console_requires_slash()};
   }
   return handle_ai_console_command(evaluation_worker, project_id, image_id, *input, banner_row,
                                     start_col, content_cols);
@@ -426,6 +521,11 @@ int cmd_open(const std::vector<std::string>& args) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_project_no_images(project.name).c_str());
     return 1;
   }
+  // F-09：g 层筛选结果的影子副本——`images` 本身继续驱动导航/渲染/
+  // prefetch 不变,`g_filtered_images` 只在 g 切换筛选时同步更新,供
+  // `/filter` 在它之上再筛一层、`/filter clear` 时还原用,见下面 `g`
+  // 键处理和 `:` 键处理的说明。
+  auto g_filtered_images = images;
 
   // increment 6.4.5:废片系统标签正常应该在 pzt new 时就建好了,这里不是
   // 为了处理迁移——只是同一个幂等、廉价的 find-or-create,顺带兜住"项目
@@ -546,6 +646,9 @@ int cmd_open(const std::vector<std::string>& args) {
     // 了哪个标签——跟 current_id 一样是这个函数作用域内的纯局部状态。
     std::optional<pzt::core::TagId> active_filter_tag_id;
     std::string active_filter_tag_name;
+    // F-09：控制台二级筛选是否生效,以及是哪个条件——切 g 筛选(应用或
+    // 清除)会自动清空这个状态,见 `g` 键处理的说明。
+    std::optional<ConsoleFilterCriterion> active_console_filter;
 
     while (true) {
       auto key_time = std::chrono::steady_clock::now();
@@ -694,6 +797,11 @@ int cmd_open(const std::vector<std::string>& args) {
         std::string index_line =
             "[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]";
         if (active_filter_tag_id) index_line += pzt::cli::i18n::info_filter_label(active_filter_tag_name);
+        // F-09：二级筛选标注跟 g 标签筛选各自独立、可以同时出现。
+        if (active_console_filter) {
+          index_line += pzt::cli::i18n::info_console_filter_label(
+              console_filter_criterion_keyword(*active_console_filter));
+        }
         emit_line(index_line);
 
         emit_line(current_ref ? current_ref->file_name : "?");
@@ -1152,6 +1260,11 @@ int cmd_open(const std::vector<std::string>& args) {
             current_id = new_current;
             active_filter_tag_id = decision.tag_id;
             active_filter_tag_name = decision.tag_name;
+            // F-09：切到新的 g 筛选,二级筛选跟着自动清空(已跟用户确
+            // 认),g_filtered_images 同步成这次的结果,供 /filter 在它
+            // 之上再筛。
+            g_filtered_images = images;
+            active_console_filter.reset();
           }
         } else if (decision.action == GKeyAction::ClearFilter) {
           if (active_filter_tag_id) {
@@ -1161,6 +1274,9 @@ int cmd_open(const std::vector<std::string>& args) {
             current_id = new_current;
             active_filter_tag_id.reset();
             active_filter_tag_name.clear();
+            // F-09：同上,清除 g 筛选也要清空二级筛选、同步 g_filtered_images。
+            g_filtered_images = images;
+            active_console_filter.reset();
           }
           // 不在筛选中时 g+g 是空操作:不查库、不提示,静默——避免每次误
           // 按 g+g 在未筛选状态下也触发一次不必要的 list_images 查询。
@@ -1200,10 +1316,31 @@ int cmd_open(const std::vector<std::string>& args) {
         // M3:vim 风格的额外指引输入,提交给 EvaluationWorker 异步评估。
         // current_id 不变,跟 space/x/r/e 一样只走 status_override 原地
         // 刷新——结果落地由上面的 poll 逻辑触发重绘,不是这里同步等待。
+        // F-09：`/filter` 是例外,它会改浏览池状态,返回类型从纯
+        // std::string 升级成 ConsoleCommandResult 之后在这里执行。
         if (current_ref) {
           highlight_active_menu_key(':', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          status_override = handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, banner_row,
-                                                   start_col, content_cols);
+          auto console_result = handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id,
+                                                        banner_row, start_col, content_cols);
+          status_override = console_result.status;
+          if (console_result.action == ConsoleCommandResult::FilterAction::Clear) {
+            // 没有活跃二级筛选时是静默 no-op,跟 g+g 空筛选同一个约定。
+            if (active_console_filter) {
+              current_id = resolve_current_after_switch(g_filtered_images, current_id);
+              images = g_filtered_images;
+              active_console_filter.reset();
+            }
+          } else if (console_result.action == ConsoleCommandResult::FilterAction::Apply) {
+            auto filtered =
+                apply_console_filter(*id, g_filtered_images, reject_tag_id, console_result.criterion);
+            if (filtered.empty()) {
+              status_override = pzt::cli::i18n::msg_console_filter_no_images();  // images/current_id 不变
+            } else {
+              current_id = resolve_current_after_switch(filtered, current_id);
+              images = std::move(filtered);
+              active_console_filter = console_result.criterion;
+            }
+          }
         }
       }
       prefetch.set_current(images, current_id);

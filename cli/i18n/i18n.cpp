@@ -733,6 +733,19 @@ std::string info_filter_label(const std::string &tag_name) {
   }
 }
 
+std::string info_console_filter_label(const std::string &keyword) {
+  if (g_lang == Lang::zh) {
+    std::string label = keyword;
+    if (keyword == "unevaluated") label = "未评估";
+    else if (keyword == "fail") label = "评估不达标";
+    else if (keyword == "reject") label = "废片";
+    else if (keyword == "dup") label = "重复";
+    return "  二级筛选: " + label;
+  } else {
+    return "  Filter2: " + keyword;
+  }
+}
+
 std::string info_tags_label() {
   if (g_lang == Lang::zh) {
     return "标签:";
@@ -856,6 +869,14 @@ std::string msg_filter_no_images() {
   }
 }
 
+std::string msg_console_filter_no_images() {
+  if (g_lang == Lang::zh) {
+    return " 没有符合条件的图片 ";
+  } else {
+    return " No images match this filter ";
+  }
+}
+
 std::string msg_browse_exited() {
   if (g_lang == Lang::zh) {
     return "已退出浏览\n";
@@ -888,9 +909,11 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
 
 std::string msg_ai_prompt_placeholder() {
   if (g_lang == Lang::zh) {
-    return "命令必须以 / 开头: /ai_eval [指引] | /ai_eval * | /ai_eval #标签 | /tasks | /dedup * | /dedup #标签";
+    return "命令必须以 / 开头: /ai_eval [指引] | /ai_eval * | /ai_eval #标签 | /tasks | /dedup * | /dedup "
+           "#标签 | /filter <条件> | /filter clear";
   } else {
-    return "Commands must start with /: /ai_eval [note] | /ai_eval * | /ai_eval #tag | /tasks | /dedup * | /dedup #tag";
+    return "Commands must start with /: /ai_eval [note] | /ai_eval * | /ai_eval #tag | /tasks | /dedup * "
+           "| /dedup #tag | /filter <criterion> | /filter clear";
   }
 }
 
@@ -1037,6 +1060,14 @@ std::string err_console_invalid_scope() {
     return " 范围必须是 * 或 #标签名 ";
   } else {
     return " Scope must be * or #tag ";
+  }
+}
+
+std::string err_console_invalid_filter_criterion() {
+  if (g_lang == Lang::zh) {
+    return " 筛选条件必须是 unevaluated/fail/reject/dup 之一 ";
+  } else {
+    return " Filter criterion must be one of unevaluated/fail/reject/dup ";
   }
 }
 
