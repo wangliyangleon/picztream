@@ -99,6 +99,13 @@ int cmd_new(const std::vector<std::string>& args) {
   for (std::size_t i = 1; i < args.size(); ++i) {
     if (args[i] == "--support-raw") {
       support_raw = true;
+    } else if (args[i].rfind("--", 0) == 0) {
+      // F-06：`--` 开头但不认识的参数(比如拼错的 --supportraw)不能静默
+      // 落进 positional、被当成 folder_path——那样扫描目标会变成一个不
+      // 存在的"目录",容易被误解成程序出问题而不是自己打错了参数。
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_unknown_arg(args[i]).c_str());
+      print_usage();
+      return 1;
     } else {
       positional.push_back(args[i]);
     }

@@ -95,30 +95,55 @@ std::string path_stem_key(const fs::path& relative_path) {
 // 描——JPEG 不会因为文件夹里有同名 RAW 而被忽略，因为这一轮压根不知道
 // RAW 存在。这是 RAW 支持默认关闭这个设计的核心：关闭时代码路径上跟
 // M0/M1 完全一样，见 docs/RAW_Support.md。
+// F-06：递归扫描不能用抛异常的迭代器重载——目录不存在、或者中途撞上一
+// 个没有读权限的子目录(macOS TCC 保护的 ~/Pictures 是真实会踩到的场
+// 景,不是理论情形)会让 pzt new/pzt rescan 整个进程直接 abort。改用
+// error_code 版本 + skip_permission_denied:一整棵目录树都进不去(比如
+// root 本身不存在)时,返回一个空的 ScanResult,让调用方(create_project/
+// rescan_project)按"没扫到任何图片"处理,走已有的 NoImagesFound 错误
+// 路径,不抛异常；中途某个子目录没权限时跳过它,继续扫剩下的部分；单个
+// 文件条目的 stat 调用(is_regular_file/file_size)同样改用 error_code
+// 版本,防止扫描期间文件被删除这类小概率竞态把整个扫描打断。
 ScanResult scan_media(const fs::path& root, bool support_raw) {
   std::vector<ScannedImage> jpegs;
   std::unordered_set<std::string> raw_stems;
   std::unordered_map<std::string, std::vector<RawFileEntry>> raw_groups;
   ScanResult result;
 
-  for (const auto& entry : fs::recursive_directory_iterator(root)) {
-    if (!entry.is_regular_file()) continue;
+  std::error_code ec;
+  fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+  if (ec) return result;  // root 不存在/完全无权限进入——按"没扫到任何图片"处理
+
+  const fs::recursive_directory_iterator end;
+  for (; it != end; it.increment(ec)) {
+    if (ec) break;  // 迭代中途出错(比如子目录扫描一半被删),就地停止,不崩溃
+
+    const fs::directory_entry& entry = *it;
+    std::error_code entry_ec;
+    if (!entry.is_regular_file(entry_ec) || entry_ec) continue;
+
     fs::path rel = fs::relative(entry.path(), root);
     if (is_jpeg(entry.path())) {
+      std::error_code size_ec;
+      auto size = entry.file_size(size_ec);
+      if (size_ec) continue;
       jpegs.push_back(ScannedImage{
           rel.string(),
           entry.path().filename().string(),
-          static_cast<std::int64_t>(entry.file_size()),
+          static_cast<std::int64_t>(size),
           "jpeg",
       });
       result.on_disk_paths.insert(rel.string());
     } else if (support_raw && is_raw(entry.path())) {
+      std::error_code size_ec;
+      auto size = entry.file_size(size_ec);
+      if (size_ec) continue;
       std::string stem = path_stem_key(rel);
       raw_stems.insert(stem);
       raw_groups[stem].push_back(RawFileEntry{
           rel.string(),
           entry.path().filename().string(),
-          static_cast<std::int64_t>(entry.file_size()),
+          static_cast<std::int64_t>(size),
       });
       result.on_disk_paths.insert(rel.string());
     }

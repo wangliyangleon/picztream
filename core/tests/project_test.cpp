@@ -177,6 +177,21 @@ TEST_CASE("create_project rejects an empty (no-JPEG) folder") {
   CHECK(list_projects(db).empty());
 }
 
+// F-06：scan_media 以前用会抛异常的 recursive_directory_iterator 重载,
+// 目标目录根本不存在时会让 create_project(进而 `pzt new`)直接崩溃,而
+// 不是走 Result<T,E> 的 NoImagesFound 错误路径。改用 error_code 版本之
+// 后,这种情况应该跟"目录存在但没有图片"一样干净地报错,不抛异常。
+TEST_CASE("create_project cleanly reports NoImagesFound for a nonexistent folder, doesn't throw") {
+  auto db = Database::open_at(fresh_db_path("nonexistent_folder"));
+  fs::path missing = fs::temp_directory_path() / "pzt_test" / "definitely_does_not_exist_12345";
+  fs::remove_all(missing);
+
+  auto result = create_project(db, "ghost_trip", missing.string());
+  REQUIRE(!result.ok());
+  CHECK(result.error() == CreateProjectError::NoImagesFound);
+  CHECK(list_projects(db).empty());
+}
+
 TEST_CASE("create_project rejects a duplicate project name") {
   auto db = Database::open_at(fresh_db_path("dup_name"));
   auto photos = fresh_photo_dir("dup_name");

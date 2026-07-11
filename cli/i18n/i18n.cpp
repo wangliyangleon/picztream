@@ -178,6 +178,14 @@ std::string err_new_no_images(const std::string &folder_path) {
   }
 }
 
+std::string err_new_unknown_arg(const std::string &arg) {
+  if (g_lang == Lang::zh) {
+    return "pzt new: 未知参数 '" + arg + "'\n";
+  } else {
+    return "pzt new: unknown option '" + arg + "'\n";
+  }
+}
+
 std::string msg_raw_preview_progress(int done, int total) {
   if (g_lang == Lang::zh) {
     return "正在生成 RAW 预览缓存 (" + std::to_string(done) + "/" + std::to_string(total) + ")...";

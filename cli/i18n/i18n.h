@@ -46,6 +46,10 @@ std::string err_project_not_found(const std::string& cmd, const std::string& pro
 std::string err_new_missing_name();
 std::string err_new_name_exists(const std::string& name);
 std::string err_new_no_images(const std::string& folder_path);
+// F-06：`--` 开头但不是 `--support-raw` 的参数(比如拼错的
+// `--supportraw`)不再被静默当成 folder_path——那样会让扫描目标变成一
+// 个不存在的"目录",容易被误解成程序坏了而不是自己打错了参数。
+std::string err_new_unknown_arg(const std::string& arg);
 std::string msg_raw_preview_progress(int done, int total);
 std::string msg_export_raw_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
