@@ -180,6 +180,9 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s) {
 struct ScopeResolution {
   std::vector<pzt::core::ImageId> image_ids;
   std::string error_message;  // 非空表示解析失败，caller 直接把它当结果返回
+  // F-26：范围标签本身的 id，`*` 时为空。用来判断"范围本身就是废片/
+  // 重复"这个对称例外——这种情况下用户已经显式要求处理它，不再排除。
+  std::optional<pzt::core::TagId> scope_tag_id;
 };
 
 ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std::string& scope) {
@@ -201,6 +204,7 @@ ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std
     result.error_message = pzt::cli::i18n::err_console_tag_not_found(tag_name);
     return result;
   }
+  result.scope_tag_id = *tag_id;
   auto filtered = pzt::core::filter_by_tag(*tag_id);
   if (!filtered.ok()) {
     result.error_message = pzt::cli::i18n::err_filter_failed();
@@ -208,6 +212,20 @@ ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std
   }
   for (const auto& ref : filtered.value()) result.image_ids.push_back(ref.id);
   return result;
+}
+
+// F-26：从 resolved.image_ids 里剔除带 reject_tag_id 这个标签的图片，除
+// 非范围本身就是这个标签(对称例外)——eval/dedup 的批量范围各自受一个
+// 独立开关控制(settings.eval_reject/dedup_reject)，共用这一份过滤逻
+// 辑。reject_tag_id 为空(项目里还没有对应系统标签)时直接跳过，不当错
+// 误处理。
+void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::TagId> exclude_tag_id) {
+  if (!exclude_tag_id || resolved.scope_tag_id == *exclude_tag_id) return;
+  auto matched = pzt::core::images_with_tag(resolved.image_ids, *exclude_tag_id);
+  if (matched.empty()) return;
+  auto& ids = resolved.image_ids;
+  ids.erase(std::remove_if(ids.begin(), ids.end(), [&](auto id) { return matched.count(id) > 0; }),
+            ids.end());
 }
 
 // `/dedup * | #标签名`——近似重复检测唯一的触发入口，见
@@ -223,6 +241,14 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
                                   int banner_row, int start_col, int content_cols) {
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
+
+  // F-26：默认排除废片，除非范围本身就是 #废片(用户已经明确要处理
+  // 它)。开关走 F-12 的 Settings，现读不缓存，跟 resolve_ai_provider()
+  // 同一个先例。
+  if (!pzt::core::load_settings().dedup_reject) {
+    exclude_scope_by_tag(resolved,
+                          pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
+  }
 
   // F-07：以前逐张 get_image() 判断评估状态，大项目按一次键就是几百到
   // 几千次数据库往返。改成一条批量查询，只统计数量。
@@ -258,6 +284,12 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
                                     const std::string& extra_guidance) {
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
+
+  // F-26：同上，默认排除废片，除非范围本身就是 #废片。
+  if (!pzt::core::load_settings().eval_reject) {
+    exclude_scope_by_tag(resolved,
+                          pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
+  }
 
   // F-07：同上，一条批量查询代替逐张 get_image()。
   auto evaluated = pzt::core::evaluated_image_ids(resolved.image_ids);

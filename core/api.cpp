@@ -96,6 +96,11 @@ std::vector<TagSummary> tags_for_image(ImageId image_id) {
   return tagging::tags_for_image(db, image_id);
 }
 
+std::unordered_set<ImageId> images_with_tag(const std::vector<ImageId>& image_ids, TagId tag_id) {
+  db::Database db = db::Database::open_default();
+  return tagging::images_with_tag(db, image_ids, tag_id);
+}
+
 Result<void, AddTagError> add_tag(ImageId image_id, TagId tag_id) {
   db::Database db = db::Database::open_default();
   return tagging::add_tag(db, image_id, tag_id);
@@ -167,9 +172,11 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id) {
 }
 
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
-                                                 ExportProgressFn on_progress) {
+                                                 ExportProgressFn on_progress, bool include_reject,
+                                                 bool include_dup) {
   db::Database db = db::Database::open_default();
-  return exporting::export_tag(db, tag_id, output_folder, std::move(on_progress));
+  return exporting::export_tag(db, tag_id, output_folder, std::move(on_progress), raw::decode_full,
+                                include_reject, include_dup);
 }
 
 Result<ExportImageResult, ExportImageError> export_image(ImageId image_id,

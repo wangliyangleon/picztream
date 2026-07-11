@@ -1,5 +1,6 @@
 #include "core/export/export.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
@@ -125,7 +126,8 @@ std::string target_file_name(const std::string& file_name, const std::string& ki
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
                                                  ExportProgressFn on_progress,
-                                                 RawDecodeFn raw_decode_fn) {
+                                                 RawDecodeFn raw_decode_fn, bool include_reject,
+                                                 bool include_dup) {
   sqlite3* conn = db.handle();
 
   auto tag_info = get_tag_info(conn, tag_id);
@@ -137,7 +139,25 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   if (!filtered.ok()) {
     return Result<ExportResult, ExportTagError>::Err(ExportTagError::TagNotFound);
   }
-  const auto& images = filtered.value();
+  auto images = std::move(filtered.value());
+
+  // F-26：默认排除废片/重复，除非调用方显式要求包含，或者这次导出的
+  // 目标标签本身就是废片/重复(用户已经明确要处理它)。项目里还没有对
+  // 应系统标签时(find_tag_by_name 查不到)没有可排除的东西，跳过。
+  auto exclude_by_tag = [&](const char* system_tag_name) {
+    auto system_tag_id = tagging::find_tag_by_name(db, tag_info->project_id, system_tag_name);
+    if (!system_tag_id || tag_id == *system_tag_id) return;
+    std::vector<ImageId> ids;
+    ids.reserve(images.size());
+    for (const auto& img : images) ids.push_back(img.id);
+    auto matched = tagging::images_with_tag(db, ids, *system_tag_id);
+    if (matched.empty()) return;
+    images.erase(std::remove_if(images.begin(), images.end(),
+                                 [&](const auto& img) { return matched.count(img.id) > 0; }),
+                 images.end());
+  };
+  if (!include_reject) exclude_by_tag(tagging::kRejectTagName);
+  if (!include_dup) exclude_by_tag(tagging::kDuplicateTagName);
 
   fs::path root_path = get_project_root_path(conn, tag_info->project_id);
   fs::path out_dir(output_folder);

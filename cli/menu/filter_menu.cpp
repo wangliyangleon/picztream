@@ -65,7 +65,12 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
   };
-  auto result = pzt::core::export_tag(target_id, resolved_path, on_progress);
+  // F-26：默认排除废片/重复，除非目标标签本身就是废片/重复，或者用户
+  // 在 Settings 里显式打开了 export_reject/export_dup——跟 cmd_export
+  // (cli/commands/commands.cpp)同一份规则。
+  auto settings = pzt::core::load_settings();
+  auto result = pzt::core::export_tag(target_id, resolved_path, on_progress, settings.export_reject,
+                                       settings.export_dup);
   // F-25：大批量导出(尤其是带 RAW 图片的批次)可能冻结主循环几秒到几十
   // 秒——见 cli/commands/browse.cpp 的 handle_dedup_command 里同一处修
   // 复的说明，同一个风险，这里是另一个长阻塞入口。

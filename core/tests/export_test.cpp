@@ -254,6 +254,55 @@ TEST_CASE("export_tag disambiguates a filename collision in the output folder") 
   CHECK(fs::exists(out_dir / "img_000_2.jpg"));  // 新导出的加了 _2
 }
 
+// F-26：默认排除废片/重复，即便它们打了要导出的目标标签。
+TEST_CASE("export_tag excludes images also tagged reject or duplicate by default") {
+  auto fx = make_fixture("export_exclude_default", 3);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  for (auto img : fx.images) REQUIRE(add_tag(fx.db, img, tag.value()).ok());
+
+  auto reject_id = ensure_reject_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[0], reject_id).ok());
+  auto dup_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[1], dup_id).ok());
+
+  auto out_dir = fresh_output_dir("export_exclude_default");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 1);
+  CHECK(fs::exists(out_dir / "img_002.jpg"));
+  CHECK_FALSE(fs::exists(out_dir / "img_000.jpg"));
+  CHECK_FALSE(fs::exists(out_dir / "img_001.jpg"));
+}
+
+// include_reject/include_dup 为 true 时不排除。
+TEST_CASE("export_tag includes reject/duplicate images when include flags are set") {
+  auto fx = make_fixture("export_exclude_flags", 2);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  for (auto img : fx.images) REQUIRE(add_tag(fx.db, img, tag.value()).ok());
+  auto reject_id = ensure_reject_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[0], reject_id).ok());
+
+  auto out_dir = fresh_output_dir("export_exclude_flags");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string(), /*on_progress=*/nullptr,
+                            pzt::core::raw::decode_full, /*include_reject=*/true);
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 2);
+}
+
+// 例外：目标标签本身就是废片时不排除废片(用户显式要求导出废片组)。
+TEST_CASE("export_tag does not exclude reject images when the export target is the reject tag itself") {
+  auto fx = make_fixture("export_exclude_symmetric", 2);
+  auto reject_id = ensure_reject_tag(fx.db, fx.project_id);
+  for (auto img : fx.images) REQUIRE(add_tag(fx.db, img, reject_id).ok());
+
+  auto out_dir = fresh_output_dir("export_exclude_symmetric");
+  auto result = export_tag(fx.db, reject_id, out_dir.string());
+  REQUIRE(result.ok());
+  CHECK(result.value().exported_count == 2);
+}
+
 TEST_CASE("export_tag skips images whose source file is missing without aborting the rest") {
   auto fx = make_fixture("export_missing_source", 2);
   auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);

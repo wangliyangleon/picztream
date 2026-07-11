@@ -425,3 +425,38 @@ TEST_CASE("ensure_reject_tag and ensure_duplicate_tag coexist as two distinct sy
   CHECK(reject_id != duplicate_id);
   CHECK(list_tags(fx.db, fx.project_id).size() == 2);
 }
+
+// F-26/F-09：只返回请求范围内、确实打了目标标签的图片，不是"这个标签下
+// 所有图片"（那是 filter_by_tag 的职责）。
+TEST_CASE("images_with_tag returns only the images in scope that carry the given tag") {
+  auto fx = make_fixture("images_with_tag_basic", 3);
+  auto reject = create_tag(fx.db, fx.project_id, "废片", std::nullopt, false);
+  REQUIRE(reject.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], reject.value()).ok());
+  // images[2] 也打了废片，但不在下面查询的 image_ids 范围内，不该出现。
+  REQUIRE(add_tag(fx.db, fx.images[2], reject.value()).ok());
+
+  auto result = images_with_tag(fx.db, {fx.images[0], fx.images[1]}, reject.value());
+  CHECK(result.size() == 1);
+  CHECK(result.count(fx.images[0]) == 1);
+  CHECK(result.count(fx.images[1]) == 0);
+  CHECK(result.count(fx.images[2]) == 0);
+
+  CHECK(images_with_tag(fx.db, {}, reject.value()).empty());
+}
+
+// 500 是分块大小，不是硬上限——超过一个分块也要正确合并所有分块的结果。
+TEST_CASE("images_with_tag correctly spans more than one 500-id chunk") {
+  auto fx = make_fixture("images_with_tag_chunking", 1);
+  auto reject = create_tag(fx.db, fx.project_id, "废片", std::nullopt, false);
+  REQUIRE(reject.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], reject.value()).ok());
+
+  std::vector<ImageId> ids;
+  for (int i = 0; i < 600; ++i) ids.push_back(1000000 + i);  // 不存在的 id，凑数量
+  ids.push_back(fx.images[0]);  // 唯一真的打了标签的 id，混在中间
+
+  auto result = images_with_tag(fx.db, ids, reject.value());
+  CHECK(result.size() == 1);
+  CHECK(result.count(fx.images[0]) == 1);
+}

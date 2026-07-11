@@ -173,6 +173,36 @@ std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
   return sqlite3_column_int64(stmt.get(), 0);
 }
 
+// F-26/F-09 共用的底层原语：一条 `IN (...) AND tag_id = ?` 查询，跟
+// project::evaluated_image_ids 同一个分块惯例（500 是 SQLite 默认
+// SQLITE_MAX_VARIABLE_NUMBER 之下的保守值，避免绑定变量数超限）。
+std::unordered_set<ImageId> images_with_tag(db::Database& db, const std::vector<ImageId>& image_ids,
+                                             TagId tag_id) {
+  std::unordered_set<ImageId> result;
+  sqlite3* conn = db.handle();
+  constexpr std::size_t kChunkSize = 500;
+  for (std::size_t offset = 0; offset < image_ids.size(); offset += kChunkSize) {
+    std::size_t count = std::min(kChunkSize, image_ids.size() - offset);
+    std::string placeholders;
+    for (std::size_t i = 0; i < count; ++i) {
+      if (i) placeholders += ",";
+      placeholders += "?";
+    }
+    std::string sql = "SELECT image_id FROM image_tags WHERE image_id IN (" + placeholders +
+                       ") AND tag_id = ?;";
+    Stmt stmt(conn, sql.c_str());
+    std::size_t i = 0;
+    for (; i < count; ++i) {
+      sqlite3_bind_int64(stmt.get(), static_cast<int>(i) + 1, image_ids[offset + i]);
+    }
+    sqlite3_bind_int64(stmt.get(), static_cast<int>(i) + 1, tag_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+      result.insert(sqlite3_column_int64(stmt.get(), 0));
+    }
+  }
+  return result;
+}
+
 Result<void, AddTagError> add_tag(db::Database& db, ImageId image_id, TagId tag_id) {
   sqlite3* conn = db.handle();
 

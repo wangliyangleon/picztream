@@ -283,7 +283,11 @@ int cmd_export(const std::vector<std::string>& args) {
   }
   std::string output_folder = expand_home_path(args[2]);
 
-  auto result = pzt::core::export_tag(*tag_id, output_folder, print_export_progress);
+  // F-26：默认排除废片/重复，除非目标标签本身就是废片/重复，或者用户
+  // 在 Settings 里显式打开了 export_reject/export_dup。
+  auto settings = pzt::core::load_settings();
+  auto result = pzt::core::export_tag(*tag_id, output_folder, print_export_progress,
+                                       settings.export_reject, settings.export_dup);
   if (!result.ok()) {
     if (result.error() == pzt::core::ExportTagError::IoError) {
       std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());

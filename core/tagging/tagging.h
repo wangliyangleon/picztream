@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/db/database.h"
@@ -41,6 +42,11 @@ Result<TagId, CreateTagError> create_tag(db::Database& db, ProjectId project_id,
 std::vector<TagSummary> list_tags(db::Database& db, ProjectId project_id);
 std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
                                        const std::string& name);
+
+// F-26/F-09：给定一批图片 id，返回其中打了 tag_id 这个标签的子集——一条
+// 批量查询，不是逐张查（跟 project::evaluated_image_ids 同一个模式）。
+std::unordered_set<ImageId> images_with_tag(db::Database& db, const std::vector<ImageId>& image_ids,
+                                             TagId tag_id);
 
 // 反方向查询："这张图当前打了哪些标签"（list_tags 是"这个项目有哪些标
 // 签"，filter_by_tag/ordered_entries 内部是"这个标签下有哪些图"）。increment

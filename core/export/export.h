@@ -73,10 +73,19 @@ using RawDecodeFn = std::function<Result<decode::DecodedImage, raw::RawError>(co
 // recipe/kind="raw" 的图片输出永远是新生成的文件，没有"原始字节"可软
 // 链，唯一还会被软链模式影响的场景("纯 JPEG + 无 recipe")覆盖面太窄，
 // 想不出实际用途，直接删掉比保留一个只在一种场景下生效的选项更简单。
+//
+// F-26：默认从导出范围里排除带"废片"/"重复"标签的图片(打了那个标签
+// 本身不代表要导出它)，除非 include_reject/include_dup 为 true，或者
+// tag_id 本身就是废片/重复标签(这种情况下用户显式要求处理废片/重复，
+// 不再排除，跟 /ai_eval、/dedup 批量范围的例外规则对称)。项目里还没
+// 有废片/重复系统标签时(find_tag_by_name 查不到)跳过对应的排除，不当
+// 错误处理。
 Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
                                                  const std::string& output_folder,
                                                  ExportProgressFn on_progress = nullptr,
-                                                 RawDecodeFn raw_decode_fn = raw::decode_full);
+                                                 RawDecodeFn raw_decode_fn = raw::decode_full,
+                                                 bool include_reject = false,
+                                                 bool include_dup = false);
 
 enum class ExportImageError {
   ImageNotFound,

@@ -137,6 +137,10 @@ std::vector<TagSummary> list_tags(ProjectId project_id);
 std::optional<TagId> find_tag_by_name(ProjectId project_id, const std::string& name);
 std::vector<TagSummary> tags_for_image(ImageId image_id);
 
+// F-26/F-09：给定一批图片 id，返回其中打了 tag_id 的子集，一条批量查
+// 询——见 core/tagging/tagging.h 的说明。
+std::unordered_set<ImageId> images_with_tag(const std::vector<ImageId>& image_ids, TagId tag_id);
+
 Result<void, AddTagError> add_tag(ImageId image_id, TagId tag_id);
 Result<void, RemoveTagError> remove_tag(ImageId image_id, TagId tag_id);
 Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image, ImageId new_image);
@@ -176,8 +180,13 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 // M2：on_progress 汇报 RAW 图片全量解码的进度（纯 JPEG 批次不触发），见
 // core/export/export.h。RawDecodeFn 不在门面层暴露——那是测试用的依赖注
 // 入点，cli 不需要覆盖真实的 raw::decode_full。
+//
+// F-26：include_reject/include_dup 默认 false(排除废片/重复)，调用方
+// (cmd_export、handle_g_export_flow)传入 Settings.export_reject/
+// export_dup，语义见 core/export/export.h 的说明。
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
-                                                 ExportProgressFn on_progress = nullptr);
+                                                 ExportProgressFn on_progress = nullptr,
+                                                 bool include_reject = false, bool include_dup = false);
 
 // 导出单张图片，不需要标签——`pzt open` 里按 `e` 键"就导出当前这张"专
 // 用，见 core/export/export.h。
