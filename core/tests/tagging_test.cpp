@@ -82,6 +82,40 @@ TEST_CASE("create_tag succeeds and rejects duplicate names") {
   CHECK(dup.error() == CreateTagError::NameAlreadyExists);
 }
 
+// 大小写不敏感只影响 ASCII 字母比较——"Selected"/"selected"/"SELECTED"
+// 视为同一个名字，中文标签名(上面那条用例)不受影响，没有大小写概念。
+TEST_CASE("create_tag rejects a duplicate name that only differs by ASCII case") {
+  auto fx = make_fixture("create_tag_case", 1);
+
+  auto tag = create_tag(fx.db, fx.project_id, "Selected", std::nullopt, false);
+  REQUIRE(tag.ok());
+
+  auto dup = create_tag(fx.db, fx.project_id, "selected", std::nullopt, false);
+  REQUIRE(!dup.ok());
+  CHECK(dup.error() == CreateTagError::NameAlreadyExists);
+
+  auto dup2 = create_tag(fx.db, fx.project_id, "SELECTED", std::nullopt, false);
+  REQUIRE(!dup2.ok());
+  CHECK(dup2.error() == CreateTagError::NameAlreadyExists);
+}
+
+// find_tag_by_name 大小写不敏感，且返回值仍然是当初创建时输入的原始
+// 大小写(display 用同一份存储值，没有单独的 display_name 字段)。
+TEST_CASE("find_tag_by_name matches regardless of ASCII case and preserves original casing on display") {
+  auto fx = make_fixture("find_tag_case", 1);
+  auto created = create_tag(fx.db, fx.project_id, "Selected", std::nullopt, false);
+  REQUIRE(created.ok());
+
+  CHECK(find_tag_by_name(fx.db, fx.project_id, "Selected") == created.value());
+  CHECK(find_tag_by_name(fx.db, fx.project_id, "selected") == created.value());
+  CHECK(find_tag_by_name(fx.db, fx.project_id, "SELECTED") == created.value());
+  CHECK(!find_tag_by_name(fx.db, fx.project_id, "unrelated").has_value());
+
+  auto tags = list_tags(fx.db, fx.project_id);
+  REQUIRE(tags.size() == 1);
+  CHECK(tags[0].name == "Selected");  // 原样保留，没有被小写化
+}
+
 TEST_CASE("add_tag on an unordered uncapped tag just inserts") {
   auto fx = make_fixture("add_unordered", 2);
   auto tag = create_tag(fx.db, fx.project_id, "废片", std::nullopt, false);

@@ -18,8 +18,13 @@ std::int64_t now_unix() {
       .count();
 }
 
+// COLLATE NOCASE 只影响 ASCII 字母的大小写比较,中文标签名不受影响
+// (没有大小写概念)——"Reject"/"reject"/"REJECT" 视为同一个名字,既用
+// 于这里的创建前查重,也用于下面 find_tag_by_name 的查找,两处必须是
+// 同一套比较规则,不然会出现"建的时候查不到重名、查的时候却因为大小
+// 写不同找不到"的不一致。
 bool tag_name_exists(sqlite3* conn, ProjectId project_id, const std::string& name) {
-  Stmt stmt(conn, "SELECT 1 FROM tags WHERE project_id = ? AND name = ?;");
+  Stmt stmt(conn, "SELECT 1 FROM tags WHERE project_id = ? AND name = ? COLLATE NOCASE;");
   sqlite3_bind_int64(stmt.get(), 1, project_id);
   sqlite3_bind_text(stmt.get(), 2, name.c_str(), -1, SQLITE_TRANSIENT);
   return sqlite3_step(stmt.get()) == SQLITE_ROW;
@@ -164,9 +169,12 @@ std::vector<TagSummary> tags_for_image(db::Database& db, ImageId image_id) {
   return out;
 }
 
+// 大小写不敏感查找(见 tag_name_exists 的说明)——存的名字仍然保留用户
+// 输入时的原始大小写(display 用的就是这一份，不需要单独一个
+// display_name 字段)，这里只是比较时忽略大小写，不改写存储值。
 std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
                                        const std::string& name) {
-  Stmt stmt(db.handle(), "SELECT id FROM tags WHERE project_id = ? AND name = ?;");
+  Stmt stmt(db.handle(), "SELECT id FROM tags WHERE project_id = ? AND name = ? COLLATE NOCASE;");
   sqlite3_bind_int64(stmt.get(), 1, project_id);
   sqlite3_bind_text(stmt.get(), 2, name.c_str(), -1, SQLITE_TRANSIENT);
   if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
