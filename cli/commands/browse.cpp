@@ -1,9 +1,11 @@
 #include "cli/commands/commands.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -44,6 +46,25 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
     if (ref.id == desired) return desired;
   }
   return new_images.front().id;
+}
+
+// F-10：AI 供应商固定写死 Gemini 只是因为开发时手头只有 Gemini 的
+// key，不是经过设计的选择(docs/M3_PRD.md"风险与待确认问题"一节的
+// TODO 原话)。读一次 PZT_AI_PROVIDER 环境变量(claude/gemini，大小写
+// 不敏感)，没设或者值不认识都保持原来的 Gemini 默认值——交互式切换 UI
+// 这次不做(PRD 已经明确排除)，环境变量是够用的最小版本。不缓存，每次
+// 调用现读——getenv 是个廉价的进程内查表，不值得为了省这几次调用专门
+// 传参或加个全局变量。
+pzt::core::Provider resolve_ai_provider() {
+  const char* env = std::getenv("PZT_AI_PROVIDER");
+  if (env) {
+    std::string value(env);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (value == "claude") return pzt::core::Provider::Claude;
+    if (value == "gemini") return pzt::core::Provider::Gemini;
+  }
+  return pzt::core::Provider::Gemini;
 }
 
 // 信息栏"标签:"这一行——原来一行一个标签太占竖直空间，改成
@@ -234,7 +255,7 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
   for (auto id : resolved.image_ids) {
     auto info = pzt::core::get_image(id);
     if (info && info->evaluation) continue;  // 已经评估过,跳过
-    if (evaluation_worker.request(id, pzt::core::Provider::Gemini, extra_guidance)) ++submitted;
+    if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance)) ++submitted;
   }
   return pzt::cli::i18n::msg_ai_eval_submitted(submitted);
 }
@@ -268,11 +289,11 @@ std::string handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_wo
     if (is_batch_scope) {
       return handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance);
     }
-    // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——固
-    // 定供应商用 Gemini(手头只有 GEMINI_API_KEY,没有 ANTHROPIC_API_KEY)
-    // ——多供应商切换本来就是 docs/M3_PRD.md 明确留到以后的开放问题,这
-    // 次只是换了一下写死的默认值,不是新决策。
-    bool accepted = evaluation_worker.request(current_image_id, pzt::core::Provider::Gemini, rest);
+    // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——供
+    // 应商见 resolve_ai_provider()(F-10:读 PZT_AI_PROVIDER 环境变量，
+    // 默认 Gemini)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
+    // 的开放问题,这次不做。
+    bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest);
     if (!accepted) return pzt::cli::i18n::msg_ai_processing_pending();  // 走 status_override,等按键确认
     // 提交成功只是个轻量的确认,不需要用户额外按键才能回到浏览——结果本
     // 身是异步落地、靠 poll 逻辑自动重绘的,这条提示只是"确实提交了"，跟
