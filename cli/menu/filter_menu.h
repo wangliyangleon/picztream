@@ -33,8 +33,11 @@ struct GKeyDecision {
 
 // g 键入口:显示筛选/导出/清除选项,返回一个"意图"(GKeyDecision)交给
 // cmd_open 执行(g + e 导出是自包含的,直接在内部执行完用 Handled 返回)。
-// tags 由调用方(cmd_open)用 tags_for_menu 构好后传入。
+// tags 由调用方(cmd_open)用 tags_for_menu 构好后传入。F-01：
+// duplicate_tag_id 为空表示项目还没有"重复"系统标签,`9` 不出现在菜单
+// 里、按了也不响应,跟 handle_space_key 同样的处理方式。
 GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
+                                 std::optional<pzt::core::TagId> duplicate_tag_id,
                                  const std::vector<pzt::core::TagSummary>& tags,
                                  std::optional<pzt::core::TagId> active_filter_tag_id,
                                  const std::string& active_filter_tag_name, int banner_row,

@@ -1035,8 +1035,13 @@ int cmd_open(const std::vector<std::string>& args) {
       } else if (c == ' ') {
         if (current_ref) {
           highlight_active_menu_key(' ', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          status_override = handle_space_key(*id, reject_tag_id, current_ref->id, banner_row,
-                                              start_col, content_cols);
+          // F-01：现查而不是缓存在循环外——"重复"标签可能是本次浏览会
+          // 话期间第一次跑 /dedup 才创建的,find_tag_by_name 找不到就是
+          // nullopt,不会创建它(打开菜单不该有创建标签的副作用)。
+          auto duplicate_tag_id =
+              pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
+          status_override = handle_space_key(*id, reject_tag_id, duplicate_tag_id,
+                                              current_ref->id, banner_row, start_col, content_cols);
         }
         // current_id 不变,跟其它分支一样落到下面的 set_current + 循环顶部
         // 整屏重绘,信息栏会自然显示打标签之后的结果。
@@ -1071,9 +1076,12 @@ int cmd_open(const std::vector<std::string>& args) {
         // 完整项目——数字编号复用跟 space 菜单同一套 tags_for_menu。
         highlight_active_menu_key('g', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
         auto tags = tags_for_menu(*id);
-        auto decision = handle_g_key_prompt(reject_tag_id, tags, active_filter_tag_id,
-                                             active_filter_tag_name, banner_row, start_col,
-                                             content_cols);
+        // F-01：跟 space 分支同样的现查逻辑,见那边的说明。
+        auto duplicate_tag_id =
+            pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
+        auto decision = handle_g_key_prompt(reject_tag_id, duplicate_tag_id, tags,
+                                             active_filter_tag_id, active_filter_tag_name,
+                                             banner_row, start_col, content_cols);
 
         if (decision.action == GKeyAction::Handled) {
           status_override = decision.status;

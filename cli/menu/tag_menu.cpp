@@ -47,17 +47,26 @@ std::string handle_cap_replace_submenu(pzt::core::TagId tag_id, pzt::core::Image
 // 外校验或过滤。菜单文案前缀"摘除:"跟加标签菜单区分开,给一个明确的视觉
 // 提示"现在是摘除模式"。
 std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& tags,
-                                       pzt::core::TagId reject_tag_id, pzt::core::ImageId image_id,
-                                       int banner_row, int start_col, int content_cols) {
+                                       pzt::core::TagId reject_tag_id,
+                                       std::optional<pzt::core::TagId> duplicate_tag_id,
+                                       pzt::core::ImageId image_id, int banner_row, int start_col,
+                                       int content_cols) {
   std::string line = pzt::cli::i18n::tag_menu_remove_prefix();
   for (std::size_t i = 0; i < tags.size(); ++i) {
     line += "  " + pzt::cli::i18n::menu_item(std::to_string(i + 1), tags[i].name);
+  }
+  // F-01：`9:重复` 只在项目里已经存在这个系统标签时才出现在摘除菜单
+  // 里，不强迫用户面对一个从没跑过 /dedup 的项目也看到这个选项。
+  if (duplicate_tag_id) {
+    line += "  " + pzt::cli::i18n::menu_item("9", pzt::cli::i18n::duplicate_tag_label());
   }
   line += pzt::cli::i18n::tag_menu_esc_cancel();
   char c = prompt_and_read_key(line, banner_row, start_col, content_cols);
   pzt::core::TagId tag_id;
   if (c == '0') {
     tag_id = reject_tag_id;
+  } else if (c == '9' && duplicate_tag_id) {
+    tag_id = *duplicate_tag_id;
   } else if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
     tag_id = tags[static_cast<std::size_t>(c - '1')].id;
   } else {
@@ -153,15 +162,17 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // `list_tags` 是按名字字母序排的(给 `pzt tag list` 这类展示用)——数字键
 // 要按标签创建顺序(tag id 升序)固定,不然新建一个名字靠前的标签会让所有
 // 已有标签的数字悄悄错位。不改 `list_tags` 本身,这里对结果客户端重排序。
-// 只有 1-9 有数字键,超过的这次不处理。increment 6.4.5:系统标签("废片")
-// 固定占硬编码的 `0`,不参与这个动态的 1-9 序列,先过滤掉。
+// increment 6.4.5:系统标签("废片")固定占硬编码的 `0`,不参与这个动态序
+// 列,先过滤掉。F-01:动态标签只截断到 8 个(不是 9)——数字 `9` 现在固
+// 定留给"重复"系统标签(见 handle_space_key/handle_g_key_prompt 里
+// duplicate_tag_id 参数的用法),动态列表不能再占用它。
 std::vector<pzt::core::TagSummary> tags_for_menu(pzt::core::ProjectId project_id) {
   auto tags = pzt::core::list_tags(project_id);
   tags.erase(std::remove_if(tags.begin(), tags.end(), [](const auto& t) { return t.is_system; }),
              tags.end());
   std::sort(tags.begin(), tags.end(),
             [](const auto& a, const auto& b) { return a.id < b.id; });
-  if (tags.size() > 9) tags.resize(9);
+  if (tags.size() > 8) tags.resize(8);
   return tags;
 }
 
@@ -187,9 +198,13 @@ std::string handle_add_tag_result(pzt::core::TagId tag_id, pzt::core::ImageId im
 // space 键的入口:在 banner 那一行显示可选标签、读一个键选标签或取消,
 // cap 超限时转入 handle_cap_replace_submenu;`-`/`c`/`d` 分别转入摘除/新
 // 建/删除标签定义。`0:废片` 是硬编码的固定选项,不占用 `tags_for_menu` 的
-// 动态 1-9 序列——`废片` 从 pzt new 起就保证存在,不再有"这次按 space 完
-// 全没有东西可选"的情况,不管动态列表是不是空都无条件阻塞读一个键。
+// 动态 1-8 序列——`废片` 从 pzt new 起就保证存在,不再有"这次按 space 完
+// 全没有东西可选"的情况,不管动态列表是不是空都无条件阻塞读一个键。F-01：
+// `9:重复` 是另一个硬编码固定选项,跟 `0:废片` 对称,但只在 duplicate_
+// tag_id 有值(项目已经跑过至少一次 /dedup)时才出现——不像废片那样保证
+// 存在,调用方(cmd_open)每次按 space 前都重新查一次,不缓存。
 std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId reject_tag_id,
+                              std::optional<pzt::core::TagId> duplicate_tag_id,
                               pzt::core::ImageId image_id, int banner_row, int start_col,
                               int content_cols) {
   // `c` 新建标签之后留在这个循环里,不管成功/失败/中途 Esc 取消都回到标签
@@ -202,9 +217,9 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
 
     // 标签一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
     // 作,见 prompt_and_read_key_2line 的说明。
-    char c = prompt_and_read_key_2line(pzt::cli::i18n::tag_menu_options_line(tags),
-                                        pzt::cli::i18n::tag_menu_actions_line(), banner_row,
-                                        start_col, content_cols);
+    char c = prompt_and_read_key_2line(
+        pzt::cli::i18n::tag_menu_options_line(tags, duplicate_tag_id.has_value()),
+        pzt::cli::i18n::tag_menu_actions_line(), banner_row, start_col, content_cols);
     if (c == 'c') {
       std::string result = handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
       if (!result.empty()) {
@@ -218,12 +233,15 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
       continue;
     }
     if (c == '-') {
-      return handle_remove_tag_submenu(tags, reject_tag_id, image_id, banner_row, start_col,
-                                        content_cols);
+      return handle_remove_tag_submenu(tags, reject_tag_id, duplicate_tag_id, image_id, banner_row,
+                                        start_col, content_cols);
     }
     if (c == 'd') return handle_delete_tag_submenu(tags, banner_row, start_col, content_cols);
     if (c == '0') {
       return handle_add_tag_result(reject_tag_id, image_id, banner_row, start_col, content_cols);
+    }
+    if (c == '9' && duplicate_tag_id) {
+      return handle_add_tag_result(*duplicate_tag_id, image_id, banner_row, start_col, content_cols);
     }
     if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
       const auto& chosen = tags[static_cast<std::size_t>(c - '1')];

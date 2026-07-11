@@ -87,15 +87,16 @@ std::string handle_g_export_flow(pzt::core::TagId reject_tag_id,
 }  // namespace
 
 GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
+                                  std::optional<pzt::core::TagId> duplicate_tag_id,
                                   const std::vector<pzt::core::TagSummary>& tags,
                                   std::optional<pzt::core::TagId> active_filter_tag_id,
                                   const std::string& active_filter_tag_name, int banner_row,
                                   int start_col, int content_cols) {
   // 标签一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
   // 作,见 prompt_and_read_key_2line 的说明。
-  char c = prompt_and_read_key_2line(pzt::cli::i18n::filter_menu_options_line(tags),
-                                      pzt::cli::i18n::filter_menu_actions_line(), banner_row,
-                                      start_col, content_cols);
+  char c = prompt_and_read_key_2line(
+      pzt::cli::i18n::filter_menu_options_line(tags, duplicate_tag_id.has_value()),
+      pzt::cli::i18n::filter_menu_actions_line(), banner_row, start_col, content_cols);
   if (c == 'g') return {GKeyAction::ClearFilter, {}, "", ""};
   if (c == 'e') {
     std::string status = handle_g_export_flow(reject_tag_id, tags, active_filter_tag_id,
@@ -105,6 +106,10 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
   }
   if (c == '0') {
     return {GKeyAction::ApplyFilter, reject_tag_id, pzt::cli::i18n::reject_tag_label(), ""};
+  }
+  // F-01：`9:重复` 跟 `0:废片` 对称，只在 duplicate_tag_id 有值时才响应。
+  if (c == '9' && duplicate_tag_id) {
+    return {GKeyAction::ApplyFilter, *duplicate_tag_id, pzt::cli::i18n::duplicate_tag_label(), ""};
   }
   if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
     const auto& t = tags[static_cast<std::size_t>(c - '1')];

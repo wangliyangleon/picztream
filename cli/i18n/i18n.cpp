@@ -1272,7 +1272,7 @@ std::string tag_menu_add_failed() {
 }
 
 std::string
-tag_menu_options_line(const std::vector<pzt::core::TagSummary> &tags) {
+tag_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool show_duplicate) {
   std::string line = " " + menu_item("0", reject_tag_label());
   for (size_t i = 0; i < tags.size(); ++i) {
     line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
@@ -1280,6 +1280,9 @@ tag_menu_options_line(const std::vector<pzt::core::TagSummary> &tags) {
       line += "(" + std::to_string(tags[i].tagged_count) + "/" +
               std::to_string(*tags[i].cap) + ")";
     }
+  }
+  if (show_duplicate) {
+    line += "  " + menu_item("9", duplicate_tag_label());
   }
   return line;
 }
@@ -1377,10 +1380,13 @@ std::string filter_menu_export_success(int count, const std::string &name,
 }
 
 std::string
-filter_menu_options_line(const std::vector<pzt::core::TagSummary> &tags) {
+filter_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool show_duplicate) {
   std::string line = " " + menu_item("0", reject_tag_label());
   for (size_t i = 0; i < tags.size(); ++i) {
     line += "  " + menu_item(std::to_string(i + 1), tags[i].name);
+  }
+  if (show_duplicate) {
+    line += "  " + menu_item("9", duplicate_tag_label());
   }
   return line;
 }

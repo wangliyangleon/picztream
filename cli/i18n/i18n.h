@@ -232,9 +232,12 @@ std::string tag_menu_deleted(const std::string& name);
 std::string tag_menu_delete_failed();
 std::string tag_menu_add_failed();
 // space 顶层菜单拆成两行(见 prompt_and_read_key_2line):第一行带编号的
-// 标签选项(0:废片 + 1-9 动态标签),第二行是固定的字母操作。标签一多,
-// 单行版本会把第二行这几个操作挤到看不见的地方。
-std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags);
+// 标签选项(0:废片 + 1-8 动态标签 + 9:重复[条件性]),第二行是固定的字
+// 母操作。标签一多,单行版本会把第二行这几个操作挤到看不见的地方。
+// show_duplicate 为真时在末尾追加 `9:重复`(F-01,只在项目已经存在这
+// 个系统标签时才显示)。
+std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,
+                                   bool show_duplicate);
 std::string tag_menu_actions_line();
 
 // Filter Menu
@@ -247,7 +250,9 @@ std::string filter_menu_export_failed();
 std::string filter_menu_export_no_images(const std::string& name);
 std::string filter_menu_export_success(int count, const std::string& name, const std::string& path, bool created_folder, size_t skipped_count);
 // g 顶层菜单拆成两行,跟 tag_menu_options_line/actions_line 同样的理由。
-std::string filter_menu_options_line(const std::vector<pzt::core::TagSummary>& tags);
+// show_duplicate 见 tag_menu_options_line 的说明,同一条 F-01 规则。
+std::string filter_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,
+                                      bool show_duplicate);
 std::string filter_menu_actions_line();
 
 // Recipe Menu
