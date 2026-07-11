@@ -70,3 +70,23 @@ TEST_CASE("err_internal_error includes the exception message and follows languag
 
   g_lang = Lang::zh;  // 还原
 }
+
+// F-03：评估失败提示——只验证文案包含图片 id 和一句能区分错误类型的原
+// 因，具体措辞不是接口契约。
+TEST_CASE("msg_ai_evaluation_failed includes the image id and a reason, follows language") {
+  g_lang = Lang::zh;
+  auto zh_text = msg_ai_evaluation_failed(42, pzt::core::EvaluationError::NetworkError);
+  CHECK(zh_text.find("42") != std::string::npos);
+  CHECK(zh_text.find("网络") != std::string::npos);
+
+  auto zh_missing_key = msg_ai_evaluation_failed(1, pzt::core::EvaluationError::MissingApiKey);
+  auto zh_unavailable = msg_ai_evaluation_failed(1, pzt::core::EvaluationError::ImageUnavailable);
+  CHECK(zh_missing_key != zh_unavailable);  // 不同错误类型给出不同的原因文案
+
+  g_lang = Lang::en;
+  auto en_text = msg_ai_evaluation_failed(42, pzt::core::EvaluationError::NetworkError);
+  CHECK(en_text.find("42") != std::string::npos);
+  CHECK(en_text.find("network") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}

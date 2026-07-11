@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -64,6 +65,20 @@ class EvaluationWorker {
   // in_flight_ 比 queue_ 多出来的那一个就是它。
   QueueStatus queue_status() const;
 
+  // F-03：评估请求失败(网络/key/解析，或者请求真正发出去之前就失败
+  // ——图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug
+  // 时用户完全看不到，提交之后要么等到结果、要么永远等不到也不知道为
+  // 什么。跟 generation_ 用途不同：generation_ 只回答"有没有新结果落
+  // 地"(成功/失败都算)，这个回答"最近一次落地的结果是不是失败的、失
+  // 败的是哪张图、什么原因"。取走即清空(跟 consume_new_result 的"消费
+  // 一次"精神一致)，调用方(browse.cpp 的 poll 逻辑)只在确认有新结果
+  // 落地之后才取一次，不会重复弹同一条失败提示。
+  struct LastFailure {
+    project::ImageId image_id;
+    EvaluationError error;
+  };
+  std::optional<LastFailure> take_last_failure();
+
  private:
   struct PendingRequest {
     project::ImageId image_id;
@@ -72,7 +87,10 @@ class EvaluationWorker {
   };
 
   void worker_loop(std::stop_token stop);
-  void process_request(const PendingRequest& req);
+  // 返回 nullopt 表示这次请求成功；否则携带失败原因，worker_loop 负责
+  // 把它记进 last_failure_(process_request 本身不碰 mu_ 保护的状态，
+  // 维持它原来"纯粹是 db I/O + 网络调用"的定位）。
+  std::optional<EvaluationError> process_request(const PendingRequest& req);
 
   std::string db_path_;
   EvaluationFn evaluation_fn_;
@@ -82,6 +100,7 @@ class EvaluationWorker {
   std::vector<PendingRequest> queue_;
   std::unordered_set<project::ImageId> in_flight_;
   std::uint64_t generation_ = 0;
+  std::optional<LastFailure> last_failure_;
 
   // 声明在最后，保证析构时先于其它成员被销毁——它的析构自动
   // request_stop()+join()，worker 线程在其它成员真正被销毁之前已经彻底

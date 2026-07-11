@@ -52,6 +52,13 @@ EvaluationWorker::QueueStatus EvaluationWorker::queue_status() const {
   return QueueStatus{queue_.size(), in_flight_.size() > queue_.size()};
 }
 
+std::optional<EvaluationWorker::LastFailure> EvaluationWorker::take_last_failure() {
+  std::lock_guard<std::mutex> lock(mu_);
+  auto result = last_failure_;
+  last_failure_.reset();
+  return result;
+}
+
 void EvaluationWorker::worker_loop(std::stop_token stop) {
   while (true) {
     std::unique_lock<std::mutex> lock(mu_);
@@ -67,31 +74,38 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
     queue_.erase(queue_.begin());
     lock.unlock();
 
-    process_request(req);
+    auto failure = process_request(req);
 
     lock.lock();
     in_flight_.erase(req.image_id);
+    // F-03：记下这次是不是失败的，供 take_last_failure() 取用——之前失
+    // 败只打 stderr，不开 --debug 时用户完全看不到，见头文件里
+    // LastFailure 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，
+    // process_request 本身不碰这些受 mu_ 保护的状态。
+    if (failure) {
+      last_failure_ = LastFailure{req.image_id, *failure};
+    }
     ++generation_;
     lock.unlock();
     cv_.notify_all();
   }
 }
 
-void EvaluationWorker::process_request(const PendingRequest& req) {
+std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRequest& req) {
   db::Database db = db::Database::open_at(db_path_);
 
   auto info = project::get_image(db, req.image_id);
   if (!info) {
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld not found\n",
                  static_cast<long long>(req.image_id));
-    return;
+    return EvaluationError::ImageUnavailable;
   }
 
   auto project_summary = project::open_project(db, info->project_id);
   if (!project_summary.ok()) {
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld project_id=%lld not found\n",
                  static_cast<long long>(req.image_id), static_cast<long long>(info->project_id));
-    return;
+    return EvaluationError::ImageUnavailable;
   }
 
   std::string path = resolve_path(project_summary.value().root_path, *info);
@@ -99,7 +113,7 @@ void EvaluationWorker::process_request(const PendingRequest& req) {
   if (!decoded.ok()) {
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld decode failed path=%s\n",
                  static_cast<long long>(req.image_id), path.c_str());
-    return;
+    return EvaluationError::ImageUnavailable;
   }
 
   auto result = evaluation_fn_(decoded.value(), req.extra_guidance, req.provider);
@@ -110,7 +124,7 @@ void EvaluationWorker::process_request(const PendingRequest& req) {
     // 一节。
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld evaluation request failed\n",
                  static_cast<long long>(req.image_id));
-    return;
+    return result.error();
   }
 
   const auto& r = result.value();
@@ -171,6 +185,7 @@ void EvaluationWorker::process_request(const PendingRequest& req) {
   std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld exposure=%d composition=%d focus=%d\n",
                static_cast<long long>(req.image_id), r.exposure.score, r.composition.score,
                r.focus.score);
+  return std::nullopt;
 }
 
 }  // namespace pzt::core::ai

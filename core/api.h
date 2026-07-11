@@ -80,6 +80,9 @@ using RenderRecipeError = recipe::RenderRecipeError;
 using EvaluationWorker = ai::EvaluationWorker;
 using EvaluationInfo = ai::EvaluationInfo;
 using Provider = ai::Provider;
+// F-03：EvaluationWorker::take_last_failure() 把失败原因带出来给 cli
+// 展示，cli 层需要能叫出这个类型的名字。
+using EvaluationError = ai::EvaluationError;
 // 综合分数/达标判断不入库，现算——CLI 展示时直接调这两个函数，不在 cli/
 // 层重新实现一遍算法，见 core/ai/evaluation.h 的说明。
 using ai::overall_score;

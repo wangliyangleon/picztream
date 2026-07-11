@@ -936,8 +936,19 @@ int cmd_open(const std::vector<std::string>& args) {
       while (true) {
         if (debug_mode || evaluation_worker.has_pending()) {
           if (!stdin_ready(300)) {
-            if (!debug_mode && !evaluation_worker.consume_new_result(ai_last_seen_generation)) {
-              continue;
+            if (!debug_mode) {
+              if (!evaluation_worker.consume_new_result(ai_last_seen_generation)) {
+                continue;
+              }
+              // F-03：确认拿到新结果(不是超时空转)之后,顺带看一眼这次
+              // 落地的请求是不是失败的——失败之前只打 stderr,不开
+              // --debug 时用户完全看不到,提交之后要么等到结果、要么永
+              // 远等不到也不知道为什么。debug 模式下失败已经能从 debug
+              // 面板的日志流看到,不在这里重复弹一次提示。
+              if (auto failure = evaluation_worker.take_last_failure()) {
+                status_override =
+                    pzt::cli::i18n::msg_ai_evaluation_failed(failure->image_id, failure->error);
+              }
             }
             timed_out = true;
             break;

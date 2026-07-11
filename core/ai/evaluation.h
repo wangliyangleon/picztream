@@ -13,7 +13,14 @@
 // （core/ai/score.h，已删除）。
 namespace pzt::core::ai {
 
-enum class EvaluationError { MissingApiKey, NetworkError, HttpError, ParseError, OutOfRange };
+// ImageUnavailable：F-03 新增，覆盖 EvaluationWorker::process_request 里
+// "还没走到真正发起 AI 请求这一步就失败"的几种情况(图片记录/项目找不
+// 到、预览图解码失败)——这几种失败原来只打 stderr，用户完全看不到；跟
+// request_evaluation 本身可能失败的几种原因（网络/key/解析）合并成同一
+// 个错误类型，方便 EvaluationWorker::LastFailure 统一携带，不需要为
+// "发请求之前" vs "发请求之后"两类失败分别设计上报通道。
+enum class EvaluationError { MissingApiKey, NetworkError, HttpError, ParseError, OutOfRange,
+                              ImageUnavailable };
 
 struct DimensionAssessment {
   int score;  // 0-10

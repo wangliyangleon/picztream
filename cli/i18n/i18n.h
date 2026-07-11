@@ -156,6 +156,12 @@ std::string msg_ai_prompt_placeholder();
 // 馈，不是新开一套文案。
 std::string msg_ai_processing_pending();
 std::string msg_ai_processing_submitted();
+// F-03：评估请求失败(网络/key/解析，或者请求还没真正发出去就失败——
+// 图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug 时用
+// 户完全看不到。poll 逻辑检测到有新结果落地时顺带查一次
+// EvaluationWorker::take_last_failure()，非空就用这条文案当
+// status_override 显示一次，不需要用户主动去 --debug 面板里找原因。
+std::string msg_ai_evaluation_failed(pzt::core::ImageId image_id, pzt::core::EvaluationError error);
 // 输入为空、或者非空但不以 `/` 开头时统一显示——控制台不再有"裸文本=当
 // 前图片额外指引"这条隐藏路径，用户忘了打 `/` 不会被无声当成提交了一次
 // 评估请求（这是本轮改动明确要解决的误触发风险）。Esc 依然是唯一真正的

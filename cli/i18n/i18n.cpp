@@ -967,6 +967,39 @@ std::string msg_ai_processing_submitted() {
   }
 }
 
+// F-03：把 EvaluationError 翻译成一句人话，不逐条列出的都归到笼统的
+// "请求失败"——这几种原因(网络/HttpError/key)对用户来说都是"这次没请
+// 求成功，再试一次"，不需要精确到协议层细节；ParseError/OutOfRange 单
+// 独说明是"模型返回的内容不对"，跟"网络/权限"是不同性质的问题，值得
+// 区分；ImageUnavailable 单独说明是"这张图暂时评估不了"，不是网络问
+// 题，重试大概率还是不行(比如预览图解码失败)。
+std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
+  switch (error) {
+    case pzt::core::EvaluationError::MissingApiKey:
+      return g_lang == Lang::zh ? "未配置 API key" : "API key not configured";
+    case pzt::core::EvaluationError::NetworkError:
+      return g_lang == Lang::zh ? "网络请求失败" : "network request failed";
+    case pzt::core::EvaluationError::HttpError:
+      return g_lang == Lang::zh ? "服务端返回错误" : "server returned an error";
+    case pzt::core::EvaluationError::ParseError:
+      return g_lang == Lang::zh ? "模型返回内容无法解析" : "couldn't parse the model's response";
+    case pzt::core::EvaluationError::OutOfRange:
+      return g_lang == Lang::zh ? "模型返回的分数超出范围" : "model returned an out-of-range score";
+    case pzt::core::EvaluationError::ImageUnavailable:
+      return g_lang == Lang::zh ? "图片暂时无法评估" : "image is currently unavailable";
+  }
+  return g_lang == Lang::zh ? "未知错误" : "unknown error";  // 不可达，安抚 -Wreturn-type
+}
+
+std::string msg_ai_evaluation_failed(pzt::core::ImageId image_id, pzt::core::EvaluationError error) {
+  std::string reason = ai_evaluation_error_reason(error);
+  if (g_lang == Lang::zh) {
+    return " 图 " + std::to_string(image_id) + " 评估失败: " + reason + " ";
+  } else {
+    return " image " + std::to_string(image_id) + " evaluation failed: " + reason + " ";
+  }
+}
+
 std::string msg_ai_unknown_command(const std::string &command) {
   if (g_lang == Lang::zh) {
     return " 未知命令: /" + command + " ";

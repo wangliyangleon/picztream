@@ -161,6 +161,46 @@ TEST_CASE("a failed request leaves no evaluation row") {
   CHECK(!worker.has_pending());
 }
 
+// F-03：失败原因原来只打 stderr，用户在 --debug 之外完全看不到。
+// take_last_failure() 把它暴露出来，一次取走就清空——避免同一次失败被
+// 反复报出来（跟 consume_new_result 的"消费一次"精神一致）。
+TEST_CASE("a failed request is recorded in take_last_failure, consumed exactly once") {
+  Fixture fx("evaluation_worker_last_failure");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::NetworkError);
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+
+  auto failure = worker.take_last_failure();
+  REQUIRE(failure.has_value());
+  CHECK(failure->image_id == fx.image_id);
+  CHECK(failure->error == EvaluationError::NetworkError);
+
+  CHECK(!worker.take_last_failure().has_value());  // 取走之后清空，不会重复报
+}
+
+TEST_CASE("a successful request leaves take_last_failure empty") {
+  Fixture fx("evaluation_worker_last_failure_success");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+
+  CHECK(!worker.take_last_failure().has_value());
+}
+
 TEST_CASE("a failed re-evaluation does not clear a previously successful result") {
   Fixture fx("evaluation_worker_keep_old_on_failure");
   bool succeed = true;
@@ -303,6 +343,13 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
   CHECK(!worker.has_pending());
+
+  // F-03：请求真正发出去之前(图片记录都找不到)的失败,也要走同一条
+  // last_failure_ 通道,不是只有"AI 请求本身失败"才算数。
+  auto failure = worker.take_last_failure();
+  REQUIRE(failure.has_value());
+  CHECK(failure->image_id == 999999);
+  CHECK(failure->error == EvaluationError::ImageUnavailable);
 }
 
 }  // namespace pzt::core::ai
