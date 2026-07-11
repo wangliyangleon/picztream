@@ -2,7 +2,9 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -11,6 +13,7 @@
 #include "core/db/database.h"
 #include "core/decode/decode.h"
 #include "core/project/project.h"
+#include "core/tagging/tagging.h"
 
 namespace fs = std::filesystem;
 using pzt::core::Result;
@@ -52,6 +55,9 @@ void write_real_jpeg(const fs::path& p) {
   REQUIRE(result.ok());
 }
 
+// composition=4 < kEvaluationGateThreshold(6)，三项不是全部达标，
+// passes_gate() 对这个结果恒为 false——下面 auto_ai_reject 的测试直接
+// 复用它当"评估不达标"的样本，不需要单独再造一份。
 EvaluationResult make_evaluation_result() {
   return EvaluationResult{
       DimensionAssessment{7, "slightly underexposed"},
@@ -61,6 +67,64 @@ EvaluationResult make_evaluation_result() {
       DimensionAssessment{9, "sharp"},
       "overall solid, mainly the tilted horizon",
   };
+}
+
+// 三项都 >= 6，passes_gate() 恒为 true。
+EvaluationResult make_passing_evaluation_result() {
+  return EvaluationResult{
+      DimensionAssessment{7, "well exposed"},
+      std::nullopt,
+      DimensionAssessment{8, "balanced"},
+      std::nullopt,
+      DimensionAssessment{9, "sharp"},
+      "solid across the board",
+  };
+}
+
+// Settings.auto_ai_reject 从 XDG_CONFIG_HOME/pzt/config.json 里读，不是
+// 构造函数参数——测试要临时接管这个环境变量，写一份只含这一个字段的
+// 配置文件，用完恢复原值，不泄漏给同一进程里跑的其它测试用例。
+class ScopedAutoAiRejectConfig {
+ public:
+  explicit ScopedAutoAiRejectConfig(bool enabled) {
+    const char* old = std::getenv("XDG_CONFIG_HOME");
+    if (old) {
+      had_old_ = true;
+      old_value_ = old;
+    }
+
+    dir_ = (fs::temp_directory_path() / "pzt_test" / "evaluation_worker_auto_reject_xdg").string();
+    fs::remove_all(dir_);
+    fs::create_directories(fs::path(dir_) / "pzt");
+    std::ofstream f(fs::path(dir_) / "pzt" / "config.json");
+    f << "{\"auto_ai_reject\": " << (enabled ? "true" : "false") << "}";
+    f.close();
+
+    setenv("XDG_CONFIG_HOME", dir_.c_str(), 1);
+  }
+
+  ~ScopedAutoAiRejectConfig() {
+    if (had_old_) {
+      setenv("XDG_CONFIG_HOME", old_value_.c_str(), 1);
+    } else {
+      unsetenv("XDG_CONFIG_HOME");
+    }
+  }
+
+  ScopedAutoAiRejectConfig(const ScopedAutoAiRejectConfig&) = delete;
+  ScopedAutoAiRejectConfig& operator=(const ScopedAutoAiRejectConfig&) = delete;
+
+ private:
+  std::string dir_;
+  bool had_old_ = false;
+  std::string old_value_;
+};
+
+bool has_reject_tag(Database& db, ImageId id) {
+  for (const auto& t : tagging::tags_for_image(db, id)) {
+    if (t.name == tagging::kRejectTagName) return true;
+  }
+  return false;
 }
 
 // 假 EvaluationFn 立即返回，后台线程处理一个请求应该是毫秒级——用一个短
@@ -199,6 +263,66 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
   REQUIRE(wait_for_result(worker, generation));
 
   CHECK(!worker.take_last_failure().has_value());
+}
+
+// Settings.auto_ai_reject：评估不达标(passes_gate() == false)且开关打
+// 开时，process_request 落库之后应该自动给这张图打上"废片"系统标签,
+// 不需要用户手动再过一遍 fail 的图。
+TEST_CASE("auto_ai_reject tags a failing evaluation with the reject tag when enabled") {
+  ScopedAutoAiRejectConfig cfg(/*enabled=*/true);
+  Fixture fx("evaluation_worker_auto_reject_fail");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());  // 不达标
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+
+  auto db = Database::open_at(fx.db_path);
+  CHECK(has_reject_tag(db, fx.image_id));
+}
+
+// 同样开着 auto_ai_reject，但这次评估达标——不该被自动打上废片。
+TEST_CASE("auto_ai_reject does not tag a passing evaluation") {
+  ScopedAutoAiRejectConfig cfg(/*enabled=*/true);
+  Fixture fx("evaluation_worker_auto_reject_pass");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Ok(make_passing_evaluation_result());
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+
+  auto db = Database::open_at(fx.db_path);
+  CHECK(!has_reject_tag(db, fx.image_id));
+}
+
+// 默认(没有配置文件/auto_ai_reject=false)不自动打标签，即便评估不达
+// 标——这是现有行为的回归防护，上面所有其它测试用例都隐式依赖这一点。
+TEST_CASE("auto_ai_reject leaves failing evaluations untagged when disabled") {
+  ScopedAutoAiRejectConfig cfg(/*enabled=*/false);
+  Fixture fx("evaluation_worker_auto_reject_disabled");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());  // 不达标
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+
+  auto db = Database::open_at(fx.db_path);
+  CHECK(!has_reject_tag(db, fx.image_id));
 }
 
 // F-17：process_request 落库那一步以前不检查 sqlite3_step 的返回值——

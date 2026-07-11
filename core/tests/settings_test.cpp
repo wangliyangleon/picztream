@@ -38,6 +38,7 @@ TEST_CASE("load returns all defaults when the config file doesn't exist") {
   CHECK(s.dedup_reject == false);
   CHECK(s.export_reject == false);
   CHECK(s.export_dup == false);
+  CHECK(s.auto_ai_reject == false);
   CHECK(!s.lang.has_value());
   CHECK(s.ui_width_ratio == doctest::Approx(0.7));
   CHECK(s.prefetch_window == 3);
@@ -68,6 +69,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
     "dedup_reject": true,
     "export_reject": true,
     "export_dup": true,
+    "auto_ai_reject": true,
     "lang": "en",
     "ui_width_ratio": 0.85,
     "prefetch_window": 5
@@ -81,6 +83,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
   CHECK(s.dedup_reject == true);
   CHECK(s.export_reject == true);
   CHECK(s.export_dup == true);
+  CHECK(s.auto_ai_reject == true);
   REQUIRE(s.lang.has_value());
   CHECK(*s.lang == "en");
   CHECK(s.ui_width_ratio == doctest::Approx(0.85));

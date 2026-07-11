@@ -7,6 +7,18 @@
 using namespace pzt::cli::i18n;
 
 TEST_CASE("i18n language initialization and switching") {
+  // F-12 之后 init_lang() 会读 Settings.lang，Settings 又是从
+  // XDG_CONFIG_HOME/pzt/config.json 加载的——不隔离这个环境变量的话，
+  // 这条用例读的是开发者/用户真实的 config.json，一旦那份文件里写了
+  // "lang" 字段（比如手动测过 F-12 之后忘记还原），就会盖过这里
+  // setenv("LANG", ...) 想测的系统 LANG 兜底逻辑，测试变得依赖运行机
+  // 器上的真实文件内容。指向一个确定不存在的目录，保证 Settings 全程
+  // 是默认值(lang = nullopt)。
+  const char* old_xdg = std::getenv("XDG_CONFIG_HOME");
+  std::string old_xdg_value = old_xdg ? old_xdg : "";
+  bool had_old_xdg = old_xdg != nullptr;
+  setenv("XDG_CONFIG_HOME", "/nonexistent/pzt_i18n_test_isolation", 1);
+
   // Test fallback logic
   unsetenv("PZT_LANG");
   unsetenv("LANG");
@@ -33,6 +45,12 @@ TEST_CASE("i18n language initialization and switching") {
   
   unsetenv("PZT_LANG");
   unsetenv("LANG");
+
+  if (had_old_xdg) {
+    setenv("XDG_CONFIG_HOME", old_xdg_value.c_str(), 1);
+  } else {
+    unsetenv("XDG_CONFIG_HOME");
+  }
 }
 
 TEST_CASE("i18n localized text strings") {

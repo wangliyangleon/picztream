@@ -5,6 +5,8 @@
 
 #include "core/api.h"
 #include "core/db/stmt.h"
+#include "core/settings/settings.h"
+#include "core/tagging/tagging.h"
 
 namespace pzt::core::ai {
 
@@ -190,6 +192,21 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld failed to save evaluation result\n",
                  static_cast<long long>(req.image_id));
     return EvaluationError::StorageFailed;
+  }
+
+  // Settings.auto_ai_reject：结果已经落库之后再判断达标与否，走 passes_gate
+  // 复用同一份判定，不在这里重算一遍三项阈值比较。只在不达标时打标
+  // 签，不做反向摘除(见 core/settings/settings.h 里的说明)——这里用
+  // 已经打开的 db 连接直接调 tagging:: 里的函数，不经过 core/api.h 门
+  // 面(那边会各自开一条新连接，没必要)。
+  if (settings::load().auto_ai_reject) {
+    EvaluationInfo eval_info{r.exposure,    r.exposure_fix,     r.composition,
+                              r.composition_fix, r.focus,       r.comment,
+                              req.extra_guidance, to_string(req.provider)};
+    if (!passes_gate(eval_info)) {
+      auto reject_tag_id = tagging::ensure_reject_tag(db, info->project_id);
+      (void)tagging::add_tag(db, req.image_id, reject_tag_id);
+    }
   }
 
   std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld exposure=%d composition=%d focus=%d\n",
