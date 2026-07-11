@@ -682,7 +682,7 @@ std::vector<MenuLine> menu_lines() {
         {' ', menu_item("space", "打标签")},
         {'x', menu_item("x", "标记废片")},
         {0, ""},
-        {'g', menu_item("g", "筛选")},
+        {'f', menu_item("f", "筛选")},
         {'e', menu_item("e", "导出")},
         {0, ""},
         {'r', menu_item("r", "风格")},
@@ -694,7 +694,7 @@ std::vector<MenuLine> menu_lines() {
         {' ', menu_item("space", "Tag")},
         {'x', menu_item("x", "Toggle Reject")},
         {0, ""},
-        {'g', menu_item("g", "Filter")},
+        {'f', menu_item("f", "Filter")},
         {'e', menu_item("e", "Export")},
         {0, ""},
         {'r', menu_item("r", "Recipe")},
@@ -1503,10 +1503,13 @@ filter_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool sh
 std::string filter_menu_actions_line() {
   // 点 1：g+e"挑任意标签导出"这条路径已经退休(交互起来太诡异)——`e`
   // 键的导出入口挪到顶层 `e`(见 msg_export_submenu_prompt 的说明)。
+  // 点 3：筛选菜单入口键从 g 改成 f(g 容易让人以为是 Group)，"再按一
+  // 次同一个键清除筛选"这个既有约定(以前 g+g)也跟着变成 f+f，保持内
+  // 部一致。
   if (g_lang == Lang::zh) {
-    return " " + menu_item("g", "清除筛选") + "  " + menu_item("Esc", "取消");
+    return " " + menu_item("f", "清除筛选") + "  " + menu_item("Esc", "取消");
   } else {
-    return " " + menu_item("g", "Clear Filter") + "  " + menu_item("Esc", "Cancel");
+    return " " + menu_item("f", "Clear Filter") + "  " + menu_item("Esc", "Cancel");
   }
 }
 

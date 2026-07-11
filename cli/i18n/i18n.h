@@ -109,7 +109,7 @@ std::string err_open_project_no_images(const std::string& name);
 std::string err_open_tmux_passthrough();
 
 // 右侧菜单区(下半 block)逐行显示的顶层按键提示，一行一条——只收会派生二
-// 级菜单的键(' '/'x'/'g'/'e'/'r'，跟按键本身一致)，不派生二级菜单的
+// 级菜单的键(' '/'x'/'f'/'e'/'r'，跟按键本身一致)，不派生二级菜单的
 // h/l、j/k、q 挪到底部导航栏(见 nav_bar_text)。空行分隔符用 key=0 表
 // 示、text 是空字符串——cli/commands/browse.cpp 触发某个二级菜单前,靠这
 // 个 key 字段找到对应行做加粗高亮,不依赖硬编码下标。见

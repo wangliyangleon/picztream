@@ -14,8 +14,13 @@ using namespace pzt::cli::ui;
 namespace pzt::cli::menu {
 
 // 点 1：g+e"挑任意标签导出"曾经的入口(交互起来非常诡异)已经退休——导
-// 出统一走顶层 `e` 键(见 cli/commands/browse.cpp 的说明)，`g` 菜单只
+// 出统一走顶层 `e` 键(见 cli/commands/browse.cpp 的说明)，这个菜单只
 // 负责筛选，不再兼管导出，不再需要知道 active filter 是哪个标签。
+// 点 3：入口键从顶层 `g` 改成 `f`(筛选/Filter 的首字母，`g` 容易让人
+// 以为是 Group)，"再按一次同一个键清除筛选"这个既有约定也跟着从 g+g
+// 变成 f+f——这个函数本身处理的是"进了菜单之后按的第二个键"，所以这
+// 里判断的是 `c == 'f'`，不是顶层入口键（那是 cmd_open 里 `c == 'f'`
+// 才会调用到这个函数）。
 GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
                                   std::optional<pzt::core::TagId> duplicate_tag_id,
                                   const std::vector<pzt::core::TagSummary>& tags, int banner_row,
@@ -25,7 +30,7 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
   char c = prompt_and_read_key_2line(
       pzt::cli::i18n::filter_menu_options_line(tags, duplicate_tag_id.has_value()),
       pzt::cli::i18n::filter_menu_actions_line(), banner_row, start_col, content_cols);
-  if (c == 'g') return {GKeyAction::ClearFilter, {}, "", ""};
+  if (c == 'f') return {GKeyAction::ClearFilter, {}, "", ""};
   if (c == '0') {
     return {GKeyAction::ApplyFilter, reject_tag_id, pzt::cli::i18n::reject_tag_label(), ""};
   }

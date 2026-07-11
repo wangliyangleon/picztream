@@ -1209,7 +1209,7 @@ int cmd_open(const std::vector<std::string>& args) {
           break;
         }
         if (c == 'q' || c == 'h' || c == 'l' || c == 'j' || c == 'k' || c == ' ' || c == 'x' ||
-            c == 'g' || c == 'r' || c == 'e' || c == ':') {
+            c == 'f' || c == 'r' || c == 'e' || c == ':') {
           break;
         }
       }
@@ -1288,10 +1288,11 @@ int cmd_open(const std::vector<std::string>& args) {
                                                      start_col, content_cols);
           }
         }
-      } else if (c == 'g') {
-        // g + 数字切换到只浏览该标签下图片的筛选视图,g + g 清除筛选回到
-        // 完整项目——数字编号复用跟 space 菜单同一套 tags_for_menu。
-        highlight_active_menu_key('g', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
+      } else if (c == 'f') {
+        // 点 3：筛选入口键从 g 改成 f(筛选/Filter 首字母)——f + 数字切换
+        // 到只浏览该标签下图片的筛选视图,f + f 清除筛选回到完整项目,数
+        // 字编号复用跟 space 菜单同一套 tags_for_menu。
+        highlight_active_menu_key('f', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
         auto tags = tags_for_menu(*id);
         // F-01：跟 space 分支同样的现查逻辑,见那边的说明。
         auto duplicate_tag_id =
@@ -1342,8 +1343,8 @@ int cmd_open(const std::vector<std::string>& args) {
             g_filtered_images = images;
             active_console_filter.reset();
           }
-          // 不在筛选中时 g+g 是空操作:不查库、不提示,静默——避免每次误
-          // 按 g+g 在未筛选状态下也触发一次不必要的 list_images 查询。
+          // 不在筛选中时 f+f 是空操作:不查库、不提示,静默——避免每次误
+          // 按 f+f 在未筛选状态下也触发一次不必要的 list_images 查询。
         } else if (decision.action == GKeyAction::Cancel) {
           // decision.status 在 Esc 时是空字符串(静默),按了个不认识的
           // 键时带一句"无效按键"提示——跟 r 键的 handle_r_key 保持一致,
@@ -1422,7 +1423,7 @@ int cmd_open(const std::vector<std::string>& args) {
                                                         banner_row, start_col, content_cols);
           status_override = console_result.status;
           if (console_result.action == ConsoleCommandResult::FilterAction::Clear) {
-            // 没有活跃二级筛选时是静默 no-op,跟 g+g 空筛选同一个约定。
+            // 没有活跃二级筛选时是静默 no-op,跟 f+f 空筛选同一个约定。
             if (active_console_filter) {
               current_id = resolve_current_after_switch(g_filtered_images, current_id);
               images = g_filtered_images;
