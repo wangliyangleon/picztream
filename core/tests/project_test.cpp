@@ -2,7 +2,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "core/db/database.h"
 #include "core/project/project.h"
@@ -13,6 +15,7 @@ using pzt::core::project::archive_project;
 using pzt::core::project::create_project;
 using pzt::core::project::CreateProjectError;
 using pzt::core::project::delete_project;
+using pzt::core::project::evaluated_image_ids;
 using pzt::core::project::find_image_by_path;
 using pzt::core::project::find_project_by_name;
 using pzt::core::project::find_project_by_root_path;
@@ -45,6 +48,23 @@ void touch(const fs::path& p, std::size_t bytes = 10) {
   fs::create_directories(p.parent_path());
   std::ofstream f(p, std::ios::binary);
   f << std::string(bytes, 'x');
+}
+
+// F-07：evaluated_image_ids 只关心"这张图有没有一行 image_evaluations
+// 记录"，不像"get_image returns nullopt evaluation..."那个测试那样需
+// 要具体分数字段——占位值就够。
+void insert_evaluation_stub(Database& db, pzt::core::project::ImageId id) {
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(),
+                      "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
+                      "composition_score, composition_note, focus_score, focus_note, comment, "
+                      "extra_guidance, provider) VALUES (?, 5, '', 5, '', 5, '', '', '', 'gemini');",
+                      -1, &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, id);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    throw std::runtime_error("insert_evaluation_stub failed");
+  }
+  sqlite3_finalize(stmt);
 }
 
 }  // namespace
@@ -444,6 +464,80 @@ TEST_CASE("get_image returns nullopt evaluation by default, reads it back once s
   CHECK(eval.comment == "overall solid, mainly the tilted horizon");
   CHECK(eval.extra_guidance == "focus on the crop");
   CHECK(eval.provider == "gemini");
+}
+
+// F-07：批量版 get_image，只回答"这些图片里哪些已经有评估结果"，一条
+// IN 查询代替逐张 get_image()。
+TEST_CASE("evaluated_image_ids returns only the ids that actually have an evaluation row") {
+  auto db = Database::open_at(fresh_db_path("evaluated_image_ids_basic"));
+  auto photos = fresh_photo_dir("evaluated_image_ids_basic");
+  touch(photos / "a.jpg");
+  touch(photos / "b.jpg");
+  touch(photos / "c.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto a_id = find_image_by_path(db, created.value(), "a.jpg");
+  auto b_id = find_image_by_path(db, created.value(), "b.jpg");
+  auto c_id = find_image_by_path(db, created.value(), "c.jpg");
+  REQUIRE(a_id.has_value());
+  REQUIRE(b_id.has_value());
+  REQUIRE(c_id.has_value());
+
+  insert_evaluation_stub(db, *a_id);
+  insert_evaluation_stub(db, *c_id);
+  // b 故意不评估。
+
+  auto result = evaluated_image_ids(db, {*a_id, *b_id, *c_id});
+  CHECK(result.size() == 2);
+  CHECK(result.count(*a_id) == 1);
+  CHECK(result.count(*b_id) == 0);
+  CHECK(result.count(*c_id) == 1);
+}
+
+TEST_CASE("evaluated_image_ids ignores ids outside the requested list and handles an empty list") {
+  auto db = Database::open_at(fresh_db_path("evaluated_image_ids_scope"));
+  auto photos = fresh_photo_dir("evaluated_image_ids_scope");
+  touch(photos / "a.jpg");
+  touch(photos / "b.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto a_id = find_image_by_path(db, created.value(), "a.jpg");
+  auto b_id = find_image_by_path(db, created.value(), "b.jpg");
+  REQUIRE(a_id.has_value());
+  REQUIRE(b_id.has_value());
+  insert_evaluation_stub(db, *a_id);
+  insert_evaluation_stub(db, *b_id);
+
+  // 只问 a，即使 b 也有评估结果，不该出现在只请求了 a 的结果里。
+  auto scoped = evaluated_image_ids(db, {*a_id});
+  CHECK(scoped.size() == 1);
+  CHECK(scoped.count(*a_id) == 1);
+
+  CHECK(evaluated_image_ids(db, {}).empty());
+}
+
+// F-07：500 是分块大小，不是什么魔法上限——超过一个分块也要能正确合并
+// 所有分块的结果，不是只返回第一块。600 个 id(没有真实图片，故意传入
+// 数据库里根本不存在的 id)验证分块逻辑本身，不依赖真的建 600 张图片。
+TEST_CASE("evaluated_image_ids correctly spans more than one 500-id chunk") {
+  auto db = Database::open_at(fresh_db_path("evaluated_image_ids_chunking"));
+  auto photos = fresh_photo_dir("evaluated_image_ids_chunking");
+  touch(photos / "a.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+  auto a_id = find_image_by_path(db, created.value(), "a.jpg");
+  REQUIRE(a_id.has_value());
+  insert_evaluation_stub(db, *a_id);
+
+  std::vector<pzt::core::project::ImageId> ids;
+  for (int i = 0; i < 600; ++i) ids.push_back(1000000 + i);  // 不存在的 id，凑数量
+  ids.push_back(*a_id);  // 唯一真的有评估结果的 id，混在中间
+
+  auto result = evaluated_image_ids(db, ids);
+  CHECK(result.size() == 1);
+  CHECK(result.count(*a_id) == 1);
 }
 
 TEST_CASE("rescan_project is idempotent - rescanning again with no new files adds nothing") {

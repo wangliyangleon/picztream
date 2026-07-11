@@ -476,6 +476,34 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   return info;
 }
 
+std::unordered_set<ImageId> evaluated_image_ids(db::Database& db,
+                                                  const std::vector<ImageId>& image_ids) {
+  std::unordered_set<ImageId> result;
+  sqlite3* conn = db.handle();
+  // 500 是 SQLite 默认 SQLITE_MAX_VARIABLE_NUMBER(通常远大于这个值,但不
+  // 假设部署环境的编译期配置)之下的保守分块大小,避免单条语句绑的变量
+  // 数超限直接 prepare 失败(呼应 F-40)。
+  constexpr std::size_t kChunkSize = 500;
+  for (std::size_t offset = 0; offset < image_ids.size(); offset += kChunkSize) {
+    std::size_t count = std::min(kChunkSize, image_ids.size() - offset);
+    std::string placeholders;
+    for (std::size_t i = 0; i < count; ++i) {
+      if (i) placeholders += ",";
+      placeholders += "?";
+    }
+    std::string sql =
+        "SELECT image_id FROM image_evaluations WHERE image_id IN (" + placeholders + ");";
+    Stmt stmt(conn, sql.c_str());
+    for (std::size_t i = 0; i < count; ++i) {
+      sqlite3_bind_int64(stmt.get(), static_cast<int>(i) + 1, image_ids[offset + i]);
+    }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+      result.insert(sqlite3_column_int64(stmt.get(), 0));
+    }
+  }
+  return result;
+}
+
 Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, ProjectId id,
                                                              bool prune, bool support_raw,
                                                              ScanProgressFn on_progress) {

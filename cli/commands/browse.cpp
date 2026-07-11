@@ -223,11 +223,10 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
 
-  int unevaluated = 0;
-  for (auto id : resolved.image_ids) {
-    auto info = pzt::core::get_image(id);
-    if (!info || !info->evaluation) ++unevaluated;
-  }
+  // F-07：以前逐张 get_image() 判断评估状态，大项目按一次键就是几百到
+  // 几千次数据库往返。改成一条批量查询，只统计数量。
+  auto evaluated = pzt::core::evaluated_image_ids(resolved.image_ids);
+  int unevaluated = static_cast<int>(resolved.image_ids.size()) - static_cast<int>(evaluated.size());
   if (unevaluated > 0) {
     // 拆两行,跟 tag_menu.cpp 里"是否有序"那个确认同一个先例——见
     // msg_dedup_confirm_unevaluated_line1/2 的说明。
@@ -259,10 +258,11 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
 
+  // F-07：同上，一条批量查询代替逐张 get_image()。
+  auto evaluated = pzt::core::evaluated_image_ids(resolved.image_ids);
   int submitted = 0;
   for (auto id : resolved.image_ids) {
-    auto info = pzt::core::get_image(id);
-    if (info && info->evaluation) continue;  // 已经评估过,跳过
+    if (evaluated.count(id)) continue;  // 已经评估过,跳过
     if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance)) ++submitted;
   }
   return pzt::cli::i18n::msg_ai_eval_submitted(submitted);

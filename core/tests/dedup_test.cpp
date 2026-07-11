@@ -411,7 +411,6 @@ TEST_CASE("find_and_tag_duplicates tags non-keep members and reports a correct s
   REQUIRE(result.ok());
   CHECK(result.value().group_count == 1);
   CHECK(result.value().tagged_count == 1);
-  CHECK(result.value().unevaluated_image_count == 2);
 
   auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
   CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));  // 保留的那张不该被打标签
@@ -466,7 +465,6 @@ TEST_CASE("find_and_tag_duplicates only clears old marks inside the requested sc
   REQUIRE(result.ok());
   CHECK(result.value().group_count == 1);      // 只看到 a,b 这一组
   CHECK(result.value().tagged_count == 1);
-  CHECK(result.value().unevaluated_image_count == 2);  // 只统计 scope 内的
 
   CHECK(has_duplicate_tag(fx.db, fx.images[2], duplicate_tag_id));  // c 在 scope 外,标记原样保留
   CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[3], duplicate_tag_id));  // d 从没被碰过

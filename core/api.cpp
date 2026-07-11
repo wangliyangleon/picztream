@@ -68,6 +68,11 @@ std::optional<ImageInfo> get_image(ImageId image_id) {
   return project::get_image(db, image_id);
 }
 
+std::unordered_set<ImageId> evaluated_image_ids(const std::vector<ImageId>& image_ids) {
+  db::Database db = db::Database::open_default();
+  return project::evaluated_image_ids(db, image_ids);
+}
+
 Result<TagId, CreateTagError> create_tag(ProjectId project_id, const std::string& name,
                                           std::optional<std::int64_t> cap, bool is_ordered) {
   db::Database db = db::Database::open_default();

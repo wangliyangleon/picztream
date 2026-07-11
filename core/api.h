@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/ai/evaluation_worker.h"
@@ -118,6 +119,10 @@ Result<void, ProjectNotFoundError> delete_project(ProjectId id);
 // 按 id 取一张图片的完整信息(含 file_size),供 increment 6.4.2 的信息栏
 // 渲染当前图片的 metadata 用。
 std::optional<ImageInfo> get_image(ImageId image_id);
+
+// F-07：批量版 get_image,只回答"这些图片里哪些已经有评估结果"——一条
+// IN 查询,不是对每张图各开一次连接。见 core/project/project.h 的说明。
+std::unordered_set<ImageId> evaluated_image_ids(const std::vector<ImageId>& image_ids);
 
 Result<TagId, CreateTagError> create_tag(ProjectId project_id, const std::string& name,
                                           std::optional<std::int64_t> cap, bool is_ordered);

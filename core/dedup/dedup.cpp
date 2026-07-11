@@ -238,12 +238,6 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     return Result<DedupSummary, project::ProjectNotFoundError>::Err(project_summary.error());
   }
 
-  int unevaluated_image_count = 0;
-  for (project::ImageId id : image_ids) {
-    auto info = project::get_image(db, id);
-    if (!info || !info->evaluation) ++unevaluated_image_count;
-  }
-
   // 先摘光再重新打：只清 image_ids 这个范围内的旧标记，范围外的图片(比
   // 如全项目扫描之后又单独对某个标签跑了一次)不受影响，见
   // docs/M3_Dedup_PRD.md"重新运行"一节。remove_tag 是幂等的，图片本来
@@ -276,7 +270,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   }
 
   return Result<DedupSummary, project::ProjectNotFoundError>::Ok(
-      DedupSummary{static_cast<int>(groups.size()), tagged_count, unevaluated_image_count});
+      DedupSummary{static_cast<int>(groups.size()), tagged_count});
 }
 
 namespace detail {

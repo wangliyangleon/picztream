@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/ai/evaluation.h"
@@ -99,6 +100,15 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 
 // 给标签模块校验"这张图属于哪个项目"用。
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id);
+
+// F-07：批量查询 image_ids 里哪些已经有评估结果——一条 `WHERE image_id
+// IN (...)` 查询，不是对每张图各调一次 get_image()。`/ai_eval`/`/dedup`
+// 批量命令原来各自逐张 get_image 判断"评估过没有"，大项目(几百到几千
+// 张)按一次键就是几百到几千次数据库往返。按 500 张分块(SQLite 变量
+// 数上限保守值，同时呼应 F-40)，返回值只包含 image_ids 里真的有评估
+// 结果的那些 id，调用方用 `count()` 判断某张图评估过没有。
+std::unordered_set<ImageId> evaluated_image_ids(db::Database& db,
+                                                 const std::vector<ImageId>& image_ids);
 
 struct RescanSummary {
   std::int64_t added_count;

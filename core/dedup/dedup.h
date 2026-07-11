@@ -77,13 +77,15 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
 
 struct DedupSummary {
   int group_count;
-  int tagged_count;             // 被打上 duplicate 标签的图片总数(不含每组里被保留的那一张)
-  int unevaluated_image_count;  // 这次范围内还没跑过选片辅助评估的图片数(不分是否在重复组里)
+  int tagged_count;  // 被打上 duplicate 标签的图片总数(不含每组里被保留的那一张)
 };
 
-// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签：统计未评
-// 估数 -> 清空 image_ids 范围内的旧 duplicate 标记 -> find_duplicates
-// 分组 -> 给每组除 keep_id 外的成员打标签。放在同一个 core/dedup 模块
+// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签：清空
+// image_ids 范围内的旧 duplicate 标记 -> find_duplicates 分组 -> 给每
+// 组除 keep_id 外的成员打标签。"这次范围内有多少张还没评估过"这个统
+// 计不在这里做(F-07：唯一调用方 handle_dedup_command 自己在调用这个
+// 函数之前，用 core::evaluated_image_ids 批量查好了，不需要这个函数
+// 重复统计一遍再塞进 DedupSummary 里却没人读)。放在同一个 core/dedup 模块
 // 里，不是违反"纯算法层"的说法——跟 core/export 的 export_tag(db::
 // Database&, ...) 同一个先例：模块以功能命名(dedup/export)，内部按需
 // 组合其它模块(tagging/project)完成一次完整的用户可见操作，"纯算法层"
