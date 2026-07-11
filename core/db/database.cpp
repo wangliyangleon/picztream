@@ -31,6 +31,15 @@ Database Database::open_at(const std::string& path) {
     throw std::runtime_error("failed to open database at " + path + ": " + message);
   }
 
+  // M3 引入了后台线程(EvaluationWorker)在独立连接上写库,跟主线程/其它
+  // 进程的写操作并发时,SQLite 默认的空 busy handler 会让锁冲突立刻返回
+  // SQLITE_BUSY——core 里所有 DAO 遇到非 SQLITE_DONE 都是 throw,这会让一
+  // 次短暂的锁等待变成一次异常(在 worker 线程里未捕获就是 std::terminate,
+  // 见 F-05 的说明)。给每条打开的连接设置几秒的忙等超时,让 SQLite 自己
+  // 在这个时间窗口内重试,而不是立刻报错——这是 SQLite 官方推荐的多连接
+  // 并发写法,不需要额外的锁或队列。
+  sqlite3_busy_timeout(db, 5000);
+
   initialize_schema(db);
   return Database(db, path);
 }
