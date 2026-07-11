@@ -1093,12 +1093,15 @@ std::string msg_dedup_confirm_unevaluated_line2() {
 }
 
 std::string msg_dedup_result(int group_count, int tagged_count) {
+  // F-11：标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
+  // 示——用户按 g 9 只会看到空列表，反而更困惑。
+  std::string hint = tagged_count > 0 ? (g_lang == Lang::zh ? "，按 g 9 查看" : ", press g 9 to view") : "";
   if (g_lang == Lang::zh) {
     return " 找到 " + std::to_string(group_count) + " 组重复，标记了 " + std::to_string(tagged_count) +
-           " 张 ";
+           " 张" + hint + " ";
   } else {
     return " Found " + std::to_string(group_count) + " duplicate group(s), tagged " +
-           std::to_string(tagged_count) + " image(s) ";
+           std::to_string(tagged_count) + " image(s)" + hint + " ";
   }
 }
 

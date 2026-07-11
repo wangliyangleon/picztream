@@ -56,6 +56,28 @@ TEST_CASE("i18n localized text strings") {
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例
 }
 
+// F-11：dedup 结果文案在实际标记到重复图片时带上"按 g 9 查看"入口提
+// 示；标记数为 0 时不带（范围内没有新重复组，提示了也是空列表）。
+TEST_CASE("msg_dedup_result includes entry hint only when images were tagged") {
+  g_lang = Lang::zh;
+  auto zh_tagged = msg_dedup_result(2, 4);
+  CHECK(zh_tagged.find("2") != std::string::npos);
+  CHECK(zh_tagged.find("4") != std::string::npos);
+  CHECK(zh_tagged.find("g 9") != std::string::npos);
+
+  auto zh_empty = msg_dedup_result(0, 0);
+  CHECK(zh_empty.find("g 9") == std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_tagged = msg_dedup_result(2, 4);
+  CHECK(en_tagged.find("g 9") != std::string::npos);
+
+  auto en_empty = msg_dedup_result(0, 0);
+  CHECK(en_empty.find("g 9") == std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
 // F-05:main() 的异常边界兜底提示——只验证文案本身正确拼接、跟着语言切
 // 换,异常真正被捕获、终端状态被正确还原这件事只能靠真机验证(main()
 // 本身不是单元测试能覆盖的粒度)。
