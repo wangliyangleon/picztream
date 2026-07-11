@@ -115,9 +115,6 @@ Result<void, ProjectNotFoundError> archive_project(ProjectId id);
 // ON DELETE CASCADE. Never touches files on disk.
 Result<void, ProjectNotFoundError> delete_project(ProjectId id);
 
-// 给 cli 调试标签命令把"图片相对路径"翻译成内部 id 用。
-std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::string& relative_path);
-
 // 按 id 取一张图片的完整信息(含 file_size),供 increment 6.4.2 的信息栏
 // 渲染当前图片的 metadata 用。
 std::optional<ImageInfo> get_image(ImageId image_id);

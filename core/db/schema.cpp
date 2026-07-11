@@ -159,18 +159,6 @@ void ensure_column(sqlite3* conn, const char* table, const char* column,
   exec(conn, sql.c_str());
 }
 
-// ensure_column 反过来的写法——`DROP COLUMN` 不像 `ADD COLUMN` 那样"列已
-// 经存在就是安全的重复操作"，列已经不存在时再 DROP 会报错，所以幂等性靠
-// 这个函数自己判断，不是靠 SQL 本身天然幂等。`ALTER TABLE ... DROP
-// COLUMN` 是 SQLite 3.35.0（2021）才有的原生语法，见
-// docs/M3_Eng_Design.md"风险与待确认问题"一节——这个项目实测链接的是
-// macOS 系统 SQLite 3.43.2，够新。
-void ensure_column_dropped(sqlite3* conn, const char* table, const char* column) {
-  if (!column_exists(conn, table, column)) return;
-  std::string sql = std::string("ALTER TABLE ") + table + " DROP COLUMN " + column + ";";
-  exec(conn, sql.c_str());
-}
-
 }  // namespace
 
 void initialize_schema(sqlite3* conn) {
@@ -202,15 +190,15 @@ void initialize_schema(sqlite3* conn) {
   // 在 0（未开启），跟 M0/M1 时代"没有 RAW 概念"的项目语义一致。一旦被
   // 打开过就不会自动关闭，没有对应的取消开关。
   ensure_column(conn, "projects", "support_raw", "support_raw INTEGER NOT NULL DEFAULT 0");
-  // M3 增量一修订：原来"审美评分"用的四列（1-100 综合分+点评）已经被
-  // image_evaluations 表（上面 kCreateImageEvaluations）取代，删掉——这
-  // 几列上的数据都是这一路开发过程里测出来的测试数据，没有需要保留的
-  // 真实用户数据，不写迁移逻辑。见 docs/M3_Eng_Design.md"数据库 Schema
-  // 设计"一节。
-  ensure_column_dropped(conn, "images", "ai_score");
-  ensure_column_dropped(conn, "images", "ai_score_comment");
-  ensure_column_dropped(conn, "images", "ai_score_prompt");
-  ensure_column_dropped(conn, "images", "ai_score_provider");
+  // F-33（曾经在这里）：M3 增量一修订把"审美评分"用的四个旧列（1-100
+  // 综合分+点评）换成了上面的 image_evaluations 表，当时加了
+  // ensure_column_dropped 在每次开库时把旧列清掉。那批列上的数据只是
+  // 开发过程里的测试数据，从来没有真实用户数据要保护——这是一个单用户
+  // 个人工具，唯一的真实数据库(~/.config/pzt/pzt.db)早就在那次改动之
+  // 后打开过、迁移已经跑完，旧列已确认不存在。继续每次开库都跑 4 次
+  // PRAGMA table_info 检查一个已经不可能再发生的迁移是纯粹的浪费，删
+  // 掉这个一次性清理逻辑（连同已经没有其它调用方的 ensure_column_
+  // dropped 辅助函数）。
 }
 
 }  // namespace pzt::core::db

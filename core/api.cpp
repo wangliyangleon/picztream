@@ -63,11 +63,6 @@ Result<void, ProjectNotFoundError> delete_project(ProjectId id) {
   return project::delete_project(db, id);
 }
 
-std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::string& relative_path) {
-  db::Database db = db::Database::open_default();
-  return project::find_image_by_path(db, project_id, relative_path);
-}
-
 std::optional<ImageInfo> get_image(ImageId image_id) {
   db::Database db = db::Database::open_default();
   return project::get_image(db, image_id);

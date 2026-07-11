@@ -20,6 +20,17 @@ std::int64_t now_unix() {
       .count();
 }
 
+// F-32：ensure_default_presets 在每次 list_presets()/list_versions() 门
+// 面调用时都会跑一遍(每次按 `r` 键至少一次)——不检查的话，seed_preset
+// 会在真正需要它之前就先把 make_warm_lut(17) 整个算一遍(17³ 格点、每
+// 个格点几次 sin() 调用)，算完才被 INSERT OR IGNORE 直接扔掉。先查一
+// 遍这个预设名字是不是已经播种过，跳过明显不需要的重新计算。
+bool preset_name_exists(sqlite3* conn, const std::string& name) {
+  Stmt stmt(conn, "SELECT 1 FROM recipes WHERE name = ? AND parent_id IS NULL;");
+  sqlite3_bind_text(stmt.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
+  return sqlite3_step(stmt.get()) == SQLITE_ROW;
+}
+
 // 随手调的暖色偏移，只用来验证"确实在处理颜色"这条路径，不追求调色质
 // 量——公式照抄 spikes/color_lut_probe/probe.cpp 的 make_lut()，真正的预
 // 设调色设计是后续可以随时补充的独立工作，不阻塞这次的机制验证。
@@ -138,8 +149,10 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
 }
 
 void ensure_default_presets(db::Database& db) {
-  seed_origin_preset(db.handle());
-  seed_preset(db.handle(), "Warm", 17, make_warm_lut(17));
+  seed_origin_preset(db.handle());  // 没有 LUT 要算，INSERT OR IGNORE 本身足够便宜，不需要同样的守卫
+  if (!preset_name_exists(db.handle(), "Warm")) {
+    seed_preset(db.handle(), "Warm", 17, make_warm_lut(17));
+  }
 }
 
 Result<RecipeId, CreateVersionError> create_version(db::Database& db, RecipeId preset_id,
