@@ -159,6 +159,51 @@ TEST_CASE("msg_ai_prompt_placeholder mentions /filter usage") {
   g_lang = Lang::zh;  // 还原
 }
 
+// /help：不带参数列出全部命令；带一个已知命令名返回该命令的详细用
+// 法；带一个不认识的命令名返回 nullopt，调用方据此转去
+// err_help_unknown_command。
+TEST_CASE("msg_help_overview lists every command and msg_help_command covers each one") {
+  g_lang = Lang::zh;
+  auto overview = msg_help_overview();
+  for (const char* cmd : {"/ai_eval", "/dedup", "/tasks", "/filter", "/help"}) {
+    CHECK(overview.find(cmd) != std::string::npos);
+  }
+
+  for (const char* cmd : {"ai_eval", "dedup", "tasks", "filter", "help"}) {
+    auto detail = msg_help_command(cmd);
+    REQUIRE(detail.has_value());
+    CHECK(detail->find(std::string("/") + cmd) != std::string::npos);
+  }
+  CHECK(!msg_help_command("bogus").has_value());
+
+  g_lang = Lang::en;
+  REQUIRE(msg_help_command("filter").has_value());
+  CHECK(!msg_help_command("bogus").has_value());
+
+  g_lang = Lang::zh;  // 还原
+}
+
+TEST_CASE("err_help_unknown_command includes the command name and follows language") {
+  g_lang = Lang::zh;
+  CHECK(err_help_unknown_command("bogus").find("bogus") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(err_help_unknown_command("bogus").find("bogus") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// 点 7：`/` 前缀仍然强制要求，但错误提示要指路到 /help。
+TEST_CASE("msg_console_requires_slash points users at /help") {
+  g_lang = Lang::zh;
+  CHECK(msg_console_requires_slash().find("/help") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(msg_console_requires_slash().find("/help") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
 // F-05:main() 的异常边界兜底提示——只验证文案本身正确拼接、跟着语言切
 // 换,异常真正被捕获、终端状态被正确还原这件事只能靠真机验证(main()
 // 本身不是单元测试能覆盖的粒度)。

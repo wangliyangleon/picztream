@@ -391,6 +391,16 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
                                                 const std::string& input, int banner_row, int start_col,
                                                 int content_cols) {
   auto [command, rest] = split_console_command(input);
+  if (command == "help") {
+    if (rest.empty()) {
+      return ConsoleCommandResult{pzt::cli::i18n::msg_help_overview()};
+    }
+    auto detail = pzt::cli::i18n::msg_help_command(rest);
+    if (!detail) {
+      return ConsoleCommandResult{pzt::cli::i18n::err_help_unknown_command(rest)};
+    }
+    return ConsoleCommandResult{*detail};
+  }
   if (command == "dedup") {
     return ConsoleCommandResult{handle_dedup_command(project_id, rest, banner_row, start_col, content_cols)};
   }

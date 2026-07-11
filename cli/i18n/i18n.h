@@ -180,6 +180,13 @@ std::string msg_console_requires_slash();
 // docs/M3_PRD.md"触发入口"一节——不再像最初那样静默忽略。
 std::string msg_ai_unknown_command(const std::string& command);
 
+// `/help`：不带参数列出全部命令名，带参数(命令名不含前导 `/`)显示这个
+// 命令的详细用法。msg_help_command 返回 nullopt 表示这个命令名没有对
+// 应的帮助条目，调用方据此改用 err_help_unknown_command。
+std::string msg_help_overview();
+std::optional<std::string> msg_help_command(const std::string& command);
+std::string err_help_unknown_command(const std::string& command);
+
 // M3：`/dedup`、`/ai_eval` 的标签范围解析共用同一条"标签不存在"文案——
 // 两边的标签范围语法都是 `#标签名`，不需要各自维护一份几乎相同的文案。
 std::string err_console_tag_not_found(const std::string& tag_name);

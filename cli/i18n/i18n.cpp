@@ -910,10 +910,10 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
 std::string msg_ai_prompt_placeholder() {
   if (g_lang == Lang::zh) {
     return "命令必须以 / 开头: /ai_eval [指引] | /ai_eval * | /ai_eval #标签 | /tasks | /dedup * | /dedup "
-           "#标签 | /filter <条件> | /filter clear";
+           "#标签 | /filter <条件> | /filter clear | /help";
   } else {
     return "Commands must start with /: /ai_eval [note] | /ai_eval * | /ai_eval #tag | /tasks | /dedup * "
-           "| /dedup #tag | /filter <criterion> | /filter clear";
+           "| /dedup #tag | /filter <criterion> | /filter clear | /help";
   }
 }
 
@@ -1047,6 +1047,61 @@ std::string msg_ai_unknown_command(const std::string &command) {
   }
 }
 
+std::string msg_help_overview() {
+  if (g_lang == Lang::zh) {
+    return " 可用命令: /ai_eval /dedup /tasks /filter /help —— /help <命令> 查看详情 ";
+  } else {
+    return " Available commands: /ai_eval /dedup /tasks /filter /help — /help <command> for details ";
+  }
+}
+
+std::optional<std::string> msg_help_command(const std::string &command) {
+  if (g_lang == Lang::zh) {
+    if (command == "ai_eval") {
+      return " /ai_eval [指引] 评估当前图片；/ai_eval * [指引] 评估全部；/ai_eval #标签 [指引] 评估该标签范围 ";
+    }
+    if (command == "dedup") {
+      return " /dedup * 或 /dedup #标签：在范围内查找近似重复，非保留项打上\"重复\"标签 ";
+    }
+    if (command == "tasks") {
+      return " /tasks：查看评估队列排队中/处理中的数量 ";
+    }
+    if (command == "filter") {
+      return " /filter unevaluated|fail|reject|dup：在当前视图上再筛一层；/filter clear：清除 ";
+    }
+    if (command == "help") {
+      return " /help [命令名]：不带参数列出全部命令，带参数显示该命令的详细用法 ";
+    }
+    return std::nullopt;
+  } else {
+    if (command == "ai_eval") {
+      return " /ai_eval [note] evaluates the current photo; /ai_eval * [note] the whole project; "
+             "/ai_eval #tag [note] a tag's scope ";
+    }
+    if (command == "dedup") {
+      return " /dedup * or /dedup #tag: find near-duplicates in scope, tag non-keep members Duplicate ";
+    }
+    if (command == "tasks") {
+      return " /tasks: shows how many evaluations are queued/processing ";
+    }
+    if (command == "filter") {
+      return " /filter unevaluated|fail|reject|dup: narrows the current view further; /filter clear resets it ";
+    }
+    if (command == "help") {
+      return " /help [command]: lists all commands, or shows detailed usage for one ";
+    }
+    return std::nullopt;
+  }
+}
+
+std::string err_help_unknown_command(const std::string &command) {
+  if (g_lang == Lang::zh) {
+    return " 没有 '" + command + "' 这个命令的帮助 ";
+  } else {
+    return " No help available for '" + command + "' ";
+  }
+}
+
 std::string err_console_tag_not_found(const std::string &tag_name) {
   if (g_lang == Lang::zh) {
     return " 找不到标签 '" + tag_name + "' ";
@@ -1073,9 +1128,9 @@ std::string err_console_invalid_filter_criterion() {
 
 std::string msg_console_requires_slash() {
   if (g_lang == Lang::zh) {
-    return " 命令必须以 / 开头，例如 /ai_eval ";
+    return " 命令必须以 / 开头，输入 /help 查看命令列表 ";
   } else {
-    return " Commands must start with /, e.g. /ai_eval ";
+    return " Commands must start with /, type /help for a list ";
   }
 }
 
