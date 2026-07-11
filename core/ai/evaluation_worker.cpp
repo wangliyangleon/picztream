@@ -180,7 +180,17 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
   sqlite3_bind_text(stmt.get(), 14, r.comment.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 15, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 16, to_string(req.provider), -1, SQLITE_TRANSIENT);
-  sqlite3_step(stmt.get());
+  // F-17：以前不检查这一步——AI 已经给出结果，但落库失败(磁盘满、库损
+  // 坏)时会静默发生，generation_ 照样 +1 触发一次什么都没变的空重绘，
+  // 用户完全看不到发生了什么。这里不像 recipe.cpp 那些函数一样直接
+  // throw：process_request 跑在后台 jthread 上，未捕获异常会
+  // std::terminate，风险比"结果暂时没存上"这件事本身还大；改成走
+  // F-03 刚建好的 last_failure_ 通道，跟其它失败路径统一。
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld failed to save evaluation result\n",
+                 static_cast<long long>(req.image_id));
+    return EvaluationError::StorageFailed;
+  }
 
   std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld exposure=%d composition=%d focus=%d\n",
                static_cast<long long>(req.image_id), r.exposure.score, r.composition.score,

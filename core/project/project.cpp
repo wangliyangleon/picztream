@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <stdexcept>
 #include <unordered_map>
@@ -319,7 +320,15 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
       sqlite3_reset(update_cache_stmt.get());
       sqlite3_bind_text(update_cache_stmt.get(), 1, cache_path->c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
-      sqlite3_step(update_cache_stmt.get());
+      // F-17：以前不检查这一步——这是主事务提交之后的 best-effort 回写
+      // (呼应上面"单张生成失败也不影响已经成功创建的项目和其它图片的
+      // 记录"的既有设计)，真失败时不该 throw 打断整批扫描(那样反而比
+      // "这张图退化到内嵌预览兜底路径"更糟)，但也不该完全沉默——打一
+      // 行 stderr，至少 --debug 面板能看到。
+      if (sqlite3_step(update_cache_stmt.get()) != SQLITE_DONE) {
+        std::fprintf(stderr, "[pzt project] failed to persist preview cache path for image_id=%lld\n",
+                     static_cast<long long>(image_id));
+      }
     }
   }
 
@@ -558,7 +567,12 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
             sqlite3_reset(backfill_captured_at_stmt.get());
             sqlite3_bind_int64(backfill_captured_at_stmt.get(), 1, *captured_at);
             sqlite3_bind_int64(backfill_captured_at_stmt.get(), 2, existing_id);
-            sqlite3_step(backfill_captured_at_stmt.get());
+            // F-17：同上——best-effort 回填，失败不该打断整个 rescan(下
+            // 一次 rescan 会自然重试)，但不该完全沉默。
+            if (sqlite3_step(backfill_captured_at_stmt.get()) != SQLITE_DONE) {
+              std::fprintf(stderr, "[pzt project] failed to backfill captured_at for image_id=%lld\n",
+                           static_cast<long long>(existing_id));
+            }
           }
         }
         continue;
@@ -701,7 +715,11 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       sqlite3_reset(update_cache_stmt.get());
       sqlite3_bind_text(update_cache_stmt.get(), 1, cache_path->c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
-      sqlite3_step(update_cache_stmt.get());
+      // F-17：同 create_project 里的同一处修复。
+      if (sqlite3_step(update_cache_stmt.get()) != SQLITE_DONE) {
+        std::fprintf(stderr, "[pzt project] failed to persist preview cache path for image_id=%lld\n",
+                     static_cast<long long>(image_id));
+      }
     }
   }
 

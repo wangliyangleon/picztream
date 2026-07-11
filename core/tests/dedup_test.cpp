@@ -418,6 +418,32 @@ TEST_CASE("find_and_tag_duplicates tags non-keep members and reports a correct s
   CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
 }
 
+// F-18：以前不检查 add_tag 的返回值，tagged_count 无条件自增。如果用户
+// 在这个功能之前就手动建过一个带 cap 的同名"重复"标签(ensure_duplicate_
+// tag 会直接复用它，不区分是不是系统创建的，见该函数的说明)，超出 cap
+// 的图实际打不上标签，汇总却照样报"打了 N 张"——这里用 cap=0 制造一个
+// 必然失败的场景，验证 tagged_count 现在如实反映真正打上的数量。
+TEST_CASE("find_and_tag_duplicates only counts images that actually got tagged, not cap conflicts") {
+  auto fx = make_fixture("facade_cap_conflict", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));  // 字节相同,必然判为重复
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+
+  REQUIRE(create_tag(fx.db, fx.project_id, kDuplicateTagName, /*cap=*/0, /*is_ordered=*/false,
+                      /*is_system=*/true)
+              .ok());
+
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(result.ok());
+  CHECK(result.value().group_count == 1);
+  CHECK(result.value().tagged_count == 0);  // add_tag 因 cap=0 必然失败，不该照样报 1
+
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));  // 确实没打上
+}
+
 TEST_CASE("find_and_tag_duplicates only clears old marks inside the requested scope") {
   auto fx = make_fixture("facade_scope", 4);
   auto dir = fs::path(fx.root_path);

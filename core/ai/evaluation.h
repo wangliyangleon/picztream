@@ -19,8 +19,14 @@ namespace pzt::core::ai {
 // request_evaluation 本身可能失败的几种原因（网络/key/解析）合并成同一
 // 个错误类型，方便 EvaluationWorker::LastFailure 统一携带，不需要为
 // "发请求之前" vs "发请求之后"两类失败分别设计上报通道。
+// StorageFailed：F-17 新增，覆盖"AI 已经给出结果，但落库这一步失败"
+// (磁盘满、库损坏这类不该发生的场景)——原来这里的 sqlite3_step 返回值
+// 不检查，失败会静默发生，generation_ 照样 +1 触发一次什么都没变的空
+// 重绘，用户毫无察觉。跟 ImageUnavailable 是不同性质的失败(那个是"请
+// 求都没发出去"，这个是"请求成功了但结果丢了")，值得用不同的原因文
+// 案区分。
 enum class EvaluationError { MissingApiKey, NetworkError, HttpError, ParseError, OutOfRange,
-                              ImageUnavailable };
+                              ImageUnavailable, StorageFailed };
 
 struct DimensionAssessment {
   int score;  // 0-10

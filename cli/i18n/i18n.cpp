@@ -987,6 +987,8 @@ std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
       return g_lang == Lang::zh ? "模型返回的分数超出范围" : "model returned an out-of-range score";
     case pzt::core::EvaluationError::ImageUnavailable:
       return g_lang == Lang::zh ? "图片暂时无法评估" : "image is currently unavailable";
+    case pzt::core::EvaluationError::StorageFailed:
+      return g_lang == Lang::zh ? "结果未能保存" : "failed to save the result";
   }
   return g_lang == Lang::zh ? "未知错误" : "unknown error";  // 不可达，安抚 -Wreturn-type
 }

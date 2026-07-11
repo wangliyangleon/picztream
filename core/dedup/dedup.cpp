@@ -250,7 +250,12 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   // 没打过标签也不算错，不需要先查一遍"这张图有没有这个标签"。
   tagging::TagId duplicate_tag_id = tagging::ensure_duplicate_tag(db, project_id);
   for (project::ImageId id : image_ids) {
-    tagging::remove_tag(db, id, duplicate_tag_id);
+    // F-19：remove_tag 幂等，图片本来没这个标签也算成功(见上面的说
+    // 明)；唯一的失败原因(TagNotFound/ImageNotFound)在这里结构上不会
+    // 发生——tag_id 刚被 ensure_duplicate_tag 确认存在，id 来自调用方
+    // 已经解析好的图片列表。显式 (void) 丢弃，而不是让 [[nodiscard]]
+    // 警告一直挂在这里没人处理。
+    (void)tagging::remove_tag(db, id, duplicate_tag_id);
   }
 
   auto groups = find_duplicates(db, project_summary.value().root_path, image_ids,
@@ -261,8 +266,12 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   for (const auto& group : groups) {
     for (project::ImageId id : group.image_ids) {
       if (id == group.keep_id) continue;
-      tagging::add_tag(db, id, duplicate_tag_id);
-      ++tagged_count;
+      // F-18：以前不检查 add_tag 的返回值，tagged_count 无条件自增。如
+      // 果用户在这个功能之前就手动建过一个带 cap 的同名"重复"标签
+      // (ensure_duplicate_tag 会直接复用它，不区分是不是系统创建的，
+      // 见该函数的说明)，超出 cap 的图实际没打上标签，汇总却照样报"打
+      // 了 N 张"——只在真的打上时才计数。
+      if (tagging::add_tag(db, id, duplicate_tag_id).ok()) ++tagged_count;
     }
   }
 

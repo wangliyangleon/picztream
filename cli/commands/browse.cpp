@@ -856,8 +856,11 @@ int cmd_open(const std::vector<std::string>& args) {
       // 那里重置过,这里直接复用,不重新算一遍。
       if (navigated || style_toggled) {
         // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
-        // 关键一步,没有它,旧 placement 不会自动消失。
-        pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+        // 关键一步,没有它,旧 placement 不会自动消失。失败(比如
+        // WriteFailed)这里不特殊处理——下面马上要写新的 placement 覆盖
+        // 同一个 id,没有比"继续往下走"更好的补救动作,显式 (void) 丢弃
+        // 而不是让 [[nodiscard]] 警告挂着没人处理(F-19)。
+        (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
 
         auto decoded = prefetch.get(current_id);
         if (decoded.ok()) {
@@ -1150,8 +1153,9 @@ int cmd_open(const std::vector<std::string>& args) {
 
     // 退出前显式删掉最后一帧的 placement——AltScreen 切回主屏幕缓冲区、
     // 甚至用户手动跑 `clear`,都清不掉 Kitty 协议画出来的图片,那是叠加在
-    // 文字网格之上的独立层,只有协议自己的 delete 命令能清。
-    pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+    // 文字网格之上的独立层,只有协议自己的 delete 命令能清。程序马上就要
+    // 退出了,这一步失败没有可行的补救动作，显式 (void) 丢弃(F-19)。
+    (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
   }  // AltScreen/CbreakMode 析构,自动还原终端设置
 
   if (latency_count > 0) {

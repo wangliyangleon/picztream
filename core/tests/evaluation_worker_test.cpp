@@ -201,6 +201,43 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
   CHECK(!worker.take_last_failure().has_value());
 }
 
+// F-17：process_request 落库那一步以前不检查 sqlite3_step 的返回值——
+// AI 已经给出结果，但写库失败(磁盘满/库损坏)时会静默发生，generation_
+// 照样 +1 触发一次什么都没变的空重绘。这里用真实的只读文件权限强迫写
+// 入失败(而不是伪造返回码)，验证这条路径现在会被 take_last_failure()
+// 捕获成 StorageFailed，跟其它失败路径统一走 F-03 建的通道，不 throw
+// (process_request 跑在后台 jthread 上，未捕获异常会 std::terminate)。
+TEST_CASE("a DB write failure after a successful AI response is reported as StorageFailed") {
+  Fixture fx("evaluation_worker_storage_failed");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  fs::permissions(fx.db_path, fs::perms::owner_read, fs::perm_options::replace);
+  auto restore_perms = [&] {
+    fs::permissions(fx.db_path, fs::perms::owner_all, fs::perm_options::replace);
+  };
+
+  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+
+  std::uint64_t generation = 0;
+  bool got_result = wait_for_result(worker, generation);
+  restore_perms();  // 不管断言接下来会不会失败，先把权限还原掉，不影响其它测试
+  REQUIRE(got_result);
+
+  auto failure = worker.take_last_failure();
+  REQUIRE(failure.has_value());
+  CHECK(failure->image_id == fx.image_id);
+  CHECK(failure->error == EvaluationError::StorageFailed);
+
+  auto db = Database::open_at(fx.db_path);
+  auto info = get_image(db, fx.image_id);
+  REQUIRE(info.has_value());
+  CHECK(!info->evaluation.has_value());  // 写入真的失败了，没有半成品行落地
+}
+
 TEST_CASE("a failed re-evaluation does not clear a previously successful result") {
   Fixture fx("evaluation_worker_keep_old_on_failure");
   bool succeed = true;

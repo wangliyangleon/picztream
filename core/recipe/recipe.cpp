@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
 
 #include "core/db/stmt.h"
 
@@ -55,7 +56,13 @@ void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
   sqlite3_bind_blob(stmt.get(), 3, lut.data(), static_cast<int>(lut.size() * sizeof(float)),
                      SQLITE_TRANSIENT);
   sqlite3_bind_int64(stmt.get(), 4, now_unix());
-  sqlite3_step(stmt.get());
+  // F-17：`INSERT OR IGNORE` 命中已存在的预设名字时也返回 SQLITE_DONE
+  // (这是幂等播种的正常情形，不是错误)——只有真正的写入失败(磁盘满、
+  // 库损坏)才会拿到别的返回值，跟 project::/tagging:: 现有的"查了就
+  // throw"约定统一。
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("seed preset failed: ") + sqlite3_errmsg(conn));
+  }
 }
 
 // "Origin" 没有 base_lut——它代表"没有基础调色风格，只有亮度/白平衡这
@@ -68,7 +75,9 @@ void seed_origin_preset(sqlite3* conn) {
     VALUES (0, NULL, 'Origin', 1, ?);
   )sql");
   sqlite3_bind_int64(stmt.get(), 1, now_unix());
-  sqlite3_step(stmt.get());
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {  // 同 seed_preset，见上面的说明
+    throw std::runtime_error(std::string("seed origin preset failed: ") + sqlite3_errmsg(conn));
+  }
 }
 
 // increment 2 的三个写操作(create/rename/delete_version)都要先弄清楚一
@@ -160,7 +169,13 @@ Result<RecipeId, CreateVersionError> create_version(db::Database& db, RecipeId p
   sqlite3_bind_double(stmt.get(), 5, params.wb_shift_r);
   sqlite3_bind_double(stmt.get(), 6, params.wb_shift_b);
   sqlite3_bind_int64(stmt.get(), 7, now_unix());
-  sqlite3_step(stmt.get());
+  // F-17：以前不检查这一步，插入真失败(磁盘满等)时 sqlite3_last_insert_
+  // rowid 会返回上一条无关插入的 rowid，把它当成新建的 version id 交还
+  // 给调用方——是一个真实但极少触发的正确性 bug，跟 project::/
+  // tagging:: 现有的"查了就 throw"约定统一，不静默吞掉写入失败。
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("insert version failed: ") + sqlite3_errmsg(conn));
+  }
 
   return Result<RecipeId, CreateVersionError>::Ok(sqlite3_last_insert_rowid(conn));
 }
@@ -175,7 +190,9 @@ Result<void, RecipeOpError> rename_version(db::Database& db, RecipeId version_id
   Stmt stmt(conn, "UPDATE recipes SET name = ? WHERE id = ?;");
   sqlite3_bind_text(stmt.get(), 1, new_name.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_int64(stmt.get(), 2, version_id);
-  sqlite3_step(stmt.get());
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("rename version failed: ") + sqlite3_errmsg(conn));
+  }
   return Result<void, RecipeOpError>::Ok();
 }
 
@@ -188,7 +205,9 @@ Result<void, RecipeOpError> delete_version(db::Database& db, RecipeId version_id
   Stmt stmt(conn, "UPDATE recipes SET deleted_at = ? WHERE id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, now_unix());
   sqlite3_bind_int64(stmt.get(), 2, version_id);
-  sqlite3_step(stmt.get());
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("soft-delete version failed: ") + sqlite3_errmsg(conn));
+  }
   return Result<void, RecipeOpError>::Ok();
 }
 
@@ -212,7 +231,9 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
     sqlite3_bind_null(stmt.get(), 1);
   }
   sqlite3_bind_int64(stmt.get(), 2, image_id);
-  sqlite3_step(stmt.get());
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("set image recipe failed: ") + sqlite3_errmsg(conn));
+  }
   return Result<void, SetImageRecipeError>::Ok();
 }
 
