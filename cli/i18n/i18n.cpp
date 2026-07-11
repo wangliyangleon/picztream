@@ -135,6 +135,14 @@ std::string err_unknown_subcommand(const std::string &subcommand) {
   }
 }
 
+std::string err_internal_error(const std::string &what) {
+  if (g_lang == Lang::zh) {
+    return "pzt: 内部错误: " + what + "\n";
+  } else {
+    return "pzt: internal error: " + what + "\n";
+  }
+}
+
 std::string err_project_not_found(const std::string &cmd,
                                   const std::string &project_name) {
   if (g_lang == Lang::zh) {

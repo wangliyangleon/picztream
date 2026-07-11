@@ -38,6 +38,10 @@ std::string usage_recipe();
 
 // Command errors/status
 std::string err_unknown_subcommand(const std::string& subcommand);
+// 顶层 main() 兜底的异常边界用——core 里任何逃逸的异常(数据库 busy、磁
+// 盘满、库损坏)落到这里,打一句人话再退出,而不是让 uncaught 异常直接
+// terminate(那样 AltScreen/CbreakMode 的析构不会跑,终端会留在坏状态)。
+std::string err_internal_error(const std::string& what);
 std::string err_project_not_found(const std::string& cmd, const std::string& project_name);
 std::string err_new_missing_name();
 std::string err_new_name_exists(const std::string& name);

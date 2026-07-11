@@ -55,3 +55,18 @@ TEST_CASE("i18n localized text strings") {
 
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例
 }
+
+// F-05:main() 的异常边界兜底提示——只验证文案本身正确拼接、跟着语言切
+// 换,异常真正被捕获、终端状态被正确还原这件事只能靠真机验证(main()
+// 本身不是单元测试能覆盖的粒度)。
+TEST_CASE("err_internal_error includes the exception message and follows language") {
+  g_lang = Lang::zh;
+  CHECK(err_internal_error("disk full").find("disk full") != std::string::npos);
+  CHECK(err_internal_error("disk full").find("内部错误") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(err_internal_error("disk full").find("disk full") != std::string::npos);
+  CHECK(err_internal_error("disk full").find("internal error") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
