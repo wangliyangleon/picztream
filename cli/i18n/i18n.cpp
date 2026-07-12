@@ -725,25 +725,31 @@ std::string nav_bar_line2() {
   }
 }
 
-std::string info_filter_label(const std::string &tag_name) {
-  if (g_lang == Lang::zh) {
-    return "  筛选: " + tag_name;
-  } else {
-    return "  Filter: " + tag_name;
+// 反馈:"筛选: X  二级筛选: Y" 这两段标签+前缀太长，`[N/Total]` 后面经
+// 常被截断看不全。改成不带标签、用 " | " 隔开的紧凑写法(比如
+// "Food | fail")——g 层标签名和二级筛选条件各自可能单独出现，也可能
+// 同时出现，用同一个函数统一拼，不在 browse.cpp 里各自处理拼接逻辑。
+std::string info_active_filters_label(const std::optional<std::string> &tag_name,
+                                       const std::optional<std::string> &console_criterion_keyword) {
+  std::vector<std::string> parts;
+  if (tag_name) parts.push_back(*tag_name);
+  if (console_criterion_keyword) {
+    std::string label = *console_criterion_keyword;
+    if (g_lang == Lang::zh) {
+      if (label == "unevaluated") label = "未评估";
+      else if (label == "fail") label = "不达标";
+      else if (label == "reject") label = "废片";
+      else if (label == "dup") label = "重复";
+    }
+    parts.push_back(label);
   }
-}
-
-std::string info_console_filter_label(const std::string &keyword) {
-  if (g_lang == Lang::zh) {
-    std::string label = keyword;
-    if (keyword == "unevaluated") label = "未评估";
-    else if (keyword == "fail") label = "评估不达标";
-    else if (keyword == "reject") label = "废片";
-    else if (keyword == "dup") label = "重复";
-    return "  二级筛选: " + label;
-  } else {
-    return "  Filter2: " + keyword;
+  if (parts.empty()) return "";
+  std::string result = "  ";
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    if (i) result += " | ";
+    result += parts[i];
   }
+  return result;
 }
 
 std::string info_tags_label() {
@@ -1178,6 +1184,23 @@ std::string msg_dedup_confirm_unevaluated_line2() {
   }
 }
 
+std::string msg_quit_confirm_pending_line1(int pending_count) {
+  if (g_lang == Lang::zh) {
+    return " " + std::to_string(pending_count) + " 个评估任务尚未完成，退出会丢失排队中还没开始的部分 ";
+  } else {
+    return " " + std::to_string(pending_count) +
+           " evaluation task(s) still pending, quitting drops the ones not yet started ";
+  }
+}
+
+std::string msg_quit_confirm_pending_line2() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("y", "仍然退出") + " / " + menu_item("其它键", "取消") + " ";
+  } else {
+    return " " + menu_item("y", "Quit anyway") + " / " + menu_item("other keys", "Cancel") + " ";
+  }
+}
+
 std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time) {
   // F-11：标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
   // 示——用户按 g 9 只会看到空列表，反而更困惑。
@@ -1396,16 +1419,21 @@ tag_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool show_
   if (show_duplicate) {
     line += "  " + menu_item("9", duplicate_tag_label());
   }
+  // 反馈:"-"(摘除某个已打的标签)紧挨着第二行的 "d"(删除标签定义)容
+  // 易按错——两者严重程度完全不同,前者只是从这张图摘掉一个标签,后者
+  // 是把整个标签定义连同所有图的关联一起删掉。挪到第一行编号选项的最
+  // 后面,跟"选一个标签"这组操作放在一起,离 d 远一点。
+  line += "  " + menu_item("-", g_lang == Lang::zh ? "摘除" : "Remove");
   return line;
 }
 
 std::string tag_menu_actions_line() {
   if (g_lang == Lang::zh) {
     return " " + menu_item("c", "新建") + "  " + menu_item("d", "删除") + "  " +
-           menu_item("-", "摘除") + "  " + menu_item("Esc", "取消");
+           menu_item("Esc", "取消");
   } else {
     return " " + menu_item("c", "New") + "  " + menu_item("d", "Delete") + "  " +
-           menu_item("-", "Remove") + "  " + menu_item("Esc", "Cancel");
+           menu_item("Esc", "Cancel");
   }
 }
 

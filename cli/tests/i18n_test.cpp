@@ -117,17 +117,48 @@ TEST_CASE("msg_dedup_result mentions skipped-no-capture-time count only when non
   g_lang = Lang::zh;  // 还原
 }
 
-// F-09：控制台二级筛选四个关键字各自映射到对应的中文标签,英文路径原
-// 样透出关键字(不额外维护一份英文词表)。
-TEST_CASE("info_console_filter_label maps each keyword to the agreed vocabulary") {
+// 反馈:退出时如果评估队列里还有任务,提示文案要带上数量,按键提示要
+// 明确"y 才是真的退出"。
+TEST_CASE("msg_quit_confirm_pending includes the pending count and follows language") {
   g_lang = Lang::zh;
-  CHECK(info_console_filter_label("unevaluated").find("未评估") != std::string::npos);
-  CHECK(info_console_filter_label("fail").find("评估不达标") != std::string::npos);
-  CHECK(info_console_filter_label("reject").find("废片") != std::string::npos);
-  CHECK(info_console_filter_label("dup").find("重复") != std::string::npos);
+  CHECK(msg_quit_confirm_pending_line1(3).find("3") != std::string::npos);
+  CHECK(msg_quit_confirm_pending_line2().find("y") != std::string::npos);
 
   g_lang = Lang::en;
-  CHECK(info_console_filter_label("unevaluated").find("unevaluated") != std::string::npos);
+  CHECK(msg_quit_confirm_pending_line1(3).find("3") != std::string::npos);
+  CHECK(msg_quit_confirm_pending_line2().find("y") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// 反馈:标签+前缀太长会被截断,改成不带标签的 "TagName | criterion" 紧
+// 凑写法——控制台二级筛选四个关键字各自映射到对应的中文词,英文路径原
+// 样透出关键字(不额外维护一份英文词表);两层筛选各自可以单独出现,也
+// 可以同时出现;都不生效时返回空串。
+TEST_CASE("info_active_filters_label joins tag name and console criterion compactly") {
+  g_lang = Lang::zh;
+  CHECK(info_active_filters_label(std::nullopt, std::nullopt).empty());
+
+  auto tag_only = info_active_filters_label(std::string("Food"), std::nullopt);
+  CHECK(tag_only.find("Food") != std::string::npos);
+  CHECK(tag_only.find("|") == std::string::npos);  // 只有一段时不出现分隔符
+
+  CHECK(info_active_filters_label(std::nullopt, std::string("unevaluated")).find("未评估") !=
+        std::string::npos);
+  CHECK(info_active_filters_label(std::nullopt, std::string("fail")).find("不达标") !=
+        std::string::npos);
+  CHECK(info_active_filters_label(std::nullopt, std::string("reject")).find("废片") !=
+        std::string::npos);
+  CHECK(info_active_filters_label(std::nullopt, std::string("dup")).find("重复") != std::string::npos);
+
+  auto both = info_active_filters_label(std::string("Food"), std::string("fail"));
+  CHECK(both.find("Food") != std::string::npos);
+  CHECK(both.find("不达标") != std::string::npos);
+  CHECK(both.find(" | ") != std::string::npos);  // 两段同时出现时用竖杠隔开
+
+  g_lang = Lang::en;
+  CHECK(info_active_filters_label(std::nullopt, std::string("unevaluated"))
+            .find("unevaluated") != std::string::npos);
 
   g_lang = Lang::zh;  // 还原
 }

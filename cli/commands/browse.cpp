@@ -212,19 +212,34 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s) {
   return {s.substr(start, space - start), rest_start == std::string::npos ? "" : s.substr(rest_start)};
 }
 
+// ASCII 大小写不敏感比较——只用来判断"这段英文是不是 Reject/Duplicate
+// 的某种大小写拼法"，跟 core::tagging 里 COLLATE NOCASE 是同一个不敏感
+// 范围(只影响 A-Z/a-z，中文不受影响)，这里不复用那条 SQL 路径是因为
+// 比较的是常量字符串，不需要真的去查库。
+bool equals_ascii_case_insensitive(const std::string& a, const std::string& b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+      return false;
+  }
+  return true;
+}
+
 // 系统标签(废片/重复)在数据库里永远存中文名(见 kRejectTagName/
 // kDuplicateTagName 的说明)，但展示层的名字跟着当前 UI 语言走——英文
 // 界面下用户在信息栏/菜单里看到的是"Reject"/"Duplicate"，很自然地会
-// 拿这个词去打 `#Reject`，如果只按存库的中文名精确匹配就会得到"标签
-// 不存在"，语言相关的行为反而成了 bug。这里两种拼法都认，不管当前
-// g_lang 是什么；普通用户自己建的标签不受影响，仍然是精确字符串匹
-// 配，不做任何模糊/大小写处理。
+// 拿这个词去打 `#Reject`(或者 `#REJECT`/`#reject`，跟标签大小写不敏
+// 感是同一个便利性诉求)，如果只按存库的中文名精确匹配就会得到"标签
+// 不存在"，语言相关的行为反而成了 bug。这里两种拼法(含任意大小写)都
+// 认，不管当前 g_lang 是什么；普通用户自己建的标签不受这条特判影响，
+// 仍然走 find_tag_by_name 本身的(大小写不敏感、但不做语言别名)匹配。
 std::optional<pzt::core::TagId> resolve_tag_name_language_independent(pzt::core::ProjectId project_id,
                                                                        const std::string& name) {
-  if (name == pzt::core::tagging::kRejectTagName || name == "Reject") {
+  if (name == pzt::core::tagging::kRejectTagName || equals_ascii_case_insensitive(name, "Reject")) {
     return pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName);
   }
-  if (name == pzt::core::tagging::kDuplicateTagName || name == "Duplicate") {
+  if (name == pzt::core::tagging::kDuplicateTagName ||
+      equals_ascii_case_insensitive(name, "Duplicate")) {
     return pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kDuplicateTagName);
   }
   return pzt::core::find_tag_by_name(project_id, name);
@@ -863,12 +878,13 @@ int cmd_open(const std::vector<std::string>& args) {
         // 的行号计算,切换筛选状态时不会有内容跳动。
         std::string index_line =
             "[" + std::to_string(index + 1) + "/" + std::to_string(images.size()) + "]";
-        if (active_filter_tag_id) index_line += pzt::cli::i18n::info_filter_label(active_filter_tag_name);
-        // F-09：二级筛选标注跟 g 标签筛选各自独立、可以同时出现。
-        if (active_console_filter) {
-          index_line += pzt::cli::i18n::info_console_filter_label(
-              console_filter_criterion_keyword(*active_console_filter));
-        }
+        // 反馈:标签前缀太长容易被截断,改成 "TagName | criterion" 这种
+        // 紧凑写法,两层筛选各自独立、可以同时出现。
+        index_line += pzt::cli::i18n::info_active_filters_label(
+            active_filter_tag_id ? std::optional<std::string>(active_filter_tag_name) : std::nullopt,
+            active_console_filter
+                ? std::optional<std::string>(console_filter_criterion_keyword(*active_console_filter))
+                : std::nullopt);
         emit_line(index_line);
 
         emit_line(current_ref ? current_ref->file_name : "?");
@@ -1218,7 +1234,22 @@ int cmd_open(const std::vector<std::string>& args) {
         continue;
       }
       suppress_latency_log = false;  // 这一轮确实读到了真实按键
-      if (c == 'q') break;
+      if (c == 'q') {
+        // 反馈:队列里还有评估任务时直接退出会静默丢掉还没开始处理的那
+        // 部分(EvaluationWorker 析构只等"已经在处理"的那一个完成，不
+        // 会继续消费 queue_ 里剩下的请求)——加一次确认，给用户反悔的
+        // 机会，跟 /dedup 那个"还有未评估图片"的两行确认同一个先例。
+        auto pending_status = evaluation_worker.queue_status();
+        int pending_count =
+            static_cast<int>(pending_status.queued) + (pending_status.processing ? 1 : 0);
+        if (pending_count > 0) {
+          char confirm = prompt_and_read_key_2line(
+              pzt::cli::i18n::msg_quit_confirm_pending_line1(pending_count),
+              pzt::cli::i18n::msg_quit_confirm_pending_line2(), banner_row, start_col, content_cols);
+          if (confirm != 'y' && confirm != 'Y') continue;  // 取消退出,回到主循环
+        }
+        break;
+      }
 
       if (c == 'h') {
         current_id = pzt::core::prev_image(images, current_id).value_or(current_id);

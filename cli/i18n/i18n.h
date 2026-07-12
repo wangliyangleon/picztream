@@ -124,12 +124,13 @@ std::vector<MenuLine> menu_lines();
 // 二行会一直空着,不好看。
 std::string nav_bar_line1();
 std::string nav_bar_line2();
-std::string info_filter_label(const std::string& tag_name);
-// F-09：控制台 `/filter` 二级筛选生效时的信息栏标注,keyword 是
-// "unevaluated"/"fail"/"reject"/"dup" 之一,跟解析 `/filter <criterion>`
-// 用的是同一套关键字——这个函数不需要认识 cli 内部的 ConsoleFilterCriterion
-// 枚举类型,只接字符串。
-std::string info_console_filter_label(const std::string& keyword);
+// g 层标签筛选/控制台二级筛选各自可能生效，也可能同时生效——统一拼成
+// "TagName | criterion" 这种不带标签前缀的紧凑写法，都不生效时返回空
+// 串。console_criterion_keyword 是 "unevaluated"/"fail"/"reject"/"dup"
+// 之一(跟解析 `/filter <criterion>` 用的是同一套关键字)，这个函数不
+// 需要认识 cli 内部的 ConsoleFilterCriterion 枚举类型，只接字符串。
+std::string info_active_filters_label(const std::optional<std::string>& tag_name,
+                                       const std::optional<std::string>& console_criterion_keyword);
 std::string info_tags_label();
 std::string info_none_label();
 std::string info_size_label(const std::string& size_str);
@@ -202,6 +203,12 @@ std::string err_console_invalid_filter_criterion();
 // 行更稳妥。
 std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count);
 std::string msg_dedup_confirm_unevaluated_line2();
+// 反馈:退出时如果还有评估任务排队/处理中，队列里还没开始处理的部分
+// 会被直接丢弃(EvaluationWorker 析构只等当前正在处理的这一个，不会
+// 继续消费队列剩下的)，静默退出容易让用户以为提交的一批评估都在跑，
+// 其实中途被打断了一部分——加一次确认，给反悔机会。
+std::string msg_quit_confirm_pending_line1(int pending_count);
+std::string msg_quit_confirm_pending_line2();
 // F-08：skipped_no_capture_time 是范围内因为没有拍摄时间(captured_at
 // 为 NULL)完全没参与比较的图片数,>0 时带一句提示,不静默排除。
 std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time);
