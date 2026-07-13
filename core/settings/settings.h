@@ -18,6 +18,13 @@ struct Settings {
   ai::Provider ai_provider = ai::Provider::Gemini;
   int dedup_time_window_seconds = 10;
   int dedup_hash_threshold = 5;
+  // B：curate 分簇用的阈值，独立于 dedup_*、不共用同一份配置（避免"调宽
+  // 了 curate 顺带影响 dedup 标记"这种耦合）。候选集已经排除了"重复"标
+  // 签图，用跟 dedup 相同的阈值重新分簇不会产生任何合并——默认值取
+  // dedup 默认值(10s/5)的 2 倍，是留给真机效果调整的起点，不是精确调出
+  // 来的数字。见 docs/M4_Eng_Design.md 第三节。
+  int curate_time_window_seconds = 20;
+  int curate_hash_threshold = 10;
   // F-26 的批量默认排除策略用的四个开关——true 表示"不排除"(把这类图
   // 片当成正常范围的一部分处理)，false(默认)是当前拍板的行为。
   bool eval_reject = false;

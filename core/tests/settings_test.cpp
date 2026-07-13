@@ -34,6 +34,8 @@ TEST_CASE("load returns all defaults when the config file doesn't exist") {
   CHECK(s.ai_provider == Provider::Gemini);
   CHECK(s.dedup_time_window_seconds == 10);
   CHECK(s.dedup_hash_threshold == 5);
+  CHECK(s.curate_time_window_seconds == 20);
+  CHECK(s.curate_hash_threshold == 10);
   CHECK(s.eval_reject == false);
   CHECK(s.dedup_reject == false);
   CHECK(s.export_reject == false);
@@ -65,6 +67,8 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
     "ai_provider": "claude",
     "dedup_time_window_seconds": 20,
     "dedup_hash_threshold": 8,
+    "curate_time_window_seconds": 30,
+    "curate_hash_threshold": 15,
     "eval_reject": true,
     "dedup_reject": true,
     "export_reject": true,
@@ -79,6 +83,8 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
   CHECK(s.ai_provider == Provider::Claude);
   CHECK(s.dedup_time_window_seconds == 20);
   CHECK(s.dedup_hash_threshold == 8);
+  CHECK(s.curate_time_window_seconds == 30);
+  CHECK(s.curate_hash_threshold == 15);
   CHECK(s.eval_reject == true);
   CHECK(s.dedup_reject == true);
   CHECK(s.export_reject == true);
@@ -98,6 +104,7 @@ TEST_CASE("load falls back per-field on bad types or unrecognized values, others
     "ai_provider": "not-a-real-provider",
     "dedup_time_window_seconds": "twenty",
     "dedup_hash_threshold": 8,
+    "curate_hash_threshold": "ten",
     "eval_reject": "yes"
   })json");
 
@@ -105,6 +112,7 @@ TEST_CASE("load falls back per-field on bad types or unrecognized values, others
   CHECK(s.ai_provider == Provider::Gemini);          // 不认识的供应商名字，回退默认
   CHECK(s.dedup_time_window_seconds == 10);          // 字符串类型不对，回退默认
   CHECK(s.dedup_hash_threshold == 8);                // 这个字段本身合法，正常生效
+  CHECK(s.curate_hash_threshold == 10);              // 字符串类型不对，回退默认
   CHECK(s.eval_reject == false);                     // 字符串类型不对，回退默认
 }
 

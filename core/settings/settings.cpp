@@ -66,6 +66,8 @@ Settings load(const std::string& path) {
   }
   assign_if_present(j, "dedup_time_window_seconds", settings.dedup_time_window_seconds);
   assign_if_present(j, "dedup_hash_threshold", settings.dedup_hash_threshold);
+  assign_if_present(j, "curate_time_window_seconds", settings.curate_time_window_seconds);
+  assign_if_present(j, "curate_hash_threshold", settings.curate_hash_threshold);
   assign_if_present(j, "eval_reject", settings.eval_reject);
   assign_if_present(j, "dedup_reject", settings.dedup_reject);
   assign_if_present(j, "export_reject", settings.export_reject);
