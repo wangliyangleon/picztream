@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+from typing import Any
+
+from .stage import Stage, StageContext
+from .types import (
+    GateState,
+    Plan,
+    PlanDelta,
+    RunState,
+    RunStatus,
+    StageSpec,
+    StageStatus,
+)
+
+
+class Driver:
+    """纯确定性循环：取 Stage -> 查依赖 -> 过闸门 -> 调 Stage.run -> 存状态。
+    挂不挂闸门、超时怎么处理，全部来自 Plan 里已经定好的 StageSpec 参数，
+    Driver 不做任何"决定"，零 LLM。
+    """
+
+    def __init__(self, stages: dict[str, Stage], store, transport: Any = None) -> None:
+        # transport 子增量 C 不使用——真正的 Transport 协议要到子增量 F
+        # 才落地，这里先按 docs/M4_Eng_Design.md 第四节锁定的构造签名占位。
+        self.stages = stages
+        self.store = store
+        self.transport = transport
+
+    def advance(self, run: RunState) -> RunState:
+        if run.status in (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED):
+            return run
+        if run.status == RunStatus.AWAITING_GATE:
+            return run
+
+        next_spec = self._next_pending(run)
+        if next_spec is None:
+            run.status = RunStatus.AWAITING_REVIEW
+            self.store.save(run)
+            return run
+
+        if next_spec.gate != "off" and run.gate_state is None:
+            run.gate_state = GateState(stage_name=next_spec.name, setting=next_spec.gate)
+            run.status = RunStatus.AWAITING_GATE
+            self.store.save(run)
+            return run
+
+        self._run_stage(run, next_spec)
+        run.gate_state = None
+        self.store.save(run)
+        return run
+
+    def resolve_gate(self, run: RunState, decision: str) -> RunState:
+        if run.gate_state is None:
+            raise ValueError("no gate is pending on this run")
+        if decision == "hold":
+            run.gate_state.decision = "hold"
+            run.status = RunStatus.CANCELLED
+            self.store.save(run)
+            return run
+        run.gate_state.decision = "proceed"
+        run.status = RunStatus.RUNNING
+        spec = self._spec_by_name(run, run.gate_state.stage_name)
+        self._run_stage(run, spec)
+        run.gate_state = None
+        self.store.save(run)
+        return run
+
+    def timeout_gate(self, run: RunState) -> RunState:
+        if run.gate_state is None or run.gate_state.setting != "courtesy":
+            raise ValueError("no courtesy gate is pending on this run")
+        spec = self._spec_by_name(run, run.gate_state.stage_name)
+        return self.resolve_gate(run, spec.gate_on_timeout)
+
+    def approve(self, run: RunState) -> RunState:
+        if run.status != RunStatus.AWAITING_REVIEW:
+            raise ValueError("run is not awaiting review")
+        run.status = RunStatus.DONE
+        self.store.save(run)
+        return run
+
+    def cancel(self, run: RunState) -> RunState:
+        run.status = RunStatus.CANCELLED
+        self.store.save(run)
+        return run
+
+    def apply_adjustment(self, run: RunState, delta: PlanDelta) -> RunState:
+        spec = self._spec_by_name(run, delta.stage_name)
+        spec.params.update(delta.params)
+
+        for name in self._downstream_of(run.plan, delta.stage_name):
+            run.stage_states[name] = StageStatus.PENDING
+            run.outputs.pop(name, None)
+
+        run.gate_state = None
+        run.status = RunStatus.RUNNING
+        self.store.save(run)
+        return run
+
+    # -- internal --
+
+    def _next_pending(self, run: RunState) -> StageSpec | None:
+        for spec in run.plan.stages:
+            if run.stage_states.get(spec.name) != StageStatus.PENDING:
+                continue
+            stage = self.stages[spec.name]
+            unmet = [
+                d for d in stage.inputs
+                if run.stage_states.get(d) not in (StageStatus.DONE, StageStatus.SKIPPED)
+            ]
+            if unmet:
+                raise RuntimeError(
+                    f"stage {spec.name!r} is next in Plan order but its inputs {unmet} "
+                    "are not resolved yet -- Plan is not topologically ordered"
+                )
+            return spec
+        return None
+
+    def _spec_by_name(self, run: RunState, name: str) -> StageSpec:
+        for spec in run.plan.stages:
+            if spec.name == name:
+                return spec
+        raise KeyError(name)
+
+    def _run_stage(self, run: RunState, spec: StageSpec) -> None:
+        stage = self.stages[spec.name]
+        run.stage_states[spec.name] = StageStatus.RUNNING
+        ctx = StageContext(run_id=run.run_id, project_id=run.project_id, outputs=run.outputs)
+        output = stage.run(ctx, spec.params)
+        run.outputs[spec.name] = output
+
+        if output.ok:
+            run.stage_states[spec.name] = StageStatus.DONE
+            run.status = RunStatus.RUNNING
+            return
+
+        if stage.criticality == "critical":
+            run.stage_states[spec.name] = StageStatus.FAILED
+            run.status = RunStatus.FAILED
+        else:
+            run.stage_states[spec.name] = StageStatus.SKIPPED
+            run.status = RunStatus.RUNNING
+
+    def _downstream_of(self, plan: Plan, stage_name: str) -> list[str]:
+        names_in_plan = [s.name for s in plan.stages]
+        affected = {stage_name}
+        changed = True
+        while changed:
+            changed = False
+            for name in names_in_plan:
+                if name in affected:
+                    continue
+                stage = self.stages[name]
+                if any(dep in affected for dep in stage.inputs):
+                    affected.add(name)
+                    changed = True
+        return [n for n in names_in_plan if n in affected]
