@@ -4,7 +4,7 @@
 
 这是 M4 **agent 编排骨架的设计规格（design spec）**，2026-07-13 经过一轮结构化 brainstorm 产出。它只回答一件事：**agent 的工作流（编排）长什么样**——有哪些抽象、状态怎么流转、人在哪几处介入、失败/离线怎么恢复、对话怎么驱动状态、怎么测。
 
-**范围边界（重要）**：本 spec **只管工作流**。M4 的其它维度——**本地模型分层设计（Tier 0/1/2）、用例探索、"挑 N 张"的策展算法、与 M3 遗留的交叉、尚未拍板的产品岔路（WhatsApp 官方 vs 非官方、"照片不出机"硬约束、风格是否含几何变换）**——留在 `docs/M4_Brainstorm.md`，本文不重复。后续的 M4 PRD 会把两份综合成"以功能和 actionable item 为主"的需求文档。
+**范围边界（重要）**：本 spec **只管工作流**。M4 的其它维度——**本地模型分层设计（Tier 0/1/2）、用例探索、"挑 N 张"的策展算法、与 M3 遗留的交叉、尚未拍板的产品岔路（"照片不出机"硬约束、风格是否含几何变换、其它 IM 接入）**——留在 `docs/M4_Brainstorm.md`，本文不重复。后续的 M4 PRD 会把两份综合成"以功能和 actionable item 为主"的需求文档。
 
 本 spec 是设计骨架，不是最终 Eng Design；具体 schema、模块划分、命令签名留给对应 Eng Design。
 
@@ -131,7 +131,7 @@ agent/ (Python 编排进程)
 - "平级兄弟"落地为：`agent/` 是 core 公开面的平级消费者，只是独立 Python 进程、经 headless 命令契约消费——依赖单向 `agent → headless cli → core`，core 永不反向、编排概念永不下渗。
 - headless 子命令的形态举例：`pzt tag apply <image> <tag>`、`pzt eval <proj> --scope … --provider {gemini|claude|local} --auto-reject`、`pzt dedup <proj> …`、`pzt curate <proj> …`、`pzt export-images <proj> <images…> <folder>`。按 `image_path` 寻址（`find_image_by_path` 已有）；交互流里藏的"人的决定"（如超 cap 替换哪张）在 headless 侧变成显式策略参数。这些是给已有 `core/api` 套的薄壳，不是重新实现。
 
-**agent/ 内部组件**：Transport 适配器（可插拔，WhatsApp / watch-folder，统一收发接口）、会话路由、驱动器、Stage 实现、意图/调整 composer（LLM）、Run/Plan 状态存储（agent 自己的 SQLite/JSON，按 `run_id` 存、引 core 的 `project_id`，绝不进 core schema）。
+**agent/ 内部组件**：Transport 适配器（可插拔，统一收发接口；v1 = Telegram Bot API，另有 watch-folder 供开发/测试，WhatsApp 等其它 IM 属后续适配器）、会话路由、驱动器、Stage 实现、意图/调整 composer（LLM）、Run/Plan 状态存储（agent 自己的 SQLite/JSON，按 `run_id` 存、引 core 的 `project_id`，绝不进 core schema）。
 
 **模型 provider 边界（划清 core 与 agent 各管哪种 AI）**：
 - **照片分析 AI（打分/去重）= core 的事**：eval 是 core 能力，provider（云/本地）经 headless flag 选；加 `Provider::Local`（指 localhost Ollama）即让 `--provider local` 本地跑，agent 只管传 flag。
@@ -159,7 +159,7 @@ agent/ (Python 编排进程)
 
 ## 九、测试策略
 
-**核心洞察**：本设计的确定性回报在这一节兑现——整套编排能在**没有 Mac Vision、没有 Ollama、没有 WhatsApp、没有云 API、甚至没有真照片**的情况下单元测试。三个注入缝把所有"贵/外部"的挡在外面（延续 M3 到处 `HttpPostFn`/`EvaluationFn`/`DecodeFn` 注入的哲学）：
+**核心洞察**：本设计的确定性回报在这一节兑现——整套编排能在**没有 Mac Vision、没有 Ollama、没有真 IM（Telegram）、没有云 API、甚至没有真照片**的情况下单元测试。三个注入缝把所有"贵/外部"的挡在外面（延续 M3 到处 `HttpPostFn`/`EvaluationFn`/`DecodeFn` 注入的哲学）：
 
 1. **驱动器（最大回报）—— 用假 Stage 测**：喂"假 Stage 计划"（返回预设的成功/失败/部分/跳过），断言：依赖顺序、闸门触发位置、timeout→proceed/hold、按 criticality 降级/中止/暂停、Stage 后持久化、**模拟崩溃重载续跑**、**调整→正确子图作废+重跑**。纯逻辑、无真 core/模型/网络。
 2. **意图→Plan / 调整解析（LLM 步）—— 拆两半**：确定性校验护栏（纯逻辑，重点硬测）；LLM 解析本身用注入**假 LLM 响应**（复用 M3 的 `HttpPostFn` 缝）测映射逻辑 + 离线 **eval 集**（真实人话 → 期望 Plan 形状，偶尔跑真模型抓 prompt 回归、人工过、不进快测）。
@@ -167,7 +167,7 @@ agent/ (Python 编排进程)
 4. **整条对话流 —— 假传输 + 假 Stage 端到端**：喂**内存假传输**，脚本化整条"用户发图 + 意图 → plan → 闸门 → 回应 → 交付"，**整套骨架、零外部依赖**；含幂等/续跑测（各边界崩溃重载不双跑、**Deliver 不重发**）。
 5. **v0 watch-folder 兼作真端到端**：本就是"监听文件夹 + 真 `pzt` 子命令 + 真评估"，天然一条真集成测。慢，跑得少。
 
-**分层归属**：core 保持自己的 C++ 单测（不动）+ headless 子命令加薄 CLI smoke；agent（Python）一套 pytest（驱动器/校验/包装/对话流/续跑）；LLM prompt 质量单独离线 eval 集人工过；传输适配器（WhatsApp）本身按项目惯例走真机手动验证（像 cli 的 pty 验证），后面一切被注入缝挡住、可单测。
+**分层归属**：core 保持自己的 C++ 单测（不动）+ headless 子命令加薄 CLI smoke；agent（Python）一套 pytest（驱动器/校验/包装/对话流/续跑）；LLM prompt 质量单独离线 eval 集人工过；传输适配器（Telegram）本身按项目惯例走真机手动验证（像 cli 的 pty 验证），后面一切被注入缝挡住、可单测。
 
 ## 十、本 spec 之外的依赖与遗留（供后续 PRD / Eng Design 接手）
 
@@ -178,4 +178,4 @@ agent/ (Python 编排进程)
 - **`Provider::Local`（core/ai）**：让 `pzt eval --provider local` 走本地 Ollama，本地模型分层设计见 `docs/M4_Brainstorm.md` 第五节。
 - **headless 命令面**：给现有 `core/api` 补一批非交互 `pzt` 子命令（形态 B 的边界）。
 - **agent 侧 Run/Plan 状态存储**：agent 自有持久化，独立于 core schema。
-- **传输接入**（WhatsApp 官方 vs 非官方、控制/像素通道、文件 vs 照片）：产品岔路见 `docs/M4_Brainstorm.md` 第四节。
+- **传输接入**：v1 已定 = Telegram 官方 Bot API（见 `docs/M4_PRD.md`）；WhatsApp 等其它 IM 作为后续可插拔适配器。控制/像素同通道、文件 vs 照片的思路沿用。
