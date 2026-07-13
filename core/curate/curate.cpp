@@ -49,31 +49,28 @@ std::vector<project::ImageId> resolve_candidates(db::Database& db, project::Proj
   return candidates;
 }
 
-struct Cluster {
-  project::ImageId rep;
-  std::vector<project::ImageId> members;
-};
-
 // 分簇：复用 dedup::find_duplicates 现场重新分簇(不是读历史分组，候选
 // 集已经排除了"重复"标签图，没有旧状态可读，见
 // docs/M4_Eng_Design.md 第三节)。候选里没有出现在任何 DuplicateGroup
 // 里的(包括所有没有 captured_at 的图，find_duplicates 内部会跳过它
-// 们)，各自单独成一簇。
-std::vector<Cluster> build_clusters(db::Database& db, const std::string& root_path,
-                                     const std::vector<project::ImageId>& candidates,
-                                     int time_window_seconds, int hash_threshold) {
+// 们)，各自单独成一簇。只需要每簇的代表 id——簇的非代表成员不会进入
+// 最终选择(见下面 curate() 里"簇数 < N 不回填同簇候选"的说明)，不用
+// 保留完整 membership。
+std::vector<project::ImageId> build_cluster_reps(db::Database& db, const std::string& root_path,
+                                                   const std::vector<project::ImageId>& candidates,
+                                                   int time_window_seconds, int hash_threshold) {
   auto groups = dedup::find_duplicates(db, root_path, candidates, time_window_seconds, hash_threshold);
 
   std::unordered_set<project::ImageId> grouped;
-  std::vector<Cluster> clusters;
+  std::vector<project::ImageId> reps;
   for (auto& g : groups) {
     for (auto id : g.image_ids) grouped.insert(id);
-    clusters.push_back(Cluster{g.keep_id, g.image_ids});
+    reps.push_back(g.keep_id);
   }
   for (auto id : candidates) {
-    if (!grouped.count(id)) clusters.push_back(Cluster{id, {id}});
+    if (!grouped.count(id)) reps.push_back(id);
   }
-  return clusters;
+  return reps;
 }
 
 struct RepInfo {
@@ -153,25 +150,29 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
   // 验证过存在，这里不会失败——跟 core/api.cpp 其它门面对已验证 project_id
   // 的处理一致，不再二次判空。
   auto project_summary = project::open_project(db, project_id);
-  auto clusters = build_clusters(db, project_summary.value().root_path, candidates,
-                                  time_window_seconds, hash_threshold);
+  auto cluster_reps = build_cluster_reps(db, project_summary.value().root_path, candidates,
+                                          time_window_seconds, hash_threshold);
 
   std::vector<RepInfo> selected_info;
   std::vector<project::ImageId> selected;
 
-  if (static_cast<int>(clusters.size()) >= count) {
+  if (static_cast<int>(cluster_reps.size()) >= count) {
     std::vector<RepInfo> pool;
-    for (auto& c : clusters) pool.push_back(make_rep_info(db, c.rep));
+    for (auto id : cluster_reps) pool.push_back(make_rep_info(db, id));
     for (int i = 0; i < count && !pool.empty(); ++i) {
       auto picked = greedy_pick(pool, selected_info);
       selected.push_back(picked.id);
       selected_info.push_back(picked);
     }
   } else {
-    // phase 1：每簇一张代表，全部先选入，按 score desc/captured_at
-    // desc/id asc 排序决定入选顺序。
+    // 簇数 < N：只返回每簇一张代表，不回填同簇的非代表成员——同簇成员
+    // 本来就是 build_cluster_reps 判定过的"近似重复"，回填会让最终结
+    // 果里出现彼此近重复的图，违背 curate 存在的多样性目的(真机验证时
+    // 发现的问题：只有 1-2 张候选、互相近似的场景下，回填会把这批近重
+    // 复图凑数塞进 N 张里)。宁可 returned < requested，也不用近重复凑
+    // 数——不足的部分如实反映在 returned 里，不报错(算法设计第 5 条)。
     std::vector<RepInfo> reps;
-    for (auto& c : clusters) reps.push_back(make_rep_info(db, c.rep));
+    for (auto id : cluster_reps) reps.push_back(make_rep_info(db, id));
     std::sort(reps.begin(), reps.end(), [](const RepInfo& a, const RepInfo& b) {
       if (a.score != b.score) return a.score > b.score;
       auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
@@ -182,23 +183,6 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
     for (auto& r : reps) {
       selected.push_back(r.id);
       selected_info.push_back(r);
-    }
-
-    // phase 2：剩余名额从各簇非代表成员按 score 贪心补齐。
-    int remaining = count - static_cast<int>(clusters.size());
-    if (remaining > 0) {
-      std::vector<RepInfo> backfill_pool;
-      for (auto& c : clusters) {
-        for (auto id : c.members) {
-          if (id == c.rep) continue;
-          backfill_pool.push_back(make_rep_info(db, id));
-        }
-      }
-      for (int i = 0; i < remaining && !backfill_pool.empty(); ++i) {
-        auto picked = greedy_pick(backfill_pool, selected_info);
-        selected.push_back(picked.id);
-        selected_info.push_back(picked);
-      }
     }
   }
 

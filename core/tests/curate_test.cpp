@@ -213,11 +213,12 @@ TEST_CASE("curate greedy tie-break spreads selection across captured_at when sco
   CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[1]});
 }
 
-TEST_CASE("curate backfills from non-representative cluster members when clusters < N") {
-  // 一簇 3 张(a 代表分最高，b 次之，c 最低)，全部落进同一个候选池，
-  // count=2 > 簇数=1：phase1 先选代表 a；phase2 从簇内非代表{b,c}里按分
-  // 数补 1 个名额 -> b。
-  auto fx = make_fixture("backfill", 3);
+TEST_CASE("curate does not backfill from non-representative cluster members when clusters < N") {
+  // 一簇 3 张(a 代表分最高，b/c 是它的近重复)，全部落进同一个候选池，
+  // count=2 > 簇数=1：只返回代表 a，不从簇内非代表{b,c}里回填凑数——
+  // 回填会让结果里出现彼此近重复的图，违背多样性目的(真机验证发现的
+  // 问题，见 curate.cpp 里的说明)。returned(1) < requested(2)，不报错。
+  auto fx = make_fixture("no_backfill", 3);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
   REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
@@ -228,5 +229,27 @@ TEST_CASE("curate backfills from non-representative cluster members when cluster
   insert_evaluation(fx.db, fx.images[2], 6, 6, 6);  // c
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[1]});
+  CHECK(result.requested == 2);
+  CHECK(result.returned == 1);
+  CHECK(result.selected == std::vector<ImageId>{fx.images[0]});
+}
+
+TEST_CASE("curate returns one representative per cluster across multiple clusters when clusters < N") {
+  // 两簇：{a,b}(a 代表，分 9) 和 {c}(独立簇，分 7)，count=3 > 簇数=2。
+  // 只返回两个代表，不回填 b。
+  auto fx = make_fixture("multi_cluster_shortfall", 3);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 120));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1005);    // 跟 a 同簇
+  set_captured_at(fx.db, fx.images[2], 100000);  // 独立簇
+  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);
+  insert_evaluation(fx.db, fx.images[1], 5, 5, 5);
+  insert_evaluation(fx.db, fx.images[2], 7, 7, 7);
+
+  auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);
+  CHECK(result.returned == 2);
+  CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[2]});
 }
