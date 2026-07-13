@@ -42,7 +42,7 @@ agent/           (新增，Python 包，独立 venv)
 
 | 子命令 | 映射 core | 关键参数 / 输出 |
 |---|---|---|
-| `pzt new <name> <folder>` | `create_project` | 已有；输出加 `--json`（project_id / 图片数） |
+| `pzt new <name> <folder>` | `create_project` | 已有；输出加 `--json`（project 名 / 图片数）——跟其它 headless 命令一致按项目名寻址，不返回内存态的 `project_id`（同一个理由见 `find_image_by_path`：名字/路径对人和脚本都比数据库内部 id 稳定） |
 | `pzt images <proj> --json` | `list_images` + `get_image` | 列出图片：path / 是否已评估 / passes_gate / 标签。agent 读状态用（复用 `evaluated_image_ids` 批量查，避免 N+1） |
 | `pzt eval <proj> --scope <*|#tag> --provider <gemini\|claude> [--auto-reject] --json` | `EvaluationWorker` 批量 | `--auto-reject`（策略参数，agent 默认传）：不达标即 `add_tag(reject)`，**显式传参、不读也不改 `Settings.auto_ai_reject`**（物理隔离，PRD P6）。同步跑完（批处理场景不需要异步 worker 的非阻塞语义，直接顺序评估+等待）；输出每张 结果/跳过/失败 |
 | `pzt dedup <proj> --scope <*|#tag> --json` | `find_and_tag_duplicates` | 时间窗/阈值读 `Settings`（M3 F-08 已支持）；输出组数/标记数/skipped_no_capture_time |

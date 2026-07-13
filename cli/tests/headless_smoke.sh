@@ -183,6 +183,23 @@ assert_nonzero_exit_with_error "eval: unknown provider fails with JSON error" \
 assert_nonzero_exit_with_error "eval: unknown tag scope fails with JSON error" \
   "$PZT" eval smoke --scope '#不存在的标签' --provider gemini --json
 
+# --- pzt new --json ---
+PHOTOS2="$WORKDIR/photos2"
+mkdir -p "$PHOTOS2"
+printf 'x%.0s' {1..30} > "$PHOTOS2/d.jpg"
+printf 'x%.0s' {1..30} > "$PHOTOS2/e.jpg"
+out="$("$PZT" new smoke2 "$PHOTOS2" --json)"
+assert_json_has "$out" "j['project'] == 'smoke2'" "new --json: echoes back the project name"
+assert_json_has "$out" "j['image_count'] == 2" "new --json: reports the scanned image count"
+
+assert_nonzero_exit_with_error "new --json: duplicate project name fails with JSON error" \
+  "$PZT" new smoke2 "$PHOTOS2" --json
+
+EMPTY="$WORKDIR/empty_folder"
+mkdir -p "$EMPTY"
+assert_nonzero_exit_with_error "new --json: empty folder fails with JSON error" \
+  "$PZT" new smoke3 "$EMPTY" --json
+
 echo ""
 echo "== headless smoke: $pass_count passed, $fail_count failed =="
 if [ "$fail_count" -ne 0 ]; then

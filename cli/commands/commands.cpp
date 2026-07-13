@@ -472,10 +472,15 @@ int cmd_new(const std::vector<std::string>& args) {
   // 出现在 usage_main() 里，但正常生效。不管它出现在 name 后面第几个位
   // 置，摘出来之后剩下的第一个位置参数才是 folder_path。
   bool support_raw = false;
+  // M4：headless ingest 用，见下面 json 分支——跟 --support-raw 同样的
+  // flag 摘取方式，不占位置参数。
+  bool json = false;
   std::vector<std::string> positional;
   for (std::size_t i = 1; i < args.size(); ++i) {
     if (args[i] == "--support-raw") {
       support_raw = true;
+    } else if (args[i] == "--json") {
+      json = true;
     } else if (args[i].rfind("--", 0) == 0) {
       // F-06：`--` 开头但不认识的参数(比如拼错的 --supportraw)不能静默
       // 落进 positional、被当成 folder_path——那样扫描目标会变成一个不
@@ -490,8 +495,19 @@ int cmd_new(const std::vector<std::string>& args) {
   std::string folder_path =
       !positional.empty() ? positional[0] : std::filesystem::current_path().string();
 
-  auto result = pzt::core::create_project(name, folder_path, support_raw, print_scan_progress);
+  // --json 模式下 stdout 只能有一个 JSON 对象(headless 契约)——扫描进
+  // 度这条 \r 覆盖写的人读文案不能掺进去，这里传 nullptr 直接不打。
+  auto result = pzt::core::create_project(name, folder_path, support_raw,
+                                           json ? pzt::core::ScanProgressFn(nullptr) : print_scan_progress);
   if (!result.ok()) {
+    if (json) {
+      switch (result.error()) {
+        case pzt::core::CreateProjectError::NameAlreadyExists:
+          return emit_json_error("name_exists", "project name already exists: " + name);
+        case pzt::core::CreateProjectError::NoImagesFound:
+          return emit_json_error("no_images_found", "no images found in folder: " + folder_path);
+      }
+    }
     switch (result.error()) {
       case pzt::core::CreateProjectError::NameAlreadyExists:
         std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_name_exists(name).c_str());
@@ -513,9 +529,17 @@ int cmd_new(const std::vector<std::string>& args) {
   // CLI invocation, not a hot path.
   for (const auto& p : pzt::core::list_projects()) {
     if (p.id == result.value()) {
+      if (json) {
+        emit_json({{"project", p.name}, {"image_count", p.image_count}});
+        return 0;
+      }
       std::printf("%s", pzt::cli::i18n::msg_project_created(p.name, p.root_path, p.image_count).c_str());
       return maybe_open_after_new(p.name);
     }
+  }
+  if (json) {
+    emit_json({{"project", name}, {"image_count", 0}});
+    return 0;
   }
   std::printf("%s", pzt::cli::i18n::msg_project_created_simple(name).c_str());
   return maybe_open_after_new(name);
