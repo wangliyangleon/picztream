@@ -2,9 +2,7 @@
 
 #include <chrono>
 #include <condition_variable>
-#include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -81,45 +79,6 @@ EvaluationResult make_passing_evaluation_result() {
   };
 }
 
-// Settings.auto_ai_reject 从 XDG_CONFIG_HOME/pzt/config.json 里读，不是
-// 构造函数参数——测试要临时接管这个环境变量，写一份只含这一个字段的
-// 配置文件，用完恢复原值，不泄漏给同一进程里跑的其它测试用例。
-class ScopedAutoAiRejectConfig {
- public:
-  explicit ScopedAutoAiRejectConfig(bool enabled) {
-    const char* old = std::getenv("XDG_CONFIG_HOME");
-    if (old) {
-      had_old_ = true;
-      old_value_ = old;
-    }
-
-    dir_ = (fs::temp_directory_path() / "pzt_test" / "evaluation_worker_auto_reject_xdg").string();
-    fs::remove_all(dir_);
-    fs::create_directories(fs::path(dir_) / "pzt");
-    std::ofstream f(fs::path(dir_) / "pzt" / "config.json");
-    f << "{\"auto_ai_reject\": " << (enabled ? "true" : "false") << "}";
-    f.close();
-
-    setenv("XDG_CONFIG_HOME", dir_.c_str(), 1);
-  }
-
-  ~ScopedAutoAiRejectConfig() {
-    if (had_old_) {
-      setenv("XDG_CONFIG_HOME", old_value_.c_str(), 1);
-    } else {
-      unsetenv("XDG_CONFIG_HOME");
-    }
-  }
-
-  ScopedAutoAiRejectConfig(const ScopedAutoAiRejectConfig&) = delete;
-  ScopedAutoAiRejectConfig& operator=(const ScopedAutoAiRejectConfig&) = delete;
-
- private:
-  std::string dir_;
-  bool had_old_ = false;
-  std::string old_value_;
-};
-
 bool has_reject_tag(Database& db, ImageId id) {
   for (const auto& t : tagging::tags_for_image(db, id)) {
     if (t.name == tagging::kRejectTagName) return true;
@@ -166,9 +125,9 @@ TEST_CASE("request rejects a duplicate for the same image while one is in flight
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, "") == true);
-  CHECK(worker.request(fx.image_id, Provider::Claude, "") == false);
-  CHECK(worker.request(fx.image_id + 1, Provider::Claude, "") == true);
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false) == true);
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false) == false);
+  CHECK(worker.request(fx.image_id + 1, Provider::Claude, "", false) == true);
 }
 
 TEST_CASE("a successful request writes all fields, extra_guidance is the raw guidance text") {
@@ -179,7 +138,7 @@ TEST_CASE("a successful request writes all fields, extra_guidance is the raw gui
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Gemini, "focus on the crop"));
+  CHECK(worker.request(fx.image_id, Provider::Gemini, "focus on the crop", false));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -202,7 +161,7 @@ TEST_CASE("a successful request writes all fields, extra_guidance is the raw gui
   CHECK(eval.provider == "gemini");
 
   CHECK(!worker.has_pending());
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));  // 完成后去重状态清除，可以再请求
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));  // 完成后去重状态清除，可以再请求
 }
 
 TEST_CASE("a failed request leaves no evaluation row") {
@@ -213,7 +172,7 @@ TEST_CASE("a failed request leaves no evaluation row") {
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -236,7 +195,7 @@ TEST_CASE("a failed request is recorded in take_last_failure, consumed exactly o
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -257,7 +216,7 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -265,11 +224,11 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
   CHECK(!worker.take_last_failure().has_value());
 }
 
-// Settings.auto_ai_reject：评估不达标(passes_gate() == false)且开关打
-// 开时，process_request 落库之后应该自动给这张图打上"废片"系统标签,
-// 不需要用户手动再过一遍 fail 的图。
-TEST_CASE("auto_ai_reject tags a failing evaluation with the reject tag when enabled") {
-  ScopedAutoAiRejectConfig cfg(/*enabled=*/true);
+// auto_reject 现在是 request() 的显式参数，不再从 Settings.auto_ai_reject
+// 读取——process_request 不知道调用方是交互路径还是 agent，物理隔离见
+// docs/M4_PRD.md P6。评估不达标(passes_gate() == false)且 auto_reject=true
+// 时，process_request 落库之后应该自动给这张图打上"废片"系统标签。
+TEST_CASE("auto_reject tags a failing evaluation with the reject tag when true") {
   Fixture fx("evaluation_worker_auto_reject_fail");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
                              Provider) -> Result<EvaluationResult, EvaluationError> {
@@ -277,7 +236,7 @@ TEST_CASE("auto_ai_reject tags a failing evaluation with the reject tag when ena
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", /*auto_reject=*/true));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -286,9 +245,8 @@ TEST_CASE("auto_ai_reject tags a failing evaluation with the reject tag when ena
   CHECK(has_reject_tag(db, fx.image_id));
 }
 
-// 同样开着 auto_ai_reject，但这次评估达标——不该被自动打上废片。
-TEST_CASE("auto_ai_reject does not tag a passing evaluation") {
-  ScopedAutoAiRejectConfig cfg(/*enabled=*/true);
+// 同样 auto_reject=true，但这次评估达标——不该被自动打上废片。
+TEST_CASE("auto_reject does not tag a passing evaluation") {
   Fixture fx("evaluation_worker_auto_reject_pass");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
                              Provider) -> Result<EvaluationResult, EvaluationError> {
@@ -296,7 +254,7 @@ TEST_CASE("auto_ai_reject does not tag a passing evaluation") {
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", /*auto_reject=*/true));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -305,10 +263,9 @@ TEST_CASE("auto_ai_reject does not tag a passing evaluation") {
   CHECK(!has_reject_tag(db, fx.image_id));
 }
 
-// 默认(没有配置文件/auto_ai_reject=false)不自动打标签，即便评估不达
-// 标——这是现有行为的回归防护，上面所有其它测试用例都隐式依赖这一点。
-TEST_CASE("auto_ai_reject leaves failing evaluations untagged when disabled") {
-  ScopedAutoAiRejectConfig cfg(/*enabled=*/false);
+// 默认(auto_reject=false)不自动打标签，即便评估不达标——这是现有行为的
+// 回归防护，上面绝大多数其它测试用例都隐式依赖这一点。
+TEST_CASE("auto_reject leaves failing evaluations untagged when false") {
   Fixture fx("evaluation_worker_auto_reject_disabled");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
                              Provider) -> Result<EvaluationResult, EvaluationError> {
@@ -316,7 +273,7 @@ TEST_CASE("auto_ai_reject leaves failing evaluations untagged when disabled") {
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", /*auto_reject=*/false));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
@@ -344,7 +301,7 @@ TEST_CASE("a DB write failure after a successful AI response is reported as Stor
     fs::permissions(fx.db_path, fs::perms::owner_all, fs::perm_options::replace);
   };
 
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
 
   std::uint64_t generation = 0;
   bool got_result = wait_for_result(worker, generation);
@@ -373,11 +330,11 @@ TEST_CASE("a failed re-evaluation does not clear a previously successful result"
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
   std::uint64_t generation = 0;
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
   REQUIRE(wait_for_result(worker, generation));
 
   succeed = false;
-  CHECK(worker.request(fx.image_id, Provider::Claude, "retry"));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "retry", false));
   REQUIRE(wait_for_result(worker, generation));
 
   auto db = Database::open_at(fx.db_path);
@@ -399,11 +356,11 @@ TEST_CASE("re-evaluating an image overwrites the previous result") {
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
   std::uint64_t generation = 0;
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
   REQUIRE(wait_for_result(worker, generation));
 
   score = 2;
-  CHECK(worker.request(fx.image_id, Provider::Claude, ""));
+  CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
   REQUIRE(wait_for_result(worker, generation));
 
   auto db = Database::open_at(fx.db_path);
@@ -455,7 +412,7 @@ TEST_CASE("queue_status reflects idle, processing-alone, and processing-with-bac
   CHECK(idle.queued == 0);
   CHECK(idle.processing == false);
 
-  CHECK(worker.request(*id_a, Provider::Claude, ""));
+  CHECK(worker.request(*id_a, Provider::Claude, "", false));
   {
     std::unique_lock<std::mutex> lock(block_mu);
     block_cv.wait(lock, [&] { return entered_processing; });
@@ -464,8 +421,8 @@ TEST_CASE("queue_status reflects idle, processing-alone, and processing-with-bac
   CHECK(processing_alone.queued == 0);
   CHECK(processing_alone.processing == true);
 
-  CHECK(worker.request(*id_b, Provider::Claude, ""));
-  CHECK(worker.request(*id_c, Provider::Claude, ""));
+  CHECK(worker.request(*id_b, Provider::Claude, "", false));
+  CHECK(worker.request(*id_c, Provider::Claude, "", false));
   auto with_backlog = worker.queue_status();
   CHECK(with_backlog.queued == 2);
   CHECK(with_backlog.processing == true);
@@ -499,7 +456,7 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   };
   EvaluationWorker worker(db_path, fake_evaluation);
 
-  CHECK(worker.request(999999, Provider::Claude, ""));
+  CHECK(worker.request(999999, Provider::Claude, "", false));
 
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));

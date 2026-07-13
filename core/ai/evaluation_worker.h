@@ -40,7 +40,14 @@ class EvaluationWorker {
 
   // 提交一个评估请求，立即返回，不阻塞。同一张图已经有请求在排队/处理
   // 中时返回 false（去重——调用方据此提示"正在处理"，不是报错）。
-  bool request(project::ImageId image_id, Provider provider, const std::string& extra_guidance);
+  // auto_reject 是显式参数，不是从 Settings.auto_ai_reject 读——
+  // process_request 本身不知道、也不该知道调用方是交互路径还是 agent，
+  // 见 docs/M4_PRD.md P6"物理隔离"：agent 触发时可以比人工更激进（评估
+  // 不达标直接打废片），交互路径的默认设置完全不受影响。调用方（
+  // browse.cpp）自己决定传什么值——交互路径传
+  // load_settings().auto_ai_reject，行为跟以前一样。
+  bool request(project::ImageId image_id, Provider provider, const std::string& extra_guidance,
+               bool auto_reject);
 
   // 有没有请求正在排队或者处理中——跟 request() 的去重判断是两回事，这个
   // 是给"要不要显示一个全局的处理中提示"这类场景用的。
@@ -84,6 +91,7 @@ class EvaluationWorker {
     project::ImageId image_id;
     Provider provider;
     std::string extra_guidance;
+    bool auto_reject;
   };
 
   void worker_loop(std::stop_token stop);

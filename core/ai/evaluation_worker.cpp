@@ -5,7 +5,6 @@
 
 #include "core/api.h"
 #include "core/db/stmt.h"
-#include "core/settings/settings.h"
 #include "core/tagging/tagging.h"
 
 namespace pzt::core::ai {
@@ -27,11 +26,11 @@ EvaluationWorker::EvaluationWorker(std::string db_path, EvaluationFn evaluation_
 EvaluationWorker::~EvaluationWorker() = default;
 
 bool EvaluationWorker::request(project::ImageId image_id, Provider provider,
-                                const std::string& extra_guidance) {
+                                const std::string& extra_guidance, bool auto_reject) {
   std::unique_lock<std::mutex> lock(mu_);
   if (in_flight_.count(image_id)) return false;
   in_flight_.insert(image_id);
-  queue_.push_back(PendingRequest{image_id, provider, extra_guidance});
+  queue_.push_back(PendingRequest{image_id, provider, extra_guidance, auto_reject});
   lock.unlock();
   cv_.notify_all();
   return true;
@@ -194,12 +193,13 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
     return EvaluationError::StorageFailed;
   }
 
-  // Settings.auto_ai_reject：结果已经落库之后再判断达标与否，走 passes_gate
-  // 复用同一份判定，不在这里重算一遍三项阈值比较。只在不达标时打标
-  // 签，不做反向摘除(见 core/settings/settings.h 里的说明)——这里用
-  // 已经打开的 db 连接直接调 tagging:: 里的函数，不经过 core/api.h 门
-  // 面(那边会各自开一条新连接，没必要)。
-  if (settings::load().auto_ai_reject) {
+  // auto_reject：结果已经落库之后再判断达标与否，走 passes_gate 复用同
+  // 一份判定，不在这里重算一遍三项阈值比较。只在不达标时打标签，不做
+  // 反向摘除(见 core/settings/settings.h 里的说明)——这里用已经打开的
+  // db 连接直接调 tagging:: 里的函数，不经过 core/api.h 门面(那边会各
+  // 自开一条新连接，没必要)。req.auto_reject 是调用方（提交请求时）传
+  // 进来的显式参数，process_request 本身不读 Settings。
+  if (req.auto_reject) {
     EvaluationInfo eval_info{r.exposure,    r.exposure_fix,     r.composition,
                               r.composition_fix, r.focus,       r.comment,
                               req.extra_guidance, to_string(req.provider)};

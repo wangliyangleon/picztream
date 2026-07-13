@@ -368,10 +368,14 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
 
   // F-07：同上，一条批量查询代替逐张 get_image()。
   auto evaluated = pzt::core::evaluated_image_ids(resolved.image_ids);
+  // M4：auto_reject 现在是 request() 的显式参数(见 evaluation_worker.h)，
+  // 交互路径在这里读一次 Settings 透传，行为跟以前完全一样，只是读取
+  // 点从 worker 内部挪到了提交侧。
+  bool auto_reject = pzt::core::load_settings().auto_ai_reject;
   int submitted = 0;
   for (auto id : resolved.image_ids) {
     if (evaluated.count(id)) continue;  // 已经评估过,跳过
-    if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance)) ++submitted;
+    if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance, auto_reject)) ++submitted;
   }
   return pzt::cli::i18n::msg_ai_eval_submitted(submitted);
 }
@@ -511,7 +515,8 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     // 应商见 resolve_ai_provider()(F-10:读 PZT_AI_PROVIDER 环境变量，
     // 默认 Gemini)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
     // 的开放问题,这次不做。
-    bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest);
+    bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest,
+                                               pzt::core::load_settings().auto_ai_reject);
     if (!accepted) {
       return ConsoleCommandResult{pzt::cli::i18n::msg_ai_processing_pending()};  // 走 status_override,等按键确认
     }
