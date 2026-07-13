@@ -1,3 +1,6 @@
 build/
 build_release/
 compile_commands.json
+agent/.venv/
+agent/.pytest_cache/
+agent/**/__pycache__/

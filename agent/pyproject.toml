@@ -1,0 +1,9 @@
+[project]
+name = "pzt-agent"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
