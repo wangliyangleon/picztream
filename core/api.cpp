@@ -70,6 +70,11 @@ std::optional<ImageInfo> get_image(ImageId image_id) {
   return project::get_image(db, image_id);
 }
 
+std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::string& relative_path) {
+  db::Database db = db::Database::open_default();
+  return project::find_image_by_path(db, project_id, relative_path);
+}
+
 std::unordered_set<ImageId> evaluated_image_ids(const std::vector<ImageId>& image_ids) {
   db::Database db = db::Database::open_default();
   return project::evaluated_image_ids(db, image_ids);

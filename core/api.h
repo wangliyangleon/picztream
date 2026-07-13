@@ -128,6 +128,14 @@ Result<void, ProjectNotFoundError> delete_project(ProjectId id);
 // 渲染当前图片的 metadata 用。
 std::optional<ImageInfo> get_image(ImageId image_id);
 
+// M4：把"项目内相对路径"翻译成 image_id——headless 命令按路径寻址图片
+// (路径对人和脚本都比内存里的 image_id 稳定),见 docs/M4_Eng_Design.md
+// "headless 命令面设计"一节。底层 project::find_image_by_path 已经在
+// core/tests/project_test.cpp 里被当作测试 helper 广泛覆盖,这里只是转
+// 调一层开默认库的门面,零逻辑,不单独测(跟 get_image/evaluated_image_ids
+// 这些门面一样,不能拿默认库直接测)。
+std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::string& relative_path);
+
 // F-07：批量版 get_image,只回答"这些图片里哪些已经有评估结果"——一条
 // IN 查询,不是对每张图各开一次连接。见 core/project/project.h 的说明。
 std::unordered_set<ImageId> evaluated_image_ids(const std::vector<ImageId>& image_ids);
