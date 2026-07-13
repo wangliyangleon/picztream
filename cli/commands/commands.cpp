@@ -762,6 +762,48 @@ int tag_apply(const std::vector<std::string>& args) {
   return 0;
 }
 
+// M4：headless verb——把某个标签从项目里当前打了它的所有图上摘掉(整
+// 个项目范围，没有 --scope 参数；curate 的 --apply-tag 想要"这次是全新
+// 一批"语义时，agent 自己先调这个命令清一遍再重新 curate，见
+// docs/M4_Eng_Design.md 第三节)。标签本身不存在(从来没打过)是幂等成
+// 功，cleared:0，不当错误处理——跟 remove_tag 自己"图片本来就没这个标
+// 签，删除也算成功"是同一个幂等哲学，调用方不需要先查标签存不存在再
+// 决定要不要清。
+int tag_clear(const std::vector<std::string>& args) {
+  bool json = false;
+  std::vector<std::string> positional;
+  for (const auto& a : args) {
+    if (a == "--json") {
+      json = true;
+    } else {
+      positional.push_back(a);
+    }
+  }
+  if (positional.size() < 2 || !json) {
+    return emit_json_error("usage", "usage: pzt tag clear <project> <tag> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  auto tag_id = pzt::core::find_tag_by_name(*project_id, positional[1]);
+  if (!tag_id) {
+    emit_json({{"cleared", 0}});
+    return 0;
+  }
+
+  auto tagged = pzt::core::filter_by_tag(*tag_id);
+  int cleared = 0;
+  if (tagged.ok()) {
+    for (const auto& ref : tagged.value()) {
+      if (pzt::core::remove_tag(ref.id, *tag_id).ok()) ++cleared;
+    }
+  }
+
+  emit_json({{"cleared", cleared}});
+  return 0;
+}
+
 int tag_list(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_tag_list_missing_name().c_str());
@@ -880,6 +922,7 @@ int cmd_tag(const std::vector<std::string>& args) {
 
   if (verb == "list") return tag_list(rest);
   if (verb == "apply") return tag_apply(rest);
+  if (verb == "clear") return tag_clear(rest);
 
   std::fprintf(stderr, "%s", pzt::cli::i18n::err_tag_unknown_subcommand(verb).c_str());
   print_tag_usage();

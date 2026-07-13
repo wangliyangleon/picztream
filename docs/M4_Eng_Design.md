@@ -48,6 +48,8 @@ agent/           (新增，Python 包，独立 venv)
 | `pzt dedup <proj> --scope <*|#tag> --json` | `find_and_tag_duplicates` | 时间窗/阈值读 `Settings`（M3 F-08 已支持）；输出组数/标记数/skipped_no_capture_time |
 | `pzt curate <proj> --count N [--tag <name>] [--apply-tag <name>] --json` | 新增 `core::curate`（第三节） | `--tag` 是候选范围限定（可选，缺省整个项目），跟 `--apply-tag`（落到入选图上的标签，可选，默认"精选"）是两个独立概念。分簇 threshold 读独立的 `Settings.curate_time_window_seconds`/`curate_hash_threshold`（比 `dedup_*` 默认更宽松，见第三节）；输出选中的 image_path 列表 + 落一个可配置的普通标签（惰性建，非系统标签，重复运行不清历史标记——见第三节） |
 | `pzt tag apply <proj> <image_path> <tag> [--on-cap {fail\|skip}] --json` | `add_tag`（+ `create_tag` 惰性建） | 幂等 |
+| `pzt tag clear <proj> <tag> --json` | `filter_by_tag` + `remove_tag` | 把项目里当前打了这个标签的所有图整体摘掉（无 `--scope`，范围就是整个项目）；标签不存在是幂等成功（`cleared:0`），不报错。给 agent 用的清场命令——`pzt curate` 的 `--apply-tag` 重复运行不清历史标记（见第三节），想要"这次是全新一批"的语义就先调这个命令清掉上一轮的标签，再重新 `curate` |
+| `pzt export-images <proj> <image_path…> <folder> --json` | `export_images` | 输出导出/跳过清单 + 目标路径 |
 | `pzt export-images <proj> <image_path…> <folder> --json` | `export_images` | 输出导出/跳过清单 + 目标路径 |
 
 **为什么 `pzt eval` 在命令侧同步而不复用异步 `EvaluationWorker` 的非阻塞轮询**：`EvaluationWorker` 的非阻塞 + `generation_` 轮询是为 `pzt open` 交互式主循环设计的（不阻塞按键）；命令行批处理里没有交互主循环要保护，一条命令就该"跑完这批再返回"。实现上直接复用 `EvaluationWorker`（不新写一份同步评估函数）：逐张 `request()` 提交，轮询 `queue_status()` 直到 `queued==0 && !processing` 判定收尾，不用 `consume_new_result()` 的世代号计数——世代号只回答"有没有新结果"，解码失败这类不用等网络的请求可能在两次 poll 之间就连续完成好几个，世代号会被观测成一次变化，用它数"还剩几个没完成"会数少、永远等不到 0。对外契约是"同步跑完、输出每张 结果/跳过/失败"；进度**不做**结构化 JSON 流，沿用 `EvaluationWorker` 已有的 stderr 人读日志（`[pzt ai] evaluation worker: ...`）——增量一批量通常是几十张、单条命令跑完通常几分钟内，暂不需要专门的进度协议，agent 侧靠命令本身的阻塞返回感知"跑完了"，需要更细粒度进度回报是留到以后的开放问题，不在这次范围内。
@@ -91,7 +93,7 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
                     int time_window_seconds, int hash_threshold);
 }
 ```
-`curate` 只做**选择**，不打标签、不导出（单一职责）；`pzt curate` 命令在拿到结果后落一个**可配置的普通标签**（`--apply-tag <name>`，默认"精选"，惰性建/`find_tag_by_name` 找不到就 `create_tag(..., is_system=false)`，非系统标签，重复运行不清历史标记）——不是固定的系统标签：用户如果要挑"朋友圈"/"ins"投稿这类场景，标签名字应该直接就是"朋友圈"/"ins"，不该被强绑成"精选"，走的是跟 `pzt tag apply` 完全一致的惰性建标签路径（`cli/commands/commands.cpp` 的 `resolve_or_create_tag`，两处共用）。确定性：同库同参数同输出，直接单元测试。
+`curate` 只做**选择**，不打标签、不导出（单一职责）；`pzt curate` 命令在拿到结果后落一个**可配置的普通标签**（`--apply-tag <name>`，默认"精选"，惰性建/`find_tag_by_name` 找不到就 `create_tag(..., is_system=false)`，非系统标签，重复运行不清历史标记）——不是固定的系统标签：用户如果要挑"朋友圈"/"ins"投稿这类场景，标签名字应该直接就是"朋友圈"/"ins"，不该被强绑成"精选"，走的是跟 `pzt tag apply` 完全一致的惰性建标签路径（`cli/commands/commands.cpp` 的 `resolve_or_create_tag`，两处共用）。确定性：同库同参数同输出，直接单元测试。想要"这次是全新一批"的语义（清掉上一轮的标签再重新挑），调用方自己先调 `pzt tag clear <proj> <tag> --json`（见第二节命令表）清场，不是 `curate` 自己的职责。
 
 ## 四、agent/ 结构设计（Python）
 

@@ -225,6 +225,25 @@ assert_nonzero_exit_with_error "curate: unknown scope tag fails with JSON error"
 assert_nonzero_exit_with_error "curate: missing --count fails with JSON error" \
   "$PZT" curate smoke --json
 
+# --- pzt tag clear ---
+# 承接上面 curate 段留下的状态：a.jpg 同时打了"精选"和"ins"。清掉
+# "精选"应该只摘掉打了它的那些图，不动"ins"，也不影响标签本身不存在
+# 的情况(幂等)——是 agent 想"重新 curate 一批"时的清场命令。
+out="$("$PZT" tag clear smoke 精选 --json)"
+assert_json_has "$out" "j['cleared'] == 2" "tag clear: removes the tag from every image carrying it"
+
+out="$("$PZT" images smoke --json)"
+assert_json_has "$out" "all('精选' not in i['tags'] for i in j['images'])" \
+  "tag clear: 精选 is gone from every image"
+assert_json_has "$out" "any('ins' in i['tags'] for i in j['images'])" \
+  "tag clear: unrelated tags (ins) are untouched"
+
+out="$("$PZT" tag clear smoke 从没用过的标签 --json)"
+assert_json_has "$out" "j['cleared'] == 0" "tag clear: unknown tag name is idempotent, not an error"
+
+assert_nonzero_exit_with_error "tag clear: unknown project fails with JSON error" \
+  "$PZT" tag clear does-not-exist 精选 --json
+
 # --- pzt new --json ---
 PHOTOS2="$WORKDIR/photos2"
 mkdir -p "$PHOTOS2"
