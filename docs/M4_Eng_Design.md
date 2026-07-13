@@ -46,7 +46,7 @@ agent/           (新增，Python 包，独立 venv)
 | `pzt images <proj> --json` | `list_images` + `get_image` | 列出图片：path / 是否已评估 / passes_gate / 标签。agent 读状态用（复用 `evaluated_image_ids` 批量查，避免 N+1） |
 | `pzt eval <proj> --scope <*|#tag> --provider <gemini\|claude> [--auto-reject] --json` | `EvaluationWorker` 批量 | `--auto-reject`（策略参数，agent 默认传）：不达标即 `add_tag(reject)`，**显式传参、不读也不改 `Settings.auto_ai_reject`**（物理隔离，PRD P6）。同步跑完（批处理场景不需要异步 worker 的非阻塞语义，直接顺序评估+等待）；输出每张 结果/跳过/失败 |
 | `pzt dedup <proj> --scope <*|#tag> --json` | `find_and_tag_duplicates` | 时间窗/阈值读 `Settings`（M3 F-08 已支持）；输出组数/标记数/skipped_no_capture_time |
-| `pzt curate <proj> --count N [--tag <name>] --json` | 新增 `core::curate`（第三节） | 输出选中的 image_path 列表 + 落一个"精选"标签 |
+| `pzt curate <proj> --count N [--tag <name>] --json` | 新增 `core::curate`（第三节） | 分簇 threshold 读独立的 `Settings.curate_time_window_seconds`/`curate_hash_threshold`（比 `dedup_*` 默认更宽松，见第三节）；输出选中的 image_path 列表 + 落一个"精选"标签 |
 | `pzt tag apply <proj> <image_path> <tag> [--on-cap {fail\|skip}] --json` | `add_tag`（+ `create_tag` 惰性建） | 幂等 |
 | `pzt export-images <proj> <image_path…> <folder> --json` | `export_images` | 输出导出/跳过清单 + 目标路径 |
 
@@ -62,7 +62,9 @@ agent/           (新增，Python 包，独立 venv)
 
 **算法（确定性、可复现，不依赖语义 embedding——那是本地 Vision，属后续增量）**：
 
-1. **分簇**：复用 dedup 的产物做多样性信号。dedup 已经把"太像"的图并进 `DuplicateGroup`；候选里同属一组的视为同一"视觉簇"，未进任何组的各自成簇。（增量一不额外算 embedding，直接吃 dedup 的分组当"相似"的免费信号。）
+1. **分簇**：复用 dedup 的分簇算法（`dedup::find_duplicates`）在候选集合上**现场重新分簇**，不是读取历史分组——候选集已经排除了"重复"标签图片（每组只剩 `keep_id` 那一张），`find_and_tag_duplicates` 也不落库分组关联，上一轮 dedup 跑完分组信息就没了，没有旧状态可读。`curate` 直接调纯算法 `find_duplicates(db, root_path, candidate_ids, time_window_seconds, hash_threshold)`，候选里被分进同一个 `DuplicateGroup` 的视为同一"视觉簇"，未进任何组的各自成簇。
+   **阈值不能复用 `Settings.dedup_time_window_seconds`/`dedup_hash_threshold` 原值，必须比 dedup 标记阈值更宽松（更容易合并）**：候选集里能剩下的图，按定义就是上一轮 dedup 用这组阈值判断"不够像"、没被标记重复的图——如果分簇再用同一个（或更严格/更窄的）阈值，候选池里的图幾乎不会被合併，每张各自成簇，分簇退化成"没分"，第 3 步的"跨簇挑 N"就名存实亡，起不到多样性保护作用（同一场景不同角度、没触发 dedup 阈值的几张图可能同时挤进最终 N 张）。只有用比 dedup 更宽松的阈值重新分簇，才能把"没被判成重复、但视觉上仍然明显相似"的图归进同一簇，逼跨簇挑选只从中选一个代表，真正实现多样性。
+   落地：新增 `Settings.curate_time_window_seconds`/`curate_hash_threshold`（独立于 `dedup_*`，不共用同一份配置，避免"调宽了 curate 顺带影响 dedup 标记"这种耦合），初始默认值取 dedup 默认值的 2 倍（`dedup_time_window_seconds`/`dedup_hash_threshold` 默认 10s/5 → curate 默认 20s/10），是否合适留给真机使用后按效果调整，不是精确调出来的数字。同 `find_duplicates` 本身的既有约定（`core/dedup/dedup.h` 99-103 行）：**`core::curate::curate` 不直接读 Settings**，由调用方（`pzt curate` 命令）读 `Settings.curate_time_window_seconds`/`curate_hash_threshold` 后显式传参，`curate()` 签名加 `time_window_seconds`/`hash_threshold` 两个参数（见下方 core API），不新增 CLI flag。（增量一不额外算 embedding，直接吃 dedup 分簇算法当"相似"的免费信号，只是阈值調松。）
 2. **簇内选代表**：每簇取 `overall_score` 最高的一张当代表（并列时 `captured_at` 更新的、再并列 image_id 最小，跟 dedup `pick_keep_id` 同一套确定性 tie-break）。
 3. **跨簇挑 N**：
    - 若簇数 ≥ N：按代表的 `overall_score` 降序取前 N 个簇的代表——保证 N 张来自 N 个不同视觉簇（多样性优先）。
@@ -80,8 +82,13 @@ struct CurateResult {
   int returned;                             // == selected.size()，< requested 表示候选不足
 };
 // candidate_scope 为空 => 全项目;否则限定到某标签下。N > 0。
+// time_window_seconds/hash_threshold：分簇复用的 find_duplicates 参数，
+// 调用方从 Settings.curate_time_window_seconds/curate_hash_threshold(独
+// 立于 dedup_*，默认值更宽松)读出显式传入(curate 本身不读 Settings，跟
+// find_duplicates 同一约定)。
 CurateResult curate(db::Database& db, project::ProjectId project_id,
-                    std::optional<TagId> candidate_scope, int count);
+                    std::optional<TagId> candidate_scope, int count,
+                    int time_window_seconds, int hash_threshold);
 }
 ```
 `curate` 只做**选择**，不打标签、不导出（单一职责）；`pzt curate` 命令在拿到结果后再调 `add_tag` 落"精选"标签（或由 agent 的 Curate Stage 组合）。确定性：同库同参数同输出，直接单元测试。
