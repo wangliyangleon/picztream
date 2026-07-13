@@ -12,6 +12,8 @@
 
 #include <unistd.h>
 
+#include <nlohmann/json.hpp>
+
 #include "cli/i18n/i18n.h"
 #include "cli/term/cbreak_mode.h"
 #include "cli/text/text.h"
@@ -46,6 +48,84 @@ std::optional<pzt::core::ProjectId> resolve_project(const std::string& cmd,
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found(cmd, project_name).c_str());
   }
   return id;
+}
+
+// M4：headless 命令(`pzt images`/`eval`/`dedup`/`tag apply`/
+// `export-images`)统一的 JSON 输出约定——成功一个 JSON 对象打到 stdout
+// (换行结尾)，失败非零退出 + stderr 一行 JSON 错误对象，见
+// docs/M4_Eng_Design.md"headless 命令面设计"一节。这些命令是给
+// agent/ 子进程调用用的，不面向人读，跟其它 cmd_* 现有的 i18n 人读文
+// 案是两套并行的输出风格，互不影响。
+void emit_json(const nlohmann::json& j) {
+  std::printf("%s\n", j.dump().c_str());
+}
+
+int emit_json_error(const char* code, const std::string& message) {
+  nlohmann::json j = {{"error", code}, {"message", message}};
+  std::fprintf(stderr, "%s\n", j.dump().c_str());
+  return 1;
+}
+
+// resolve_project 的 headless 版本：找不到项目时走 JSON 错误，不是
+// i18n 人读文案。
+std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& project_name) {
+  auto id = pzt::core::find_project_by_name(project_name);
+  if (!id) {
+    emit_json_error("project_not_found", "project not found: " + project_name);
+  }
+  return id;
+}
+
+// M4：agent 读项目当前状态用——每张图的路径/评估状态/达标情况/标签，
+// 一次性给全，agent 不需要为了知道"评没评过"再单独查一遍(F-07 的
+// evaluated_image_ids 批量查询同一个精神)。
+int cmd_images(const std::vector<std::string>& args) {
+  bool json = false;
+  std::vector<std::string> positional;
+  for (const auto& a : args) {
+    if (a == "--json") {
+      json = true;
+    } else {
+      positional.push_back(a);
+    }
+  }
+  if (positional.empty() || !json) {
+    return emit_json_error("usage", "usage: pzt images <project> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  auto refs = pzt::core::list_images(*project_id);
+  std::vector<pzt::core::ImageId> ids;
+  ids.reserve(refs.size());
+  for (const auto& r : refs) ids.push_back(r.id);
+  auto evaluated_ids = pzt::core::evaluated_image_ids(ids);
+
+  nlohmann::json images = nlohmann::json::array();
+  for (const auto& r : refs) {
+    nlohmann::json item;
+    item["path"] = r.file_path;
+    bool evaluated = evaluated_ids.count(r.id) > 0;
+    item["evaluated"] = evaluated;
+    if (evaluated) {
+      auto info = pzt::core::get_image(r.id);
+      if (info && info->evaluation) {
+        item["passes_gate"] = pzt::core::passes_gate(*info->evaluation);
+        item["overall_score"] = pzt::core::overall_score(*info->evaluation);
+      }
+    }
+    nlohmann::json tag_names = nlohmann::json::array();
+    for (const auto& t : pzt::core::tags_for_image(r.id)) tag_names.push_back(t.name);
+    item["tags"] = tag_names;
+    images.push_back(std::move(item));
+  }
+
+  nlohmann::json out;
+  out["project"] = positional[0];
+  out["images"] = std::move(images);
+  emit_json(out);
+  return 0;
 }
 
 // new/rescan 扫到 RAW 文件时会顺带生成预览缓存(真的要跑一遍 LibRaw 降分

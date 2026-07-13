@@ -20,4 +20,8 @@ int cmd_export(const std::vector<std::string>& args);
 int cmd_tag(const std::vector<std::string>& args);
 int cmd_recipe(const std::vector<std::string>& args);
 
+// M4：headless 命令(JSON 进出，非交互)，供 agent/ 子进程调用，见
+// docs/M4_Eng_Design.md"headless 命令面设计"一节。
+int cmd_images(const std::vector<std::string>& args);
+
 }  // namespace pzt::cli::commands
