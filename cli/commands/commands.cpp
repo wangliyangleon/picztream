@@ -76,6 +76,96 @@ std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& proj
   return id;
 }
 
+// M4：`pzt dedup`/`pzt eval` 共用的批量范围解析——跟
+// cli/commands/browse.cpp 里 resolve_console_scope 同一个语义(`*` 整
+// 个项目、`#标签名` 带指定标签)，但那个函数在匿名命名空间里锁死、不
+// 对外暴露，这里为 headless 命令重写一份，错误走 error_code/error_msg
+// 而不是 i18n 人读文案。scope_tag 记录"范围本身就是这个标签"，供以后
+// 需要"目标本身是废片/重复不排除"这类对称例外的命令使用(这一版
+// dedup/eval 暂不需要，先留着字段)。
+struct ScopeResult {
+  std::vector<pzt::core::ImageId> ids;
+  std::optional<pzt::core::TagId> scope_tag;
+  std::string error_code;
+  std::string error_msg;
+};
+
+ScopeResult resolve_scope(pzt::core::ProjectId project_id, const std::string& scope) {
+  ScopeResult result;
+  if (scope == "*") {
+    for (const auto& ref : pzt::core::list_images(project_id)) result.ids.push_back(ref.id);
+    return result;
+  }
+  if (scope.empty() || scope[0] != '#') {
+    result.error_code = "invalid_scope";
+    result.error_msg = "scope must be * or #tag";
+    return result;
+  }
+  std::string tag_name = scope.substr(1);
+  if (tag_name.size() >= 2 && tag_name.front() == '"' && tag_name.back() == '"') {
+    tag_name = tag_name.substr(1, tag_name.size() - 2);
+  }
+  auto tag_id = pzt::core::find_tag_by_name(project_id, tag_name);
+  if (!tag_id) {
+    result.error_code = "tag_not_found";
+    result.error_msg = "tag not found: " + tag_name;
+    return result;
+  }
+  result.scope_tag = *tag_id;
+  auto filtered = pzt::core::filter_by_tag(*tag_id);
+  if (!filtered.ok()) {
+    result.error_code = "filter_failed";
+    result.error_msg = "failed to filter by tag";
+    return result;
+  }
+  for (const auto& ref : filtered.value()) result.ids.push_back(ref.id);
+  return result;
+}
+
+// M4：批量去重，走 Settings 的 dedup_time_window_seconds/
+// dedup_hash_threshold(跟交互路径的 /dedup 同一份配置来源)——这个命
+// 令本身不接受内联参数覆盖阈值，想调参改 config.json，跟交互侧的既有
+// 约定一致(见 docs/Fix_It_Night_Review.md F-08)。
+int cmd_dedup(const std::vector<std::string>& args) {
+  bool json = false;
+  std::string scope;
+  std::vector<std::string> positional;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--json") {
+      json = true;
+    } else if (args[i] == "--scope") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--scope requires a value");
+      scope = args[++i];
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  if (positional.empty() || scope.empty() || !json) {
+    return emit_json_error("usage", "usage: pzt dedup <project> --scope <*|#tag> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  auto resolved = resolve_scope(*project_id, scope);
+  if (!resolved.error_code.empty()) {
+    return emit_json_error(resolved.error_code.c_str(), resolved.error_msg);
+  }
+
+  auto settings = pzt::core::load_settings();
+  auto result = pzt::core::find_and_tag_duplicates(*project_id, resolved.ids,
+                                                     settings.dedup_time_window_seconds,
+                                                     settings.dedup_hash_threshold);
+  if (!result.ok()) {
+    return emit_json_error("dedup_failed", "dedup failed");
+  }
+
+  emit_json({{"groups", result.value().group_count},
+             {"tagged", result.value().tagged_count},
+             {"skipped_no_capture_time", result.value().skipped_no_capture_time}});
+  return 0;
+}
+
 // M4：agent 读项目当前状态用——每张图的路径/评估状态/达标情况/标签，
 // 一次性给全，agent 不需要为了知道"评没评过"再单独查一遍(F-07 的
 // evaluated_image_ids 批量查询同一个精神)。

@@ -112,6 +112,22 @@ assert_json_has "$out" "j['applied'] == True" "tag apply: idempotent on re-apply
 assert_nonzero_exit_with_error "tag apply: unknown image path fails with JSON error" \
   "$PZT" tag apply smoke nope.jpg 精选 --json
 
+# --- pzt dedup ---
+# 真实的分组/去重算法已经在 core/tests/dedup_test.cpp 里用可解码的假
+# JPEG 详尽覆盖了(候选聚类、汉明距离分组、keep_id 选择等)，这里的
+# fixture 是不可解码的假字节，验证的不是算法本身，是命令这一层的接线
+# (scope 解析、Settings 参数传递、JSON 形状)——三张新导入的图都没有
+# captured_at，dedup 应该把三张全部计入 skipped_no_capture_time，
+# groups/tagged 都是 0，这是确定性的、不依赖真实可解码图片内容。
+out="$("$PZT" dedup smoke --scope '*' --json)"
+assert_json_has "$out" "j['skipped_no_capture_time'] == 3" \
+  "dedup: images with no captured_at are all counted as skipped"
+assert_json_has "$out" "j['groups'] == 0 and j['tagged'] == 0" \
+  "dedup: no groups formed when nothing has a capture time"
+
+assert_nonzero_exit_with_error "dedup: unknown tag scope fails with JSON error" \
+  "$PZT" dedup smoke --scope '#不存在的标签' --json
+
 echo ""
 echo "== headless smoke: $pass_count passed, $fail_count failed =="
 if [ "$fail_count" -ne 0 ]; then
