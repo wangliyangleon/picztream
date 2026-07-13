@@ -14,6 +14,7 @@ add_executable(core_tests
   evaluation_test.cpp
   evaluation_worker_test.cpp
   dedup_test.cpp
+  curate_test.cpp
   settings_test.cpp
 )
 

@@ -139,6 +139,12 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
                                          std::move(on_progress));
 }
 
+CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
+                            int time_window_seconds, int hash_threshold) {
+  db::Database db = db::Database::open_default();
+  return curate::curate(db, project_id, candidate_scope, count, time_window_seconds, hash_threshold);
+}
+
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
                                                              bool support_raw,
                                                              ScanProgressFn on_progress) {
