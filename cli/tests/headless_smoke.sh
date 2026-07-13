@@ -96,6 +96,22 @@ assert_json_has "$out" "all(i['evaluated'] == False for i in j['images'])" \
 assert_nonzero_exit_with_error "images: unknown project fails with JSON error" \
   "$PZT" images does-not-exist --json
 
+# --- pzt tag apply ---
+out="$("$PZT" tag apply smoke a.jpg 精选 --json)"
+assert_json_has "$out" "j['applied'] == True" "tag apply: lazily creates tag and applies it"
+
+out="$("$PZT" images smoke --json)"
+assert_json_has "$out" \
+  "any(i['path'] == 'a.jpg' and '精选' in i['tags'] for i in j['images'])" \
+  "tag apply: tag shows up on the image via pzt images"
+
+# 幂等：同一张图重复打同一个标签，不报错、仍然 applied:true。
+out="$("$PZT" tag apply smoke a.jpg 精选 --json)"
+assert_json_has "$out" "j['applied'] == True" "tag apply: idempotent on re-apply"
+
+assert_nonzero_exit_with_error "tag apply: unknown image path fails with JSON error" \
+  "$PZT" tag apply smoke nope.jpg 精选 --json
+
 echo ""
 echo "== headless smoke: $pass_count passed, $fail_count failed =="
 if [ "$fail_count" -ne 0 ]; then

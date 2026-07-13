@@ -288,6 +288,73 @@ int cmd_delete(const std::vector<std::string>& args) {
   return 0;
 }
 
+// M4：headless verb——按路径给一张图打标签，标签不存在就惰性建(非系
+// 统标签、不设 cap、无序)。交互菜单里"超 cap 弹子菜单选替换谁"这个人
+// 的决定，headless 没有菜单可弹，变成显式策略参数 --on-cap：fail(默
+// 认)报错退出，skip 不算失败、输出 applied:false。add_tag 本身幂等
+// (同一张图重复打同一个标签直接算成功)，这里不需要额外处理。
+int tag_apply(const std::vector<std::string>& args) {
+  bool json = false;
+  std::string on_cap = "fail";
+  std::vector<std::string> positional;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--json") {
+      json = true;
+    } else if (args[i] == "--on-cap") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--on-cap requires a value");
+      on_cap = args[++i];
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  if (positional.size() < 3 || !json) {
+    return emit_json_error(
+        "usage", "usage: pzt tag apply <project> <image_path> <tag> [--on-cap {fail|skip}] --json");
+  }
+  if (on_cap != "fail" && on_cap != "skip") {
+    return emit_json_error("usage", "--on-cap must be 'fail' or 'skip'");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  auto image_id = pzt::core::find_image_by_path(*project_id, positional[1]);
+  if (!image_id) {
+    return emit_json_error("image_not_found", "image not found: " + positional[1]);
+  }
+
+  auto tag_id = pzt::core::find_tag_by_name(*project_id, positional[2]);
+  if (!tag_id) {
+    auto created = pzt::core::create_tag(*project_id, positional[2], std::nullopt, false);
+    if (created.ok()) {
+      tag_id = created.value();
+    } else {
+      // TOCTOU：两次 headless 调用几乎同时给同一个新标签名建标签，第二
+      // 个会撞见 NameAlreadyExists——重新查一次就能拿到第一个刚建好的
+      // id，不当成失败处理。
+      tag_id = pzt::core::find_tag_by_name(*project_id, positional[2]);
+      if (!tag_id) {
+        return emit_json_error("tag_create_failed", "failed to create tag: " + positional[2]);
+      }
+    }
+  }
+
+  auto result = pzt::core::add_tag(*image_id, *tag_id);
+  if (!result.ok()) {
+    if (result.error().kind == pzt::core::AddTagFailureKind::CapExceeded) {
+      if (on_cap == "skip") {
+        emit_json({{"applied", false}, {"reason", "cap"}});
+        return 0;
+      }
+      return emit_json_error("cap_exceeded", "tag cap exceeded: " + positional[2]);
+    }
+    return emit_json_error("add_tag_failed", "failed to apply tag");
+  }
+
+  emit_json({{"applied", true}});
+  return 0;
+}
+
 int tag_list(const std::vector<std::string>& args) {
   if (args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_tag_list_missing_name().c_str());
@@ -405,6 +472,7 @@ int cmd_tag(const std::vector<std::string>& args) {
   std::vector<std::string> rest(args.begin() + 1, args.end());
 
   if (verb == "list") return tag_list(rest);
+  if (verb == "apply") return tag_apply(rest);
 
   std::fprintf(stderr, "%s", pzt::cli::i18n::err_tag_unknown_subcommand(verb).c_str());
   print_tag_usage();
