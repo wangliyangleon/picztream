@@ -1,12 +1,15 @@
 #include "cli/commands/commands.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -232,6 +235,141 @@ int cmd_export_images(const std::vector<std::string>& args) {
   emit_json({{"exported", result.value().exported_count},
              {"skipped", std::move(skipped)},
              {"created_dir", result.value().created_output_folder}});
+  return 0;
+}
+
+// M4：EvaluationError 转成稳定的机读标识符，跟 skip_reason_str 同样的
+// 理由(headless JSON 契约，不走 i18n 人读文案)。
+const char* evaluation_error_str(pzt::core::EvaluationError error) {
+  switch (error) {
+    case pzt::core::EvaluationError::MissingApiKey:
+      return "missing_api_key";
+    case pzt::core::EvaluationError::NetworkError:
+      return "network_error";
+    case pzt::core::EvaluationError::HttpError:
+      return "http_error";
+    case pzt::core::EvaluationError::ParseError:
+      return "parse_error";
+    case pzt::core::EvaluationError::OutOfRange:
+      return "out_of_range";
+    case pzt::core::EvaluationError::ImageUnavailable:
+      return "image_unavailable";
+    case pzt::core::EvaluationError::StorageFailed:
+      return "storage_failed";
+  }
+  return "unknown";
+}
+
+// M4：同步批量评估，供 agent 的 Evaluate Stage 用——headless 批处理场景
+// 没有交互式重绘循环持续 poll，这里直接忙等到全部提交的请求都落地再
+// 一次性输出，不像交互路径那样异步返回。auto_reject 是显式参数(A6)，
+// 不读/改 Settings.auto_ai_reject，见 docs/M4_PRD.md P6"物理隔离"。
+//
+// 收尾用 queue_status() 判断"是否全部处理完"，不能靠
+// consume_new_result() 的世代号计数——世代号只回答"有没有新结果"，不
+// 是"发生了几次"；如果好几个请求在两次 poll 之间就都处理完了(比如全
+// 都在解码这一步就失败，不用等真实网络延迟，处理得飞快)，世代号只会
+// 被观测成一次变化，用它当计数器数"还剩几个没完成"会数少，永远等不
+// 到 0，卡死。queue_status() 直接查队列/处理中标志这个当下状态，不依
+// 赖计数，没有这个问题。
+//
+// EvaluationWorker::take_last_failure() 只保留"最近一次"失败(交互路径
+// 一次只处理一张图，不需要更多)。这里在每次循环都顺手取一次，尽量不
+// 丢失中间失败；确认队列已空之后再补取一次(防止最后一个失败恰好夹在
+// "取失败"和"查队列状态"这两步中间)。就算这样仍然漏掉了某次失败(理
+// 论上限：poll 间隔内连续完成两个以上失败请求)，收尾时会对没能在
+// evaluated/failed 任何一边找到记录的图片兜底计入 failed、理由标
+// "unknown"，保证每张图精确落在 evaluated/failed 之一，不会被静默漏
+// 报，也不会两边都算。
+int cmd_eval(const std::vector<std::string>& args) {
+  bool json = false;
+  bool auto_reject = false;
+  std::string scope;
+  std::string provider_str;
+  std::vector<std::string> positional;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--json") {
+      json = true;
+    } else if (args[i] == "--auto-reject") {
+      auto_reject = true;
+    } else if (args[i] == "--scope") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--scope requires a value");
+      scope = args[++i];
+    } else if (args[i] == "--provider") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
+      provider_str = args[++i];
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  pzt::core::Provider provider;
+  if (provider_str == "gemini") {
+    provider = pzt::core::Provider::Gemini;
+  } else if (provider_str == "claude") {
+    provider = pzt::core::Provider::Claude;
+  } else {
+    return emit_json_error(
+        "usage",
+        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude> [--auto-reject] --json");
+  }
+  if (positional.empty() || scope.empty() || !json) {
+    return emit_json_error(
+        "usage",
+        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude> [--auto-reject] --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  auto resolved = resolve_scope(*project_id, scope);
+  if (!resolved.error_code.empty()) {
+    return emit_json_error(resolved.error_code.c_str(), resolved.error_msg);
+  }
+
+  std::unordered_map<pzt::core::ImageId, std::string> path_by_id;
+  for (const auto& ref : pzt::core::list_images(*project_id)) path_by_id[ref.id] = ref.file_path;
+
+  auto evaluated_before = pzt::core::evaluated_image_ids(resolved.ids);
+  std::vector<pzt::core::ImageId> to_evaluate;
+  for (auto id : resolved.ids) {
+    if (!evaluated_before.count(id)) to_evaluate.push_back(id);
+  }
+
+  pzt::core::EvaluationWorker worker;
+  for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject);
+
+  std::unordered_map<pzt::core::ImageId, pzt::core::EvaluationError> failure_by_id;
+  while (true) {
+    if (auto failure = worker.take_last_failure()) failure_by_id[failure->image_id] = failure->error;
+    auto status = worker.queue_status();
+    if (status.queued == 0 && !status.processing) {
+      if (auto trailing = worker.take_last_failure()) {
+        failure_by_id[trailing->image_id] = trailing->error;
+      }
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  nlohmann::json evaluated_out = nlohmann::json::array();
+  nlohmann::json failed_out = nlohmann::json::array();
+  for (auto id : to_evaluate) {
+    const std::string& path = path_by_id[id];
+    auto info = pzt::core::get_image(id);
+    if (info && info->evaluation) {
+      evaluated_out.push_back({{"path", path},
+                                {"passes_gate", pzt::core::passes_gate(*info->evaluation)},
+                                {"overall_score", pzt::core::overall_score(*info->evaluation)}});
+    } else {
+      auto it = failure_by_id.find(id);
+      std::string error_code = it != failure_by_id.end() ? evaluation_error_str(it->second) : "unknown";
+      failed_out.push_back({{"path", path}, {"error", error_code}});
+    }
+  }
+
+  emit_json({{"submitted", static_cast<int>(to_evaluate.size())},
+             {"evaluated", std::move(evaluated_out)},
+             {"failed", std::move(failed_out)}});
   return 0;
 }
 

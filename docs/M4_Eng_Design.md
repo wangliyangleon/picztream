@@ -50,7 +50,7 @@ agent/           (新增，Python 包，独立 venv)
 | `pzt tag apply <proj> <image_path> <tag> [--on-cap {fail\|skip}] --json` | `add_tag`（+ `create_tag` 惰性建） | 幂等 |
 | `pzt export-images <proj> <image_path…> <folder> --json` | `export_images` | 输出导出/跳过清单 + 目标路径 |
 
-**为什么 `pzt eval` 在命令侧同步而不复用异步 `EvaluationWorker` 的非阻塞轮询**：`EvaluationWorker` 的非阻塞 + `generation_` 轮询是为 `pzt open` 交互式主循环设计的（不阻塞按键）；命令行批处理里没有交互主循环要保护，一条命令就该"跑完这批再返回"。命令内部可以直接顺序调 `ai::request_evaluation` + 落库（复用 `EvaluationWorker::process_request` 的落库逻辑，抽成一个可共享的函数），或起 worker 跑完 join——实现时二选一，对外契约都是"同步跑完、输出每张结果"。进度经 stderr 逐行 JSON 输出，agent 解析成进度回报。
+**为什么 `pzt eval` 在命令侧同步而不复用异步 `EvaluationWorker` 的非阻塞轮询**：`EvaluationWorker` 的非阻塞 + `generation_` 轮询是为 `pzt open` 交互式主循环设计的（不阻塞按键）；命令行批处理里没有交互主循环要保护，一条命令就该"跑完这批再返回"。实现上直接复用 `EvaluationWorker`（不新写一份同步评估函数）：逐张 `request()` 提交，轮询 `queue_status()` 直到 `queued==0 && !processing` 判定收尾，不用 `consume_new_result()` 的世代号计数——世代号只回答"有没有新结果"，解码失败这类不用等网络的请求可能在两次 poll 之间就连续完成好几个，世代号会被观测成一次变化，用它数"还剩几个没完成"会数少、永远等不到 0。对外契约是"同步跑完、输出每张 结果/跳过/失败"；进度**不做**结构化 JSON 流，沿用 `EvaluationWorker` 已有的 stderr 人读日志（`[pzt ai] evaluation worker: ...`）——增量一批量通常是几十张、单条命令跑完通常几分钟内，暂不需要专门的进度协议，agent 侧靠命令本身的阻塞返回感知"跑完了"，需要更细粒度进度回报是留到以后的开放问题，不在这次范围内。
 
 ## 三、Curate 算法设计（增量一唯一的新算法）
 
@@ -165,7 +165,7 @@ class Transport(Protocol):
 ## 八、风险与待确认问题
 
 - **`Curate` 多样性的效果上限**：增量一不做语义 embedding，多样性只吃 dedup 分组 + 时间铺开 + 分数。dedup 只抓"近重复"，抓不到"两张不同但都是逆光剪影"这种语义相似——真机观察是否够用，不够就等后续增量的 Tier 0 `VNGenerateImageFeaturePrint` 增强。
-- **`pzt eval` 同步批处理的时长**：几十张云端评估顺序跑可能几分钟，命令会阻塞这么久（agent 侧靠 stderr 进度流缓解体感）。若真机嫌慢，考虑命令内并发几路请求，但要守 M3 的 provider 限流/超时（F-21）——不提前做。
+- **`pzt eval` 同步批处理的时长**：几十张云端评估顺序跑可能几分钟，命令会阻塞这么久，且这次没做结构化进度协议（见第二节），agent 侧目前只能整体等命令返回，体感上是个黑箱。若真机嫌慢/嫌体感差，考虑命令内并发几路请求（但要守 M3 的 provider 限流/超时，F-21）或者后续增量给 `pzt eval` 补一版结构化进度输出——都不在这次范围内。
 - **Python↔C++ 版本/路径耦合**：`pzt_client` 依赖 `pzt` 可执行文件路径与 JSON 契约稳定；子命令的 JSON 输出形状要当成对 agent 的公开 API 维护，改动需同步两侧。用一版契约测试（agent 侧存几个期望 JSON、CLI 侧 smoke 产出）锁住。
 - **LLM 组装 Plan 的可靠性**：意图/调整解析走云端，非确定；靠 `validate_plan` 确定性护栏兜底 + 离线 eval 集抓 prompt 回归。真机观察组装准确率。
 - **Telegram 文件收发上限**：默认 bot 收 20MB / 发 50MB，手机 JPEG 够；RAW/大文件要自搭 local Bot API server（2GB），属后续。

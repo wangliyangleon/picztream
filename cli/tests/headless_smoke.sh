@@ -157,6 +157,32 @@ assert_json_has "$out" "j['exported'] == 1" \
 assert_nonzero_exit_with_error "export-images: unknown image path fails with JSON error" \
   "$PZT" export-images smoke nope.jpg "$WORKDIR/out3" --json
 
+# --- pzt eval ---
+# 计划原本设想用"已经全部评估过"的 fixture 测 submitted==0，但要造出
+# "已评估"状态要么真的发一次网络请求、要么直接戳库，都不是黑盒 smoke
+# 测试该干的事。这里换一个同样不碰真网络、但覆盖面更大的路径：a/b/c
+# 都是不可解码的假字节，process_request 里 decode_preview_file 这一步
+# 就会失败(EvaluationError::ImageUnavailable)，根本走不到真正调用
+# evaluation_fn_(真实 AI 请求)那一步——照样测到了完整的提交/轮询/收
+# 尾归类逻辑，不是只测"跳过"这条最短路径。
+out="$("$PZT" eval smoke --scope '*' --provider gemini --json)"
+assert_json_has "$out" "j['submitted'] == 3" "eval: submits all unevaluated images in scope"
+assert_json_has "$out" "len(j['evaluated']) == 0" "eval: none succeed (fixtures aren't real jpegs)"
+# 三个都在解码这一步失败，理由通常是 image_unavailable；但
+# take_last_failure() 只保留"最近一次"失败，三个都在毫秒级内几乎同时
+# 完成时，有极小概率某一个的失败原因在被取走前就被下一个覆盖，兜底归
+# 类成 unknown(cmd_eval 里有详细说明)——两者都算测试通过，不接受任何
+# 图片被漏报或者错误地进了 evaluated。
+assert_json_has "$out" \
+  "len(j['failed']) == 3 and all(f['error'] in ('image_unavailable', 'unknown') for f in j['failed'])" \
+  "eval: undecodable fixtures fail at decode, not at the network call"
+
+assert_nonzero_exit_with_error "eval: unknown provider fails with JSON error" \
+  "$PZT" eval smoke --scope '*' --provider bogus --json
+
+assert_nonzero_exit_with_error "eval: unknown tag scope fails with JSON error" \
+  "$PZT" eval smoke --scope '#不存在的标签' --provider gemini --json
+
 echo ""
 echo "== headless smoke: $pass_count passed, $fail_count failed =="
 if [ "$fail_count" -ne 0 ]; then
