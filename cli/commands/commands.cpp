@@ -166,6 +166,75 @@ int cmd_dedup(const std::vector<std::string>& args) {
   return 0;
 }
 
+// M4：SkipReason 转成稳定的机读标识符，不走 i18n 人读文案(那是给
+// cmd_export 那条人读命令行输出用的，跟这里的 JSON 契约是两回事)。
+const char* skip_reason_str(pzt::core::SkipReason reason) {
+  switch (reason) {
+    case pzt::core::SkipReason::SourceMissing:
+      return "source_missing";
+    case pzt::core::SkipReason::DecodeFailed:
+      return "decode_failed";
+    case pzt::core::SkipReason::RenderFailed:
+      return "render_failed";
+    case pzt::core::SkipReason::EncodeFailed:
+      return "encode_failed";
+    case pzt::core::SkipReason::RawDecodeFailed:
+      return "raw_decode_failed";
+  }
+  return "unknown";
+}
+
+// M4：按路径导出一批图片(不是按标签查——那是 cmd_export 的事)，供
+// agent 的 Deliver Stage 用。默认排除废片/重复(Settings.export_reject/
+// export_dup)，跟交互侧 cmd_export/handle_g_export_flow 同一份规则来
+// 源(见 docs/Fix_It_Night_Review.md F-26)。
+int cmd_export_images(const std::vector<std::string>& args) {
+  bool json = false;
+  std::vector<std::string> positional;
+  for (const auto& a : args) {
+    if (a == "--json") {
+      json = true;
+    } else {
+      positional.push_back(a);
+    }
+  }
+  if (positional.size() < 3 || !json) {
+    return emit_json_error("usage",
+                            "usage: pzt export-images <project> <image_path...> <out_folder> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  // 最后一个位置参数是输出目录，中间的全是图片路径。
+  const std::string& out_folder = positional.back();
+  std::vector<pzt::core::ImageId> ids;
+  ids.reserve(positional.size() - 2);
+  for (std::size_t i = 1; i + 1 < positional.size(); ++i) {
+    auto image_id = pzt::core::find_image_by_path(*project_id, positional[i]);
+    if (!image_id) {
+      return emit_json_error("image_not_found", "image not found: " + positional[i]);
+    }
+    ids.push_back(*image_id);
+  }
+
+  auto settings = pzt::core::load_settings();
+  auto result = pzt::core::export_images(*project_id, ids, expand_home_path(out_folder), nullptr,
+                                          settings.export_reject, settings.export_dup);
+  if (!result.ok()) {
+    return emit_json_error("io_error", "failed to export (I/O error)");
+  }
+
+  nlohmann::json skipped = nlohmann::json::array();
+  for (const auto& s : result.value().skipped) {
+    skipped.push_back({{"path", s.file_name}, {"reason", skip_reason_str(s.reason)}});
+  }
+  emit_json({{"exported", result.value().exported_count},
+             {"skipped", std::move(skipped)},
+             {"created_dir", result.value().created_output_folder}});
+  return 0;
+}
+
 // M4：agent 读项目当前状态用——每张图的路径/评估状态/达标情况/标签，
 // 一次性给全，agent 不需要为了知道"评没评过"再单独查一遍(F-07 的
 // evaluated_image_ids 批量查询同一个精神)。

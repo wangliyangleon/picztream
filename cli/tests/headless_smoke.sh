@@ -128,6 +128,35 @@ assert_json_has "$out" "j['groups'] == 0 and j['tagged'] == 0" \
 assert_nonzero_exit_with_error "dedup: unknown tag scope fails with JSON error" \
   "$PZT" dedup smoke --scope '#不存在的标签' --json
 
+# --- pzt export-images ---
+# a.jpg/b.jpg/c.jpg 都是不可解码的假字节，但 kind="jpeg" 且没有 recipe
+# 的图片导出走字节级拷贝(core/export/export.cpp 的 write_one_export)，
+# 不需要真的能解码——所以这里能测到真实的导出成功路径,不是靠错误路径
+# 打幌子。
+OUT1="$WORKDIR/out1"
+out="$("$PZT" export-images smoke a.jpg b.jpg "$OUT1" --json)"
+assert_json_has "$out" "j['exported'] == 2" "export-images: exports the given paths"
+assert_json_has "$out" "j['created_dir'] == True" "export-images: reports newly-created output dir"
+if [ -f "$OUT1/a.jpg" ] && [ -f "$OUT1/b.jpg" ]; then
+  echo "PASS: export-images: files actually written to disk"
+  pass_count=$((pass_count + 1))
+else
+  echo "FAIL: export-images: files actually written to disk"
+  fail_count=$((fail_count + 1))
+fi
+
+# F-26 默认排除：c.jpg 打上(已存在的系统)废片标签之后，即便显式点名
+# 也不会被导出，除非 Settings.export_reject 打开——跟交互侧 cmd_export
+# 同一份默认排除规则(见 docs/Fix_It_Night_Review.md F-26)，这里验证
+# export-images 这条新命令也遵守它。
+"$PZT" tag apply smoke c.jpg 废片 --json >/dev/null
+out="$("$PZT" export-images smoke a.jpg c.jpg "$WORKDIR/out2" --json)"
+assert_json_has "$out" "j['exported'] == 1" \
+  "export-images: reject-tagged image excluded by default (F-26)"
+
+assert_nonzero_exit_with_error "export-images: unknown image path fails with JSON error" \
+  "$PZT" export-images smoke nope.jpg "$WORKDIR/out3" --json
+
 echo ""
 echo "== headless smoke: $pass_count passed, $fail_count failed =="
 if [ "$fail_count" -ne 0 ]; then

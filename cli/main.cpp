@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     if (subcommand == "recipe") return cmd_recipe(args);
     if (subcommand == "images") return cmd_images(args);
     if (subcommand == "dedup") return cmd_dedup(args);
+    if (subcommand == "export-images") return cmd_export_images(args);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_internal_error(e.what()).c_str());
     return 1;

@@ -24,5 +24,6 @@ int cmd_recipe(const std::vector<std::string>& args);
 // docs/M4_Eng_Design.md"headless 命令面设计"一节。
 int cmd_images(const std::vector<std::string>& args);
 int cmd_dedup(const std::vector<std::string>& args);
+int cmd_export_images(const std::vector<std::string>& args);
 
 }  // namespace pzt::cli::commands
