@@ -79,6 +79,11 @@ std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& proj
   return id;
 }
 
+// 前向声明：完整定义(含注释)在 tag_apply 附近，cmd_curate 也要用，物理
+// 位置在这里只是因为 cmd_curate 放在 cmd_eval 后面、定义处更靠后。
+std::optional<pzt::core::TagId> resolve_or_create_tag(pzt::core::ProjectId project_id,
+                                                        const std::string& name);
+
 // M4：`pzt dedup`/`pzt eval` 共用的批量范围解析——跟
 // cli/commands/browse.cpp 里 resolve_console_scope 同一个语义(`*` 整
 // 个项目、`#标签名` 带指定标签)，但那个函数在匿名命名空间里锁死、不
@@ -373,6 +378,85 @@ int cmd_eval(const std::vector<std::string>& args) {
   return 0;
 }
 
+// M4：策展挑图，见 docs/M4_Eng_Design.md 第三节。--tag 是候选范围限定
+// (可选，缺省整个项目)，跟 --apply-tag(落到入选图上的标签，可选，默
+// 认"精选")是两个独立的标签概念，不要混淆——前者是"从哪些图里选"，后
+// 者是"选完打什么标记"。--apply-tag 走跟 tag_apply 完全一致的惰性建普
+// 通标签路径，不是系统标签，重复运行不清历史标记(见 docs/M4_Eng_Design.md
+// 第三节 Context 里的拍板：用户想用"朋友圈"/"ins"这类自定义名字，不该
+// 被强绑成固定系统标签)。
+int cmd_curate(const std::vector<std::string>& args) {
+  bool json = false;
+  int count = 0;
+  bool count_set = false;
+  std::string scope_tag_name;
+  std::string apply_tag_name = "精选";
+  std::vector<std::string> positional;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--json") {
+      json = true;
+    } else if (args[i] == "--count") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--count requires a value");
+      try {
+        count = std::stoi(args[++i]);
+      } catch (...) {
+        return emit_json_error("usage", "--count must be an integer");
+      }
+      count_set = true;
+    } else if (args[i] == "--tag") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--tag requires a value");
+      scope_tag_name = args[++i];
+    } else if (args[i] == "--apply-tag") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--apply-tag requires a value");
+      apply_tag_name = args[++i];
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  if (positional.empty() || !count_set || count <= 0 || !json) {
+    return emit_json_error(
+        "usage", "usage: pzt curate <project> --count N [--tag <name>] [--apply-tag <name>] --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  std::optional<pzt::core::TagId> candidate_scope;
+  if (!scope_tag_name.empty()) {
+    auto tag_id = pzt::core::find_tag_by_name(*project_id, scope_tag_name);
+    if (!tag_id) return emit_json_error("tag_not_found", "tag not found: " + scope_tag_name);
+    candidate_scope = tag_id;
+  }
+
+  auto settings = pzt::core::load_settings();
+  auto result = pzt::core::curate_images(*project_id, candidate_scope, count,
+                                          settings.curate_time_window_seconds,
+                                          settings.curate_hash_threshold);
+
+  if (!result.selected.empty()) {
+    auto apply_tag_id = resolve_or_create_tag(*project_id, apply_tag_name);
+    if (!apply_tag_id) {
+      return emit_json_error("tag_create_failed", "failed to create tag: " + apply_tag_name);
+    }
+    for (auto id : result.selected) {
+      if (!pzt::core::add_tag(id, *apply_tag_id).ok()) {
+        return emit_json_error("add_tag_failed", "failed to apply tag to selected image");
+      }
+    }
+  }
+
+  std::unordered_map<pzt::core::ImageId, std::string> curate_path_by_id;
+  for (const auto& ref : pzt::core::list_images(*project_id)) curate_path_by_id[ref.id] = ref.file_path;
+
+  nlohmann::json selected_paths = nlohmann::json::array();
+  for (auto id : result.selected) selected_paths.push_back(curate_path_by_id[id]);
+
+  emit_json({{"requested", result.requested},
+             {"returned", result.returned},
+             {"selected", std::move(selected_paths)}});
+  return 0;
+}
+
 // M4：agent 读项目当前状态用——每张图的路径/评估状态/达标情况/标签，
 // 一次性给全，agent 不需要为了知道"评没评过"再单独查一遍(F-07 的
 // evaluated_image_ids 批量查询同一个精神)。
@@ -609,6 +693,19 @@ int cmd_delete(const std::vector<std::string>& args) {
   return 0;
 }
 
+// 惰性 find-or-create 一个非系统标签(不设 cap、无序)：找不到就建，建的
+// 时候撞见并发/TOCTOU 导致 NameAlreadyExists(两次 headless 调用几乎同
+// 时给同一个新标签名建标签)就再查一次兜底，拿第一个刚建好的 id，不当
+// 成失败处理。tag_apply 和 cmd_curate 共用这一段逻辑。
+std::optional<pzt::core::TagId> resolve_or_create_tag(pzt::core::ProjectId project_id,
+                                                        const std::string& name) {
+  auto tag_id = pzt::core::find_tag_by_name(project_id, name);
+  if (tag_id) return tag_id;
+  auto created = pzt::core::create_tag(project_id, name, std::nullopt, false);
+  if (created.ok()) return created.value();
+  return pzt::core::find_tag_by_name(project_id, name);
+}
+
 // M4：headless verb——按路径给一张图打标签，标签不存在就惰性建(非系
 // 统标签、不设 cap、无序)。交互菜单里"超 cap 弹子菜单选替换谁"这个人
 // 的决定，headless 没有菜单可弹，变成显式策略参数 --on-cap：fail(默
@@ -644,20 +741,9 @@ int tag_apply(const std::vector<std::string>& args) {
     return emit_json_error("image_not_found", "image not found: " + positional[1]);
   }
 
-  auto tag_id = pzt::core::find_tag_by_name(*project_id, positional[2]);
+  auto tag_id = resolve_or_create_tag(*project_id, positional[2]);
   if (!tag_id) {
-    auto created = pzt::core::create_tag(*project_id, positional[2], std::nullopt, false);
-    if (created.ok()) {
-      tag_id = created.value();
-    } else {
-      // TOCTOU：两次 headless 调用几乎同时给同一个新标签名建标签，第二
-      // 个会撞见 NameAlreadyExists——重新查一次就能拿到第一个刚建好的
-      // id，不当成失败处理。
-      tag_id = pzt::core::find_tag_by_name(*project_id, positional[2]);
-      if (!tag_id) {
-        return emit_json_error("tag_create_failed", "failed to create tag: " + positional[2]);
-      }
-    }
+    return emit_json_error("tag_create_failed", "failed to create tag: " + positional[2]);
   }
 
   auto result = pzt::core::add_tag(*image_id, *tag_id);

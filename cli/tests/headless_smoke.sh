@@ -183,6 +183,48 @@ assert_nonzero_exit_with_error "eval: unknown provider fails with JSON error" \
 assert_nonzero_exit_with_error "eval: unknown tag scope fails with JSON error" \
   "$PZT" eval smoke --scope '#不存在的标签' --provider gemini --json
 
+# --- pzt curate ---
+# a/b/c 手动写评估分数(全部通过 gate)和分散的 captured_at(避免互相聚
+# 簇)，验证候选过滤 + 每张各自成簇时按分数选 top N + 默认落"精选"标签
+# 的接线，不测多样性算法本身的细节(那部分已经在 core/tests/curate_test.cpp
+# 用可解码 JPEG 详尽覆盖)。
+DBPATH="$XDG_CONFIG_HOME/pzt/pzt.db"
+sqlite3 "$DBPATH" "UPDATE images SET captured_at = 1000 WHERE file_path = 'a.jpg';"
+sqlite3 "$DBPATH" "UPDATE images SET captured_at = 100000 WHERE file_path = 'b.jpg';"
+sqlite3 "$DBPATH" "UPDATE images SET captured_at = 200000 WHERE file_path = 'c.jpg';"
+sqlite3 "$DBPATH" "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note,
+    composition_score, composition_note, focus_score, focus_note, comment, extra_guidance, provider)
+  SELECT id, 9, '', 9, '', 9, '', '', '', 'gemini' FROM images WHERE file_path = 'a.jpg';"
+sqlite3 "$DBPATH" "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note,
+    composition_score, composition_note, focus_score, focus_note, comment, extra_guidance, provider)
+  SELECT id, 8, '', 8, '', 8, '', '', '', 'gemini' FROM images WHERE file_path = 'b.jpg';"
+# c.jpg 保持不评估——验证候选过滤排除未评估图
+
+out="$("$PZT" curate smoke --count 2 --json)"
+assert_json_has "$out" "j['requested'] == 2 and j['returned'] == 2" \
+  "curate: selects up to count from evaluated, passing candidates"
+assert_json_has "$out" "sorted(j['selected']) == ['a.jpg', 'b.jpg']" \
+  "curate: excludes unevaluated c.jpg, picks a/b by score"
+
+out="$("$PZT" images smoke --json)"
+assert_json_has "$out" \
+  "all('精选' in i['tags'] for i in j['images'] if i['path'] in ('a.jpg', 'b.jpg'))" \
+  "curate: applies the default apply-tag (精选) to selected images"
+
+out="$("$PZT" curate smoke --count 1 --apply-tag ins --json)"
+assert_json_has "$out" "j['returned'] == 1 and j['selected'] == ['a.jpg']" \
+  "curate: --apply-tag uses a custom tag name, still picks by score"
+
+out="$("$PZT" images smoke --json)"
+assert_json_has "$out" "any(i['path'] == 'a.jpg' and 'ins' in i['tags'] for i in j['images'])" \
+  "curate: custom apply-tag actually gets applied"
+
+assert_nonzero_exit_with_error "curate: unknown scope tag fails with JSON error" \
+  "$PZT" curate smoke --count 1 --tag 不存在的标签 --json
+
+assert_nonzero_exit_with_error "curate: missing --count fails with JSON error" \
+  "$PZT" curate smoke --json
+
 # --- pzt new --json ---
 PHOTOS2="$WORKDIR/photos2"
 mkdir -p "$PHOTOS2"

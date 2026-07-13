@@ -46,7 +46,7 @@ agent/           (新增，Python 包，独立 venv)
 | `pzt images <proj> --json` | `list_images` + `get_image` | 列出图片：path / 是否已评估 / passes_gate / 标签。agent 读状态用（复用 `evaluated_image_ids` 批量查，避免 N+1） |
 | `pzt eval <proj> --scope <*|#tag> --provider <gemini\|claude> [--auto-reject] --json` | `EvaluationWorker` 批量 | `--auto-reject`（策略参数，agent 默认传）：不达标即 `add_tag(reject)`，**显式传参、不读也不改 `Settings.auto_ai_reject`**（物理隔离，PRD P6）。同步跑完（批处理场景不需要异步 worker 的非阻塞语义，直接顺序评估+等待）；输出每张 结果/跳过/失败 |
 | `pzt dedup <proj> --scope <*|#tag> --json` | `find_and_tag_duplicates` | 时间窗/阈值读 `Settings`（M3 F-08 已支持）；输出组数/标记数/skipped_no_capture_time |
-| `pzt curate <proj> --count N [--tag <name>] --json` | 新增 `core::curate`（第三节） | 分簇 threshold 读独立的 `Settings.curate_time_window_seconds`/`curate_hash_threshold`（比 `dedup_*` 默认更宽松，见第三节）；输出选中的 image_path 列表 + 落一个"精选"标签 |
+| `pzt curate <proj> --count N [--tag <name>] [--apply-tag <name>] --json` | 新增 `core::curate`（第三节） | `--tag` 是候选范围限定（可选，缺省整个项目），跟 `--apply-tag`（落到入选图上的标签，可选，默认"精选"）是两个独立概念。分簇 threshold 读独立的 `Settings.curate_time_window_seconds`/`curate_hash_threshold`（比 `dedup_*` 默认更宽松，见第三节）；输出选中的 image_path 列表 + 落一个可配置的普通标签（惰性建，非系统标签，重复运行不清历史标记——见第三节） |
 | `pzt tag apply <proj> <image_path> <tag> [--on-cap {fail\|skip}] --json` | `add_tag`（+ `create_tag` 惰性建） | 幂等 |
 | `pzt export-images <proj> <image_path…> <folder> --json` | `export_images` | 输出导出/跳过清单 + 目标路径 |
 
@@ -91,7 +91,7 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
                     int time_window_seconds, int hash_threshold);
 }
 ```
-`curate` 只做**选择**，不打标签、不导出（单一职责）；`pzt curate` 命令在拿到结果后再调 `add_tag` 落"精选"标签（或由 agent 的 Curate Stage 组合）。确定性：同库同参数同输出，直接单元测试。
+`curate` 只做**选择**，不打标签、不导出（单一职责）；`pzt curate` 命令在拿到结果后落一个**可配置的普通标签**（`--apply-tag <name>`，默认"精选"，惰性建/`find_tag_by_name` 找不到就 `create_tag(..., is_system=false)`，非系统标签，重复运行不清历史标记）——不是固定的系统标签：用户如果要挑"朋友圈"/"ins"投稿这类场景，标签名字应该直接就是"朋友圈"/"ins"，不该被强绑成"精选"，走的是跟 `pzt tag apply` 完全一致的惰性建标签路径（`cli/commands/commands.cpp` 的 `resolve_or_create_tag`，两处共用）。确定性：同库同参数同输出，直接单元测试。
 
 ## 四、agent/ 结构设计（Python）
 
