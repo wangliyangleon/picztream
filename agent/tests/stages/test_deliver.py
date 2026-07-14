@@ -89,7 +89,8 @@ def test_deliver_writes_marker_after_successful_send(tmp_path):
 
     stage.run(ctx, {})
 
-    assert (marker_dir / "run-1.json").exists()
+    markers = list(marker_dir.glob("run-1-*.json"))
+    assert len(markers) == 1
 
 
 def test_deliver_skips_resend_when_marker_already_exists(tmp_path):
@@ -127,3 +128,24 @@ def test_deliver_maps_export_failure_to_stage_failure(tmp_path):
 
     assert output.ok is False
     assert len(transport.sent_files) == 0
+
+
+def test_deliver_resends_when_curate_selection_changes_after_adjustment(tmp_path):
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout='{"exported": 1, "skipped": [], "created_dir": true}\n', stderr="")
+
+    client = PztClient(pzt_bin="/fake/pzt", runner=fake_runner)
+    transport = FakeTransport()
+    marker_dir = tmp_path / "delivered"
+    stage = DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=tmp_path / "staging")
+
+    stage.run(make_curate_output_ctx(["a.jpg"]), {})  # 第一次交付选片 a
+    output = stage.run(make_curate_output_ctx(["b.jpg"]), {})  # 调整后换成选片 b，同一个 run_id
+
+    assert len(calls) == 2  # export-images 对两次不同的选片都真的调用了
+    assert len(transport.sent_files) == 2
+    assert transport.sent_files[1][1].endswith("b.jpg")
+    assert output.data.get("already_delivered") is not True
