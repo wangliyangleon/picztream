@@ -58,3 +58,11 @@ class TelegramBotClient:
         largest = max(photo_sizes, key=lambda p: p.file_size or 0)
         file = await self._bot.get_file(largest.file_id)
         await file.download_to_drive(custom_path=dest_path)
+
+    async def download_document(self, update: Any, dest_path: str) -> None:
+        # 手机相册"以文件方式发送"(不压缩)走的是 document，不是
+        # photo：两者是 Telegram 里完全不同的消息字段，document 只有
+        # 一份原图，不用像 photo 那样在多个尺寸里挑最大的。
+        document = update.message.document
+        file = await self._bot.get_file(document.file_id)
+        await file.download_to_drive(custom_path=dest_path)

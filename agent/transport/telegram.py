@@ -62,17 +62,42 @@ class TelegramTransport:
                 continue
             for update in updates:
                 self._offset = update.update_id + 1
-                message = getattr(update, "message", None)
-                if message is None:
-                    continue
-                if str(message.chat.id) != self.chat_id:
-                    continue
-                if getattr(message, "photo", None):
-                    dest_path = self.download_dir / f"{uuid.uuid4().hex}.jpg"
-                    await self._bot_client.download_photo(update, dest_path=str(dest_path))
-                    self._inbound.put(InboundMessage(kind="photo", chat_id=self.chat_id, file_path=str(dest_path)))
-                elif getattr(message, "text", None):
-                    self._inbound.put(InboundMessage(kind="text", chat_id=self.chat_id, text=message.text))
+                try:
+                    await self._handle_update(update)
+                except Exception as e:
+                    # 单条更新处理失败(典型是下载图片时网络抖了一下)不该
+                    # 拖死整条常驻轮询协程：offset 已经在上面推进过了，
+                    # 这条更新算是"丢弃"，但轮询本身必须活下去，不然一次
+                    # 偶发失败就会让进程看起来"卡住了"却毫无提示。
+                    print(f"[TelegramTransport] 处理消息失败，已跳过：{e!r}")
+
+    async def _handle_update(self, update: Any) -> None:
+        message = getattr(update, "message", None)
+        if message is None:
+            return
+        if str(message.chat.id) != self.chat_id:
+            return
+        document = getattr(message, "document", None)
+        if getattr(message, "photo", None):
+            dest_path = self.download_dir / f"{uuid.uuid4().hex}.jpg"
+            await self._bot_client.download_photo(update, dest_path=str(dest_path))
+            self._inbound.put(InboundMessage(kind="photo", chat_id=self.chat_id, file_path=str(dest_path)))
+        elif document is not None and (document.mime_type or "").startswith("image/"):
+            # 手机相册"以文件方式发送"(不压缩)的图片走 document，不是
+            # photo，真机验证时发现之前完全没处理这种情况，见
+            # transport/telegram_client.py::download_document。
+            suffix = Path(document.file_name).suffix if document.file_name else ".jpg"
+            dest_path = self.download_dir / f"{uuid.uuid4().hex}{suffix}"
+            await self._bot_client.download_document(update, dest_path=str(dest_path))
+            self._inbound.put(InboundMessage(kind="file", chat_id=self.chat_id, file_path=str(dest_path)))
+        elif getattr(message, "text", None):
+            self._inbound.put(InboundMessage(kind="text", chat_id=self.chat_id, text=message.text))
+        else:
+            # 诊断用：消息进来了但既没命中 photo 也没命中 text，先打印
+            # 出来看它长什么样，不要悄无声息地把它吃掉。
+            print(f"[TelegramTransport] 收到不认识的消息形状，已跳过：photo={getattr(message, 'photo', 'N/A')!r} "
+                  f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
+                  f"document={getattr(message, 'document', 'N/A')!r}")
 
     def receive(self) -> List[InboundMessage]:
         messages: List[InboundMessage] = []

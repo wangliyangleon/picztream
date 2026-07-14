@@ -72,7 +72,10 @@ def main() -> None:
     try:
         while True:
             for msg in transport.receive():
-                router.handle_message(msg)
+                print(f"[收到消息] kind={msg.kind} text={msg.text!r} file_path={msg.file_path!r}")
+                run = router.handle_message(msg)
+                if run is not None:
+                    print(f"  -> run_id={run.run_id} status={run.status.value}")
             time.sleep(args.poll_interval)
     except KeyboardInterrupt:
         print("收到中断，正在停止…")
