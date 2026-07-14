@@ -97,6 +97,30 @@ class SessionRouter:
 
         return run
 
+    def check_idle_timers(self) -> None:
+        active = self.store.list_active()
+        if not active:
+            return
+        run = active[0]
+        if run.reminder_sent or run.last_activity_at is None:
+            return
+        if self.now_fn() - run.last_activity_at < self.idle_reminder_seconds:
+            return
+
+        if run.status == RunStatus.COLLECTING:
+            count = len(list(incoming_dir_for(self.incoming_root, run.run_id).iterdir()))
+            self.transport.send_text(self.chat_id, f"看到你发了 {count} 张，想怎么处理？")
+        elif run.status == RunStatus.AWAITING_GATE:
+            self.transport.send_text(
+                self.chat_id,
+                "还在等你的回复呢，满意就说\"好的\"，不满意说说想怎么调，不要了就说\"取消\"",
+            )
+        else:
+            return
+
+        run.reminder_sent = True
+        self.store.save(run)
+
     def _handle_gate(self, run: RunState, msg: InboundMessage) -> RunState:
         if msg.kind in ("photo", "file"):
             if msg.file_path:

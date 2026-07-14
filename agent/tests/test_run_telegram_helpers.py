@@ -43,3 +43,15 @@ def test_build_router_uses_the_real_compose_plan_and_classify_gate_reply_functio
 
     assert router.compose_plan_fn is compose_plan
     assert router.classify_gate_reply_fn is classify_gate_reply
+
+
+def test_build_router_defaults_and_passes_through_idle_reminder_seconds(tmp_path):
+    client = PztClient(pzt_bin="/fake/pzt")
+    transport = FakeTransport()
+
+    default_router = build_router(state_dir=tmp_path, client=client, transport=transport, chat_id="42")
+    assert default_router.idle_reminder_seconds == 300.0
+
+    custom_router = build_router(state_dir=tmp_path, client=client, transport=transport, chat_id="42",
+                                  idle_reminder_seconds=20.0)
+    assert custom_router.idle_reminder_seconds == 20.0

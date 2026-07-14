@@ -27,7 +27,8 @@ from transport.telegram import TelegramTransport
 from transport.telegram_client import chat_id_from_env, token_from_env
 
 
-def build_router(state_dir: Path, client: PztClient, transport: Any, chat_id: str) -> SessionRouter:
+def build_router(state_dir: Path, client: PztClient, transport: Any, chat_id: str,
+                  idle_reminder_seconds: float = 300.0) -> SessionRouter:
     state_dir = Path(state_dir)
     store = RunStore(state_dir / "runs")
     marker_dir = state_dir / "delivered"
@@ -51,13 +52,16 @@ def build_router(state_dir: Path, client: PztClient, transport: Any, chat_id: st
         store=store, driver=driver, transport=transport, client=client, chat_id=chat_id,
         incoming_root=incoming_root, preview_root=preview_root, deliver_out_folder=deliver_out_folder,
         compose_plan_fn=compose_plan, classify_gate_reply_fn=classify_gate_reply,
+        idle_reminder_seconds=idle_reminder_seconds,
     )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Telegram 长驻会话 runner（子增量 F1）")
+    parser = argparse.ArgumentParser(description="Telegram 长驻会话 runner（子增量 F1/F2）")
     parser.add_argument("--state-dir", help="agent 状态落盘目录，默认 ~/.pzt-agent")
     parser.add_argument("--poll-interval", type=float, default=1.5, help="receive() 轮询间隔秒数")
+    parser.add_argument("--idle-reminder-seconds", type=float, default=300.0,
+                         help="Collecting/AwaitingGate 静默多久后主动提醒一次，默认 300 秒")
     args = parser.parse_args()
 
     state_dir = Path(args.state_dir) if args.state_dir else Path.home() / ".pzt-agent"
@@ -65,10 +69,12 @@ def main() -> None:
     chat_id = chat_id_from_env()
     client = PztClient()
     transport = TelegramTransport(token=token, chat_id=chat_id, download_dir=state_dir / "telegram-inbox")
-    router = build_router(state_dir=state_dir, client=client, transport=transport, chat_id=chat_id)
+    router = build_router(state_dir=state_dir, client=client, transport=transport, chat_id=chat_id,
+                           idle_reminder_seconds=args.idle_reminder_seconds)
 
     transport.start()
-    print(f"Telegram runner 已启动，chat_id={chat_id}，state_dir={state_dir}")
+    print(f"Telegram runner 已启动，chat_id={chat_id}，state_dir={state_dir}，"
+          f"idle_reminder_seconds={args.idle_reminder_seconds}")
     try:
         while True:
             for msg in transport.receive():
@@ -84,6 +90,10 @@ def main() -> None:
                     continue
                 if run is not None:
                     print(f"  -> run_id={run.run_id} status={run.status.value}")
+            try:
+                router.check_idle_timers()
+            except Exception as e:
+                print(f"[run_telegram] 检查静默计时器时出错，已跳过：{e!r}")
             time.sleep(args.poll_interval)
     except KeyboardInterrupt:
         print("收到中断，正在停止…")
