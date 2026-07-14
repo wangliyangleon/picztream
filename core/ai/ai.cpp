@@ -20,7 +20,7 @@ namespace {
 // 的东西。真实调通验证留给真机验收（没有 API key 的环境下测不出型号是
 // 不是还有效）。
 constexpr const char* kClaudeModel = "claude-sonnet-4-5-20250929";
-constexpr const char* kGeminiModel = "gemini-2.5-flash";
+constexpr const char* kGeminiModel = "gemini-3.1-flash-lite";
 constexpr const char* kClaudeUrl = "https://api.anthropic.com/v1/messages";
 
 std::optional<std::string> get_api_key(Provider provider) {
