@@ -88,6 +88,7 @@ def test_full_pipeline_runs_to_awaiting_review_and_delivers_selected_files(tmp_p
         "eval": '{"submitted": 3, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 3, "tagged": 0, "skipped_no_capture_time": 0}',
         "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
+        "tag": '{}',
         "export-images": '{"exported": 2, "skipped": [], "created_dir": true}',
     })
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
@@ -118,6 +119,7 @@ def test_crash_before_checkpoint_persists_does_not_resend_via_deliver_marker(tmp
         "eval": '{"submitted": 1, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 1, "tagged": 0, "skipped_no_capture_time": 0}',
         "curate": '{"requested": 1, "returned": 1, "selected": ["a.jpg"]}',
+        "tag": '{}',
         "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
     })
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
@@ -177,6 +179,7 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
         call_log_after_restart.append(argv[1])
         responses = {
             "curate": '{"requested": 1, "returned": 1, "selected": ["a.jpg"]}',
+            "tag": '{}',
             "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
         }
         return subprocess.CompletedProcess(argv, 0, stdout=responses[argv[1]], stderr="")
@@ -193,5 +196,5 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
     if reloaded.status == RunStatus.AWAITING_REVIEW:
         driver_b.approve(reloaded)
 
-    assert call_log_after_restart == ["curate", "export-images"]  # 没有重跑 new/eval/dedup
+    assert call_log_after_restart == ["curate", "tag", "tag", "export-images"]  # 没有重跑 new/eval/dedup
     assert reloaded.status == RunStatus.DONE

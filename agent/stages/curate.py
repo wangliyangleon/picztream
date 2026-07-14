@@ -17,9 +17,28 @@ class CurateStage:
     criticality: str = "critical"
 
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
-        args = ["curate", ctx.project_id, "--count", str(params["count"]), "--apply-tag", params.get("apply_tag", "精选")]
+        count = params["count"]
+        apply_tag = params.get("apply_tag", "精选")
+        exclude = params.get("exclude", [])
+
         try:
-            result = self.client.call(*args)
+            result = self.client.call(
+                "curate", ctx.project_id,
+                "--count", str(count + len(exclude)),
+                "--apply-tag", apply_tag,
+            )
+            # pzt curate --apply-tag 无条件给拿到的每一张候选打标(包括
+            # 多要的 len(exclude) 张、以及要被换掉的那几张)，过滤裁剪
+            # 之后必须重新收口标签状态：不能指望 --apply-tag 自己做对。
+            final_selection = [p for p in result["selected"] if p not in exclude][:count]
+            self.client.call("tag", "clear", ctx.project_id, apply_tag)
+            for path in final_selection:
+                self.client.call("tag", "apply", ctx.project_id, path, apply_tag)
         except PztCommandError as e:
             return StageOutput(ok=False, error=f"{e.code}: {e.message}")
-        return StageOutput(ok=True, data=result)
+
+        return StageOutput(ok=True, data={
+            "requested": count,
+            "returned": len(final_selection),
+            "selected": final_selection,
+        })
