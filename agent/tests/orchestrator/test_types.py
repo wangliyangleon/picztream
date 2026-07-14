@@ -59,3 +59,26 @@ def test_stage_status_is_json_serializable_directly_as_its_string_value():
     # encoder——这条测试锁住这个隐含依赖，以后别人改成非 str 混入的
     # Enum 会在这里炸。
     assert json.dumps({"s": StageStatus.DONE}) == '{"s": "done"}'
+
+
+def test_run_state_round_trips_activity_tracking_fields():
+    run = make_sample_run()
+    run.last_activity_at = 1700000000.5
+    run.reminder_sent = True
+
+    restored = run_state_from_dict(json.loads(json.dumps(asdict(run))))
+
+    assert restored.last_activity_at == 1700000000.5
+    assert restored.reminder_sent is True
+
+
+def test_run_state_from_dict_defaults_activity_fields_when_missing():
+    run = make_sample_run()
+    data = json.loads(json.dumps(asdict(run)))
+    del data["last_activity_at"]
+    del data["reminder_sent"]
+
+    restored = run_state_from_dict(data)
+
+    assert restored.last_activity_at is None
+    assert restored.reminder_sent is False

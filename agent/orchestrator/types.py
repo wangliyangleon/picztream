@@ -67,6 +67,8 @@ class RunState:
     gate_state: Optional[GateState] = None
     intent_raw: str = ""
     status: RunStatus = RunStatus.PLANNED
+    last_activity_at: Optional[float] = None
+    reminder_sent: bool = False
 
 
 @dataclass
@@ -89,4 +91,6 @@ def run_state_from_dict(data: dict[str, Any]) -> RunState:
         gate_state=gate_state,
         intent_raw=data.get("intent_raw", ""),
         status=RunStatus(data["status"]),
+        last_activity_at=data.get("last_activity_at"),
+        reminder_sent=data.get("reminder_sent", False),
     )
