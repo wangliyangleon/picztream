@@ -56,6 +56,7 @@ def main() -> None:
     state_dir = Path(args.state_dir) if args.state_dir else Path.home() / ".pzt-agent"
     store = RunStore(state_dir / "runs")
     marker_dir = state_dir / "delivered"
+    staging_dir = state_dir / "staging"
     client = PztClient()
 
     if args.resume:
@@ -81,7 +82,7 @@ def main() -> None:
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
-        "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir),
+        "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
     driver = Driver(stages=stages, store=store)
 

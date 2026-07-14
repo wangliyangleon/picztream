@@ -72,12 +72,13 @@ class FakeTransport:
 
 def _make_pipeline(tmp_path, client, transport):
     marker_dir = tmp_path / "delivered"
+    staging_dir = tmp_path / "staging"
     return {
         "Ingest": IngestStage(client=client),
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
-        "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir),
+        "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
 
 
