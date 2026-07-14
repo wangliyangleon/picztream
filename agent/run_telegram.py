@@ -73,7 +73,15 @@ def main() -> None:
         while True:
             for msg in transport.receive():
                 print(f"[收到消息] kind={msg.kind} text={msg.text!r} file_path={msg.file_path!r}")
-                run = router.handle_message(msg)
+                try:
+                    run = router.handle_message(msg)
+                except Exception as e:
+                    # 单条消息处理时炸了(网络抖动、LLM 超时、随便什么)
+                    # 不该拖死整个常驻进程——Run 的状态在崩之前该落盘的
+                    # 都已经落盘了(见 Driver.advance 每步都存)，这条消
+                    # 息就当处理失败跳过，进程继续收下一条。
+                    print(f"[run_telegram] 处理消息时出错，已跳过：{e!r}")
+                    continue
                 if run is not None:
                     print(f"  -> run_id={run.run_id} status={run.status.value}")
             time.sleep(args.poll_interval)

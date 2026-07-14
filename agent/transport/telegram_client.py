@@ -12,6 +12,7 @@ import os
 from typing import Any, List, Optional
 
 import telegram
+from telegram.request import HTTPXRequest
 
 
 class TelegramConfigError(Exception):
@@ -37,7 +38,18 @@ def chat_id_from_env() -> str:
 
 class TelegramBotClient:
     def __init__(self, token: str) -> None:
-        self._bot = telegram.Bot(token=token)
+        # python-telegram-bot 的默认 HTTPXRequest 读/写/连接超时都只有
+        # 5 秒：真机验证时复现过，发照片/文件在正常网络下经常超过 5 秒
+        # 就被 httpx 自己掐断(telegram.error.TimedOut)，跟 Telegram 服
+        # 务端是否响应无关。get_updates 走长轮询，读超时必须明显大于
+        # 传给它的 timeout 参数，否则 httpx 会比 Telegram 服务端更早
+        # 放弃这次长轮询。两类请求超时诉求不同，用 ptb 原生支持的
+        # request/get_updates_request 分开配置。
+        request = HTTPXRequest(connection_pool_size=8, read_timeout=30, write_timeout=30,
+                                connect_timeout=15, pool_timeout=15)
+        get_updates_request = HTTPXRequest(connection_pool_size=1, read_timeout=40, write_timeout=15,
+                                            connect_timeout=15, pool_timeout=15)
+        self._bot = telegram.Bot(token=token, request=request, get_updates_request=get_updates_request)
 
     async def get_updates(self, offset: Optional[int] = None, timeout: int = 25) -> List[Any]:
         return await self._bot.get_updates(offset=offset, timeout=timeout)
