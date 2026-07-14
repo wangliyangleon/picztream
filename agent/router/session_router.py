@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from compose.adjustment_parser import AdjustmentError
 from compose.llm_client import LlmRequestError
 from compose.validate import ValidationError, validate_plan
 from orchestrator.driver import Driver
@@ -16,6 +17,9 @@ from pzt_client import PztClient, PztCommandError
 from router.collecting import incoming_dir_for, new_collecting_run, new_run_id, stage_incoming_photo
 from store.run_store import RunStore
 from transport.base import InboundMessage
+
+_APPROVE_KEYWORDS = {"", "approve", "同意", "可以", "好", "好的", "ok"}
+_REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 
 
 class SessionRouter:
@@ -45,7 +49,61 @@ class SessionRouter:
             run = new_collecting_run(new_run_id())
             self.store.save(run)
 
-        return self._handle_collecting(run, msg)
+        return self._dispatch(run, msg)
+
+    def _dispatch(self, run: RunState, msg: InboundMessage) -> RunState:
+        if run.status == RunStatus.AWAITING_REVIEW:
+            self.driver.approve(run)
+            run = new_collecting_run(new_run_id())
+            self.store.save(run)
+
+        if run.status == RunStatus.COLLECTING:
+            return self._handle_collecting(run, msg)
+
+        if run.status == RunStatus.AWAITING_GATE:
+            return self._handle_gate(run, msg)
+
+        if run.status == RunStatus.RUNNING:
+            # 崩溃后续跑：drive_to_stop 之后要是停在 AWAITING_GATE，用
+            # 户还是得看到预览，所以走带通知的版本，不能只 _drive_to_stop。
+            self._drive_to_stop_and_notify(run)
+            return self._dispatch(run, msg)
+
+        return run
+
+    def _handle_gate(self, run: RunState, msg: InboundMessage) -> RunState:
+        if msg.kind in ("photo", "file"):
+            if msg.file_path:
+                stage_incoming_photo(self.incoming_root, run.run_id, msg.file_path)
+            self.transport.send_text(self.chat_id, "收到新照片，先处理完当前这批")
+            return run
+
+        text = (msg.text or "").strip()
+        normalized = text.lower()
+
+        if normalized in _REJECT_KEYWORDS:
+            self.driver.cancel(run)
+            self.transport.send_text(self.chat_id, "已取消")
+            return run
+
+        if normalized in _APPROVE_KEYWORDS:
+            self.driver.resolve_gate(run, "proceed")
+            self._drive_to_stop(run)
+            if run.status == RunStatus.AWAITING_REVIEW:
+                self.driver.approve(run)
+            return run
+
+        try:
+            delta = self.parse_adjustment_fn(text, run)
+        except AdjustmentError:
+            self.transport.send_text(
+                self.chat_id,
+                "没听懂这句调整，能再说清楚点吗？比如\"留9张\"\"换掉第2张\"\"换成xx标签\"",
+            )
+            return run
+
+        self.driver.apply_adjustment(run, delta)
+        return self._drive_to_stop_and_notify(run)
 
     def _handle_collecting(self, run: RunState, msg: InboundMessage) -> RunState:
         if msg.kind in ("photo", "file"):
