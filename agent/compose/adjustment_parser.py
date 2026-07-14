@@ -49,7 +49,7 @@ _SCHEMA_INSTRUCTION = (
 _GATE_SCHEMA_INSTRUCTION = (
     "You are classifying a user's reply about a batch of photos they were just shown "
     "for review, right before final delivery. Respond with a single JSON object "
-    "describing exactly one of these five shapes: "
+    "describing exactly one of these six shapes: "
     '{"action": "approve"} if the user is satisfied and wants to proceed with delivery, '
     'even if phrased casually or indirectly (for example "挺好的，就这三张吧", "可以了", '
     '"没问题", "just send it"); '
@@ -60,7 +60,10 @@ _GATE_SCHEMA_INSTRUCTION = (
     'wants the selected photos tagged with a different tag, album, or audience name; '
     '{"action": "swap_out", "index": <integer>} if the user wants to replace one '
     "specific photo, identified by its 1-based position in the previously shown list "
-    '(for example "换掉第3张" or "swap out photo #3" means index=3).'
+    '(for example "换掉第3张" or "swap out photo #3" means index=3); '
+    '{"action": "query"} if the message is just a question about the current status '
+    '(for example "选了几张呀？", "how many did you pick?"), not an instruction to '
+    "change anything or proceed."
 )
 
 _ADJUST_ACTIONS = ("set_count", "set_apply_tag", "swap_out")
@@ -75,7 +78,7 @@ class AdjustmentError(Exception):
 
 @dataclass
 class GateReply:
-    action: Literal["approve", "reject", "adjust"]
+    action: Literal["approve", "reject", "adjust", "query"]
     delta: Optional[PlanDelta] = None
 
 
@@ -108,6 +111,9 @@ def classify_gate_reply(msg: str, run: RunState, http_post: Optional[HttpPostFn]
 
     if action == "reject":
         return GateReply(action="reject")
+
+    if action == "query":
+        return GateReply(action="query")
 
     if action in _ADJUST_ACTIONS:
         return GateReply(action="adjust", delta=_decision_to_delta(action, decision, run))
@@ -147,20 +153,27 @@ def _resolve_swap_out(index: int, run: RunState) -> PlanDelta:
 _CONFIRMATION_SCHEMA_INSTRUCTION = (
     "You proposed a photo-culling plan and asked the user to confirm it. You are given "
     "the user's original intent, the plan you proposed (as JSON), and the user's reply. "
-    "Respond with a single JSON object in one of two shapes: "
+    "Respond with a single JSON object in one of five shapes: "
+    '{"action": "approve"} if the user is satisfied and wants to proceed, even if '
+    'phrased casually or indirectly (for example "好的，处理吧", "可以", "没问题"); '
+    '{"action": "reject"} if the user wants to abandon this plan entirely (for example '
+    '"算了", "不要了", "cancel"); '
+    '{"action": "query"} if the message is just a question about the current status '
+    '(for example "你收到几张图片了？", "现在的方案是什么？"), not an instruction to '
+    "change or approve anything; "
     '{"action": "confirmed", "provider": <string>, "auto_reject": <boolean>, '
     '"count": <integer>, "apply_tag": <string>} if the reply lets you determine a '
     "complete updated plan (for any field the user didn't ask to change, keep the same "
     "value as the plan you proposed); "
-    '{"action": "clarify", "question": <string>} if the reply is too vague to safely '
-    'act on (for example just "不对"/"no" with no specifics) - write a short, specific '
-    "follow-up question to ask the user in that case."
+    '{"action": "clarify", "question": <string>} if the reply seems to want a change but '
+    'is too vague to safely act on (for example just "不对"/"no" with no specifics) - '
+    "write a short, specific follow-up question to ask the user in that case."
 )
 
 
 @dataclass
 class PlanConfirmationReply:
-    action: Literal["confirmed", "clarify"]
+    action: Literal["confirmed", "clarify", "query", "approve", "reject"]
     provider: Optional[str] = None
     auto_reject: Optional[bool] = None
     count: Optional[int] = None
@@ -184,6 +197,15 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
     )
     action = decision.get("action")
 
+    if action == "approve":
+        return PlanConfirmationReply(action="approve")
+
+    if action == "reject":
+        return PlanConfirmationReply(action="reject")
+
+    if action == "query":
+        return PlanConfirmationReply(action="query")
+
     if action == "clarify":
         return PlanConfirmationReply(action="clarify", question=decision.get("question", "能再说清楚一点吗？"))
 
@@ -197,3 +219,35 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
         )
 
     raise AdjustmentError("unknown_action", f"unrecognized confirmation action {action!r}")
+
+
+_COLLECTING_SCHEMA_INSTRUCTION = (
+    "The user has been sending photos to a photo-culling bot and hasn't yet given a "
+    "processing instruction. You are given how many photos have been received so far "
+    "and the user's message. Respond with a single JSON object in one of two shapes: "
+    '{"action": "query"} if the message is just a question about the current status '
+    '(for example "收到几张了？", "how many photos so far?"), not an instruction to '
+    "start processing; "
+    '{"action": "intent"} if the message is an actual instruction describing how to '
+    'process the photos (for example "帮我选几张发朋友圈", "筛一下").'
+)
+
+
+@dataclass
+class CollectingReply:
+    action: Literal["query", "intent"]
+
+
+def classify_collecting_message(text: str, photo_count: int, http_post: Optional[HttpPostFn] = None,
+                                 meta_provider: str = "gemini") -> CollectingReply:
+    user_prompt = f"目前已收到 {photo_count} 张照片。用户消息：{text}"
+    decision = request_json(
+        user_prompt=user_prompt,
+        schema_instruction=_COLLECTING_SCHEMA_INSTRUCTION,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action not in ("query", "intent"):
+        raise AdjustmentError("unknown_action", f"unrecognized collecting message action {action!r}")
+    return CollectingReply(action=action)

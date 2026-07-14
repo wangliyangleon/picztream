@@ -4,6 +4,7 @@ import pytest
 
 from compose.adjustment_parser import (
     AdjustmentError,
+    classify_collecting_message,
     classify_gate_reply,
     parse_adjustment,
     refine_plan_confirmation,
@@ -172,5 +173,75 @@ def test_refine_plan_confirmation_unknown_action_raises(monkeypatch):
             "帮我选几张发朋友圈", current_params, "随便",
             http_post=_fake_http_post({"action": "do_something_else"}),
         )
+
+    assert exc_info.value.code == "unknown_action"
+
+
+def test_classify_gate_reply_recognizes_a_status_query(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    reply = classify_gate_reply("选了几张呀？", run, http_post=_fake_http_post({"action": "query"}))
+
+    assert reply.action == "query"
+
+
+def test_refine_plan_confirmation_recognizes_a_status_query(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "你收到几张图片了？",
+        http_post=_fake_http_post({"action": "query"}),
+    )
+
+    assert reply.action == "query"
+
+
+def test_refine_plan_confirmation_recognizes_natural_language_approval(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "好的，处理吧",
+        http_post=_fake_http_post({"action": "approve"}),
+    )
+
+    assert reply.action == "approve"
+
+
+def test_refine_plan_confirmation_recognizes_natural_language_rejection(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "算了不用了",
+        http_post=_fake_http_post({"action": "reject"}),
+    )
+
+    assert reply.action == "reject"
+
+
+def test_classify_collecting_message_recognizes_a_status_query(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    reply = classify_collecting_message("你收到几张图片了？", 7, http_post=_fake_http_post({"action": "query"}))
+
+    assert reply.action == "query"
+
+
+def test_classify_collecting_message_recognizes_a_real_intent(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    reply = classify_collecting_message("帮我选几张发朋友圈", 7, http_post=_fake_http_post({"action": "intent"}))
+
+    assert reply.action == "intent"
+
+
+def test_classify_collecting_message_unknown_action_raises(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    with pytest.raises(AdjustmentError) as exc_info:
+        classify_collecting_message("随便说点什么", 7, http_post=_fake_http_post({"action": "do_something_else"}))
 
     assert exc_info.value.code == "unknown_action"
