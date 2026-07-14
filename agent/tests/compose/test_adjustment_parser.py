@@ -2,7 +2,12 @@ import json
 
 import pytest
 
-from compose.adjustment_parser import AdjustmentError, classify_gate_reply, parse_adjustment
+from compose.adjustment_parser import (
+    AdjustmentError,
+    classify_gate_reply,
+    parse_adjustment,
+    refine_plan_confirmation,
+)
 from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
 
 
@@ -125,5 +130,47 @@ def test_classify_gate_reply_unknown_action_raises(monkeypatch):
 
     with pytest.raises(AdjustmentError) as exc_info:
         classify_gate_reply("随便你", run, http_post=_fake_http_post({"action": "do_something_else"}))
+
+    assert exc_info.value.code == "unknown_action"
+
+
+def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "不对",
+        http_post=_fake_http_post({"action": "clarify", "question": "具体想改哪一项？"}),
+    )
+
+    assert reply.action == "clarify"
+    assert reply.question == "具体想改哪一项？"
+
+
+def test_refine_plan_confirmation_merges_specific_correction_and_keeps_the_rest(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "改成6张",
+        http_post=_fake_http_post({"action": "confirmed", "count": 6}),
+    )
+
+    assert reply.action == "confirmed"
+    assert reply.count == 6
+    assert reply.provider == "gemini"       # 用户没提，保留原值
+    assert reply.auto_reject is True
+    assert reply.apply_tag == "精选"
+
+
+def test_refine_plan_confirmation_unknown_action_raises(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
+
+    with pytest.raises(AdjustmentError) as exc_info:
+        refine_plan_confirmation(
+            "帮我选几张发朋友圈", current_params, "随便",
+            http_post=_fake_http_post({"action": "do_something_else"}),
+        )
 
     assert exc_info.value.code == "unknown_action"
