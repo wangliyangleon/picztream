@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from compose.adjustment_parser import classify_gate_reply, refine_plan_confirmation
+from compose.adjustment_parser import classify_collecting_message, classify_gate_reply, refine_plan_confirmation
 from compose.plan_composer import compose_plan
 from orchestrator.driver import Driver
 from pzt_client import PztClient
@@ -53,6 +53,7 @@ def build_router(state_dir: Path, client: PztClient, transport: Any, chat_id: st
         incoming_root=incoming_root, preview_root=preview_root, deliver_out_folder=deliver_out_folder,
         compose_plan_fn=compose_plan, classify_gate_reply_fn=classify_gate_reply,
         refine_plan_confirmation_fn=refine_plan_confirmation,
+        classify_collecting_message_fn=classify_collecting_message,
         idle_reminder_seconds=idle_reminder_seconds,
     )
 
