@@ -36,7 +36,7 @@ _REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 class SessionRouter:
     def __init__(self, store: RunStore, driver: Driver, transport: Any, client: PztClient, chat_id: str,
                  incoming_root: Path, preview_root: Path, deliver_out_folder: Path,
-                 compose_plan_fn: Any, classify_gate_reply_fn: Any,
+                 compose_plan_fn: Any, classify_gate_reply_fn: Any, refine_plan_confirmation_fn: Any,
                  now_fn: Callable[[], float] = time.time, idle_reminder_seconds: float = 300.0) -> None:
         self.store = store
         self.driver = driver
@@ -48,6 +48,7 @@ class SessionRouter:
         self.deliver_out_folder = Path(deliver_out_folder)
         self.compose_plan_fn = compose_plan_fn
         self.classify_gate_reply_fn = classify_gate_reply_fn
+        self.refine_plan_confirmation_fn = refine_plan_confirmation_fn
         self.now_fn = now_fn
         self.idle_reminder_seconds = idle_reminder_seconds
 
@@ -240,11 +241,38 @@ class SessionRouter:
         if normalized in _APPROVE_KEYWORDS:
             return self._begin_running(run)
 
-        self.transport.send_text(
-            self.chat_id,
-            "没听懂，满意就说\"好的\"，不满意说说想怎么改，不要了就说\"取消\"",
-        )
-        return run
+        current_params = self._current_plan_params(run)
+        try:
+            reply = self.refine_plan_confirmation_fn(run.intent_raw, current_params, text)
+        except AdjustmentError:
+            self.transport.send_text(
+                self.chat_id,
+                "没听懂，满意就说\"好的\"，不满意说说想怎么改，不要了就说\"取消\"",
+            )
+            return run
+
+        if reply.action == "clarify":
+            self.transport.send_text(self.chat_id, reply.question)
+            return run
+
+        evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
+        curate = next(s for s in run.plan.stages if s.name == "Curate")
+        evaluate.params["provider"] = reply.provider
+        evaluate.params["auto_reject"] = reply.auto_reject
+        curate.params["count"] = reply.count
+        curate.params["apply_tag"] = reply.apply_tag
+        self.store.save(run)
+        return self._begin_running(run)
+
+    def _current_plan_params(self, run: RunState) -> dict:
+        evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
+        curate = next(s for s in run.plan.stages if s.name == "Curate")
+        return {
+            "provider": evaluate.params["provider"],
+            "auto_reject": evaluate.params["auto_reject"],
+            "count": curate.params["count"],
+            "apply_tag": curate.params["apply_tag"],
+        }
 
     def _begin_running(self, run: RunState) -> RunState:
         run.status = RunStatus.RUNNING

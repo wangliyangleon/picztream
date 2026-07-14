@@ -77,15 +77,67 @@ def test_photo_arriving_while_planned_merges_directly_into_the_run_folder(tmp_pa
     assert not (tmp_path / "incoming" / "_pending").exists()  # 直接并入，不走 F2 的排队区
 
 
-def test_unrecognized_reply_while_planned_sends_a_generic_apology(tmp_path):
-    router, store, transport, _ = _make_router(tmp_path)
+def test_vague_reply_while_planned_asks_a_clarifying_question(tmp_path):
+    from compose.adjustment_parser import PlanConfirmationReply
+
+    def _fake_clarify(original_intent, current_params, followup):
+        assert followup == "不对"
+        return PlanConfirmationReply(action="clarify", question="具体想改哪一项？")
+
+    router, store, transport, _ = _make_router(tmp_path, refine_plan_confirmation_fn=_fake_clarify)
     downloaded = tmp_path / "downloaded"
     downloaded.mkdir()
     (downloaded / "a.jpg").write_bytes(b"a")
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
     router.handle_message(_text_msg("筛一下"))
 
+    run = router.handle_message(_text_msg("不对"))
+
+    assert run.status == RunStatus.PLANNED
+    assert any("具体想改哪一项？" in text for _, text in transport.sent_texts)
+
+
+def test_specific_correction_while_planned_updates_params_and_begins_running(tmp_path):
+    from compose.adjustment_parser import PlanConfirmationReply
+
+    def _fake_confirmed(original_intent, current_params, followup):
+        assert followup == "改成6张"
+        return PlanConfirmationReply(
+            action="confirmed", provider=current_params["provider"],
+            auto_reject=current_params["auto_reject"], count=6,
+            apply_tag=current_params["apply_tag"],
+        )
+
+    router, store, transport, _ = _make_router(tmp_path, refine_plan_confirmation_fn=_fake_confirmed)
+    downloaded = tmp_path / "downloaded"
+    downloaded.mkdir()
+    (downloaded / "a.jpg").write_bytes(b"a")
+    (downloaded / "b.jpg").write_bytes(b"b")
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "b.jpg")))
+    router.handle_message(_text_msg("筛一下留2张"))
+
     run = router.handle_message(_text_msg("改成6张"))
 
-    assert run.status == RunStatus.PLANNED  # Task 2 阶段还没接 LLM，先原地不动
+    assert run.status == RunStatus.AWAITING_GATE
+    curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
+    assert curate_spec.params["count"] == 6
+
+
+def test_unparseable_reply_while_planned_apologizes_via_refine_fn_error(tmp_path):
+    from compose.adjustment_parser import AdjustmentError
+
+    def _raising(original_intent, current_params, followup):
+        raise AdjustmentError("unknown_action", "boom")
+
+    router, store, transport, _ = _make_router(tmp_path, refine_plan_confirmation_fn=_raising)
+    downloaded = tmp_path / "downloaded"
+    downloaded.mkdir()
+    (downloaded / "a.jpg").write_bytes(b"a")
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
+    router.handle_message(_text_msg("筛一下"))
+
+    run = router.handle_message(_text_msg("乱说一句"))
+
+    assert run.status == RunStatus.PLANNED
     assert any("没听懂" in text for _, text in transport.sent_texts)

@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from compose.adjustment_parser import classify_gate_reply
+from compose.adjustment_parser import classify_gate_reply, refine_plan_confirmation
 from orchestrator.driver import Driver
 from orchestrator.types import Plan, StageSpec
 from pzt_client import PztClient
@@ -85,7 +85,9 @@ class FakeClock:
 
 def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
                   runner: Callable = _fake_runner, now_fn: Callable[[], float] = time.time,
-                  idle_reminder_seconds: float = 300.0) -> Tuple[SessionRouter, RunStore, FakeTransport, PztClient]:
+                  idle_reminder_seconds: float = 300.0,
+                  refine_plan_confirmation_fn: Callable = refine_plan_confirmation
+                  ) -> Tuple[SessionRouter, RunStore, FakeTransport, PztClient]:
     client = PztClient(pzt_bin="/fake/pzt", runner=runner)
     transport = FakeTransport()
     store = RunStore(tmp_path / "runs")
@@ -103,6 +105,7 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
         incoming_root=tmp_path / "incoming", preview_root=tmp_path / "preview",
         deliver_out_folder=tmp_path / "deliver-out",
         compose_plan_fn=compose_plan_fn, classify_gate_reply_fn=classify_gate_reply,
+        refine_plan_confirmation_fn=refine_plan_confirmation_fn,
         now_fn=now_fn, idle_reminder_seconds=idle_reminder_seconds,
     )
     return router, store, transport, client
