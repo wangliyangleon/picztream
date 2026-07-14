@@ -157,6 +157,25 @@ def test_send_preview_falls_back_to_send_file_when_a_photo_is_too_big_and_still_
     assert any("选好了 2 张" in text for _, text in transport.sent_texts)
 
 
+def test_query_while_planned_answers_with_status_snapshot_and_stays_planned(tmp_path):
+    from compose.adjustment_parser import PlanConfirmationReply
+
+    def _fake_query(original_intent, current_params, followup):
+        return PlanConfirmationReply(action="query")
+
+    router, store, transport, _ = _make_router(tmp_path, refine_plan_confirmation_fn=_fake_query)
+    downloaded = tmp_path / "downloaded"
+    downloaded.mkdir()
+    (downloaded / "a.jpg").write_bytes(b"a")
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
+    router.handle_message(_text_msg("筛一下"))
+
+    run = router.handle_message(_text_msg("你收到几张图片了？"))
+
+    assert run.status == RunStatus.PLANNED
+    assert any("目前收到 1 张照片" in text for _, text in transport.sent_texts)
+
+
 def test_unparseable_reply_while_planned_apologizes_via_refine_fn_error(tmp_path):
     from compose.adjustment_parser import AdjustmentError
 

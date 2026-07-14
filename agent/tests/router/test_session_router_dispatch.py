@@ -78,3 +78,19 @@ def test_casual_approval_not_matching_keywords_is_recognized_via_classify_gate_r
 
     assert result.status == RunStatus.DONE
     assert len(transport.sent_files) == 2
+
+
+def test_query_at_gate_answers_with_status_snapshot_and_does_not_disturb_the_gate(tmp_path):
+    from compose.adjustment_parser import GateReply
+
+    def _fake_query_classify(text, run):
+        return GateReply(action="query")
+
+    router, store, transport, _ = _make_router(tmp_path)
+    _run_to_gate(router)
+    router.classify_gate_reply_fn = _fake_query_classify
+
+    result = router.handle_message(_text_msg("选了几张呀？"))
+
+    assert result.status == RunStatus.AWAITING_GATE
+    assert any("已经选好了 2 张" in text for _, text in transport.sent_texts)

@@ -173,6 +173,10 @@ class SessionRouter:
             self.transport.send_text(self.chat_id, "已取消")
             return run
 
+        if reply.action == "query":
+            self.transport.send_text(self.chat_id, self._status_snapshot_text(run))
+            return run
+
         self.driver.apply_adjustment(run, reply.delta)
         return self._drive_to_stop_and_notify(run)
 
@@ -255,6 +259,10 @@ class SessionRouter:
             self.transport.send_text(self.chat_id, reply.question)
             return run
 
+        if reply.action == "query":
+            self.transport.send_text(self.chat_id, self._status_snapshot_text(run))
+            return run
+
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
         evaluate.params["provider"] = reply.provider
@@ -273,6 +281,21 @@ class SessionRouter:
             "count": curate.params["count"],
             "apply_tag": curate.params["apply_tag"],
         }
+
+    def _status_snapshot_text(self, run: RunState) -> str:
+        count = len(list(incoming_dir_for(self.incoming_root, run.run_id).iterdir()))
+        if run.status == RunStatus.COLLECTING:
+            return f"目前收到 {count} 张照片，还没告诉我想怎么处理"
+        if run.status == RunStatus.PLANNED:
+            evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
+            curate = next(s for s in run.plan.stages if s.name == "Curate")
+            return (f"目前收到 {count} 张照片，方案是：用 {evaluate.params['provider']} 评估，"
+                    f"留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"")
+        if run.status == RunStatus.AWAITING_GATE:
+            curate_output = run.outputs.get("Curate")
+            selected = curate_output.data.get("selected", []) if curate_output else []
+            return f"已经选好了 {len(selected)} 张，等你回复"
+        return "没什么可说的"
 
     def _begin_running(self, run: RunState) -> RunState:
         run.status = RunStatus.RUNNING
