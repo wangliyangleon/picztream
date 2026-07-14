@@ -1,21 +1,11 @@
 from orchestrator.types import RunStatus
-from transport.base import InboundMessage
 
-from router_fakes import CHAT_ID, _make_router, _run_to_gate, _text_msg
+from router_fakes import _make_router, _run_to_gate, _text_msg
 
-
-def test_photo_arriving_at_gate_is_staged_but_does_not_disturb_the_pending_gate(tmp_path):
-    router, store, transport, _ = _make_router(tmp_path)
-    run = _run_to_gate(router)
-    src = tmp_path / "downloaded" / "extra.jpg"
-    src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_bytes(b"z")
-
-    result = router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(src)))
-
-    assert result.status == RunStatus.AWAITING_GATE
-    assert (tmp_path / "incoming" / run.run_id / "extra.jpg").read_bytes() == b"z"
-    assert any("收到新照片" in text for _, text in transport.sent_texts)
+# 注：photo-at-gate 的行为(F2 起改成排队，不再直接并入当前 run)现在由
+# tests/router/test_session_router_queue.py::
+# test_photo_at_gate_is_queued_not_merged_into_the_current_run 覆盖，
+# 这里不再重复一份针对旧行为的测试。
 
 
 def test_stale_awaiting_review_run_self_heals_to_done_then_starts_a_fresh_collecting_run(tmp_path):

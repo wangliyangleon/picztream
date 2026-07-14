@@ -5,8 +5,9 @@ assert 顶住），多会话/多项目并发不在这个子增量范围内。
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from compose.adjustment_parser import AdjustmentError
 from compose.llm_client import LlmRequestError
@@ -14,7 +15,14 @@ from compose.validate import ValidationError, validate_plan
 from orchestrator.driver import Driver
 from orchestrator.types import RunState, RunStatus, StageStatus
 from pzt_client import PztClient, PztCommandError
-from router.collecting import incoming_dir_for, new_collecting_run, new_run_id, stage_incoming_photo
+from router.collecting import (
+    drain_queue_into,
+    incoming_dir_for,
+    new_collecting_run,
+    new_run_id,
+    queue_incoming_photo,
+    stage_incoming_photo,
+)
 from store.run_store import RunStore
 from transport.base import InboundMessage
 
@@ -25,7 +33,8 @@ _REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 class SessionRouter:
     def __init__(self, store: RunStore, driver: Driver, transport: Any, client: PztClient, chat_id: str,
                  incoming_root: Path, preview_root: Path, deliver_out_folder: Path,
-                 compose_plan_fn: Any, classify_gate_reply_fn: Any) -> None:
+                 compose_plan_fn: Any, classify_gate_reply_fn: Any,
+                 now_fn: Callable[[], float] = time.time, idle_reminder_seconds: float = 300.0) -> None:
         self.store = store
         self.driver = driver
         self.transport = transport
@@ -36,6 +45,8 @@ class SessionRouter:
         self.deliver_out_folder = Path(deliver_out_folder)
         self.compose_plan_fn = compose_plan_fn
         self.classify_gate_reply_fn = classify_gate_reply_fn
+        self.now_fn = now_fn
+        self.idle_reminder_seconds = idle_reminder_seconds
 
     def handle_message(self, msg: InboundMessage) -> Optional[RunState]:
         if msg.chat_id != self.chat_id:
@@ -46,15 +57,30 @@ class SessionRouter:
         if active:
             run = active[0]
         else:
-            run = new_collecting_run(new_run_id())
-            self.store.save(run)
+            run = self._mint_collecting_run()
 
         return self._dispatch(run, msg)
+
+    def _mint_collecting_run(self) -> RunState:
+        run = new_collecting_run(new_run_id())
+        run.last_activity_at = self.now_fn()
+        moved = drain_queue_into(self.incoming_root, run.run_id)
+        self.store.save(run)
+        if moved:
+            self.transport.send_text(self.chat_id, f"之前排队的 {len(moved)} 张已经并进这一批了")
+        return run
 
     def _dispatch(self, run: RunState, msg: InboundMessage) -> RunState:
         if run.status == RunStatus.AWAITING_REVIEW:
             self.driver.approve(run)
-            run = new_collecting_run(new_run_id())
+            run = self._mint_collecting_run()
+
+        if run.status in (RunStatus.COLLECTING, RunStatus.AWAITING_GATE):
+            # 每条真正落到一个活跃 run 上的消息都刷新一次"最近活跃时
+            # 间"、清掉"已经提醒过"的标记 -- 静默计时器算的是"用户有多
+            # 久没搭理这个 run"，不是"run 存在了多久"。
+            run.last_activity_at = self.now_fn()
+            run.reminder_sent = False
             self.store.save(run)
 
         if run.status == RunStatus.COLLECTING:
@@ -74,8 +100,8 @@ class SessionRouter:
     def _handle_gate(self, run: RunState, msg: InboundMessage) -> RunState:
         if msg.kind in ("photo", "file"):
             if msg.file_path:
-                stage_incoming_photo(self.incoming_root, run.run_id, msg.file_path)
-            self.transport.send_text(self.chat_id, "收到新照片，先处理完当前这批")
+                queue_incoming_photo(self.incoming_root, msg.file_path)
+            self.transport.send_text(self.chat_id, "先帮你收着，这批处理完就接着看这些新照片")
             return run
 
         text = (msg.text or "").strip()
