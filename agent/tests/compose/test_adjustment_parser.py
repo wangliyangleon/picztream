@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from compose.adjustment_parser import AdjustmentError, parse_adjustment
+from compose.adjustment_parser import AdjustmentError, classify_gate_reply, parse_adjustment
 from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
 
 
@@ -84,5 +84,46 @@ def test_parse_adjustment_unknown_action_raises(monkeypatch):
 
     with pytest.raises(AdjustmentError) as exc_info:
         parse_adjustment("随便你", run, http_post=_fake_http_post({"action": "do_something_else"}))
+
+    assert exc_info.value.code == "unknown_action"
+
+
+def test_classify_gate_reply_recognizes_casual_approval(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    reply = classify_gate_reply("挺好的，就这三张吧", run, http_post=_fake_http_post({"action": "approve"}))
+
+    assert reply.action == "approve"
+    assert reply.delta is None
+
+
+def test_classify_gate_reply_recognizes_reject(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    run = _make_run(["a.jpg"])
+
+    reply = classify_gate_reply("算了不要了", run, http_post=_fake_http_post({"action": "reject"}))
+
+    assert reply.action == "reject"
+    assert reply.delta is None
+
+
+def test_classify_gate_reply_still_resolves_adjustments_with_a_delta(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    reply = classify_gate_reply("换掉第3张", run, http_post=_fake_http_post({"action": "swap_out", "index": 3}))
+
+    assert reply.action == "adjust"
+    assert reply.delta.stage_name == "Curate"
+    assert reply.delta.params == {"exclude": ["c.jpg"]}
+
+
+def test_classify_gate_reply_unknown_action_raises(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    run = _make_run(["a.jpg"])
+
+    with pytest.raises(AdjustmentError) as exc_info:
+        classify_gate_reply("随便你", run, http_post=_fake_http_post({"action": "do_something_else"}))
 
     assert exc_info.value.code == "unknown_action"

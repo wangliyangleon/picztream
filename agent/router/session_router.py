@@ -25,7 +25,7 @@ _REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 class SessionRouter:
     def __init__(self, store: RunStore, driver: Driver, transport: Any, client: PztClient, chat_id: str,
                  incoming_root: Path, preview_root: Path, deliver_out_folder: Path,
-                 compose_plan_fn: Any, parse_adjustment_fn: Any) -> None:
+                 compose_plan_fn: Any, classify_gate_reply_fn: Any) -> None:
         self.store = store
         self.driver = driver
         self.transport = transport
@@ -35,7 +35,7 @@ class SessionRouter:
         self.preview_root = Path(preview_root)  # 预览导出目的地，跟 DeliverStage 的 staging_dir 同构
         self.deliver_out_folder = Path(deliver_out_folder)
         self.compose_plan_fn = compose_plan_fn
-        self.parse_adjustment_fn = parse_adjustment_fn
+        self.classify_gate_reply_fn = classify_gate_reply_fn
 
     def handle_message(self, msg: InboundMessage) -> Optional[RunState]:
         if msg.chat_id != self.chat_id:
@@ -94,15 +94,27 @@ class SessionRouter:
             return run
 
         try:
-            delta = self.parse_adjustment_fn(text, run)
+            reply = self.classify_gate_reply_fn(text, run)
         except AdjustmentError:
             self.transport.send_text(
                 self.chat_id,
-                "没听懂这句调整，能再说清楚点吗？比如\"留9张\"\"换掉第2张\"\"换成xx标签\"",
+                "没听懂这句话，能再说清楚点吗？满意就说\"好的\"，不满意说说想怎么调，不要了就说\"取消\"",
             )
             return run
 
-        self.driver.apply_adjustment(run, delta)
+        if reply.action == "approve":
+            self.driver.resolve_gate(run, "proceed")
+            self._drive_to_stop(run)
+            if run.status == RunStatus.AWAITING_REVIEW:
+                self.driver.approve(run)
+            return run
+
+        if reply.action == "reject":
+            self.driver.cancel(run)
+            self.transport.send_text(self.chat_id, "已取消")
+            return run
+
+        self.driver.apply_adjustment(run, reply.delta)
         return self._drive_to_stop_and_notify(run)
 
     def _handle_collecting(self, run: RunState, msg: InboundMessage) -> RunState:

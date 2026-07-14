@@ -55,17 +55,36 @@ def test_reject_keyword_at_gate_cancels_the_run(tmp_path):
     assert any("已取消" in text for _, text in transport.sent_texts)
 
 
-def test_unparseable_adjustment_at_gate_keeps_the_gate_and_apologizes(tmp_path):
+def test_unparseable_reply_at_gate_keeps_the_gate_and_apologizes(tmp_path):
     from compose.adjustment_parser import AdjustmentError
 
-    def _raising_parse_adjustment(text, run):
+    def _raising_classify(text, run):
         raise AdjustmentError("unknown_action", "boom")
 
     router, store, transport, _ = _make_router(tmp_path)
-    router.parse_adjustment_fn = _raising_parse_adjustment
+    router.classify_gate_reply_fn = _raising_classify
     _run_to_gate(router)
 
     result = router.handle_message(_text_msg("胡乱说一句"))
 
     assert result.status == RunStatus.AWAITING_GATE
-    assert any("没听懂这句调整" in text for _, text in transport.sent_texts)
+    assert any("没听懂这句话" in text for _, text in transport.sent_texts)
+
+
+def test_casual_approval_not_matching_keywords_is_recognized_via_classify_gate_reply(tmp_path):
+    # 真机验证时复现的真实 bug："挺好的，就这三张吧"不精确等于
+    # _APPROVE_KEYWORDS 里任何一项，之前会被当成一句解析不出来的调整，
+    # Gate 卡住不动。classify_gate_reply_fn 兜底识别这种自然口语的同意。
+    def _fake_classify_casual_approve(text, run):
+        from compose.adjustment_parser import GateReply
+        assert text == "挺好的，就这三张吧"
+        return GateReply(action="approve")
+
+    router, store, transport, _ = _make_router(tmp_path)
+    router.classify_gate_reply_fn = _fake_classify_casual_approve
+    _run_to_gate(router)
+
+    result = router.handle_message(_text_msg("挺好的，就这三张吧"))
+
+    assert result.status == RunStatus.DONE
+    assert len(transport.sent_files) == 2

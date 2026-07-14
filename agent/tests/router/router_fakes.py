@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from compose.adjustment_parser import parse_adjustment
+from compose.adjustment_parser import classify_gate_reply
 from orchestrator.driver import Driver
 from orchestrator.types import Plan, StageSpec
 from pzt_client import PztClient
@@ -89,7 +89,7 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
         store=store, driver=driver, transport=transport, client=client, chat_id=CHAT_ID,
         incoming_root=tmp_path / "incoming", preview_root=tmp_path / "preview",
         deliver_out_folder=tmp_path / "deliver-out",
-        compose_plan_fn=compose_plan_fn, parse_adjustment_fn=parse_adjustment,
+        compose_plan_fn=compose_plan_fn, classify_gate_reply_fn=classify_gate_reply,
     )
     return router, store, transport, client
 

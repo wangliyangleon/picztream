@@ -32,8 +32,8 @@ def test_build_router_wires_stages_store_and_deliver_chat_id(tmp_path):
     assert (tmp_path / "deliver-out").is_dir()
 
 
-def test_build_router_uses_the_real_compose_plan_and_parse_adjustment_functions(tmp_path):
-    from compose.adjustment_parser import parse_adjustment
+def test_build_router_uses_the_real_compose_plan_and_classify_gate_reply_functions(tmp_path):
+    from compose.adjustment_parser import classify_gate_reply
     from compose.plan_composer import compose_plan
 
     client = PztClient(pzt_bin="/fake/pzt")
@@ -42,4 +42,4 @@ def test_build_router_uses_the_real_compose_plan_and_parse_adjustment_functions(
     router = build_router(state_dir=tmp_path, client=client, transport=transport, chat_id="42")
 
     assert router.compose_plan_fn is compose_plan
-    assert router.parse_adjustment_fn is parse_adjustment
+    assert router.classify_gate_reply_fn is classify_gate_reply
