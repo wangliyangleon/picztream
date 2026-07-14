@@ -55,3 +55,14 @@ def test_build_router_defaults_and_passes_through_idle_reminder_seconds(tmp_path
     custom_router = build_router(state_dir=tmp_path, client=client, transport=transport, chat_id="42",
                                   idle_reminder_seconds=20.0)
     assert custom_router.idle_reminder_seconds == 20.0
+
+
+def test_build_router_uses_the_real_refine_plan_confirmation_function(tmp_path):
+    from compose.adjustment_parser import refine_plan_confirmation
+
+    client = PztClient(pzt_bin="/fake/pzt")
+    transport = FakeTransport()
+
+    router = build_router(state_dir=tmp_path, client=client, transport=transport, chat_id="42")
+
+    assert router.refine_plan_confirmation_fn is refine_plan_confirmation
