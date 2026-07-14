@@ -2,9 +2,11 @@ import re
 
 from orchestrator.types import RunStatus
 from router.collecting import (
+    drain_queue_into,
     incoming_dir_for,
     new_collecting_run,
     new_run_id,
+    queue_incoming_photo,
     stage_incoming_photo,
 )
 from store.run_store import RunStore
@@ -72,3 +74,37 @@ def test_stage_incoming_photo_copies_bytes_into_run_subdir(tmp_path):
 
     assert dest == incoming_root / "tg-abcd1234" / "photo.jpg"
     assert dest.read_bytes() == b"real-photo-bytes"
+
+
+def test_queue_incoming_photo_stages_into_a_dedicated_pending_dir(tmp_path):
+    incoming_root = tmp_path / "incoming"
+    src = tmp_path / "source" / "extra.jpg"
+    src.parent.mkdir()
+    src.write_bytes(b"queued-bytes")
+
+    dest = queue_incoming_photo(incoming_root, str(src))
+
+    assert dest == incoming_root / "_pending" / "extra.jpg"
+    assert dest.read_bytes() == b"queued-bytes"
+
+
+def test_drain_queue_into_moves_queued_files_into_the_target_run(tmp_path):
+    incoming_root = tmp_path / "incoming"
+    src = tmp_path / "source" / "extra.jpg"
+    src.parent.mkdir()
+    src.write_bytes(b"queued-bytes")
+    queue_incoming_photo(incoming_root, str(src))
+
+    moved = drain_queue_into(incoming_root, "tg-newrun1")
+
+    assert moved == [incoming_root / "tg-newrun1" / "extra.jpg"]
+    assert (incoming_root / "tg-newrun1" / "extra.jpg").read_bytes() == b"queued-bytes"
+    assert not (incoming_root / "_pending").exists()
+
+
+def test_drain_queue_into_returns_empty_list_when_nothing_queued(tmp_path):
+    incoming_root = tmp_path / "incoming"
+
+    moved = drain_queue_into(incoming_root, "tg-newrun1")
+
+    assert moved == []
