@@ -263,6 +263,17 @@ class SessionRouter:
             self.transport.send_text(self.chat_id, self._status_snapshot_text(run))
             return run
 
+        if reply.action == "approve":
+            return self._begin_running(run)
+
+        if reply.action == "reject":
+            self.driver.cancel(run)
+            self.transport.send_text(self.chat_id, "已取消")
+            return run
+
+        # reply.action == "confirmed"：更新参数、重新回显确认，不自动开
+        # 跑——PLANNED 本来就是为了防止"改完参数却没让人再看一眼就跑
+        # 了"，这里如果自动开跑就跟没加这道确认没区别。
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
         evaluate.params["provider"] = reply.provider
@@ -270,7 +281,8 @@ class SessionRouter:
         curate.params["count"] = reply.count
         curate.params["apply_tag"] = reply.apply_tag
         self.store.save(run)
-        return self._begin_running(run)
+        self._send_plan_confirmation(run)
+        return run
 
     def _current_plan_params(self, run: RunState) -> dict:
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")

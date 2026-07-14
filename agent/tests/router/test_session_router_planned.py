@@ -97,7 +97,7 @@ def test_vague_reply_while_planned_asks_a_clarifying_question(tmp_path):
     assert any("具体想改哪一项？" in text for _, text in transport.sent_texts)
 
 
-def test_specific_correction_while_planned_updates_params_and_begins_running(tmp_path):
+def test_specific_correction_while_planned_updates_params_and_re_confirms_without_running(tmp_path):
     from compose.adjustment_parser import PlanConfirmationReply
 
     def _fake_confirmed(original_intent, current_params, followup):
@@ -119,9 +119,53 @@ def test_specific_correction_while_planned_updates_params_and_begins_running(tmp
 
     run = router.handle_message(_text_msg("改成6张"))
 
-    assert run.status == RunStatus.AWAITING_GATE
+    assert run.status == RunStatus.PLANNED  # 改完参数不自动开跑，等另一句"好的"
     curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
     assert curate_spec.params["count"] == 6
+    assert len(transport.sent_texts) == 2  # 第一次提议确认 + 改完之后重新确认
+    assert "6" in transport.sent_texts[-1][1]
+
+    approved = router.handle_message(_text_msg("好的"))
+    assert approved.status == RunStatus.AWAITING_GATE
+
+
+def test_natural_language_approval_while_planned_begins_running(tmp_path):
+    from compose.adjustment_parser import PlanConfirmationReply
+
+    def _fake_approve(original_intent, current_params, followup):
+        return PlanConfirmationReply(action="approve")
+
+    router, store, transport, _ = _make_router(tmp_path, refine_plan_confirmation_fn=_fake_approve)
+    downloaded = tmp_path / "downloaded"
+    downloaded.mkdir()
+    (downloaded / "a.jpg").write_bytes(b"a")
+    (downloaded / "b.jpg").write_bytes(b"b")
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "b.jpg")))
+    router.handle_message(_text_msg("筛一下留2张"))
+
+    run = router.handle_message(_text_msg("好的，处理吧"))
+
+    assert run.status == RunStatus.AWAITING_GATE
+
+
+def test_natural_language_rejection_while_planned_cancels(tmp_path):
+    from compose.adjustment_parser import PlanConfirmationReply
+
+    def _fake_reject(original_intent, current_params, followup):
+        return PlanConfirmationReply(action="reject")
+
+    router, store, transport, _ = _make_router(tmp_path, refine_plan_confirmation_fn=_fake_reject)
+    downloaded = tmp_path / "downloaded"
+    downloaded.mkdir()
+    (downloaded / "a.jpg").write_bytes(b"a")
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
+    router.handle_message(_text_msg("筛一下"))
+
+    run = router.handle_message(_text_msg("算了不用了"))
+
+    assert run.status == RunStatus.CANCELLED
+    assert any("已取消" in text for _, text in transport.sent_texts)
 
 
 def test_send_preview_falls_back_to_send_file_when_a_photo_is_too_big_and_still_sends_the_summary(tmp_path):
