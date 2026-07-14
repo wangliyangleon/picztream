@@ -37,6 +37,7 @@ class SessionRouter:
     def __init__(self, store: RunStore, driver: Driver, transport: Any, client: PztClient, chat_id: str,
                  incoming_root: Path, preview_root: Path, deliver_out_folder: Path,
                  compose_plan_fn: Any, classify_gate_reply_fn: Any, refine_plan_confirmation_fn: Any,
+                 classify_collecting_message_fn: Any,
                  now_fn: Callable[[], float] = time.time, idle_reminder_seconds: float = 300.0) -> None:
         self.store = store
         self.driver = driver
@@ -49,6 +50,7 @@ class SessionRouter:
         self.compose_plan_fn = compose_plan_fn
         self.classify_gate_reply_fn = classify_gate_reply_fn
         self.refine_plan_confirmation_fn = refine_plan_confirmation_fn
+        self.classify_collecting_message_fn = classify_collecting_message_fn
         self.now_fn = now_fn
         self.idle_reminder_seconds = idle_reminder_seconds
 
@@ -190,6 +192,19 @@ class SessionRouter:
         text = (msg.text or "").strip()
         if not text:
             return run
+
+        photo_count = len(list(incoming_dir_for(self.incoming_root, run.run_id).iterdir()))
+        try:
+            reply = self.classify_collecting_message_fn(text, photo_count)
+        except (AdjustmentError, LlmRequestError):
+            # 分类只是锦上添花，失败了就照老办法直接当意图处理，不能因
+            # 为这一步失败(网络、没配 key、随便什么)把用户卡在这里。
+            reply = None
+
+        if reply is not None and reply.action == "query":
+            self.transport.send_text(self.chat_id, self._status_snapshot_text(run))
+            return run
+
         return self._propose_plan(run, text)
 
     def _propose_plan(self, run: RunState, intent_text: str) -> RunState:
