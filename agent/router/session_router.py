@@ -1,7 +1,10 @@
 """Telegram 场景下的会话路由：把 InboundMessage 分发到"当前唯一活跃
-run"上，串起 Collecting -> compose_plan -> Driver 跑批 -> 送 Gate 预览
-这条链路。子增量 F1 只支持单聊天单活跃 run（handle_message 里用
-assert 顶住），多会话/多项目并发不在这个子增量范围内。
+run"上，串起 Collecting -> compose_plan(提议) -> PLANNED(等用户确认) ->
+Driver 跑批 -> 送 Gate 预览这条链路。子增量 F1 只支持单聊天单活跃 run
+（handle_message 里用 assert 顶住），多会话/多项目并发不在这个子增量
+范围内。PLANNED 是子增量 F3 加的：意图解析成 Plan 之后不直接开跑，先
+把参数回显给用户确认，避免 compose_plan 理解错了却要等 Evaluate 真花
+了云端额度才发现。
 """
 from __future__ import annotations
 
@@ -75,7 +78,7 @@ class SessionRouter:
             self.driver.approve(run)
             run = self._mint_collecting_run()
 
-        if run.status in (RunStatus.COLLECTING, RunStatus.AWAITING_GATE):
+        if run.status in (RunStatus.COLLECTING, RunStatus.PLANNED, RunStatus.AWAITING_GATE):
             # 每条真正落到一个活跃 run 上的消息都刷新一次"最近活跃时
             # 间"、清掉"已经提醒过"的标记 -- 静默计时器算的是"用户有多
             # 久没搭理这个 run"，不是"run 存在了多久"。
@@ -85,6 +88,9 @@ class SessionRouter:
 
         if run.status == RunStatus.COLLECTING:
             return self._handle_collecting(run, msg)
+
+        if run.status == RunStatus.PLANNED:
+            return self._handle_planned(run, msg)
 
         if run.status == RunStatus.AWAITING_GATE:
             return self._handle_gate(run, msg)
@@ -110,6 +116,8 @@ class SessionRouter:
         if run.status == RunStatus.COLLECTING:
             count = len(list(incoming_dir_for(self.incoming_root, run.run_id).iterdir()))
             self.transport.send_text(self.chat_id, f"看到你发了 {count} 张，想怎么处理？")
+        elif run.status == RunStatus.PLANNED:
+            self.transport.send_text(self.chat_id, "还在等你确认要不要这么处理，满意就说\"好的\"")
         elif run.status == RunStatus.AWAITING_GATE:
             self.transport.send_text(
                 self.chat_id,
@@ -177,9 +185,9 @@ class SessionRouter:
         text = (msg.text or "").strip()
         if not text:
             return run
-        return self._start_run_from_intent(run, text)
+        return self._propose_plan(run, text)
 
-    def _start_run_from_intent(self, run: RunState, intent_text: str) -> RunState:
+    def _propose_plan(self, run: RunState, intent_text: str) -> RunState:
         try:
             plan = validate_plan(self.compose_plan_fn(intent_text, None, None))
         except (ValidationError, LlmRequestError) as e:
@@ -195,6 +203,50 @@ class SessionRouter:
         run.plan = plan
         run.stage_states = {s.name: StageStatus.PENDING for s in plan.stages}
         run.intent_raw = intent_text
+        run.status = RunStatus.PLANNED
+        self.store.save(run)
+        self._send_plan_confirmation(run)
+        return run
+
+    def _send_plan_confirmation(self, run: RunState) -> None:
+        evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
+        curate = next(s for s in run.plan.stages if s.name == "Curate")
+        auto_reject_desc = "自动剔除不合格照片" if evaluate.params["auto_reject"] else "不自动剔除照片"
+        self.transport.send_text(
+            self.chat_id,
+            f"理解你想：用 {evaluate.params['provider']} 评估，{auto_reject_desc}，"
+            f"留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，对吗？"
+            "\n满意就说\"好的\"，不对就直接说想怎么改，不要了就说\"取消\"",
+        )
+
+    def _handle_planned(self, run: RunState, msg: InboundMessage) -> RunState:
+        if msg.kind in ("photo", "file"):
+            if msg.file_path:
+                # PLANNED 时 Ingest 还没跑，这个文件夹还没被任何 Stage
+                # 消费过，新照片直接并进去完全安全，不用像 AwaitingGate
+                # 那样排队(那边 Curate 已经跑完了，排队是为了不把结果
+                # 弄脏)。
+                stage_incoming_photo(self.incoming_root, run.run_id, msg.file_path)
+            return run
+
+        text = (msg.text or "").strip()
+        normalized = text.lower()
+
+        if normalized in _REJECT_KEYWORDS:
+            self.driver.cancel(run)
+            self.transport.send_text(self.chat_id, "已取消")
+            return run
+
+        if normalized in _APPROVE_KEYWORDS:
+            return self._begin_running(run)
+
+        self.transport.send_text(
+            self.chat_id,
+            "没听懂，满意就说\"好的\"，不满意说说想怎么改，不要了就说\"取消\"",
+        )
+        return run
+
+    def _begin_running(self, run: RunState) -> RunState:
         run.status = RunStatus.RUNNING
         self.store.save(run)
         return self._drive_to_stop_and_notify(run)

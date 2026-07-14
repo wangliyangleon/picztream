@@ -126,4 +126,5 @@ def _run_to_gate(router: SessionRouter):
                                           file_path=_stage_source_photo(tmp_path, "a.jpg", b"a")))
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID,
                                           file_path=_stage_source_photo(tmp_path, "b.jpg", b"b")))
-    return router.handle_message(_text_msg("筛一下留2张"))
+    router.handle_message(_text_msg("筛一下留2张"))  # 现在只会停在 PLANNED，等确认
+    return router.handle_message(_text_msg("好的"))  # 确认后才真正开跑，到 AwaitingGate

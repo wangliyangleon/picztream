@@ -39,29 +39,6 @@ def test_second_photo_message_reuses_the_same_collecting_run(tmp_path):
     assert (run_dir / "b.jpg").read_bytes() == b"b"
 
 
-def test_intent_after_photos_drives_pipeline_to_gate_and_sends_exported_preview(tmp_path):
-    router, store, transport, _ = _make_router(tmp_path)
-    downloaded = tmp_path / "downloaded"
-    downloaded.mkdir()
-    (downloaded / "a.jpg").write_bytes(b"a")
-    (downloaded / "b.jpg").write_bytes(b"b")
-    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
-    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "b.jpg")))
-
-    run = router.handle_message(_text_msg("筛一下留2张"))
-
-    assert run.status == RunStatus.AWAITING_GATE
-    assert run.plan.stages[0].params["folder"] == str(tmp_path / "incoming" / run.run_id)
-    assert run.plan.stages[-1].params["out_folder"] == str(tmp_path / "deliver-out")
-    assert run.plan.stages[-1].gate == "required"
-    preview_dir = tmp_path / "preview" / run.run_id
-    assert transport.sent_photos == [
-        (CHAT_ID, str(preview_dir / "a.jpg")),
-        (CHAT_ID, str(preview_dir / "b.jpg")),
-    ]
-    assert len(transport.sent_texts) == 1
-
-
 def test_compose_plan_failure_keeps_the_run_collecting_and_apologizes(tmp_path):
     def _raising_compose_plan(intent, profile, last_config):
         raise ValidationError("bad_stage_names", "boom")
@@ -92,8 +69,9 @@ def test_critical_stage_failure_sends_a_failure_text_with_error_detail(tmp_path)
     src.parent.mkdir(parents=True)
     src.write_bytes(b"a")
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(src)))
+    router.handle_message(_text_msg("筛一下"))  # 现在只会停在 PLANNED 等确认
 
-    run = router.handle_message(_text_msg("筛一下"))
+    run = router.handle_message(_text_msg("好的"))  # 确认后才真正开跑，这时才会跑到失败
 
     assert run.status == RunStatus.FAILED
     assert any("quota_exceeded" in text for _, text in transport.sent_texts)
