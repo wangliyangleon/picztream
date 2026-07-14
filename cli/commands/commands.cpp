@@ -21,7 +21,9 @@
 #include "cli/term/cbreak_mode.h"
 #include "cli/text/text.h"
 #include "cli/ui/ui.h"
+#include "core/ai/evaluation.h"
 #include "core/api.h"
+#include "core/db/database.h"
 
 // cmd_export 里用到 expand_home_path(cli/text),用 using-directive 让搬过
 // 来的函数体保持逐字不变(.cpp 里用 using,头文件里绝不用)。print_usage
@@ -340,7 +342,34 @@ int cmd_eval(const std::vector<std::string>& args) {
     if (!evaluated_before.count(id)) to_evaluate.push_back(id);
   }
 
-  pzt::core::EvaluationWorker worker;
+  // PZT_FAKE_EVAL：纯测试用逃生舱，不打真实 AI 请求，直接落一份固定通
+  // 过的评估——给 agent/ 真机端到端测试用(watch-folder 跑真 Ingest/
+  // Dedup/Curate/Deliver，唯独 Evaluate 这一步不想打真 Gemini/Claude、
+  // 不想被限流拖垮)。EvaluationWorker::EvaluationFn 本来就是给测试注入
+  // 假函数用的口子(core/ai/evaluation_worker.h)，这里是把同一个口子在
+  // 编译好的二进制里也接上，不是新造机制。core 本身完全不知道这个开
+  // 关的存在——只有 cli 这一层在读环境变量、决定传哪个 EvaluationFn，
+  // 不下渗进 core。
+  std::optional<pzt::core::EvaluationWorker> worker_storage;
+  if (std::getenv("PZT_FAKE_EVAL")) {
+    std::fprintf(stderr,
+                  "[pzt eval] PZT_FAKE_EVAL is set: skipping real AI calls, storing canned "
+                  "passing scores instead\n");
+    pzt::core::EvaluationWorker::EvaluationFn fake_fn =
+        [](const pzt::core::decode::DecodedImage&, const std::string&, pzt::core::Provider) {
+          pzt::core::ai::EvaluationResult result;
+          result.exposure = {8, "PZT_FAKE_EVAL"};
+          result.composition = {8, "PZT_FAKE_EVAL"};
+          result.focus = {8, "PZT_FAKE_EVAL"};
+          result.comment = "fake evaluation (PZT_FAKE_EVAL set, no real AI call made)";
+          return pzt::core::Result<pzt::core::ai::EvaluationResult, pzt::core::EvaluationError>::Ok(
+              std::move(result));
+        };
+    worker_storage.emplace(pzt::core::db::default_db_path(), fake_fn);
+  } else {
+    worker_storage.emplace();
+  }
+  pzt::core::EvaluationWorker& worker = *worker_storage;
   for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject);
 
   std::unordered_map<pzt::core::ImageId, pzt::core::EvaluationError> failure_by_id;
