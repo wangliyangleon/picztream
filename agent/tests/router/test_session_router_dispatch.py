@@ -1,7 +1,7 @@
 from orchestrator.types import RunStatus
 from transport.base import InboundMessage
 
-from fakes import CHAT_ID, _make_router, _run_to_gate, _text_msg
+from router_fakes import CHAT_ID, _make_router, _run_to_gate, _text_msg
 
 
 def test_photo_arriving_at_gate_is_staged_but_does_not_disturb_the_pending_gate(tmp_path):

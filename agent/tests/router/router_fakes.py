@@ -1,6 +1,9 @@
 """router.SessionRouter 测试专用共享 fake/helper，跟 tests/orchestrator/
 fakes.py 的约定一致：同目录裸模块名导入，不建 conftest.py（仓库里目前
-没有任何 conftest.py，per-test-dir 共享 helper 模块是既有约定）。
+没有任何 conftest.py，per-test-dir 共享 helper 模块是既有约定）。命名
+成 router_fakes 而不是 fakes：pytest 默认 import mode 下裸模块名全局
+只认一个，tests/orchestrator/fakes.py 已经占了 "fakes" 这个名字，两个
+目录都叫 fakes.py 会在跑全量套件时互相顶掉。
 """
 from __future__ import annotations
 

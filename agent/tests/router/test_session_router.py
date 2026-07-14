@@ -4,7 +4,7 @@ from compose.validate import ValidationError
 from orchestrator.types import RunStatus
 from transport.base import InboundMessage
 
-from fakes import CHAT_ID, _fake_runner, _make_router, _text_msg
+from router_fakes import CHAT_ID, _fake_runner, _make_router, _text_msg
 
 
 def test_first_photo_message_creates_a_collecting_run_and_stages_the_file(tmp_path):
