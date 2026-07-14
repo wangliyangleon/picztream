@@ -314,9 +314,24 @@ class SessionRouter:
         except PztCommandError as e:
             self.transport.send_text(self.chat_id, f"预览导出失败：{e.message}")
             return
+        failed_count = 0
         for path in selected:
-            self.transport.send_photo(self.chat_id, str(preview_dir / Path(path).name))
-        self.transport.send_text(
-            self.chat_id,
-            f"选好了 {len(selected)} 张，满意就回复\"好的\"，不满意说说想怎么调，不要了就说\"取消\"",
-        )
+            preview_path = str(preview_dir / Path(path).name)
+            try:
+                self.transport.send_photo(self.chat_id, preview_path)
+            except Exception:
+                # 压缩预览图有 Telegram 自己的体积上限(真机验证时撞到过
+                # BadRequest: File is too big)，比普通文件上传严格得
+                # 多。这里不能让一张超标的图把整个预览循环、乃至后面
+                # "选好了 N 张"这句提示一起带崩——那样用户会卡在不知道
+                # 该做什么的地方。退化成按文件发一次，实在也发不出去就
+                # 跳过，最后统一在总结里报一句。
+                try:
+                    self.transport.send_file(self.chat_id, preview_path)
+                except Exception:
+                    failed_count += 1
+        summary = f"选好了 {len(selected)} 张"
+        if failed_count:
+            summary += f"(其中 {failed_count} 张预览发送失败，交付时仍会正常导出)"
+        summary += "，满意就回复\"好的\"，不满意说说想怎么调，不要了就说\"取消\""
+        self.transport.send_text(self.chat_id, summary)

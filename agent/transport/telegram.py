@@ -65,11 +65,19 @@ class TelegramTransport:
                 try:
                     await self._handle_update(update)
                 except Exception as e:
-                    # 单条更新处理失败(典型是下载图片时网络抖了一下)不该
-                    # 拖死整条常驻轮询协程：offset 已经在上面推进过了，
-                    # 这条更新算是"丢弃"，但轮询本身必须活下去，不然一次
-                    # 偶发失败就会让进程看起来"卡住了"却毫无提示。
+                    # 单条更新处理失败(典型是下载图片时网络抖了一下，或
+                    # 者文件超过 Telegram 的下载体积上限)不该拖死整条常
+                    # 驻轮询协程：offset 已经在上面推进过了，这条更新算
+                    # 是"丢弃"，但轮询本身必须活下去。光在服务端终端打
+                    # 印不够——真机验证时发现用户在 Telegram 那头完全不
+                    # 知道有张照片"丢"了，必须回一句话过去。
                     print(f"[TelegramTransport] 处理消息失败，已跳过：{e!r}")
+                    try:
+                        await self._bot_client.send_text(
+                            self.chat_id, f"收一条消息失败了(可能文件太大)，这条就跳过了：{e}"
+                        )
+                    except Exception:
+                        pass  # 连报错消息都发不出去就算了，不要再往外抛
 
     async def _handle_update(self, update: Any) -> None:
         message = getattr(update, "message", None)

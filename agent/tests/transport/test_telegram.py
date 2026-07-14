@@ -237,6 +237,28 @@ def test_poll_loop_survives_a_single_update_processing_error(tmp_path):
         transport.stop()
 
 
+def test_poll_loop_notifies_the_chat_when_a_download_fails(tmp_path):
+    # 真机验证时发现的真实 bug：下载失败之前只打印在服务端终端日志里，
+    # 用户在 Telegram 那头完全不知道有张照片"丢"了(10 张发过去，agent
+    # 只认到 7 张，用户毫无察觉是哪 3 张、为什么)。下载失败必须回一句
+    # 话给用户，不能只默默跳过。
+    fake = FakeBotClientPhotoDownloadFailsOnce()
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if any("失败" in text for _, text in fake.sent):
+                break
+            time.sleep(0.05)
+        assert any(chat_id == "123" and "失败" in text for chat_id, text in fake.sent)
+    finally:
+        transport.stop()
+
+
 def test_stop_joins_background_thread(tmp_path):
     fake = FakeBotClient()
     transport = TelegramTransport(

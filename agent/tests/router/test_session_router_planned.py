@@ -124,6 +124,39 @@ def test_specific_correction_while_planned_updates_params_and_begins_running(tmp
     assert curate_spec.params["count"] == 6
 
 
+def test_send_preview_falls_back_to_send_file_when_a_photo_is_too_big_and_still_sends_the_summary(tmp_path):
+    # 真机验证时发现的真实 bug：_send_preview 循环里一张照片超过
+    # Telegram 压缩图上限(BadRequest: File is too big)会直接把整个
+    # for 循环炸掉，连"选好了 N 张"这句结尾提示都发不出去 -- 用户实际
+    # 上已经停在 AwaitingGate 等回复，但完全不知道该做什么，看起来就
+    # 是"卡住了"。
+    router, store, transport, _ = _make_router(tmp_path)
+    downloaded = tmp_path / "downloaded"
+    downloaded.mkdir()
+    (downloaded / "a.jpg").write_bytes(b"a")
+    (downloaded / "b.jpg").write_bytes(b"b")
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
+    router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "b.jpg")))
+    router.handle_message(_text_msg("筛一下留2张"))
+
+    original_send_photo = transport.send_photo
+
+    def _send_photo_rejecting_a(chat_id, path):
+        if path.endswith("a.jpg"):
+            raise RuntimeError("File is too big")
+        original_send_photo(chat_id, path)
+
+    transport.send_photo = _send_photo_rejecting_a
+
+    run = router.handle_message(_text_msg("好的"))
+
+    assert run.status == RunStatus.AWAITING_GATE
+    preview_dir = tmp_path / "preview" / run.run_id
+    assert transport.sent_photos == [(CHAT_ID, str(preview_dir / "b.jpg"))]
+    assert transport.sent_files == [(CHAT_ID, str(preview_dir / "a.jpg"))]
+    assert any("选好了 2 张" in text for _, text in transport.sent_texts)
+
+
 def test_unparseable_reply_while_planned_apologizes_via_refine_fn_error(tmp_path):
     from compose.adjustment_parser import AdjustmentError
 
