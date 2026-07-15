@@ -64,8 +64,16 @@ pzt::core::Provider resolve_ai_provider() {
                    [](unsigned char c) { return std::tolower(c); });
     if (value == "claude") return pzt::core::Provider::Claude;
     if (value == "gemini") return pzt::core::Provider::Gemini;
+    if (value == "local") return pzt::core::Provider::Local;
   }
   return pzt::core::load_settings().ai_provider;
+}
+
+// Provider::Local 的连接信息——跟 resolve_ai_provider() 同一个"现读不
+// 缓存"惯例，用户中途改了 config.json 不需要重启 pzt open。
+pzt::core::LocalModelConfig resolve_local_model_config() {
+  auto settings = pzt::core::load_settings();
+  return pzt::core::LocalModelConfig{settings.ollama_base_url, settings.ollama_model};
 }
 
 // 信息栏"标签:"这一行——原来一行一个标签太占竖直空间，改成
@@ -375,7 +383,8 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
   int submitted = 0;
   for (auto id : resolved.image_ids) {
     if (evaluated.count(id)) continue;  // 已经评估过,跳过
-    if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance, auto_reject)) ++submitted;
+    if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance, auto_reject,
+                                   resolve_local_model_config())) ++submitted;
   }
   return pzt::cli::i18n::msg_ai_eval_submitted(submitted);
 }
@@ -516,7 +525,8 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     // 默认 Gemini)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
     // 的开放问题,这次不做。
     bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest,
-                                               pzt::core::load_settings().auto_ai_reject);
+                                               pzt::core::load_settings().auto_ai_reject,
+                                               resolve_local_model_config());
     if (!accepted) {
       return ConsoleCommandResult{pzt::cli::i18n::msg_ai_processing_pending()};  // 走 status_override,等按键确认
     }

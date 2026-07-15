@@ -314,15 +314,17 @@ int cmd_eval(const std::vector<std::string>& args) {
     provider = pzt::core::Provider::Gemini;
   } else if (provider_str == "claude") {
     provider = pzt::core::Provider::Claude;
+  } else if (provider_str == "local") {
+    provider = pzt::core::Provider::Local;
   } else {
     return emit_json_error(
         "usage",
-        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude> [--auto-reject] --json");
+        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude|local> [--auto-reject] --json");
   }
   if (positional.empty() || scope.empty() || !json) {
     return emit_json_error(
         "usage",
-        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude> [--auto-reject] --json");
+        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude|local> [--auto-reject] --json");
   }
 
   auto project_id = resolve_project_json(positional[0]);
@@ -370,8 +372,14 @@ int cmd_eval(const std::vector<std::string>& args) {
   } else {
     worker_storage.emplace();
   }
+  // Provider::Local 才会真正用到 local_config，但读一次 Settings 的成
+  // 本可以忽略——跟 browse.cpp 里 auto_reject 的现读现传是同一个先例，
+  // 不为了"只有 local 才需要"这一点单独分支。
+  auto eval_settings = pzt::core::load_settings();
+  pzt::core::LocalModelConfig local_config{eval_settings.ollama_base_url, eval_settings.ollama_model};
+
   pzt::core::EvaluationWorker& worker = *worker_storage;
-  for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject);
+  for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject, local_config);
 
   std::unordered_map<pzt::core::ImageId, pzt::core::EvaluationError> failure_by_id;
   while (true) {

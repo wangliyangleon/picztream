@@ -199,6 +199,17 @@ else
   echo "FAIL: eval --auto-reject modified global Settings (before=$settings_before after=$settings_after)"
 fi
 
+# --provider local 走跟 gemini/claude 完全相同的提交/解码/归类路径——
+# fixture 是解码不了的假字节，三个 provider 在这一步都会失败，用来验
+# 证 "local" 是合法值、能走到网络调用之前的那一整段逻辑，不用真的连
+# Ollama，也不会因为 Ollama 没跑起来而报错误的失败原因。
+out="$("$PZT" eval smoke --scope '*' --provider local --json)"
+assert_json_has "$out" "j['submitted'] == 3" "eval: --provider local is accepted, submits all unevaluated images"
+assert_json_has "$out" "len(j['evaluated']) == 0" "eval: --provider local also fails at decode (fixtures aren't real jpegs)"
+assert_json_has "$out" \
+  "len(j['failed']) == 3 and all(f['error'] in ('image_unavailable', 'unknown') for f in j['failed'])" \
+  "eval: --provider local fails at decode, not at some provider-specific code path"
+
 # --- pzt curate ---
 # a/b/c 手动写评估分数(全部通过 gate)和分散的 captured_at(避免互相聚
 # 簇)，验证候选过滤 + 每张各自成簇时按分数选 top N + 默认落"精选"标签
