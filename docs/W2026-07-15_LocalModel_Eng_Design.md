@@ -15,7 +15,7 @@
 ## 二、Ollama API 调研结论（WebFetch 核实，`/api/chat`）
 
 - 图片：`message.images` 字段，纯 base64 字符串数组（**没有** data URI 前缀，跟 Claude 的 `source.data`/Gemini 的 `inline_data.data` 都不一样，需要单独的请求体构造函数）。
-- 结构化输出：`format` 字段支持 `"json"`（宽松模式，只保证语法合法）或者一个完整 JSON Schema 对象（强约束）。**本设计选宽松 `"json"` 模式**，理由见上方"已确认的关键设计决策"第 1 条——保留 `request_json` 的任务无感知设计，只吃"保证合法 JSON"这一个免费收益，不吃"强约束字段形状"这个需要打破架构边界才能拿到的收益。完整 Schema 约束列进"风险与待确认问题"当未来可选增强。
+- 结构化输出：`format` 字段支持 `"json"`（宽松模式，只保证语法合法）或者一个完整 JSON Schema 对象（强约束）。**原计划选宽松 `"json"` 模式，真机基准测试后改为完整 Schema 约束**——详见第十节，宽松模式下弱模型（qwen2.5vl:3b）实测约 44% 请求因 JSON 结构错误失败，换成 Schema 约束 + `temperature: 0` 后同样的失败用例连续多次成功。
 - 响应：`message.content` 是纯文本（跟 Claude 的 `content[0].text`、Gemini 的 `candidates[0].content.parts[0].text` 同构，现有的 `parse_inner_json`/`strip_markdown_json_fence` 可以直接复用）。
 - 认证：无需 API key/认证头，默认监听 `http://localhost:11434`。
 - 超时/模型加载：文档没有明确的"模型是否已加载"探测接口，`keep_alive` 参数控制卸载前的保活时长（默认 5 分钟）。冷启动（模型第一次被请求，需要真正载入内存）耗时不可忽视，尤其在 16GB 内存的机器上——这是选超时数值时要考虑的因素，见下方"超时"一节。
@@ -34,7 +34,7 @@ enum class Provider { Claude, Gemini, Local };
 ```cpp
 struct LocalModelConfig {
   std::string base_url = "http://localhost:11434";
-  std::string model = "moondream";
+  std::string model = "gemma4:e2b";  // 真机基准测试后从 moondream 换成的默认值，见第十节
 };
 ```
 纯数据，可默认构造——测试和"调用方偷懒不传"的场景都能编译通过，不强制每个调用点都显式构造。
@@ -52,21 +52,22 @@ if (provider != Provider::Local) {
 
 ### `request_json` 签名扩展（`ai.h:56-60`）
 
-新增一个**默认构造**的尾参数，Claude/Gemini 路径完全无感知（不强制任何现有调用点改动）：
+新增两个**默认构造**的尾参数，Claude/Gemini 路径完全无感知（不强制任何现有调用点改动）：
 ```cpp
 Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& image,
                                                     const std::string& user_prompt,
                                                     const std::string& schema_instruction,
                                                     Provider provider,
                                                     HttpPostFn http_post = perform_curl_post,
-                                                    const LocalModelConfig& local_config = LocalModelConfig{});
+                                                    const LocalModelConfig& local_config = LocalModelConfig{},
+                                                    const std::optional<nlohmann::json>& local_json_schema = std::nullopt);
 ```
 内部三路分支（`ai.cpp:312-324` 现有的 if/else 改成 if/else if/else）：
 ```cpp
 } else if (provider == Provider::Local) {
   url = local_config.base_url + "/api/chat";
   headers = {{"content-type", "application/json"}};
-  request_body = build_local_request(image_base64, instruction_text, local_config.model);
+  request_body = build_local_request(image_base64, instruction_text, local_config.model, local_json_schema);
 }
 ```
 
@@ -75,15 +76,20 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
 ```cpp
 nlohmann::json build_local_request(const std::string& image_base64,
                                     const std::string& instruction_text,
-                                    const std::string& model) {
-  return {
+                                    const std::string& model,
+                                    const std::optional<nlohmann::json>& json_schema) {
+  nlohmann::json request = {
       {"model", model},
-      {"format", "json"},
+      {"format", json_schema.has_value() ? *json_schema : nlohmann::json("json")},
       {"stream", false},
       {"messages", nlohmann::json::array({
           {{"role", "user"}, {"content", instruction_text}, {"images", nlohmann::json::array({image_base64})}}
       })},
   };
+  if (json_schema.has_value()) {
+    request["options"] = {{"temperature", 0}};  // 见第十节，实测消除采样波动导致的结构性失败
+  }
+  return request;
 }
 
 Result<nlohmann::json, RequestError> parse_local_response(const std::string& body) {
@@ -98,6 +104,8 @@ Result<nlohmann::json, RequestError> parse_local_response(const std::string& bod
 }
 ```
 `stream: false` 是必须的——默认流式返回会拆成多个 JSON 对象，现有 `perform_curl_post`/`write_callback` 是"整个 body 攒成一个字符串"的一次性读取模型，不支持逐行解析 SSE 风格的流式响应，显式关流保持跟 Claude/Gemini 一样的"一次请求、一个完整 JSON 响应"模型。
+
+`local_json_schema` 从哪来：`evaluation.cpp` 新增 `build_evaluation_json_schema()`，构造出 `EvaluationResult` 对应的完整 JSON Schema（不含 `minimum`/`maximum`——Ollama 结构化输出文档没有提到支持这两个关键字，数值范围校验继续靠 `parse_dimension` 已有的 0-10 检查），`request_evaluation_impl` 调 `request_json` 时传入。`request_json`/`build_local_request` 本身仍然不知道这个 schema 描述的是什么任务——只是"调用方给了就用、没给就退回宽松 `"json"` 模式"的透传，`request_json` 的任务无感知定位没有被打破。
 
 ### 超时（留给任务 5 决定，本增量任务 2 不做）
 
@@ -129,7 +137,7 @@ Result<nlohmann::json, RequestError> parse_local_response(const std::string& bod
 
 ```cpp
 std::string ollama_base_url = "http://localhost:11434";
-std::string ollama_model = "moondream";
+std::string ollama_model = "gemma4:e2b";  // 真机基准测试后从 moondream 换成的默认值，见第十节
 ```
 落盘/解析走 `settings.cpp` 现有的"逐字段独立容错"模式（`assign_if_present`，参照 `auto_ai_reject` 那一行的写法），不需要新机制。
 
@@ -143,7 +151,7 @@ std::string ollama_model = "moondream";
   - `downscale_for_upload`/`strip_markdown_json_fence` 相关用例不需要为 Local 重复——那两个函数不分 provider。
 - **`core/tests/evaluation_worker_test.cpp`**：找出所有现有 `EvaluationFn` 假函数，改签名接四个参数；新增至少一条覆盖"`LocalModelConfig` 随请求一起入队、原样传到 `evaluation_fn_`"的用例。
 - **`cli/tests/headless_smoke.sh`**：`pzt eval --provider local` 的 usage 分支冒烟（不要求真的连 Ollama——跟现有 `--provider bogus` 失败用例同级别，只加一条"local 是合法值，走到网络调用那一步"的最小验证，或者用假的 `--provider local` 但没有真 Ollama 跑起来的情况下，确认失败模式是 `NetworkError` 类的清晰错误，不是 crash）。
-- **真机验证（不进快测）**：装 Ollama、`ollama pull moondream`、`pzt eval <proj> --provider local --json` 跑一次真实评估，人工看结果是否合理——跟 `pzt eval --provider gemini/claude` 现在的验收方式（"能手敲运行、JSON 输出形状稳定"）同级别，属于任务分解里的基准测试任务，不属于自动化测试范畴。
+- **真机验证（不进快测）**：装 Ollama、`ollama pull gemma4:e2b`（默认模型，见第十节）、`pzt eval <proj> --provider local --json` 跑一次真实评估，人工看结果是否合理——跟 `pzt eval --provider gemini/claude` 现在的验收方式（"能手敲运行、JSON 输出形状稳定"）同级别，属于任务分解里的基准测试任务，不属于自动化测试范畴。
 
 ## 八、任务分解（供后续 `writing-plans` 阶段细化，这里只列骨架顺序）
 
@@ -151,13 +159,26 @@ std::string ollama_model = "moondream";
 2. **`request_json` 三路分支 + `build_local_request`/`parse_local_response`**：`ai_test.cpp` 新增的对称用例覆盖，这一步结束时 `request_json(..., Provider::Local, fake_post, config)` 单测已经能过。超时不在这一步处理，见任务 5。
 3. **`EvaluationFn`/`EvaluationWorker`/`request_evaluation` 的签名涟漪**：按第四节列的三层逐一改，同步修 `PZT_FAKE_EVAL` 假函数和 `evaluation_worker_test.cpp` 里现有假函数的签名——这是最容易漏改的一步，任务描述里要把受影响文件列全。
 4. **CLI 接线**：`cmd_eval` 的 `--provider local`、`browse.cpp` 的 `resolve_ai_provider`，headless smoke 测试新增用例。
-5. **真机基准测试**：装 Ollama，至少对比 `moondream` 和一个次选（比如量化 Qwen2.5-VL 小尺寸版本），跑真实照片评估，记录质量主观判断 + 耗时，据此校准 `Settings.ollama_model` 默认值和超时数值（这一步也决定 `Provider::Local` 的超时机制——是否需要把 `HttpPostFn` 改成四参数支持差异化超时，见第三节"超时"）。这一步的产出可能反过来触发对前四步默认值的小幅调整，不是纯验收。
+5. **真机基准测试**：装 Ollama，至少对比 `moondream` 和一个次选（比如量化 Qwen2.5-VL 小尺寸版本），跑真实照片评估，记录质量主观判断 + 耗时，据此校准 `Settings.ollama_model` 默认值和超时数值（这一步也决定 `Provider::Local` 的超时机制——是否需要把 `HttpPostFn` 改成四参数支持差异化超时，见第三节"超时"）。这一步的产出可能反过来触发对前四步默认值的小幅调整，不是纯验收。**（已完成，结果见第十节；额外发现并落地了 JSON-Schema-constrained 解码，超出原计划范围但直接由真机测试驱动。超时机制仍未处理，维持第三节的决定不变。）**
 
 ## 九、风险与待确认问题
 
-- **`moondream` 能不能胜任"三维度技术评分"这种相对抽象的判断任务**：Moondream 系列主要以"看图问答/生成简短描述"见长，不确定在"曝光/构图/对焦"这种需要一定摄影判断力的任务上质量如何——这正是任务 5 真机基准测试要验证的，如果质量明显不可用，`Settings.ollama_model` 默认值要换成任务 5 里测出来更好的候选，不是本文档能预判的。
-- **JSON Schema 强约束模式**：当前设计选了宽松 `"json"` 模式（第二节已说明理由），完整 Schema 约束能进一步提升小模型的字段命中率，但要求打破 `request_json` 的任务无感知设计。如果基准测试发现 `"json"` 模式下字段缺失/类型错误的 `ParseError` 率明显偏高，值得回头重新评估这个取舍，不是这次直接做。
+- ~~**`moondream` 能不能胜任"三维度技术评分"这种相对抽象的判断任务**~~：**已解决**，见第十节——不能，9/9 真实照片全部失败，默认模型已换成 `gemma4:e2b`。
+- ~~**JSON Schema 强约束模式**~~：**已解决**，见第十节——真机验证后确认值得做，已实现（`local_json_schema` 参数 + `temperature: 0`），不再是未来可选增强。
 - **超时机制和数值都待任务 5 确定**：不只是"180 秒对不对"这个数字问题——`Provider::Local` 目前完全复用 Claude/Gemini 的硬编码 60 秒超时，要不要为它单独设置更长的超时、要不要区分冷启动和热启动，这些机制性决定本身也留到任务 5 跟真实数据一起做（详见第三节）。
 - **Ollama 版本兼容性**：`format` 字段接受完整 JSON Schema 是较新版本 Ollama 才支持的能力（本设计虽然选择不用，但 `"format": "json"` 宽松模式本身的最低版本要求也需要在文档/README 里注明，避免用户装了旧版本 Ollama 却查不出为什么不工作）。
 - **`EvaluationFn` 签名扩展的涟漪范围需要实施时仔细排查**：第四节已经点出三个已知受影响点（`request_evaluation`、`PZT_FAKE_EVAL` 假函数、`evaluation_worker_test.cpp` 假函数），但不排除还有其它测试文件里构造过 `EvaluationFn` 假函数、这次摸底没扫到——任务 3 开始前应该先做一次 `grep -rn "EvaluationFn"` 全仓库确认覆盖完整。
+
+## 十、真机基准测试结果（任务 5，2026-07-15 完成）
+
+在真实项目（9 张真实旅行照片）上跑 `pzt eval --provider local --json`，测了三个候选模型：
+
+- **moondream（1B，phi2 架构）**：9/9 失败。不是字段缺失这类小问题——它把 schema 指令里的英文提示原文当成 JSON key 抄回响应，且陷入无限重复循环、JSON 永远不闭合。这个模型对这个任务本质上不可用，跟解码约束松紧无关，不需要进一步验证。
+- **qwen2.5vl:3b**：一次未重试的真实批量跑 4/9（约 44%）成功；单独重试失败的图片各自都能成功，说明失败是偶发采样问题而不是任务理解问题。改用 JSON-Schema-constrained `format` + `temperature: 0` 重测同样失败过的图片，连续 3 次全部成功、内容逐字相同——验证了 Schema 约束确实能修复这类弱模型的结构性失败，见第一节"关键设计决策"和第二节。
+- **gemma4:e2b**（2026-04 发布）：目前试过的全部 8 次都成功（3 次单独抽测 + 一次 5 张真实批量跑，覆盖了所有让 qwen2.5vl 失败过的图片），包括在换成 Schema 约束之前、宽松模式下就已经全部成功。代价是明显更慢（约 26-37 秒/张，qwen2.5vl:3b 约 14-15 秒/张）、下载更大（7.2GB vs 3.2GB，尽管命名是"E2B/effective 2B"，实际存储体积不小，大概率是没做激进量化）。
+
+**最终决定**：
+1. `Settings.ollama_model`/`LocalModelConfig::model` 默认值改成 `gemma4:e2b`——用户明确表态"慢点没事，反正是异步的，效果好、稳定出结果更重要"，优先可靠性、不优先延迟。
+2. `Provider::Local` 的评估请求统一走 JSON-Schema-constrained 解码 + `temperature: 0`（不只是给弱模型兜底）——即使当前默认模型 gemma4:e2b 在宽松模式下已经很稳，Schema 约束仍然是防止未来换更小/更快模型时重蹈 qwen2.5vl 覆辙的结构性保险，而不是挑一个"恰好够用"的模型然后祈祷。
+3. 超时（第三节遗留问题）不受这次影响，`Provider::Local` 仍然走跟 Claude/Gemini 相同的硬编码 60 秒超时——gemma4:e2b 单张 26-37 秒的实测耗时目前在这个上限内，暂不需要处理，但如果以后模型更换导致更慢，超时问题会重新变得紧迫。
 </content>
