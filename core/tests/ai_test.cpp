@@ -212,3 +212,99 @@ TEST_CASE("to_string maps every provider to its lowercase name") {
   CHECK(std::string(to_string(Provider::Gemini)) == "gemini");
   CHECK(std::string(to_string(Provider::Local)) == "local");
 }
+
+TEST_CASE("request_json parses an Ollama-shaped response") {
+  auto img = make_image(4, 4);
+
+  auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                       const std::string&) -> Result<HttpResponse, RequestError> {
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, R"({"message":{"role":"assistant","content":"{\"foo\":\"bar\",\"n\":5}"}})"});
+  };
+
+  auto result = request_json(img, "evaluate this", "respond with foo and n", Provider::Local,
+                              fake_post);
+  REQUIRE(result.ok());
+  CHECK(result.value()["foo"] == "bar");
+  CHECK(result.value()["n"] == 5);
+}
+
+TEST_CASE("request_json builds a local request with images array and format=json") {
+  auto img = make_image(4, 4);
+
+  std::string captured_body;
+  std::string captured_url;
+  auto fake_post = [&](const std::string& url, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_url = url;
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, R"({"message":{"role":"assistant","content":"{\"ok\":true}"}})"});
+  };
+
+  LocalModelConfig config{"http://localhost:11434", "moondream"};
+  auto result = request_json(img, "some user prompt", "some schema instruction", Provider::Local,
+                              fake_post, config);
+  REQUIRE(result.ok());
+  CHECK(captured_url == "http://localhost:11434/api/chat");
+  auto parsed_body = nlohmann::json::parse(captured_body);
+  CHECK(parsed_body["model"] == "moondream");
+  CHECK(parsed_body["format"] == "json");
+  CHECK(parsed_body["stream"] == false);
+  REQUIRE(parsed_body["messages"].size() == 1);
+  CHECK(parsed_body["messages"][0]["images"].size() == 1);
+  std::string image_field = parsed_body["messages"][0]["images"][0].get<std::string>();
+  CHECK(image_field.find("data:") == std::string::npos);  // 没有 data URI 前缀，纯 base64
+  CHECK(captured_body.find("some user prompt") != std::string::npos);
+  CHECK(captured_body.find("some schema instruction") != std::string::npos);
+}
+
+TEST_CASE("request_json uses the default LocalModelConfig when none is provided") {
+  auto img = make_image(4, 4);
+
+  std::string captured_url;
+  std::string captured_body;
+  auto fake_post = [&](const std::string& url, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_url = url;
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, R"({"message":{"role":"assistant","content":"{}"}})"});
+  };
+
+  auto result = request_json(img, "p", "s", Provider::Local, fake_post);
+  REQUIRE(result.ok());
+  CHECK(captured_url == "http://localhost:11434/api/chat");
+  CHECK(captured_body.find("\"moondream\"") != std::string::npos);
+}
+
+TEST_CASE("request_json reports ParseError when the Ollama response shape is unexpected") {
+  auto img = make_image(4, 4);
+
+  auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                       const std::string&) -> Result<HttpResponse, RequestError> {
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{200, R"({"unexpected":true})"});
+  };
+
+  auto result = request_json(img, "p", "s", Provider::Local, fake_post);
+  REQUIRE(!result.ok());
+  CHECK(result.error() == RequestError::ParseError);
+}
+
+TEST_CASE("request_json skips the API key check for Provider::Local") {
+  EnvVarGuard claude_key("ANTHROPIC_API_KEY", nullptr);
+  EnvVarGuard gemini_key("GEMINI_API_KEY", nullptr);
+  auto img = make_image(4, 4);
+
+  bool called = false;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string&) -> Result<HttpResponse, RequestError> {
+    called = true;
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, R"({"message":{"role":"assistant","content":"{}"}})"});
+  };
+
+  auto result = request_json(img, "p", "s", Provider::Local, fake_post);
+  REQUIRE(result.ok());
+  CHECK(called);
+}

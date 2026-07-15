@@ -183,6 +183,33 @@ Result<nlohmann::json, RequestError> parse_gemini_response(const std::string& bo
   return parse_inner_json(part["text"].get<std::string>());
 }
 
+nlohmann::json build_local_request(const std::string& image_base64,
+                                    const std::string& instruction_text,
+                                    const std::string& model) {
+  return {
+      {"model", model},
+      {"format", "json"},
+      {"stream", false},
+      {"messages", nlohmann::json::array({
+          {{"role", "user"}, {"content", instruction_text}, {"images", nlohmann::json::array({image_base64})}}
+      })},
+  };
+}
+
+Result<nlohmann::json, RequestError> parse_local_response(const std::string& body) {
+  nlohmann::json outer;
+  try {
+    outer = nlohmann::json::parse(body);
+  } catch (const nlohmann::json::parse_error&) {
+    return Result<nlohmann::json, RequestError>::Err(RequestError::ParseError);
+  }
+  if (!outer.contains("message") || !outer["message"].contains("content") ||
+      !outer["message"]["content"].is_string()) {
+    return Result<nlohmann::json, RequestError>::Err(RequestError::ParseError);
+  }
+  return parse_inner_json(outer["message"]["content"].get<std::string>());
+}
+
 // curl_global_init 不是线程安全的，EvaluationWorker 的后台线程会调
 // perform_curl_post，不能假设只有一个线程在用——用一个函数内 static 变
 // 量的立即调用 lambda 触发一次，C++ 保证 magic static 的初始化本身是线
@@ -297,9 +324,13 @@ Result<HttpResponse, RequestError> perform_curl_post(
 Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& image,
                                                     const std::string& user_prompt,
                                                     const std::string& schema_instruction,
-                                                    Provider provider, HttpPostFn http_post) {
-  auto api_key = get_api_key(provider);
-  if (!api_key) return Result<nlohmann::json, RequestError>::Err(RequestError::MissingApiKey);
+                                                    Provider provider, HttpPostFn http_post,
+                                                    const LocalModelConfig& local_config) {
+  std::optional<std::string> api_key;
+  if (provider != Provider::Local) {
+    api_key = get_api_key(provider);
+    if (!api_key) return Result<nlohmann::json, RequestError>::Err(RequestError::MissingApiKey);
+  }
 
   std::string instruction_text = build_instruction_text(user_prompt, schema_instruction);
   // F-02：编码上传之前先降采样，见 detail::downscale_for_upload 的说明。
@@ -322,10 +353,14 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
         {"content-type", "application/json"},
     };
     request_body = build_claude_request(image_base64, instruction_text);
-  } else {
+  } else if (provider == Provider::Gemini) {
     url = gemini_url(*api_key);
     headers = {{"content-type", "application/json"}};
     request_body = build_gemini_request(image_base64, instruction_text);
+  } else {
+    url = local_config.base_url + "/api/chat";
+    headers = {{"content-type", "application/json"}};
+    request_body = build_local_request(image_base64, instruction_text, local_config.model);
   }
 
   // 跟 core/browse/prefetch.cpp 往 stderr 打 hit/miss/wait_ms 同一个惯
@@ -358,8 +393,9 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
     return Result<nlohmann::json, RequestError>::Err(RequestError::HttpError);
   }
 
-  return provider == Provider::Claude ? parse_claude_response(response.body)
-                                       : parse_gemini_response(response.body);
+  if (provider == Provider::Claude) return parse_claude_response(response.body);
+  if (provider == Provider::Gemini) return parse_gemini_response(response.body);
+  return parse_local_response(response.body);
 }
 
 }  // namespace pzt::core::ai
