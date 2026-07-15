@@ -34,6 +34,18 @@ class DeliverStage:
         digest = hashlib.sha256("|".join(selected).encode("utf-8")).hexdigest()[:16]
         return Path(self.marker_dir) / f"{run_id}-{digest}.json"
 
+    def _load_sent(self, marker_path: Path) -> List[str]:
+        if not marker_path.exists():
+            return []
+        return json.loads(marker_path.read_text())["sent"]
+
+    def _persist_sent(self, marker_path: Path, sent: List[str]) -> None:
+        # 用跟 store/run_store.py 一致的原子写(先写临时文件再 os.replace)。
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = marker_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps({"sent": sent}))
+        os.replace(tmp_path, marker_path)
+
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
         curate_output = ctx.outputs.get("Curate")
         # export-images 只负责"把选中的图导出成字节"，导出目的地是这个
@@ -45,29 +57,31 @@ class DeliverStage:
         # SameFileError。
         selected: List[str] = curate_output.data.get("selected", []) if curate_output else []
         marker_path = self._marker_path(ctx.run_id, selected)
-        if marker_path.exists():
-            delivered = json.loads(marker_path.read_text())["paths"]
-            return StageOutput(ok=True, data={"already_delivered": True, "delivered": delivered})
-
         run_staging_dir = Path(self.staging_dir) / ctx.run_id
+
+        sent = self._load_sent(marker_path)
+        if set(sent) >= set(selected):
+            delivered_paths = [str(run_staging_dir / Path(p).name) for p in selected]
+            return StageOutput(ok=True, data={"already_delivered": True, "delivered": delivered_paths})
 
         try:
             export_result = self.client.call("export-images", ctx.project_id, *selected, str(run_staging_dir))
         except PztCommandError as e:
             return StageOutput(ok=False, error=f"{e.code}: {e.message}")
 
-        delivered_paths = []
+        sent_set = set(sent)
         for path in selected:
+            if path in sent_set:
+                continue
             staged_path = str(run_staging_dir / Path(path).name)
             self.transport.send_file(self.chat_id, staged_path)
-            delivered_paths.append(staged_path)
-        self.transport.send_text(self.chat_id, f"选好了 {len(delivered_paths)} 张")
+            # 逐张标记：每成功发完一张就立刻落盘，崩溃最多重发这一张
+            # 还没标记完的，不会把已经发出去的其它张也重发一遍。
+            sent.append(path)
+            sent_set.add(path)
+            self._persist_sent(marker_path, sent)
 
-        # 标记必须在真正发送之后才写，用跟 store/run_store.py 一致的原
-        # 子写(先写临时文件再 os.replace)。
-        marker_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = marker_path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps({"paths": delivered_paths}))
-        os.replace(tmp_path, marker_path)
+        self.transport.send_text(self.chat_id, f"选好了 {len(selected)} 张")
 
+        delivered_paths = [str(run_staging_dir / Path(p).name) for p in selected]
         return StageOutput(ok=True, data={"delivered": delivered_paths, "exported": export_result["exported"]})

@@ -149,3 +149,47 @@ def test_deliver_resends_when_curate_selection_changes_after_adjustment(tmp_path
     assert len(transport.sent_files) == 2
     assert transport.sent_files[1][1].endswith("b.jpg")
     assert output.data.get("already_delivered") is not True
+
+
+def test_deliver_resumes_only_unsent_items_after_a_crash_mid_batch(tmp_path):
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout='{"exported": 3, "skipped": [], "created_dir": true}\n', stderr="")
+
+    class CrashingTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+
+        def send_file(self, chat_id, path):
+            if len(self.sent_files) >= 1:
+                raise RuntimeError("simulated crash mid-delivery")
+            super().send_file(chat_id, path)
+
+    client = PztClient(pzt_bin="/fake/pzt", runner=fake_runner)
+    crashing_transport = CrashingTransport()
+    marker_dir = tmp_path / "delivered"
+    stage = DeliverStage(client=client, transport=crashing_transport, marker_dir=marker_dir,
+                          staging_dir=tmp_path / "staging")
+    ctx = make_curate_output_ctx(["a.jpg", "b.jpg", "c.jpg"])
+
+    try:
+        stage.run(ctx, {})
+    except RuntimeError:
+        pass  # 模拟"发送中途整个进程崩了"
+
+    assert len(crashing_transport.sent_files) == 1  # 只有第一张真的发出去了
+
+    # "重启"：全新一个 DeliverStage 实例（同一个 marker_dir），用不崩溃
+    # 的 transport 继续跑，模拟进程重启后重新调用同一个 Stage。
+    resumed_transport = FakeTransport()
+    resumed_stage = DeliverStage(client=client, transport=resumed_transport, marker_dir=marker_dir,
+                                  staging_dir=tmp_path / "staging")
+    output = resumed_stage.run(ctx, {})
+
+    assert len(resumed_transport.sent_files) == 2  # 只补发没发过的两张
+    assert resumed_transport.sent_files[0][1].endswith("b.jpg")
+    assert resumed_transport.sent_files[1][1].endswith("c.jpg")
+    assert output.ok is True
