@@ -183,6 +183,22 @@ assert_nonzero_exit_with_error "eval: unknown provider fails with JSON error" \
 assert_nonzero_exit_with_error "eval: unknown tag scope fails with JSON error" \
   "$PZT" eval smoke --scope '#不存在的标签' --provider gemini --json
 
+# --auto-reject 是 agent 侧的策略参数，显式传参、不读/改全局
+# Settings.auto_ai_reject(见 docs/M4_PRD.md P6 物理隔离)。这里跑一次
+# 带 --auto-reject 的 eval，对比 Settings 落盘文件调用前后是否一字不
+# 差，锁住这条隔离性，不只靠代码审查。
+SETTINGS_FILE="$XDG_CONFIG_HOME/pzt/config.json"
+settings_before="$(cat "$SETTINGS_FILE" 2>/dev/null || echo "__missing__")"
+"$PZT" eval smoke --scope '*' --provider gemini --auto-reject --json >/dev/null
+settings_after="$(cat "$SETTINGS_FILE" 2>/dev/null || echo "__missing__")"
+if [ "$settings_before" = "$settings_after" ]; then
+  pass_count=$((pass_count + 1))
+  echo "PASS: eval --auto-reject does not modify global Settings"
+else
+  fail_count=$((fail_count + 1))
+  echo "FAIL: eval --auto-reject modified global Settings (before=$settings_before after=$settings_after)"
+fi
+
 # --- pzt curate ---
 # a/b/c 手动写评估分数(全部通过 gate)和分散的 captured_at(避免互相聚
 # 簇)，验证候选过滤 + 每张各自成簇时按分数选 top N + 默认落"精选"标签
