@@ -120,7 +120,7 @@ struct Fixture {
 TEST_CASE("request rejects a duplicate for the same image while one is in flight") {
   Fixture fx("evaluation_worker_dedup");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -133,7 +133,7 @@ TEST_CASE("request rejects a duplicate for the same image while one is in flight
 TEST_CASE("a successful request writes all fields, extra_guidance is the raw guidance text") {
   Fixture fx("evaluation_worker_success");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -167,7 +167,7 @@ TEST_CASE("a successful request writes all fields, extra_guidance is the raw gui
 TEST_CASE("a failed request leaves no evaluation row") {
   Fixture fx("evaluation_worker_failure");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::HttpError);
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -190,7 +190,7 @@ TEST_CASE("a failed request leaves no evaluation row") {
 TEST_CASE("a failed request is recorded in take_last_failure, consumed exactly once") {
   Fixture fx("evaluation_worker_last_failure");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::NetworkError);
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -211,7 +211,7 @@ TEST_CASE("a failed request is recorded in take_last_failure, consumed exactly o
 TEST_CASE("a successful request leaves take_last_failure empty") {
   Fixture fx("evaluation_worker_last_failure_success");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -231,7 +231,7 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
 TEST_CASE("auto_reject tags a failing evaluation with the reject tag when true") {
   Fixture fx("evaluation_worker_auto_reject_fail");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());  // 不达标
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -249,7 +249,7 @@ TEST_CASE("auto_reject tags a failing evaluation with the reject tag when true")
 TEST_CASE("auto_reject does not tag a passing evaluation") {
   Fixture fx("evaluation_worker_auto_reject_pass");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_passing_evaluation_result());
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -268,7 +268,7 @@ TEST_CASE("auto_reject does not tag a passing evaluation") {
 TEST_CASE("auto_reject leaves failing evaluations untagged when false") {
   Fixture fx("evaluation_worker_auto_reject_disabled");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());  // 不达标
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -291,7 +291,7 @@ TEST_CASE("auto_reject leaves failing evaluations untagged when false") {
 TEST_CASE("a DB write failure after a successful AI response is reported as StorageFailed") {
   Fixture fx("evaluation_worker_storage_failed");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
@@ -323,7 +323,7 @@ TEST_CASE("a failed re-evaluation does not clear a previously successful result"
   Fixture fx("evaluation_worker_keep_old_on_failure");
   bool succeed = true;
   auto fake_evaluation = [&](const decode::DecodedImage&, const std::string&,
-                              Provider) -> Result<EvaluationResult, EvaluationError> {
+                              Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     if (succeed) return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
     return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::NetworkError);
   };
@@ -348,7 +348,7 @@ TEST_CASE("re-evaluating an image overwrites the previous result") {
   Fixture fx("evaluation_worker_overwrite");
   int score = 7;
   auto fake_evaluation = [&](const decode::DecodedImage&, const std::string&,
-                              Provider) -> Result<EvaluationResult, EvaluationError> {
+                              Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     auto result = make_evaluation_result();
     result.exposure.score = score;
     return Result<EvaluationResult, EvaluationError>::Ok(result);
@@ -399,7 +399,7 @@ TEST_CASE("queue_status reflects idle, processing-alone, and processing-with-bac
   bool entered_processing = false;
 
   auto blocking_evaluation = [&](const decode::DecodedImage&, const std::string&,
-                                  Provider) -> Result<EvaluationResult, EvaluationError> {
+                                  Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     std::unique_lock<std::mutex> lock(block_mu);
     entered_processing = true;
     block_cv.notify_all();
@@ -451,7 +451,7 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   auto db_path = fresh_db_path("evaluation_worker_missing_image");
   Database::open_at(db_path);  // 建库但不建任何图片
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
-                             Provider) -> Result<EvaluationResult, EvaluationError> {
+                             Provider, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
   };
   EvaluationWorker worker(db_path, fake_evaluation);
@@ -468,6 +468,25 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   REQUIRE(failure.has_value());
   CHECK(failure->image_id == 999999);
   CHECK(failure->error == EvaluationError::ImageUnavailable);
+}
+
+TEST_CASE("request threads LocalModelConfig through to evaluation_fn_") {
+  Fixture fx("evaluation_worker_local_config");
+  LocalModelConfig captured_config;
+  auto fake_evaluation = [&](const decode::DecodedImage&, const std::string&, Provider,
+                              const LocalModelConfig& config) -> Result<EvaluationResult, EvaluationError> {
+    captured_config = config;
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  LocalModelConfig config{"http://example:9999", "custom-model"};
+  CHECK(worker.request(fx.image_id, Provider::Local, "", false, config));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+  CHECK(captured_config.base_url == "http://example:9999");
+  CHECK(captured_config.model == "custom-model");
 }
 
 }  // namespace pzt::core::ai

@@ -121,11 +121,12 @@ namespace detail {
 Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::DecodedImage& image,
                                                                     const std::string& extra_guidance,
                                                                     Provider provider,
-                                                                    HttpPostFn http_post) {
+                                                                    HttpPostFn http_post,
+                                                                    const LocalModelConfig& local_config) {
   std::string user_prompt = build_evaluation_prompt(extra_guidance);
   std::string schema_instruction = build_evaluation_schema_instruction();
 
-  auto json_result = request_json(image, user_prompt, schema_instruction, provider, http_post);
+  auto json_result = request_json(image, user_prompt, schema_instruction, provider, http_post, local_config);
   if (!json_result.ok()) {
     return Result<EvaluationResult, EvaluationError>::Err(map_request_error(json_result.error()));
   }
@@ -159,8 +160,9 @@ Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::
 
 Result<EvaluationResult, EvaluationError> request_evaluation(const decode::DecodedImage& image,
                                                                const std::string& extra_guidance,
-                                                               Provider provider) {
-  return detail::request_evaluation_impl(image, extra_guidance, provider, perform_curl_post);
+                                                               Provider provider,
+                                                               const LocalModelConfig& local_config) {
+  return detail::request_evaluation_impl(image, extra_guidance, provider, perform_curl_post, local_config);
 }
 
 }  // namespace pzt::core::ai

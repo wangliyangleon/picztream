@@ -26,11 +26,12 @@ EvaluationWorker::EvaluationWorker(std::string db_path, EvaluationFn evaluation_
 EvaluationWorker::~EvaluationWorker() = default;
 
 bool EvaluationWorker::request(project::ImageId image_id, Provider provider,
-                                const std::string& extra_guidance, bool auto_reject) {
+                                const std::string& extra_guidance, bool auto_reject,
+                                const LocalModelConfig& local_config) {
   std::unique_lock<std::mutex> lock(mu_);
   if (in_flight_.count(image_id)) return false;
   in_flight_.insert(image_id);
-  queue_.push_back(PendingRequest{image_id, provider, extra_guidance, auto_reject});
+  queue_.push_back(PendingRequest{image_id, provider, extra_guidance, auto_reject, local_config});
   lock.unlock();
   cv_.notify_all();
   return true;
@@ -117,7 +118,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
     return EvaluationError::ImageUnavailable;
   }
 
-  auto result = evaluation_fn_(decoded.value(), req.extra_guidance, req.provider);
+  auto result = evaluation_fn_(decoded.value(), req.extra_guidance, req.provider, req.local_config);
   if (!result.ok()) {
     // 失败(网络错误、解析失败等)不写库，也不清空这张图之前成功评估过的
     // 记录——旧结果仍然是有效信息，一次失败的重新评估不该把之前成功的

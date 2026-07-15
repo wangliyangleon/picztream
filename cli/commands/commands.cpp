@@ -356,7 +356,8 @@ int cmd_eval(const std::vector<std::string>& args) {
                   "[pzt eval] PZT_FAKE_EVAL is set: skipping real AI calls, storing canned "
                   "passing scores instead\n");
     pzt::core::EvaluationWorker::EvaluationFn fake_fn =
-        [](const pzt::core::decode::DecodedImage&, const std::string&, pzt::core::Provider) {
+        [](const pzt::core::decode::DecodedImage&, const std::string&, pzt::core::Provider,
+           const pzt::core::LocalModelConfig&) {
           pzt::core::ai::EvaluationResult result;
           result.exposure = {8, "PZT_FAKE_EVAL"};
           result.composition = {8, "PZT_FAKE_EVAL"};

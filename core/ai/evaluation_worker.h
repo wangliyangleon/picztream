@@ -25,7 +25,7 @@ namespace pzt::core::ai {
 class EvaluationWorker {
  public:
   using EvaluationFn = std::function<Result<EvaluationResult, EvaluationError>(
-      const decode::DecodedImage&, const std::string&, Provider)>;
+      const decode::DecodedImage&, const std::string&, Provider, const LocalModelConfig&)>;
 
   // db_path 默认真实的全局数据库路径；测试传一个临时路径，跟仓库里其它
   // 所有测试统一用 Database::open_at(fresh_db_path(...)) 的写法一致，不
@@ -47,7 +47,7 @@ class EvaluationWorker {
   // browse.cpp）自己决定传什么值——交互路径传
   // load_settings().auto_ai_reject，行为跟以前一样。
   bool request(project::ImageId image_id, Provider provider, const std::string& extra_guidance,
-               bool auto_reject);
+               bool auto_reject, const LocalModelConfig& local_config = LocalModelConfig{});
 
   // 有没有请求正在排队或者处理中——跟 request() 的去重判断是两回事，这个
   // 是给"要不要显示一个全局的处理中提示"这类场景用的。
@@ -92,6 +92,7 @@ class EvaluationWorker {
     Provider provider;
     std::string extra_guidance;
     bool auto_reject;
+    LocalModelConfig local_config;
   };
 
   void worker_loop(std::stop_token stop);

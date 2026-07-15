@@ -94,22 +94,26 @@ bool passes_gate(const EvaluationInfo& info);
 // 可以是任何语言)。
 //
 // 签名精确匹配 core/ai/evaluation_worker.h 里 EvaluationWorker::
-// EvaluationFn 的类型(3 个参数)，可以直接当默认值用。
+// EvaluationFn 的类型(4 个参数)，可以直接当默认值用——local_config 带默
+// 认值不影响这一点：取函数地址转换成 std::function 时看的是参数个数
+// 本身，不是能不能省略着调用。
 Result<EvaluationResult, EvaluationError> request_evaluation(const decode::DecodedImage& image,
                                                                const std::string& extra_guidance,
-                                                               Provider provider);
+                                                               Provider provider,
+                                                               const LocalModelConfig& local_config = LocalModelConfig{});
 
 // 仅供单元测试使用——http_post 可注入，不需要真的连网络就能验证 prompt
 // 拼接、字段提取、越界校验这些逻辑；上面的 request_evaluation 是这个函
 // 数在默认 http_post 参数下的一层薄封装。放在 detail 里是为了在头文件层
 // 面标出"这不是主 API，是给测试开的后门"——它不能直接当 EvaluationFn 的
-// 默认值用(4 个参数，EvaluationFn 期望 3 个)。
+// 默认值用(5 个参数，EvaluationFn 期望 4 个)。
 namespace detail {
 
 Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::DecodedImage& image,
                                                                     const std::string& extra_guidance,
                                                                     Provider provider,
-                                                                    HttpPostFn http_post);
+                                                                    HttpPostFn http_post,
+                                                                    const LocalModelConfig& local_config = LocalModelConfig{});
 
 }  // namespace detail
 
