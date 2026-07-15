@@ -27,7 +27,7 @@ enum class Provider { Claude, Gemini, Local };
 // 读一次 Settings 后显式构造传入，core::ai 内部不直接读 Settings。
 struct LocalModelConfig {
   std::string base_url = "http://localhost:11434";
-  std::string model = "moondream";
+  std::string model = "gemma4:e2b";
 };
 
 // "claude" | "gemini" | "local"——落库(image_evaluations.provider)和 debug

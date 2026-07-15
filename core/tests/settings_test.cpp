@@ -33,7 +33,7 @@ TEST_CASE("load returns all defaults when the config file doesn't exist") {
   Settings s = load(path);
   CHECK(s.ai_provider == Provider::Gemini);
   CHECK(s.ollama_base_url == "http://localhost:11434");
-  CHECK(s.ollama_model == "moondream");
+  CHECK(s.ollama_model == "gemma4:e2b");
   CHECK(s.dedup_time_window_seconds == 10);
   CHECK(s.dedup_hash_threshold == 5);
   CHECK(s.curate_time_window_seconds == 20);

@@ -314,7 +314,7 @@ TEST_CASE("request_json uses the default LocalModelConfig when none is provided"
   auto result = request_json(img, "p", "s", Provider::Local, fake_post);
   REQUIRE(result.ok());
   CHECK(captured_url == "http://localhost:11434/api/chat");
-  CHECK(captured_body.find("\"moondream\"") != std::string::npos);
+  CHECK(captured_body.find("\"gemma4:e2b\"") != std::string::npos);
 }
 
 TEST_CASE("request_json reports ParseError when the Ollama response shape is unexpected") {
