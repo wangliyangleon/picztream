@@ -11,7 +11,12 @@
 namespace pzt::core::ai {
 
 const char* to_string(Provider provider) {
-  return provider == Provider::Claude ? "claude" : "gemini";
+  switch (provider) {
+    case Provider::Claude: return "claude";
+    case Provider::Gemini: return "gemini";
+    case Provider::Local: return "local";
+  }
+  return "gemini";  // 不可达，安抚 -Wreturn-type（同 evaluation.cpp::map_request_error 的写法）
 }
 
 namespace {

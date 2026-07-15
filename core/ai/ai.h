@@ -17,10 +17,20 @@
 // 接口设计"一节。
 namespace pzt::core::ai {
 
-enum class Provider { Claude, Gemini };
+enum class Provider { Claude, Gemini, Local };
 
-// "claude" | "gemini"——落库(image_evaluations.provider)和 debug 日志共用
-// 同一份映射，不在两个地方各写一遍容易失步的三元表达式。
+// 本地 Provider（Ollama）的连接信息——base_url/model 是"可调行为参数"，
+// 不是 get_api_key() 那种"秘密"，走 Settings（core/settings/settings.h
+// 新增的 ollama_base_url/ollama_model 字段）而不是环境变量。这里只放
+// 默认值当占位，真正生效的值由调用方（cmd_eval/resolve_ai_provider）
+// 读一次 Settings 后显式构造传入，core::ai 内部不直接读 Settings。
+struct LocalModelConfig {
+  std::string base_url = "http://localhost:11434";
+  std::string model = "moondream";
+};
+
+// "claude" | "gemini" | "local"——落库(image_evaluations.provider)和 debug
+// 日志共用同一份映射，不在两个地方各写一遍容易失步的三元表达式。
 const char* to_string(Provider provider);
 
 enum class RequestError {

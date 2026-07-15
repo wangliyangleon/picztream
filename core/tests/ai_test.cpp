@@ -206,3 +206,9 @@ TEST_CASE("request_json reports MissingApiKey without calling http_post") {
   CHECK(result.error() == RequestError::MissingApiKey);
   CHECK(!called);
 }
+
+TEST_CASE("to_string maps every provider to its lowercase name") {
+  CHECK(std::string(to_string(Provider::Claude)) == "claude");
+  CHECK(std::string(to_string(Provider::Gemini)) == "gemini");
+  CHECK(std::string(to_string(Provider::Local)) == "local");
+}

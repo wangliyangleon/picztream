@@ -16,6 +16,12 @@ namespace pzt::core::settings {
 
 struct Settings {
   ai::Provider ai_provider = ai::Provider::Gemini;
+  // Provider::Local（Ollama）的连接信息——不是秘密，走 Settings 而不是
+  // 环境变量，跟 curate_time_window_seconds 独立于 dedup_time_window_
+  // seconds 同一个"可调行为参数放这里"的先例（见 docs/M4_Eng_Design.md
+  // 第三节）。
+  std::string ollama_base_url = "http://localhost:11434";
+  std::string ollama_model = "moondream";
   int dedup_time_window_seconds = 10;
   int dedup_hash_threshold = 5;
   // B：curate 分簇用的阈值，独立于 dedup_*、不共用同一份配置（避免"调宽
