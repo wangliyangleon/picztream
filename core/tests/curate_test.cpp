@@ -253,3 +253,24 @@ TEST_CASE("curate returns one representative per cluster across multiple cluster
   CHECK(result.returned == 2);
   CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[2]});
 }
+
+TEST_CASE("curate is deterministic across repeated calls with identical input") {
+  auto fx = make_fixture("determinism", 5);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 5000);
+  set_captured_at(fx.db, fx.images[2], 9000);
+  set_captured_at(fx.db, fx.images[3], 13000);
+  set_captured_at(fx.db, fx.images[4], 17000);
+  insert_evaluation(fx.db, fx.images[0], 8, 8, 8);
+  insert_evaluation(fx.db, fx.images[1], 7, 7, 7);
+  insert_evaluation(fx.db, fx.images[2], 9, 9, 9);
+  insert_evaluation(fx.db, fx.images[3], 6, 6, 6);
+  insert_evaluation(fx.db, fx.images[4], 8, 8, 8);
+
+  auto first = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);
+  auto second = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);
+
+  CHECK(first.requested == second.requested);
+  CHECK(first.returned == second.returned);
+  CHECK(first.selected == second.selected);
+}
