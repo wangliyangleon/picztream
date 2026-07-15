@@ -275,6 +275,33 @@ TEST_CASE("request_evaluation (public entry point) reports MissingApiKey without
   CHECK(result.error() == EvaluationError::MissingApiKey);
 }
 
+TEST_CASE("request_evaluation_impl passes a real JSON Schema in format for Provider::Local") {
+  auto img = make_image(4, 4);
+
+  std::string captured_body;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200,
+        R"({"message":{"role":"assistant","content":"{\"exposure\":{\"score\":7,\"note\":\"n\"},)"
+        R"(\"composition\":{\"score\":7,\"note\":\"n\"},\"focus\":{\"score\":7,\"note\":\"n\"},)"
+        R"(\"comment\":\"c\"}"}})"});
+  };
+
+  auto result = detail::request_evaluation_impl(img, "", Provider::Local, fake_post);
+  REQUIRE(result.ok());
+
+  auto parsed_body = nlohmann::json::parse(captured_body);
+  REQUIRE(parsed_body["format"].is_object());  // 不是宽松的 "json" 字符串，是真的 schema 对象
+  CHECK(parsed_body["format"]["type"] == "object");
+  CHECK(parsed_body["format"]["properties"].contains("exposure"));
+  CHECK(parsed_body["format"]["properties"].contains("composition"));
+  CHECK(parsed_body["format"]["properties"].contains("focus"));
+  CHECK(parsed_body["format"]["properties"].contains("comment"));
+  CHECK(parsed_body["options"]["temperature"] == 0);
+}
+
 TEST_CASE("overall_score averages the three dimensions and rounds") {
   EvaluationInfo info{
       DimensionAssessment{7, ""}, std::nullopt, DimensionAssessment{7, ""}, std::nullopt,

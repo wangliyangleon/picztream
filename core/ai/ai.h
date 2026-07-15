@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,7 +69,8 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
                                                     const std::string& schema_instruction,
                                                     Provider provider,
                                                     HttpPostFn http_post = perform_curl_post,
-                                                    const LocalModelConfig& local_config = LocalModelConfig{});
+                                                    const LocalModelConfig& local_config = LocalModelConfig{},
+                                                    const std::optional<nlohmann::json>& local_json_schema = std::nullopt);
 
 // 仅供单元测试使用——request_json 内部在编码上传之前会调用这个函数把图
 // 片降采样到一个合理的上限(见 ai.cpp 里的说明:纯色测试图片压缩后几乎

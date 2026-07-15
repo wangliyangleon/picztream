@@ -39,6 +39,52 @@ std::string build_evaluation_schema_instruction() {
          "fact.";
 }
 
+nlohmann::json build_evaluation_json_schema() {
+  static const char* kSchemaJson = R"json({
+    "type": "object",
+    "properties": {
+      "exposure": {
+        "type": "object",
+        "properties": {
+          "score": {"type": "integer"},
+          "note": {"type": "string"},
+          "fix_percent": {"type": "number"}
+        },
+        "required": ["score", "note"]
+      },
+      "composition": {
+        "type": "object",
+        "properties": {
+          "score": {"type": "integer"},
+          "note": {"type": "string"},
+          "fix": {
+            "type": "object",
+            "properties": {
+              "rotate_degrees": {"type": "number"},
+              "crop_left_percent": {"type": "number"},
+              "crop_right_percent": {"type": "number"},
+              "crop_top_percent": {"type": "number"},
+              "crop_bottom_percent": {"type": "number"}
+            }
+          }
+        },
+        "required": ["score", "note"]
+      },
+      "focus": {
+        "type": "object",
+        "properties": {
+          "score": {"type": "integer"},
+          "note": {"type": "string"}
+        },
+        "required": ["score", "note"]
+      },
+      "comment": {"type": "string"}
+    },
+    "required": ["exposure", "composition", "focus", "comment"]
+  })json";
+  return nlohmann::json::parse(kSchemaJson);
+}
+
 EvaluationError map_request_error(RequestError error) {
   switch (error) {
     case RequestError::MissingApiKey:
@@ -126,7 +172,8 @@ Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::
   std::string user_prompt = build_evaluation_prompt(extra_guidance);
   std::string schema_instruction = build_evaluation_schema_instruction();
 
-  auto json_result = request_json(image, user_prompt, schema_instruction, provider, http_post, local_config);
+  auto json_result = request_json(image, user_prompt, schema_instruction, provider, http_post, local_config,
+                                   build_evaluation_json_schema());
   if (!json_result.ok()) {
     return Result<EvaluationResult, EvaluationError>::Err(map_request_error(json_result.error()));
   }

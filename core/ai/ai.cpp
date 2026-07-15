@@ -185,15 +185,24 @@ Result<nlohmann::json, RequestError> parse_gemini_response(const std::string& bo
 
 nlohmann::json build_local_request(const std::string& image_base64,
                                     const std::string& instruction_text,
-                                    const std::string& model) {
-  return {
+                                    const std::string& model,
+                                    const std::optional<nlohmann::json>& json_schema) {
+  nlohmann::json request = {
       {"model", model},
-      {"format", "json"},
+      {"format", json_schema.has_value() ? *json_schema : nlohmann::json("json")},
       {"stream", false},
       {"messages", nlohmann::json::array({
           {{"role", "user"}, {"content", instruction_text}, {"images", nlohmann::json::array({image_base64})}}
       })},
   };
+  if (json_schema.has_value()) {
+    // Ollama 官方文档给结构化输出的建议——真机验证过：qwen2.5vl:3b 在
+    // 宽松 "json" 模式下约 44% 请求失败(JSON 结构错误/不闭合)，加上
+    // schema 约束 + temperature=0 后连续多次同一张图请求全部成功、内
+    // 容逐字相同。
+    request["options"] = {{"temperature", 0}};
+  }
+  return request;
 }
 
 Result<nlohmann::json, RequestError> parse_local_response(const std::string& body) {
@@ -325,7 +334,8 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
                                                     const std::string& user_prompt,
                                                     const std::string& schema_instruction,
                                                     Provider provider, HttpPostFn http_post,
-                                                    const LocalModelConfig& local_config) {
+                                                    const LocalModelConfig& local_config,
+                                                    const std::optional<nlohmann::json>& local_json_schema) {
   std::optional<std::string> api_key;
   if (provider != Provider::Local) {
     api_key = get_api_key(provider);
@@ -360,7 +370,7 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
   } else {
     url = local_config.base_url + "/api/chat";
     headers = {{"content-type", "application/json"}};
-    request_body = build_local_request(image_base64, instruction_text, local_config.model);
+    request_body = build_local_request(image_base64, instruction_text, local_config.model, local_json_schema);
   }
 
   // 跟 core/browse/prefetch.cpp 往 stderr 打 hit/miss/wait_ms 同一个惯

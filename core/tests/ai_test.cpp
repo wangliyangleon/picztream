@@ -213,6 +213,45 @@ TEST_CASE("to_string maps every provider to its lowercase name") {
   CHECK(std::string(to_string(Provider::Local)) == "local");
 }
 
+TEST_CASE("request_json uses a JSON Schema in format and sets temperature=0 when local_json_schema is provided") {
+  auto img = make_image(4, 4);
+
+  std::string captured_body;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, R"({"message":{"role":"assistant","content":"{\"ok\":true}"}})"});
+  };
+
+  nlohmann::json schema = {{"type", "object"}, {"properties", nlohmann::json::object()}};
+  auto result = request_json(img, "p", "s", Provider::Local, fake_post, LocalModelConfig{}, schema);
+  REQUIRE(result.ok());
+
+  auto parsed_body = nlohmann::json::parse(captured_body);
+  CHECK(parsed_body["format"] == schema);
+  CHECK(parsed_body["options"]["temperature"] == 0);
+}
+
+TEST_CASE("request_json falls back to loose json format without local_json_schema") {
+  auto img = make_image(4, 4);
+
+  std::string captured_body;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, R"({"message":{"role":"assistant","content":"{\"ok\":true}"}})"});
+  };
+
+  auto result = request_json(img, "p", "s", Provider::Local, fake_post);
+  REQUIRE(result.ok());
+
+  auto parsed_body = nlohmann::json::parse(captured_body);
+  CHECK(parsed_body["format"] == "json");
+  CHECK(!parsed_body.contains("options"));
+}
+
 TEST_CASE("request_json parses an Ollama-shaped response") {
   auto img = make_image(4, 4);
 
