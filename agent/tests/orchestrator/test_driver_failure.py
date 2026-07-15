@@ -37,9 +37,14 @@ def test_optional_stage_failure_degrades_and_run_continues(tmp_path):
     driver.advance(run)
     assert run.stage_states["Style"] == StageStatus.SKIPPED
     assert run.status == RunStatus.RUNNING
+    assert run.outputs["Style"].error == "no matching preset"  # 失败原因没被静默丢掉
 
     driver.advance(run)
     assert run.stage_states["Deliver"] == StageStatus.DONE
+
+    driver.advance(run)  # 没有更多 pending stage 了，推进到终态
+    assert run.status == RunStatus.AWAITING_REVIEW  # 带着一个 SKIPPED 的 Style 照样能走到复核，不卡死
+    assert run.outputs["Style"].error == "no matching preset"  # 到复核这一步失败原因依然可读
 
 
 def test_partial_item_failure_inside_a_stage_is_not_a_stage_failure(tmp_path):
