@@ -80,6 +80,32 @@ void apply_adjustments_rows(decode::DecodedImage& img, double highlights, double
   }
 }
 
+inline float grain_noise(int x, int y) {
+  std::uint32_t h = static_cast<std::uint32_t>(x) * 374761393u +
+                     static_cast<std::uint32_t>(y) * 668265263u;
+  h = (h ^ (h >> 13)) * 1274126177u;
+  h ^= (h >> 16);
+  return (static_cast<float>(h & 0xFFFFu) / 65535.f) * 2.f - 1.f;  // [-1, 1]
+}
+
+// amount=1.0 时的最大加减幅度,约 30/255——第一版工作假设,真机验证时按实
+// 际观感调整,不是摄影级精确校准。
+constexpr float kGrainMaxIntensity = 0.12f;
+
+void apply_grain_rows(decode::DecodedImage& img, float amount, int row_begin, int row_end) {
+  const float scale = amount * kGrainMaxIntensity;
+  for (int y = row_begin; y < row_end; ++y) {
+    std::uint8_t* row = &img.rgba[static_cast<std::size_t>(y) * img.width * 4];
+    for (int x = 0; x < img.width; ++x) {
+      std::uint8_t* px = row + x * 4;
+      float n = grain_noise(x, y) * scale;
+      px[0] = static_cast<std::uint8_t>(std::clamp(px[0] / 255.f + n, 0.f, 1.f) * 255.f + 0.5f);
+      px[1] = static_cast<std::uint8_t>(std::clamp(px[1] / 255.f + n, 0.f, 1.f) * 255.f + 0.5f);
+      px[2] = static_cast<std::uint8_t>(std::clamp(px[2] / 255.f + n, 0.f, 1.f) * 255.f + 0.5f);
+    }
+  }
+}
+
 // thread_count=1 时直接同步跑完，不额外起线程；>1 时按行切分到
 // std::jthread，析构时自动 join——照抄
 // spikes/color_lut_probe/probe.cpp::time_jthread 里验证过的切分写法。
@@ -112,6 +138,12 @@ void apply_adjustments(decode::DecodedImage& img, double highlights, double shad
   run_parallel_rows(img.height, thread_count, [&](int b, int e) {
     apply_adjustments_rows(img, highlights, shadows, wb_shift_r, wb_shift_b, b, e);
   });
+}
+
+void apply_grain(decode::DecodedImage& img, float amount, unsigned thread_count) {
+  if (amount <= 0.f) return;
+  run_parallel_rows(img.height, thread_count,
+                     [&](int b, int e) { apply_grain_rows(img, amount, b, e); });
 }
 
 }  // namespace pzt::core::color

@@ -37,4 +37,11 @@ void apply_lut(decode::DecodedImage& img, const Lut3D& lut, unsigned thread_coun
 void apply_adjustments(decode::DecodedImage& img, double highlights, double shadows,
                         double wb_shift_r, double wb_shift_b, unsigned thread_count = 1);
 
+// 纯位置哈希生成的单色噪声,不依赖图片内容/时间戳做种子——同一张图同一个
+// recipe 重复渲染(预览滚动、prefetch 缓存复用)得到完全相同的颗粒图案,
+// 不会看起来"闪烁"。amount 是 0..1 的强度系数,0 时调用方(core/recipe::
+// render)会直接跳过整个调用,这里不重复判断。三通道加同一个偏移量(单
+// 色噪声,更接近真实胶片颗粒对亮度而不是色相的影响),不区分亮部/暗部。
+void apply_grain(decode::DecodedImage& img, float amount, unsigned thread_count = 1);
+
 }  // namespace pzt::core::color

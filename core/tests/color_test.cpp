@@ -136,3 +136,53 @@ TEST_CASE("apply_adjustments clamps at extreme parameter values without overflow
   CHECK(img.rgba[1] == 255);
   CHECK(img.rgba[2] == 255);
 }
+
+TEST_CASE("apply_grain with amount=0 leaves pixels unchanged") {
+  auto img = make_image({{100, 100, 100, 255}, {50, 50, 50, 255}}, 2, 1);
+  auto original = img.rgba;
+  apply_grain(img, 0.f);
+  CHECK(img.rgba == original);
+}
+
+TEST_CASE("apply_grain with amount>0 perturbs at least some pixels") {
+  DecodedImage img;
+  img.width = 8;
+  img.height = 8;
+  img.rgba.assign(static_cast<std::size_t>(8) * 8 * 4, 128);
+  for (std::size_t i = 3; i < img.rgba.size(); i += 4) img.rgba[i] = 255;  // alpha
+  auto original = img.rgba;
+  apply_grain(img, 1.f);
+  int changed = 0;
+  for (std::size_t i = 0; i < img.rgba.size(); i += 4) {
+    if (img.rgba[i] != original[i]) ++changed;
+  }
+  CHECK(changed > 0);
+}
+
+TEST_CASE("apply_grain is deterministic across repeated calls on the same input") {
+  auto img1 = make_image({{100, 150, 200, 255}, {10, 20, 30, 255}}, 2, 1);
+  auto img2 = img1;
+  apply_grain(img1, 0.6f);
+  apply_grain(img2, 0.6f);
+  CHECK(img1.rgba == img2.rgba);
+}
+
+TEST_CASE("apply_grain clamps at extreme pixel values without overflow") {
+  auto img = make_image({{255, 255, 255, 255}, {0, 0, 0, 255}}, 2, 1);
+  apply_grain(img, 1.f);
+  for (auto v : img.rgba) CHECK(v <= 255);  // 无符号溢出的话会绕回一个很小的数
+}
+
+TEST_CASE("apply_grain with thread_count>1 matches the single-threaded result") {
+  DecodedImage img1;
+  img1.width = 4;
+  img1.height = 20;
+  img1.rgba.assign(static_cast<std::size_t>(4) * 20 * 4, 0);
+  for (std::size_t i = 0; i < img1.rgba.size(); ++i) {
+    img1.rgba[i] = static_cast<std::uint8_t>(i % 200);
+  }
+  DecodedImage img2 = img1;
+  apply_grain(img1, 0.7f, 1);
+  apply_grain(img2, 0.7f, 4);
+  CHECK(img1.rgba == img2.rgba);
+}
