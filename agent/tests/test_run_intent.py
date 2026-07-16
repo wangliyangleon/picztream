@@ -9,6 +9,7 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
+from stages.style import StyleStage
 from store.run_store import RunStore
 
 
@@ -40,6 +41,7 @@ def _make_pipeline(tmp_path, client, transport):
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
+        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
 
@@ -61,6 +63,7 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
         StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 1, "apply_tag": "精选"}),
+        StageSpec(name="Style", params={"provider": "gemini"}),
         StageSpec(name="Deliver", params={"out_folder": str(tmp_path / "out")}),
     ]))
     run = RunState(run_id="run-1", project_id="run-1", plan=plan,
@@ -73,6 +76,7 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
         "eval": '{"submitted": 2, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 2, "tagged": 0, "skipped_no_capture_time": 0}',
         "tag": '{}',
+        "recipe": '{"recipe_name": "Havana 1959", "reasoning": "x"}',
         "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
     }
 

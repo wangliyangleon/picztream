@@ -20,7 +20,7 @@ class DeliverStage:
     staging_dir: Path
     chat_id: str = "watchfolder"
     name: str = "Deliver"
-    inputs: List[str] = field(default_factory=lambda: ["Curate"])
+    inputs: List[str] = field(default_factory=lambda: ["Style"])
     cost_class: str = "local"
     criticality: str = "optional"  # 降级不死：交付失败不该抹掉前面已经算完的选片结果
 

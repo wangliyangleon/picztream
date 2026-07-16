@@ -381,6 +381,17 @@ class SessionRouter:
                 except Exception:
                     failed_count += 1
         summary = f"选好了 {len(selected)} 张"
+        # 目标三：Style 在 Curate 之后、Deliver 之前自动跑完(gate="off",
+        # 不单独停下来问)，Deliver 这个原本就有的必选闸门顺带成了"审核
+        # LLM 选的风格"的天然时机——闸门是在 Deliver 即将运行前触发的,
+        # 这时 Style 已经跑完,run.outputs["Style"] 里的结果已经就绪,不
+        # 需要给 Style 单独加一个闸门。见
+        # docs/W2026-07-15_AgentStyle_Eng_Design.md 第六节。
+        style_output = run.outputs.get("Style")
+        applied = style_output.data.get("applied", {}) if style_output else {}
+        if applied:
+            picks = "，".join(f"{Path(p).name}→{name}" for p, name in applied.items())
+            summary += f"，已自动套用风格：{picks}"
         if failed_count:
             summary += f"(其中 {failed_count} 张预览发送失败，交付时仍会正常导出)"
         summary += "，满意就回复\"好的\"，不满意说说想怎么调，不要了就说\"取消\""

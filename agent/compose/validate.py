@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from orchestrator.types import Plan
 
-_EXPECTED_STAGE_NAMES = ["Ingest", "Evaluate", "Dedup", "Curate", "Deliver"]
+_EXPECTED_STAGE_NAMES = ["Ingest", "Evaluate", "Dedup", "Curate", "Style", "Deliver"]
 _VALID_PROVIDERS = ("gemini", "claude")
 # 1 到 50：下限 1 是"至少选一张"这个最基本的合法性，交给 curate 自己
 # 处理"候选不够"这种更细的场景；上限 50 对齐 PRD 示例(一天出去玩拍
@@ -62,6 +62,13 @@ def validate_plan(plan: Plan) -> Plan:
         raise ValidationError(
             "bad_curate_apply_tag",
             f"Curate.params['apply_tag'] must be a non-empty string, got {apply_tag!r}",
+        )
+
+    style_provider = by_name["Style"].params.get("provider")
+    if style_provider not in _VALID_PROVIDERS:
+        raise ValidationError(
+            "bad_style_provider",
+            f"Style.params['provider'] must be one of {_VALID_PROVIDERS}, got {style_provider!r}",
         )
 
     return plan

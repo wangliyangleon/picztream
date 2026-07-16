@@ -10,6 +10,7 @@ def _valid_plan(**overrides):
         "Evaluate": StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         "Dedup": StageSpec(name="Dedup"),
         "Curate": StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
+        "Style": StageSpec(name="Style", params={"provider": "gemini"}),
         "Deliver": StageSpec(name="Deliver"),
     }
     for name, params in overrides.items():
@@ -56,6 +57,16 @@ def test_rejects_bad_evaluate_provider(provider):
         validate_plan(plan)
 
     assert exc_info.value.code == "bad_evaluate_provider"
+
+
+@pytest.mark.parametrize("provider", ["openai", "", None, 123])
+def test_rejects_bad_style_provider(provider):
+    plan = _valid_plan(Style={"provider": provider})
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_plan(plan)
+
+    assert exc_info.value.code == "bad_style_provider"
 
 
 @pytest.mark.parametrize("auto_reject", ["true", 1, None])

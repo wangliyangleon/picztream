@@ -46,5 +46,8 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
             "count": decision.get("count", 9),
             "apply_tag": decision.get("apply_tag", "精选"),
         }),
+        StageSpec(name="Style", params={
+            "provider": decision.get("provider", "gemini"),
+        }),
         StageSpec(name="Deliver"),
     ])

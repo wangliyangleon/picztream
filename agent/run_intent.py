@@ -24,6 +24,7 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
+from stages.style import StyleStage
 from store.run_store import RunStore
 
 
@@ -84,6 +85,7 @@ def main() -> None:
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
+        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
     driver = Driver(stages=stages, store=store)

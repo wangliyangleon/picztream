@@ -22,6 +22,7 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
+from stages.style import StyleStage
 from store.run_store import RunStore
 from transport.base import InboundMessage
 
@@ -33,6 +34,7 @@ _FIXED_RESPONSES = {
     "dedup": '{"groups": 2, "tagged": 0, "skipped_no_capture_time": 0}',
     "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
     "tag": '{}',
+    "recipe": '{"recipe_name": "Havana 1959", "reasoning": "warm mood fits"}',
     "export-images": '{"exported": 2, "skipped": [], "created_dir": true}',
 }
 
@@ -49,6 +51,7 @@ def _fake_compose_plan(intent: str, profile: Optional[str], last_config: Optiona
         StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
+        StageSpec(name="Style", params={"provider": "gemini"}),
         StageSpec(name="Deliver"),
     ])
 
@@ -97,6 +100,7 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
+        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=tmp_path / "delivered",
                                  staging_dir=tmp_path / "staging", chat_id=CHAT_ID),
     }

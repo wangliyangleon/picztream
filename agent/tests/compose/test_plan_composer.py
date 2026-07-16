@@ -19,13 +19,14 @@ def test_compose_plan_builds_five_stage_plan_from_llm_decision(monkeypatch):
 
     plan = compose_plan("出去玩拍了40张，挑12张发朋友圈", None, None, http_post=fake_http_post)
 
-    assert [s.name for s in plan.stages] == ["Ingest", "Evaluate", "Dedup", "Curate", "Deliver"]
+    assert [s.name for s in plan.stages] == ["Ingest", "Evaluate", "Dedup", "Curate", "Style", "Deliver"]
     assert all(s.gate == "off" for s in plan.stages)
     assert plan.stages[0].params == {}
     assert plan.stages[1].params == {"provider": "claude", "auto_reject": False}
     assert plan.stages[2].params == {}
     assert plan.stages[3].params == {"count": 12, "apply_tag": "朋友圈"}
-    assert plan.stages[4].params == {}
+    assert plan.stages[4].params == {"provider": "claude"}
+    assert plan.stages[5].params == {}
 
 
 def test_compose_plan_applies_defaults_when_llm_omits_fields(monkeypatch):

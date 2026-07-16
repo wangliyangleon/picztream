@@ -9,6 +9,7 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
+from stages.style import StyleStage
 from store.run_store import RunStore
 
 
@@ -18,11 +19,12 @@ def test_build_plan_produces_five_stages_all_gates_off():
         provider="gemini", apply_tag="精选", auto_reject=True,
     )
 
-    assert [s.name for s in plan.stages] == ["Ingest", "Evaluate", "Dedup", "Curate", "Deliver"]
+    assert [s.name for s in plan.stages] == ["Ingest", "Evaluate", "Dedup", "Curate", "Style", "Deliver"]
     assert all(s.gate == "off" for s in plan.stages)
     assert plan.stages[0].params == {"folder": "/tmp/in"}
     assert plan.stages[3].params == {"count": 9, "apply_tag": "精选"}
-    assert plan.stages[4].params == {"out_folder": "/tmp/out"}
+    assert plan.stages[4].params == {"provider": "gemini"}
+    assert plan.stages[5].params == {"out_folder": "/tmp/out"}
 
 
 def test_build_transport_reconstructs_in_and_out_dir_from_persisted_plan(tmp_path):
@@ -78,6 +80,7 @@ def _make_pipeline(tmp_path, client, transport):
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
+        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
 
@@ -89,6 +92,7 @@ def test_full_pipeline_runs_to_awaiting_review_and_delivers_selected_files(tmp_p
         "dedup": '{"groups": 3, "tagged": 0, "skipped_no_capture_time": 0}',
         "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
         "tag": '{}',
+        "recipe": '{"recipe_name": "Havana 1959", "reasoning": "x"}',
         "export-images": '{"exported": 2, "skipped": [], "created_dir": true}',
     })
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
@@ -120,6 +124,7 @@ def test_crash_before_checkpoint_persists_does_not_resend_via_deliver_marker(tmp
         "dedup": '{"groups": 1, "tagged": 0, "skipped_no_capture_time": 0}',
         "curate": '{"requested": 1, "returned": 1, "selected": ["a.jpg"]}',
         "tag": '{}',
+        "recipe": '{"recipe_name": "Havana 1959", "reasoning": "x"}',
         "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
     })
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
@@ -180,6 +185,7 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
         responses = {
             "curate": '{"requested": 1, "returned": 1, "selected": ["a.jpg"]}',
             "tag": '{}',
+            "recipe": '{"recipe_name": "Havana 1959", "reasoning": "x"}',
             "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
         }
         return subprocess.CompletedProcess(argv, 0, stdout=responses[argv[1]], stderr="")
@@ -196,5 +202,5 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
     if reloaded.status == RunStatus.AWAITING_REVIEW:
         driver_b.approve(reloaded)
 
-    assert call_log_after_restart == ["curate", "tag", "tag", "export-images"]  # 没有重跑 new/eval/dedup
+    assert call_log_after_restart == ["curate", "tag", "tag", "recipe", "recipe", "export-images"]  # 没有重跑 new/eval/dedup
     assert reloaded.status == RunStatus.DONE
