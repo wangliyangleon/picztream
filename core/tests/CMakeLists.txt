@@ -13,6 +13,7 @@ add_executable(core_tests
   ai_test.cpp
   evaluation_test.cpp
   evaluation_worker_test.cpp
+  style_test.cpp
   dedup_test.cpp
   curate_test.cpp
   settings_test.cpp
