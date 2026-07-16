@@ -32,6 +32,19 @@ from transport.base import InboundMessage
 _APPROVE_KEYWORDS = {"", "approve", "同意", "可以", "好", "好的", "ok"}
 _REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 
+# 长时间沉默体验不好——RUNNING 阶段每个 stage 开始前发一句进度提示，天
+# 然对齐 stage 边界，不需要引入线程/改 CLI 协议成流式输出。六个 stage
+# 统一处理，不特殊排除 Ingest(通常很快，一闪而过无害)/Deliver(补上此前
+# 完全沉默的交付环节)。
+_STAGE_PROGRESS_MESSAGES = {
+    "Ingest": "正在导入照片...",
+    "Evaluate": "正在执行 AI 评估...",
+    "Dedup": "正在执行去重...",
+    "Curate": "正在筛选...",
+    "Style": "正在自动套用风格...",
+    "Deliver": "正在交付...",
+}
+
 
 class SessionRouter:
     def __init__(self, store: RunStore, driver: Driver, transport: Any, client: PztClient, chat_id: str,
@@ -325,12 +338,18 @@ class SessionRouter:
         return "没什么可说的"
 
     def _begin_running(self, run: RunState) -> RunState:
+        count = len(list(incoming_dir_for(self.incoming_root, run.run_id).iterdir()))
+        self.transport.send_text(self.chat_id, f"开始处理了，共 {count} 张")
         run.status = RunStatus.RUNNING
         self.store.save(run)
         return self._drive_to_stop_and_notify(run)
 
     def _drive_to_stop(self, run: RunState) -> RunState:
         while run.status == RunStatus.RUNNING:
+            next_stage = self.driver.peek_next_stage(run)
+            message = _STAGE_PROGRESS_MESSAGES.get(next_stage) if next_stage else None
+            if message:
+                self.transport.send_text(self.chat_id, message)
             self.driver.advance(run)
         return run
 

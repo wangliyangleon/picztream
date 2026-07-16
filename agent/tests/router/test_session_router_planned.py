@@ -43,7 +43,12 @@ def test_approving_the_plan_confirmation_drives_pipeline_to_gate_and_sends_expor
         (CHAT_ID, str(preview_dir / "a.jpg")),
         (CHAT_ID, str(preview_dir / "b.jpg")),
     ]
-    assert len(transport.sent_texts) == 2  # 第一条是确认回显，第二条是预览小结
+    # 第一条是确认回显，最后一条是预览小结——中间还有"开始处理了"+每个
+    # stage 切换时的进度提示，具体条数不是这条测试要锁的东西（见
+    # test_session_router_timers.py/新增的进度播报功能），只关心首尾两
+    # 端语义没错。
+    assert transport.sent_texts[0][1].startswith("理解你想")
+    assert "选好了 2 张" in transport.sent_texts[-1][1]
 
 
 def test_reject_keyword_while_planned_cancels_the_run(tmp_path):
