@@ -98,6 +98,10 @@ def main() -> None:
                 router.check_idle_timers()
             except Exception as e:
                 print(f"[run_telegram] 检查静默计时器时出错，已跳过：{e!r}")
+            try:
+                router.check_progress_updates()
+            except Exception as e:
+                print(f"[run_telegram] 检查收图进度播报时出错，已跳过：{e!r}")
             time.sleep(args.poll_interval)
     except KeyboardInterrupt:
         print("收到中断，正在停止…")

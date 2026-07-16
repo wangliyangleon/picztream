@@ -82,3 +82,22 @@ def test_run_state_from_dict_defaults_activity_fields_when_missing():
 
     assert restored.last_activity_at is None
     assert restored.reminder_sent is False
+
+
+def test_run_state_round_trips_last_progress_notified_at():
+    run = make_sample_run()
+    run.last_progress_notified_at = 1700000100.0
+
+    restored = run_state_from_dict(json.loads(json.dumps(asdict(run))))
+
+    assert restored.last_progress_notified_at == 1700000100.0
+
+
+def test_run_state_from_dict_defaults_last_progress_notified_at_when_missing():
+    run = make_sample_run()
+    data = json.loads(json.dumps(asdict(run)))
+    del data["last_progress_notified_at"]
+
+    restored = run_state_from_dict(data)
+
+    assert restored.last_progress_notified_at is None

@@ -51,7 +51,8 @@ class SessionRouter:
                  incoming_root: Path, preview_root: Path, deliver_out_folder: Path,
                  compose_plan_fn: Any, classify_gate_reply_fn: Any, refine_plan_confirmation_fn: Any,
                  classify_collecting_message_fn: Any,
-                 now_fn: Callable[[], float] = time.time, idle_reminder_seconds: float = 300.0) -> None:
+                 now_fn: Callable[[], float] = time.time, idle_reminder_seconds: float = 300.0,
+                 progress_interval_seconds: float = 60.0) -> None:
         self.store = store
         self.driver = driver
         self.transport = transport
@@ -66,6 +67,7 @@ class SessionRouter:
         self.classify_collecting_message_fn = classify_collecting_message_fn
         self.now_fn = now_fn
         self.idle_reminder_seconds = idle_reminder_seconds
+        self.progress_interval_seconds = progress_interval_seconds
 
     def handle_message(self, msg: InboundMessage) -> Optional[RunState]:
         if msg.chat_id != self.chat_id:
@@ -83,6 +85,11 @@ class SessionRouter:
     def _mint_collecting_run(self) -> RunState:
         run = new_collecting_run(new_run_id())
         run.last_activity_at = self.now_fn()
+        # check_progress_updates 用这个字段算"离上次播报过了多久"——在这
+        # 里就设成收图开始的时间点，保证第一次播报也要等满一个
+        # progress_interval_seconds，不会在收到第一张照片时就立刻触发
+        # (那样跟"每隔一分钟"的预期不符)。
+        run.last_progress_notified_at = self.now_fn()
         moved = drain_queue_into(self.incoming_root, run.run_id)
         self.store.save(run)
         if moved:
@@ -143,6 +150,29 @@ class SessionRouter:
             return
 
         run.reminder_sent = True
+        self.store.save(run)
+
+    def check_progress_updates(self) -> None:
+        # 跟 check_idle_timers 是两个独立的机制，不合并：那个是"用户闲置
+        # 多久没搭理才提醒一次"（活动会重置、只触发一次），这个是"收图
+        # 期间按固定节奏报一次已收到几张"，不看 last_activity_at、不受
+        # 用户是否在活跃发图影响，也不是一次性——用户连续发图正是最想
+        # 知道"收到几张了"的时候，"活动即重置"的语义在这里刚好是反的。
+        active = self.store.list_active()
+        if not active:
+            return
+        run = active[0]
+        if run.status != RunStatus.COLLECTING:
+            return
+        last = run.last_progress_notified_at
+        if last is not None and self.now_fn() - last < self.progress_interval_seconds:
+            return
+
+        count = len(list(incoming_dir_for(self.incoming_root, run.run_id).iterdir()))
+        if count == 0:
+            return
+        self.transport.send_text(self.chat_id, f"已收到 {count} 张图片")
+        run.last_progress_notified_at = self.now_fn()
         self.store.save(run)
 
     def _handle_gate(self, run: RunState, msg: InboundMessage) -> RunState:

@@ -101,7 +101,7 @@ class FakeClock:
 
 def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
                   runner: Callable = _fake_runner, now_fn: Callable[[], float] = time.time,
-                  idle_reminder_seconds: float = 300.0,
+                  idle_reminder_seconds: float = 300.0, progress_interval_seconds: float = 60.0,
                   refine_plan_confirmation_fn: Callable = refine_plan_confirmation,
                   classify_collecting_message_fn: Callable = _default_classify_collecting_message
                   ) -> Tuple[SessionRouter, RunStore, FakeTransport, PztClient]:
@@ -126,6 +126,7 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
         refine_plan_confirmation_fn=refine_plan_confirmation_fn,
         classify_collecting_message_fn=classify_collecting_message_fn,
         now_fn=now_fn, idle_reminder_seconds=idle_reminder_seconds,
+        progress_interval_seconds=progress_interval_seconds,
     )
     return router, store, transport, client
 
