@@ -17,3 +17,7 @@
 
 - `Roadmap.md` - 项目路线图原稿；其背景、双层流水线、设计哲学、里程碑总览已吸收进 `docs/SPEC.md`
 - `Optimization_Backlog.md` - M1 收尾/M2 开始前的一次优化 review 快照，多数条目已完成，残留观察项在 `docs/Fix_It_Night_Review.md` 中被交叉引用
+
+## Fix-it Night 评审
+
+- `Fix_It_Night_2026-07_Completion_Report.md` - 2026-07 Fix-it Night 全面评审（基于 commit `8f5af14`）的完成报告：已完成的 22 条 F 编号逐项详情、执行日志、E2E 反馈、以及原始四视角评审分析。尚未完成的条目继续在 `docs/Fix_It_Night_Review.md` 里作为活跃 backlog 维护
