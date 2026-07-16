@@ -464,3 +464,57 @@ TEST_CASE("render reports RecipeNotFound for a nonexistent id") {
   REQUIRE(!result.ok());
   CHECK(result.error() == RenderRecipeError::RecipeNotFound);
 }
+
+TEST_CASE("make_graded_lut with all-zero params is the identity mapping") {
+  auto lut = detail::make_graded_lut(5, detail::GradeParams{});
+  // 网格点 (4,2,0) -> (1.0, 0.5, 0.0)，全零参数应该原样映回自己
+  std::size_t idx = (static_cast<std::size_t>(4) * 5 + 2) * 5 + 0;
+  CHECK(lut[idx * 3 + 0] == doctest::Approx(1.0));
+  CHECK(lut[idx * 3 + 1] == doctest::Approx(0.5));
+  CHECK(lut[idx * 3 + 2] == doctest::Approx(0.0));
+}
+
+TEST_CASE("make_graded_lut wb_shift applies a per-channel gain like apply_adjustments") {
+  auto lut = detail::make_graded_lut(5, detail::GradeParams{/*wb_r=*/50, /*wb_b=*/-50, 0, 0, 0});
+  std::size_t idx = (static_cast<std::size_t>(2) * 5 + 2) * 5 + 2;  // (0.5, 0.5, 0.5)
+  CHECK(lut[idx * 3 + 0] == doctest::Approx(0.75));  // 0.5 * 1.5
+  CHECK(lut[idx * 3 + 2] == doctest::Approx(0.25));  // 0.5 * 0.5
+}
+
+TEST_CASE("make_graded_lut saturation=-100 collapses every grid point to grayscale") {
+  auto lut = detail::make_graded_lut(5, detail::GradeParams{0, 0, /*saturation=*/-100, 0, 0});
+  std::size_t idx = (static_cast<std::size_t>(4) * 5 + 1) * 5 + 0;  // 明显偏色的一个格点
+  CHECK(lut[idx * 3 + 0] == doctest::Approx(lut[idx * 3 + 1]));
+  CHECK(lut[idx * 3 + 1] == doctest::Approx(lut[idx * 3 + 2]));
+}
+
+TEST_CASE("make_graded_lut positive saturation pushes channels further apart") {
+  detail::GradeParams neutral{};
+  detail::GradeParams boosted{0, 0, /*saturation=*/80, 0, 0};
+  auto lut_n = detail::make_graded_lut(5, neutral);
+  auto lut_b = detail::make_graded_lut(5, boosted);
+  // (0.75, 0.5, 0.25):中等 spread 的格点,留有空间验证"变得更大",不能用
+  // 已经贴到 [0,1] 边界的格点(会被 clamp 吃掉差异)。
+  std::size_t idx = (static_cast<std::size_t>(3) * 5 + 2) * 5 + 1;
+  float spread_n = lut_n[idx * 3 + 0] - lut_n[idx * 3 + 2];
+  float spread_b = lut_b[idx * 3 + 0] - lut_b[idx * 3 + 2];
+  CHECK(spread_b > spread_n);
+}
+
+TEST_CASE("make_graded_lut contrast pushes values away from the midpoint") {
+  auto lut = detail::make_graded_lut(5, detail::GradeParams{0, 0, 0, /*contrast=*/50, 0});
+  std::size_t bright = (static_cast<std::size_t>(4) * 5 + 4) * 5 + 4;  // (1,1,1)
+  std::size_t dark = 0;  // (0,0,0)
+  CHECK(lut[bright * 3 + 0] == doctest::Approx(1.0));  // 顶到 1 之后 clamp,验证不溢出
+  CHECK(lut[dark * 3 + 0] == doctest::Approx(0.0));    // 同理压到 0
+  std::size_t mid = (static_cast<std::size_t>(2) * 5 + 2) * 5 + 2;  // (0.5,0.5,0.5) 是不动点
+  CHECK(lut[mid * 3 + 0] == doctest::Approx(0.5));
+}
+
+TEST_CASE("make_graded_lut brightness adds a flat offset before clamping") {
+  auto lut = detail::make_graded_lut(5, detail::GradeParams{0, 0, 0, 0, /*brightness=*/20});
+  std::size_t idx = (static_cast<std::size_t>(2) * 5 + 2) * 5 + 2;  // (0.5,0.5,0.5)
+  CHECK(lut[idx * 3 + 0] == doctest::Approx(0.7));
+  CHECK(lut[idx * 3 + 1] == doctest::Approx(0.7));
+  CHECK(lut[idx * 3 + 2] == doctest::Approx(0.7));
+}

@@ -162,4 +162,28 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
                                                         RecipeId recipe_id,
                                                         unsigned thread_count = 1);
 
+// 仅供单元测试直接验证每个旋钮的效果——真正的调用方是 recipe.cpp 内部
+// ensure_default_presets 给 9 个内置预设烘焙 LUT,不是面向 core/api 的公开
+// 接口。照抄 core::ai::detail::downscale_for_upload 的先例(core/ai/ai.h)。
+namespace detail {
+
+// 5 个 -100..100 的百分比旋钮,烘焙成一份静态 LUT——不是 apply_adjustments
+// 那种运行时按每个 version 调的实时参数,这里生成的 LUT 存进
+// recipes.base_lut,跟预设本身一样是"烘焙好之后不再变"的。
+struct GradeParams {
+  double wb_shift_r = 0;
+  double wb_shift_b = 0;
+  double saturation = 0;
+  double contrast = 0;
+  double brightness = 0;
+};
+
+// 对每个网格点依次做 白平衡 -> 整体明暗 -> 对比度 -> 饱和度 四步,公式见
+// docs/W2026-07-15_RecipeExpansion_Eng_Design.md。saturation=-100 时四步
+// 结束后三通道必然相等(collapse 到 luma),黑白预设直接复用这同一个函数,
+// 不需要单独的黑白代码路径。
+std::vector<float> make_graded_lut(int n, const GradeParams& params);
+
+}  // namespace detail
+
 }  // namespace pzt::core::recipe

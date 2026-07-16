@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -29,30 +28,6 @@ bool preset_name_exists(sqlite3* conn, const std::string& name) {
   Stmt stmt(conn, "SELECT 1 FROM recipes WHERE name = ? AND parent_id IS NULL;");
   sqlite3_bind_text(stmt.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
   return sqlite3_step(stmt.get()) == SQLITE_ROW;
-}
-
-// 随手调的暖色偏移，只用来验证"确实在处理颜色"这条路径，不追求调色质
-// 量——公式照抄 spikes/color_lut_probe/probe.cpp 的 make_lut()，真正的预
-// 设调色设计是后续可以随时补充的独立工作，不阻塞这次的机制验证。
-std::vector<float> make_warm_lut(int n) {
-  std::vector<float> lut(static_cast<std::size_t>(n) * n * n * 3);
-  for (int r = 0; r < n; ++r) {
-    for (int g = 0; g < n; ++g) {
-      for (int b = 0; b < n; ++b) {
-        float rf = static_cast<float>(r) / (n - 1);
-        float gf = static_cast<float>(g) / (n - 1);
-        float bf = static_cast<float>(b) / (n - 1);
-        float rf2 = std::clamp(rf + 0.08f * std::sin(rf * 3.14159f), 0.f, 1.f);
-        float gf2 = std::clamp(gf + 0.02f * std::sin((gf - 0.3f) * 3.14159f), 0.f, 1.f);
-        float bf2 = std::clamp(bf - 0.08f * std::sin(bf * 3.14159f), 0.f, 1.f);
-        std::size_t idx = (static_cast<std::size_t>(r) * n + g) * n + b;
-        lut[idx * 3 + 0] = rf2;
-        lut[idx * 3 + 1] = gf2;
-        lut[idx * 3 + 2] = bf2;
-      }
-    }
-  }
-  return lut;
 }
 
 void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
@@ -113,6 +88,46 @@ std::optional<RecipeRow> get_recipe_row(sqlite3* conn, RecipeId id) {
 
 }  // namespace
 
+namespace detail {
+
+std::vector<float> make_graded_lut(int n, const GradeParams& params) {
+  std::vector<float> lut(static_cast<std::size_t>(n) * n * n * 3);
+  const float wb_gain_r = static_cast<float>(1.0 + params.wb_shift_r / 100.0);
+  const float wb_gain_b = static_cast<float>(1.0 + params.wb_shift_b / 100.0);
+  const float brightness = static_cast<float>(params.brightness / 100.0);
+  const float contrast_gain = static_cast<float>(1.0 + params.contrast / 100.0);
+  const float sat_gain = static_cast<float>(1.0 + params.saturation / 100.0);
+
+  for (int r = 0; r < n; ++r) {
+    for (int g = 0; g < n; ++g) {
+      for (int b = 0; b < n; ++b) {
+        float r1 = static_cast<float>(r) / (n - 1) * wb_gain_r;
+        float g1 = static_cast<float>(g) / (n - 1);
+        float b1 = static_cast<float>(b) / (n - 1) * wb_gain_b;
+
+        float r2 = r1 + brightness, g2 = g1 + brightness, b2 = b1 + brightness;
+
+        float r3 = (r2 - 0.5f) * contrast_gain + 0.5f;
+        float g3 = (g2 - 0.5f) * contrast_gain + 0.5f;
+        float b3 = (b2 - 0.5f) * contrast_gain + 0.5f;
+
+        float luma = 0.299f * r3 + 0.587f * g3 + 0.114f * b3;
+        float r4 = luma + (r3 - luma) * sat_gain;
+        float g4 = luma + (g3 - luma) * sat_gain;
+        float b4 = luma + (b3 - luma) * sat_gain;
+
+        std::size_t idx = (static_cast<std::size_t>(r) * n + g) * n + b;
+        lut[idx * 3 + 0] = std::clamp(r4, 0.f, 1.f);
+        lut[idx * 3 + 1] = std::clamp(g4, 0.f, 1.f);
+        lut[idx * 3 + 2] = std::clamp(b4, 0.f, 1.f);
+      }
+    }
+  }
+  return lut;
+}
+
+}  // namespace detail
+
 std::vector<PresetSummary> list_presets(db::Database& db) {
   Stmt stmt(db.handle(), "SELECT id, name FROM recipes WHERE parent_id IS NULL ORDER BY id ASC;");
   std::vector<PresetSummary> out;
@@ -151,7 +166,8 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
 void ensure_default_presets(db::Database& db) {
   seed_origin_preset(db.handle());  // 没有 LUT 要算，INSERT OR IGNORE 本身足够便宜，不需要同样的守卫
   if (!preset_name_exists(db.handle(), "Warm")) {
-    seed_preset(db.handle(), "Warm", 17, make_warm_lut(17));
+    seed_preset(db.handle(), "Warm", 17,
+                detail::make_graded_lut(17, detail::GradeParams{15, -10, 0, 0, 0}));
   }
 }
 
