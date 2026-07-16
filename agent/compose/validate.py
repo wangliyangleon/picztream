@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from orchestrator.types import Plan
 
-_EXPECTED_STAGE_NAMES = ["Ingest", "Evaluate", "Dedup", "Curate", "Style", "Deliver"]
+_EXPECTED_STAGE_NAMES = ["Ingest", "Evaluate", "Dedup", "Curate", "Style", "StyleApplyAll", "Deliver"]
 _VALID_PROVIDERS = ("local", "gemini", "claude")
 # 1 到 50：下限 1 是"至少选一张"这个最基本的合法性，交给 curate 自己
 # 处理"候选不够"这种更细的场景；上限 50 对齐 PRD 示例(一天出去玩拍

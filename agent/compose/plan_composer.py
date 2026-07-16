@@ -48,6 +48,7 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
         }),
         StageSpec(name="Style", params={
             "provider": decision.get("provider", "local"),
-        }),
+        }, gate="required"),
+        StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver"),
     ])

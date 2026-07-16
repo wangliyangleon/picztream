@@ -10,7 +10,8 @@ def _valid_plan(**overrides):
         "Evaluate": StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         "Dedup": StageSpec(name="Dedup"),
         "Curate": StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
-        "Style": StageSpec(name="Style", params={"provider": "gemini"}),
+        "Style": StageSpec(name="Style", params={"provider": "gemini"}, gate="required"),
+        "StyleApplyAll": StageSpec(name="StyleApplyAll", gate="required"),
         "Deliver": StageSpec(name="Deliver"),
     }
     for name, params in overrides.items():
@@ -41,6 +42,22 @@ def test_rejects_missing_stage():
         StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
+    ])
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_plan(plan)
+
+    assert exc_info.value.code == "bad_stage_names"
+
+
+def test_rejects_plan_missing_style_apply_all():
+    plan = Plan(stages=[
+        StageSpec(name="Ingest"),
+        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
+        StageSpec(name="Dedup"),
+        StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
+        StageSpec(name="Style", params={"provider": "gemini"}),
+        StageSpec(name="Deliver"),
     ])
 
     with pytest.raises(ValidationError) as exc_info:
