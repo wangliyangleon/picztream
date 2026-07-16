@@ -107,7 +107,7 @@ TEST_CASE("apply_lut with thread_count>1 matches the single-threaded result") {
 
 TEST_CASE("apply_adjustments boosts highlights in bright pixels and leaves dark pixels alone") {
   auto img = make_image({{200, 200, 200, 255}, {10, 10, 10, 255}}, 2, 1);
-  apply_adjustments(img, /*highlights=*/20, /*shadows=*/0, 0, 0);
+  apply_adjustments(img, AdjustParams{/*highlights=*/20, /*shadows=*/0, 0, 0, 0, 0, 0, 0});
   CHECK(img.rgba[0] > 200);   // 亮像素被 highlights 正值推高
   CHECK(img.rgba[0] < 255);   // 但没有直接顶到最大值(这次输入不该触发裁剪)
   CHECK(std::abs(static_cast<int>(img.rgba[4]) - 10) <= 1);  // 暗像素 highlight_weight≈0，基本不变
@@ -115,14 +115,14 @@ TEST_CASE("apply_adjustments boosts highlights in bright pixels and leaves dark 
 
 TEST_CASE("apply_adjustments boosts shadows in dark pixels and leaves bright pixels alone") {
   auto img = make_image({{10, 10, 10, 255}, {200, 200, 200, 255}}, 2, 1);
-  apply_adjustments(img, /*highlights=*/0, /*shadows=*/20, 0, 0);
+  apply_adjustments(img, AdjustParams{/*highlights=*/0, /*shadows=*/20, 0, 0, 0, 0, 0, 0});
   CHECK(img.rgba[0] > 10);
   CHECK(std::abs(static_cast<int>(img.rgba[4]) - 200) <= 1);
 }
 
 TEST_CASE("apply_adjustments applies white balance as a per-channel gain") {
   auto img = make_image({{100, 100, 100, 255}}, 1, 1);
-  apply_adjustments(img, 0, 0, /*wb_shift_r=*/50, /*wb_shift_b=*/-50);
+  apply_adjustments(img, AdjustParams{0, 0, 0, 0, /*wb_shift_r=*/50, /*wb_shift_b=*/-50, 0, 0});
   CHECK(img.rgba[0] == 150);  // 100 * 1.5
   CHECK(img.rgba[1] == 100);  // 绿色通道不受白平衡影响
   CHECK(img.rgba[2] == 50);   // 100 * 0.5
@@ -130,11 +130,73 @@ TEST_CASE("apply_adjustments applies white balance as a per-channel gain") {
 
 TEST_CASE("apply_adjustments clamps at extreme parameter values without overflow") {
   auto img = make_image({{250, 250, 250, 255}}, 1, 1);
-  apply_adjustments(img, /*highlights=*/1000, /*shadows=*/0, /*wb_shift_r=*/1000,
-                     /*wb_shift_b=*/1000);
+  apply_adjustments(img, AdjustParams{/*highlights=*/1000, /*shadows=*/0, 0, 0,
+                                       /*wb_shift_r=*/1000, /*wb_shift_b=*/1000, 0, 0});
   CHECK(img.rgba[0] == 255);
   CHECK(img.rgba[1] == 255);
   CHECK(img.rgba[2] == 255);
+}
+
+TEST_CASE("apply_adjustments blacks affects near-black pixels but leaves midtones untouched") {
+  auto img = make_image({{5, 5, 5, 255}, {128, 128, 128, 255}}, 2, 1);
+  apply_adjustments(img, AdjustParams{0, 0, /*blacks=*/50, 0, 0, 0, 0, 0});
+  CHECK(img.rgba[0] > 5);                                     // 近黑像素被拉亮
+  CHECK(std::abs(static_cast<int>(img.rgba[4]) - 128) <= 1);  // 中间调 black_weight≈0,基本不变
+}
+
+TEST_CASE("apply_adjustments whites affects near-white pixels but leaves midtones untouched") {
+  auto img = make_image({{250, 250, 250, 255}, {128, 128, 128, 255}}, 2, 1);
+  apply_adjustments(img, AdjustParams{0, 0, 0, /*whites=*/-50, 0, 0, 0, 0});
+  CHECK(img.rgba[0] < 250);                                   // 近白像素被压暗
+  CHECK(std::abs(static_cast<int>(img.rgba[4]) - 128) <= 1);
+}
+
+TEST_CASE("apply_adjustments blacks/whites have a narrower reach than shadows/highlights") {
+  // luminance≈0.35(90/255) 落在 shadow_weight 的影响区间(0-0.5)但落在
+  // black_weight 的影响区间(0-0.2)之外——同样的旋钮值,shadows 应该动它,
+  // blacks 不应该。
+  auto img_shadows = make_image({{90, 90, 90, 255}}, 1, 1);
+  apply_adjustments(img_shadows, AdjustParams{0, /*shadows=*/50, 0, 0, 0, 0, 0, 0});
+  auto img_blacks = make_image({{90, 90, 90, 255}}, 1, 1);
+  apply_adjustments(img_blacks, AdjustParams{0, 0, /*blacks=*/50, 0, 0, 0, 0, 0});
+  CHECK(img_shadows.rgba[0] > 90);
+  CHECK(img_blacks.rgba[0] == 90);
+}
+
+TEST_CASE("apply_adjustments contrast pushes values away from the midpoint") {
+  auto img = make_image({{200, 200, 200, 255}, {128, 128, 128, 255}, {50, 50, 50, 255}}, 3, 1);
+  apply_adjustments(img, AdjustParams{0, 0, 0, 0, 0, 0, /*contrast=*/50, 0});
+  CHECK(img.rgba[0] > 200);                                   // 亮部更亮
+  CHECK(std::abs(static_cast<int>(img.rgba[4]) - 128) <= 1);  // 中点不动
+  CHECK(img.rgba[8] < 50);                                    // 暗部更暗
+}
+
+TEST_CASE("apply_adjustments saturation pushes channels further apart") {
+  auto img_neutral = make_image({{160, 128, 96, 255}}, 1, 1);
+  apply_adjustments(img_neutral, AdjustParams{});
+  auto img_boosted = make_image({{160, 128, 96, 255}}, 1, 1);
+  apply_adjustments(img_boosted, AdjustParams{0, 0, 0, 0, 0, 0, 0, /*saturation=*/60});
+  int spread_neutral =
+      static_cast<int>(img_neutral.rgba[0]) - static_cast<int>(img_neutral.rgba[2]);
+  int spread_boosted =
+      static_cast<int>(img_boosted.rgba[0]) - static_cast<int>(img_boosted.rgba[2]);
+  CHECK(spread_boosted > spread_neutral);
+}
+
+TEST_CASE(
+    "apply_adjustments with thread_count>1 matches the single-threaded result for all 8 params") {
+  DecodedImage img1;
+  img1.width = 4;
+  img1.height = 20;
+  img1.rgba.assign(static_cast<std::size_t>(4) * 20 * 4, 0);
+  for (std::size_t i = 0; i < img1.rgba.size(); ++i) {
+    img1.rgba[i] = static_cast<std::uint8_t>(i % 250);
+  }
+  DecodedImage img2 = img1;
+  AdjustParams p{10, -10, 20, -20, 15, -15, 30, 40};
+  apply_adjustments(img1, p, 1);
+  apply_adjustments(img2, p, 4);
+  CHECK(img1.rgba == img2.rgba);
 }
 
 TEST_CASE("apply_grain with amount=0 leaves pixels unchanged") {

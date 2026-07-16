@@ -429,7 +429,8 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
   const auto& p = resolved->params;
   bool has_adjustments = p.highlights != 0 || p.shadows != 0 || p.wb_shift_r != 0 || p.wb_shift_b != 0;
   if (has_adjustments) {
-    color::apply_adjustments(out, p.highlights, p.shadows, p.wb_shift_r, p.wb_shift_b, thread_count);
+    color::AdjustParams adjust{p.highlights, p.shadows, 0, 0, p.wb_shift_r, p.wb_shift_b, 0, 0};
+    color::apply_adjustments(out, adjust, thread_count);
   }
   // grain_amount<=0 时完全跳过——跟"Origin 没有 LUT 就跳过 apply_lut"是
   // 同一个优化精神,不做无意义的整图遍历。apply_grain 内部也有同样的判

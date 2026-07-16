@@ -56,12 +56,16 @@ void apply_lut_rows(decode::DecodedImage& img, const Lut3D& lut, int row_begin, 
   }
 }
 
-void apply_adjustments_rows(decode::DecodedImage& img, double highlights, double shadows,
-                             double wb_shift_r, double wb_shift_b, int row_begin, int row_end) {
-  const float wb_gain_r = static_cast<float>(1.0 + wb_shift_r / 100.0);
-  const float wb_gain_b = static_cast<float>(1.0 + wb_shift_b / 100.0);
-  const float highlights_f = static_cast<float>(highlights / 100.0);
-  const float shadows_f = static_cast<float>(shadows / 100.0);
+void apply_adjustments_rows(decode::DecodedImage& img, const AdjustParams& params, int row_begin,
+                             int row_end) {
+  const float wb_gain_r = static_cast<float>(1.0 + params.wb_shift_r / 100.0);
+  const float wb_gain_b = static_cast<float>(1.0 + params.wb_shift_b / 100.0);
+  const float highlights_f = static_cast<float>(params.highlights / 100.0);
+  const float shadows_f = static_cast<float>(params.shadows / 100.0);
+  const float whites_f = static_cast<float>(params.whites / 100.0);
+  const float blacks_f = static_cast<float>(params.blacks / 100.0);
+  const float contrast_gain = static_cast<float>(1.0 + params.contrast / 100.0);
+  const float sat_gain = static_cast<float>(1.0 + params.saturation / 100.0);
 
   for (int y = row_begin; y < row_end; ++y) {
     std::uint8_t* row = &img.rgba[static_cast<std::size_t>(y) * img.width * 4];
@@ -71,11 +75,30 @@ void apply_adjustments_rows(decode::DecodedImage& img, double highlights, double
       float luminance = 0.299f * r + 0.587f * g + 0.114f * b;
       float highlight_weight = std::clamp((luminance - 0.5f) / 0.5f, 0.f, 1.f);
       float shadow_weight = std::clamp((0.5f - luminance) / 0.5f, 0.f, 1.f);
-      float delta = highlights_f * highlight_weight + shadows_f * shadow_weight;
+      // 比 highlight_weight/shadow_weight 窄的加权区间(0.2 阈值),只影响
+      // 真正逼近纯白/纯黑的像素——摄影里"影调端点"和"影调恢复"两个不同
+      // 概念的常规区分,见 core/color/color.h 的公式注释。
+      float white_weight = std::clamp((luminance - 0.8f) / 0.2f, 0.f, 1.f);
+      float black_weight = std::clamp((0.2f - luminance) / 0.2f, 0.f, 1.f);
+      float delta = highlights_f * highlight_weight + shadows_f * shadow_weight +
+                    whites_f * white_weight + blacks_f * black_weight;
 
-      px[0] = static_cast<std::uint8_t>(std::clamp(r * wb_gain_r + delta, 0.f, 1.f) * 255.f + 0.5f);
-      px[1] = static_cast<std::uint8_t>(std::clamp(g + delta, 0.f, 1.f) * 255.f + 0.5f);
-      px[2] = static_cast<std::uint8_t>(std::clamp(b * wb_gain_b + delta, 0.f, 1.f) * 255.f + 0.5f);
+      float r1 = std::clamp(r * wb_gain_r + delta, 0.f, 1.f);
+      float g1 = std::clamp(g + delta, 0.f, 1.f);
+      float b1 = std::clamp(b * wb_gain_b + delta, 0.f, 1.f);
+
+      float r2 = std::clamp((r1 - 0.5f) * contrast_gain + 0.5f, 0.f, 1.f);
+      float g2 = std::clamp((g1 - 0.5f) * contrast_gain + 0.5f, 0.f, 1.f);
+      float b2 = std::clamp((b1 - 0.5f) * contrast_gain + 0.5f, 0.f, 1.f);
+
+      float luma2 = 0.299f * r2 + 0.587f * g2 + 0.114f * b2;
+      float r3 = std::clamp(luma2 + (r2 - luma2) * sat_gain, 0.f, 1.f);
+      float g3 = std::clamp(luma2 + (g2 - luma2) * sat_gain, 0.f, 1.f);
+      float b3 = std::clamp(luma2 + (b2 - luma2) * sat_gain, 0.f, 1.f);
+
+      px[0] = static_cast<std::uint8_t>(r3 * 255.f + 0.5f);
+      px[1] = static_cast<std::uint8_t>(g3 * 255.f + 0.5f);
+      px[2] = static_cast<std::uint8_t>(b3 * 255.f + 0.5f);
     }
   }
 }
@@ -133,11 +156,10 @@ void apply_lut(decode::DecodedImage& img, const Lut3D& lut, unsigned thread_coun
                      [&](int b, int e) { apply_lut_rows(img, lut, b, e); });
 }
 
-void apply_adjustments(decode::DecodedImage& img, double highlights, double shadows,
-                        double wb_shift_r, double wb_shift_b, unsigned thread_count) {
-  run_parallel_rows(img.height, thread_count, [&](int b, int e) {
-    apply_adjustments_rows(img, highlights, shadows, wb_shift_r, wb_shift_b, b, e);
-  });
+void apply_adjustments(decode::DecodedImage& img, const AdjustParams& params,
+                        unsigned thread_count) {
+  run_parallel_rows(img.height, thread_count,
+                     [&](int b, int e) { apply_adjustments_rows(img, params, b, e); });
 }
 
 void apply_grain(decode::DecodedImage& img, float amount, unsigned thread_count) {
