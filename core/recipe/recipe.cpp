@@ -144,7 +144,8 @@ std::vector<PresetSummary> list_presets(db::Database& db) {
 
 std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) {
   Stmt stmt(db.handle(),
-            "SELECT id, parent_id, name, highlights, shadows, wb_shift_r, wb_shift_b, deleted_at "
+            "SELECT id, parent_id, name, highlights, shadows, wb_shift_r, wb_shift_b, contrast, "
+            "saturation, blacks, whites, deleted_at "
             "FROM recipes WHERE parent_id = ? ORDER BY id ASC;");
   sqlite3_bind_int64(stmt.get(), 1, preset_id);
   std::vector<VersionSummary> out;
@@ -158,7 +159,11 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
     v.shadows = sqlite3_column_double(stmt.get(), 4);
     v.wb_shift_r = sqlite3_column_double(stmt.get(), 5);
     v.wb_shift_b = sqlite3_column_double(stmt.get(), 6);
-    v.deleted = sqlite3_column_type(stmt.get(), 7) != SQLITE_NULL;
+    v.contrast = sqlite3_column_double(stmt.get(), 7);
+    v.saturation = sqlite3_column_double(stmt.get(), 8);
+    v.blacks = sqlite3_column_double(stmt.get(), 9);
+    v.whites = sqlite3_column_double(stmt.get(), 10);
+    v.deleted = sqlite3_column_type(stmt.get(), 11) != SQLITE_NULL;
     out.push_back(std::move(v));
   }
   return out;
@@ -235,8 +240,9 @@ Result<RecipeId, CreateVersionError> create_version(db::Database& db, RecipeId p
 
   Stmt stmt(conn, R"sql(
     INSERT INTO recipes
-      (parent_id, name, is_system, highlights, shadows, wb_shift_r, wb_shift_b, created_at)
-    VALUES (?, ?, 0, ?, ?, ?, ?, ?);
+      (parent_id, name, is_system, highlights, shadows, wb_shift_r, wb_shift_b, contrast,
+       saturation, blacks, whites, created_at)
+    VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?);
   )sql");
   sqlite3_bind_int64(stmt.get(), 1, preset_id);
   if (name) {
@@ -248,7 +254,11 @@ Result<RecipeId, CreateVersionError> create_version(db::Database& db, RecipeId p
   sqlite3_bind_double(stmt.get(), 4, params.shadows);
   sqlite3_bind_double(stmt.get(), 5, params.wb_shift_r);
   sqlite3_bind_double(stmt.get(), 6, params.wb_shift_b);
-  sqlite3_bind_int64(stmt.get(), 7, now_unix());
+  sqlite3_bind_double(stmt.get(), 7, params.contrast);
+  sqlite3_bind_double(stmt.get(), 8, params.saturation);
+  sqlite3_bind_double(stmt.get(), 9, params.blacks);
+  sqlite3_bind_double(stmt.get(), 10, params.whites);
+  sqlite3_bind_int64(stmt.get(), 11, now_unix());
   // F-17：以前不检查这一步，插入真失败(磁盘满等)时 sqlite3_last_insert_
   // rowid 会返回上一条无关插入的 rowid，把它当成新建的 version id 交还
   // 给调用方——是一个真实但极少触发的正确性 bug，跟 project::/
@@ -385,8 +395,8 @@ PresetLook load_preset_look(sqlite3* conn, RecipeId preset_id) {
 std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_id) {
   sqlite3* conn = db.handle();
   Stmt stmt(conn,
-            "SELECT parent_id, highlights, shadows, wb_shift_r, wb_shift_b FROM recipes "
-            "WHERE id = ?;");
+            "SELECT parent_id, highlights, shadows, wb_shift_r, wb_shift_b, contrast, "
+            "saturation, blacks, whites FROM recipes WHERE id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, recipe_id);
   if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
 
@@ -398,6 +408,10 @@ std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_i
     params.shadows = sqlite3_column_double(stmt.get(), 2);
     params.wb_shift_r = sqlite3_column_double(stmt.get(), 3);
     params.wb_shift_b = sqlite3_column_double(stmt.get(), 4);
+    params.contrast = sqlite3_column_double(stmt.get(), 5);
+    params.saturation = sqlite3_column_double(stmt.get(), 6);
+    params.blacks = sqlite3_column_double(stmt.get(), 7);
+    params.whites = sqlite3_column_double(stmt.get(), 8);
   }
 
   // load_preset_look 里 lut 为空是合法状态(比如 Origin 这个预设本身就没
@@ -423,13 +437,16 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
   if (resolved->lut) {
     color::apply_lut(out, *resolved->lut, thread_count);
   }
-  // 同样的道理对调整参数也成立:四个参数全零(比如 Origin 预设本身)时,
+  // 同样的道理对调整参数也成立:八个参数全零(比如 Origin 预设本身)时,
   // apply_adjustments 算出来的 delta 恒为 0、增益恒为 1,是个不折不扣的
   // 无意义计算——之前漏掉了这一半的优化,只跳过了 LUT。
   const auto& p = resolved->params;
-  bool has_adjustments = p.highlights != 0 || p.shadows != 0 || p.wb_shift_r != 0 || p.wb_shift_b != 0;
+  bool has_adjustments = p.highlights != 0 || p.shadows != 0 || p.wb_shift_r != 0 ||
+                          p.wb_shift_b != 0 || p.contrast != 0 || p.saturation != 0 ||
+                          p.blacks != 0 || p.whites != 0;
   if (has_adjustments) {
-    color::AdjustParams adjust{p.highlights, p.shadows, 0, 0, p.wb_shift_r, p.wb_shift_b, 0, 0};
+    color::AdjustParams adjust{p.highlights,  p.shadows,     p.blacks,     p.whites,
+                                p.wb_shift_r,  p.wb_shift_b,  p.contrast,   p.saturation};
     color::apply_adjustments(out, adjust, thread_count);
   }
   // grain_amount<=0 时完全跳过——跟"Origin 没有 LUT 就跳过 apply_lut"是

@@ -575,3 +575,53 @@ TEST_CASE("render applies grain when the preset's grain_amount is nonzero") {
   REQUIRE(out_off.ok());
   CHECK(out_on.value().rgba != out_off.value().rgba);  // 中性 LUT 相同,唯一差异是颗粒
 }
+
+TEST_CASE("create_version stores contrast/saturation/blacks/whites") {
+  auto db = Database::open_at(temp_db_path("recipe_new_params"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;
+
+  VersionParams params{0, 0, 0, 0, /*contrast=*/15, /*saturation=*/-20, /*blacks=*/5, /*whites=*/-5};
+  auto result = create_version(db, preset_id, std::string("Punchy"), params);
+  REQUIRE(result.ok());
+
+  auto versions = list_versions(db, preset_id);
+  REQUIRE(versions.size() == 1);
+  CHECK(versions[0].contrast == 15);
+  CHECK(versions[0].saturation == -20);
+  CHECK(versions[0].blacks == 5);
+  CHECK(versions[0].whites == -5);
+}
+
+TEST_CASE("resolve_recipe carries the new params for a version") {
+  auto db = Database::open_at(temp_db_path("recipe_new_params_resolve"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;
+  VersionParams params{0, 0, 0, 0, 15, -20, 5, -5};
+  auto version_id = create_version(db, preset_id, std::nullopt, params).value();
+
+  auto resolved = resolve_recipe(db, version_id);
+  REQUIRE(resolved.has_value());
+  CHECK(resolved->params.contrast == 15);
+  CHECK(resolved->params.saturation == -20);
+  CHECK(resolved->params.blacks == 5);
+  CHECK(resolved->params.whites == -5);
+}
+
+TEST_CASE("render applies contrast even when the four original params are all zero") {
+  auto db = Database::open_at(temp_db_path("recipe_new_params_render"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[0].id;  // Origin,没有 LUT,方便只看 apply_adjustments 的效果
+  auto version_id =
+      create_version(db, preset_id, std::nullopt, VersionParams{0, 0, 0, 0, /*contrast=*/80, 0, 0, 0})
+          .value();
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 1;
+  src.height = 1;
+  src.rgba = {200, 200, 200, 255};
+
+  auto result = render(db, src, version_id);
+  REQUIRE(result.ok());
+  CHECK(result.value().rgba[0] > 200);  // has_adjustments 必须认出新字段非零,不能被旧的 4 字段判断漏掉
+}

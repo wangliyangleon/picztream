@@ -204,6 +204,14 @@ void initialize_schema(sqlite3* conn) {
   // (包括即将被清理的占位 Warm)行为不变，见
   // docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
   ensure_column(conn, "recipes", "grain_amount", "grain_amount REAL NOT NULL DEFAULT 0");
+  // 目标二第二刀：用户自建 version 新增的四个可调旋钮，见
+  // docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第八节。默认值 0 让旧
+  // 库里已有的 version 行(比如"亮一点"、"test1")迁移后这四个新旋钮自动
+  // 落在中性状态，不影响现有效果。
+  ensure_column(conn, "recipes", "contrast", "contrast REAL NOT NULL DEFAULT 0");
+  ensure_column(conn, "recipes", "saturation", "saturation REAL NOT NULL DEFAULT 0");
+  ensure_column(conn, "recipes", "blacks", "blacks REAL NOT NULL DEFAULT 0");
+  ensure_column(conn, "recipes", "whites", "whites REAL NOT NULL DEFAULT 0");
 }
 
 }  // namespace pzt::core::db

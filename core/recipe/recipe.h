@@ -33,6 +33,10 @@ struct VersionSummary {
   double shadows;
   double wb_shift_r;
   double wb_shift_b;
+  double contrast;
+  double saturation;
+  double blacks;
+  double whites;
   bool deleted;
 };
 
@@ -60,8 +64,11 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id);
 // 观感"这个场景。
 void ensure_default_presets(db::Database& db);
 
-// increment 2:version 的增删改。这四个调整参数是这次先落地的最小集合
-// (高光/暗光/白平衡红蓝偏移)，以后想加色温/锐度/对比度之类，走跟
+// increment 2:version 的增删改。高光/暗光/白平衡红蓝偏移是最早落地的最
+// 小集合；目标二第二刀追加了对比度/饱和度/黑色/白色四个旋钮(见
+// docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第八节)，新字段追加在
+// 结构体末尾，不打乱前四个字段的声明顺序——现存代码里有位置初始化
+// (`VersionParams{a,b,c,d}`)依赖这个顺序不变。以后再加旋钮，继续走跟
 // `images.recipe_id` 一样的 ensure_column 迁移机制加新列，不需要现在改
 // 成更"灵活"但类型不安全的 JSON blob 之类的设计。
 struct VersionParams {
@@ -69,6 +76,10 @@ struct VersionParams {
   double shadows = 0;
   double wb_shift_r = 0;
   double wb_shift_b = 0;
+  double contrast = 0;
+  double saturation = 0;
+  double blacks = 0;
+  double whites = 0;
 };
 
 enum class CreateVersionError {
