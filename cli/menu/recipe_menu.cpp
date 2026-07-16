@@ -174,6 +174,18 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   auto wb_b_text =
       read_text_line(pzt::cli::i18n::recipe_menu_input_wb_b(), banner_row, start_col, content_cols);
   if (!wb_b_text) return "";
+  auto contrast_text = read_text_line(pzt::cli::i18n::recipe_menu_input_contrast(), banner_row,
+                                       start_col, content_cols);
+  if (!contrast_text) return "";
+  auto saturation_text = read_text_line(pzt::cli::i18n::recipe_menu_input_saturation(), banner_row,
+                                         start_col, content_cols);
+  if (!saturation_text) return "";
+  auto blacks_text =
+      read_text_line(pzt::cli::i18n::recipe_menu_input_blacks(), banner_row, start_col, content_cols);
+  if (!blacks_text) return "";
+  auto whites_text =
+      read_text_line(pzt::cli::i18n::recipe_menu_input_whites(), banner_row, start_col, content_cols);
+  if (!whites_text) return "";
   auto name_text =
       read_text_line(pzt::cli::i18n::recipe_menu_input_name(), banner_row, start_col, content_cols);
   if (!name_text) return "";
@@ -183,6 +195,10 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   params.shadows = parse_double_or_zero(shadows_text);
   params.wb_shift_r = parse_double_or_zero(wb_r_text);
   params.wb_shift_b = parse_double_or_zero(wb_b_text);
+  params.contrast = parse_double_or_zero(contrast_text);
+  params.saturation = parse_double_or_zero(saturation_text);
+  params.blacks = parse_double_or_zero(blacks_text);
+  params.whites = parse_double_or_zero(whites_text);
   std::optional<std::string> name = name_text->empty() ? std::nullopt : name_text;
 
   auto result = pzt::core::create_version(preset->id, name, params);

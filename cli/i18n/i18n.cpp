@@ -540,12 +540,14 @@ std::string msg_recipe_version_unnamed_label() {
 }
 
 std::string msg_recipe_version_item(int v, const std::string &name, double hi,
-                                    double sh, double r, double b) {
-  char buf[256];
+                                    double sh, double r, double b, double contrast,
+                                    double saturation, double blacks, double whites) {
+  char buf[320];
   std::snprintf(
       buf, sizeof(buf),
-      "      %-3d %-14s highlights=%.1f shadows=%.1f wb_r=%.1f wb_b=%.1f\n", v,
-      name.c_str(), hi, sh, r, b);
+      "      %-3d %-14s highlights=%.1f shadows=%.1f wb_r=%.1f wb_b=%.1f contrast=%.1f "
+      "saturation=%.1f blacks=%.1f whites=%.1f\n",
+      v, name.c_str(), hi, sh, r, b, contrast, saturation, blacks, whites);
   return buf;
 }
 
@@ -1644,6 +1646,38 @@ std::string recipe_menu_input_wb_b() {
     return " 白平衡-蓝(直接 Enter = 0): ";
   } else {
     return " WhiteBalance-Blue (Enter = 0): ";
+  }
+}
+
+std::string recipe_menu_input_contrast() {
+  if (g_lang == Lang::zh) {
+    return " 对比度(直接 Enter = 0): ";
+  } else {
+    return " Contrast (Enter = 0): ";
+  }
+}
+
+std::string recipe_menu_input_saturation() {
+  if (g_lang == Lang::zh) {
+    return " 饱和度(直接 Enter = 0): ";
+  } else {
+    return " Saturation (Enter = 0): ";
+  }
+}
+
+std::string recipe_menu_input_blacks() {
+  if (g_lang == Lang::zh) {
+    return " 黑色(直接 Enter = 0): ";
+  } else {
+    return " Blacks (Enter = 0): ";
+  }
+}
+
+std::string recipe_menu_input_whites() {
+  if (g_lang == Lang::zh) {
+    return " 白色(直接 Enter = 0): ";
+  } else {
+    return " Whites (Enter = 0): ";
   }
 }
 

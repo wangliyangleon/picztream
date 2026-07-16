@@ -1036,7 +1036,7 @@ int recipe_list(const std::vector<std::string>& args) {
       if (ver.deleted) {
         std::printf("      -   %-14s %s\n", name.c_str(), pzt::cli::i18n::msg_recipe_version_deleted_label().c_str());
       } else {
-        std::printf("%s", pzt::cli::i18n::msg_recipe_version_item(v++, name, ver.highlights, ver.shadows, ver.wb_shift_r, ver.wb_shift_b).c_str());
+        std::printf("%s", pzt::cli::i18n::msg_recipe_version_item(v++, name, ver.highlights, ver.shadows, ver.wb_shift_r, ver.wb_shift_b, ver.contrast, ver.saturation, ver.blacks, ver.whites).c_str());
       }
     }
   }
