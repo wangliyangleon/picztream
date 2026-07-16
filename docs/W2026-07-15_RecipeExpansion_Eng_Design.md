@@ -141,7 +141,7 @@ std::vector<pzt::core::PresetSummary> presets_for_menu() {
 
 `r+0`/`r+r` 快捷清除路径不受影响——它们一直是独立于预设列表、直接把 `recipe_id` 设成 `NULL` 的快捷路径，不经过这个函数。
 
-## 七、任务分解
+## 七、任务分解（第一刀：内置预设）
 
 1. 本文档。
 2. `core::color::apply_grain`。
@@ -150,5 +150,74 @@ std::vector<pzt::core::PresetSummary> presets_for_menu() {
 5. 清理 `Warm`，播种 9 个 City+Year 预设。
 6. `presets_for_menu()` 过滤 Origin。
 7. 真机验证，按观感微调数值表。
+
+第一刀具体步骤见 `.claude/plans/fully-understand-the-pzt-iterative-gosling.md`（该文件已被第二刀的计划覆盖，历史步骤见 git 提交记录 `196841d`..`3c76572`）。
+
+## 八、用户自建 version 旋钮扩展（第二刀）
+
+第一刀落地了 9 个内置预设（`base_lut`/`grain_amount`，预设级烘焙好，用户不能改）。这一刀轮到用户在预设基础上自建的 `version`——`VersionParams` 原本只有 `highlights`/`shadows`/`wb_shift_r`/`wb_shift_b` 四个可调旋钮（increment 2 时代"先落地的最小集合"），这次加 **对比度、饱和度、黑色、白色** 四个新旋钮，白平衡维持现状（`wb_shift_r`/`wb_shift_b` 双通道独立增益模型，不换成单一色温滑块——两个通道各自独立增益能表达的范围比单一色温滑块更宽，且改动成本为零）。
+
+### 8.1 `core::color::AdjustParams`
+
+`apply_adjustments` 原本是 4 个 `double` 位置参数，加到 8 个会变成容易传错顺序的陷阱——照抄第一刀 `detail::GradeParams` 遇到同样问题时的解法，换成一个结构体：
+
+```cpp
+struct AdjustParams {
+  double highlights = 0;
+  double shadows = 0;
+  double blacks = 0;
+  double whites = 0;
+  double wb_shift_r = 0;
+  double wb_shift_b = 0;
+  double contrast = 0;
+  double saturation = 0;
+};
+void apply_adjustments(decode::DecodedImage& img, const AdjustParams& params,
+                        unsigned thread_count = 1);
+```
+
+`core/color` 依然不知道"version"是什么，`AdjustParams` 只是一捆颜色调整参数，不是 `core::recipe::VersionParams` 本身——`core::recipe::render()` 负责做两者之间的映射，不让 `core/color` 反向依赖 `core/recipe`。
+
+### 8.2 公式
+
+顺序跟 `make_graded_lut` 保持一致：白平衡增益 → 整体明暗 → 对比度 → 饱和度，四步全在同一次逐像素遍历里做完，不新增遍历趟数：
+
+```
+luminance = 0.299R + 0.587G + 0.114B（原始输入像素）
+highlight_weight = clamp((luminance-0.5)/0.5, 0, 1)   // 半程,0.5→1 渐强
+shadow_weight    = clamp((0.5-luminance)/0.5, 0, 1)   // 半程,0.5→0 渐强
+white_weight     = clamp((luminance-0.8)/0.2, 0, 1)   // 窄带,只在 0.8→1 渐强
+black_weight     = clamp((0.2-luminance)/0.2, 0, 1)   // 窄带,只在 0→0.2 渐强
+brightness_delta = highlights/100*highlight_weight + shadows/100*shadow_weight
+                  + whites/100*white_weight + blacks/100*black_weight
+R1 = clamp(R*(1+wb_shift_r/100) + brightness_delta, 0, 1)
+G1 = clamp(G + brightness_delta, 0, 1)
+B1 = clamp(B*(1+wb_shift_b/100) + brightness_delta, 0, 1)
+contrast_gain = 1 + contrast/100
+R2 = clamp((R1-0.5)*contrast_gain + 0.5, 0, 1)   (G2/B2 同理)
+luma2 = 0.299*R2 + 0.587*G2 + 0.114*B2
+sat_gain = 1 + saturation/100
+R3 = clamp(luma2 + (R2-luma2)*sat_gain, 0, 1)    (G3/B3 同理)
+```
+
+黑色/白色特意用比 highlights/shadows 更窄的加权区间（0-0.2 / 0.8-1，而不是 highlights/shadows 的 0-0.5 / 0.5-1 整个半程）——这是摄影里"影调端点"和"影调恢复"两个不同概念的常规区分，不这样区分的话黑色/白色会跟暗光/高光在效果上几乎重叠，加了也没有新意义。0.2/0.8 这两个阈值是这次实现时定的工作假设，不是精确调出来的数字，真机验证后可以调整。对比度/饱和度的公式直接照抄 `make_graded_lut`，只是从"烘焙进静态 LUT"变成"每次渲染时对 `R1/G1/B1` 再做一遍"。
+
+### 8.3 数据层
+
+`recipes` 表新增 4 列，走 `ensure_column`（照抄 `grain_amount` 那次）：`contrast`/`saturation`/`blacks`/`whites`，都是 `REAL NOT NULL DEFAULT 0`。旧库里已有的 version 行迁移后这 4 个新旋钮自动落在 0（中性，不影响现有效果）。
+
+`VersionParams`/`VersionSummary` 新增 4 个字段追加在结构体末尾（不插入中间、不用 designated initializer）——现存的位置初始化 `VersionParams{a,b,c,d}` 依赖字段声明顺序不变，新增字段追加在末尾且都有默认值 `=0`，C++20 聚合初始化对未显式给出的尾部字段用默认成员初始化值填充，不需要跟着改。
+
+### 8.4 CLI
+
+交互维持现有"一个字段一个 prompt"的模式（`cli/menu/recipe_menu.cpp::handle_r_create_flow`），不改造成一次性多值输入——这是当前唯一的既有模式，改交互形式是超出这次范围的独立设计决定。新增 4 个 prompt 直接照抄 `recipe_menu_input_highlights` 等 4 个已有 i18n 函数的写法（zh/en 双语分支）。`pzt recipe list` 的展示格式（`msg_recipe_version_item`）同步加 4 个数值。
+
+### 8.5 任务分解
+
+1. 本节文档。
+2. `core::color::AdjustParams` + `apply_adjustments` 扩展公式。
+3. `recipes` 表新增 4 列 + `VersionParams`/`resolve_recipe`/`render` 接入。
+4. CLI 接入——创建流程 4 个新 prompt + `pzt recipe list` 展示。
+5. 真机验证。
 
 具体步骤见 `.claude/plans/fully-understand-the-pzt-iterative-gosling.md`（本次实现用的 TDD 计划）。
