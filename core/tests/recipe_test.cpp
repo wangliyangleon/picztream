@@ -68,13 +68,12 @@ TEST_CASE("ensure_default_presets seeds presets and is idempotent") {
 
   ensure_default_presets(db);
   auto first = list_presets(db);
-  REQUIRE(first.size() == 2);
+  REQUIRE(first.size() == 10);  // Origin + 9 个 City+Year 预设
 
   ensure_default_presets(db);
   auto second = list_presets(db);
   CHECK(second.size() == first.size());
-  CHECK(second[0].id == first[0].id);
-  CHECK(second[1].id == first[1].id);
+  for (std::size_t i = 0; i < first.size(); ++i) CHECK(second[i].id == first[i].id);
 }
 
 TEST_CASE("list_presets returns presets in creation order, Origin fixed at id 0") {
@@ -82,11 +81,32 @@ TEST_CASE("list_presets returns presets in creation order, Origin fixed at id 0"
   ensure_default_presets(db);
 
   auto presets = list_presets(db);
-  REQUIRE(presets.size() == 2);
-  CHECK(presets[0].id < presets[1].id);
+  REQUIRE(presets.size() == 10);
   CHECK(presets[0].id == 0);
   CHECK(presets[0].name == "Origin");
-  CHECK(presets[1].name == "Warm");
+  CHECK(presets[1].name == "Havana 1959");
+  CHECK(presets[9].name == "Berlin 1989");
+}
+
+TEST_CASE(
+    "ensure_default_presets removes a pre-existing Warm preset and clears any image referencing "
+    "it") {
+  auto fixture = make_image_fixture("recipe_warm_cleanup");
+  auto& db = fixture.db;
+  // 模拟"老库已经播种过 Warm、且有图片引用它"这个真实场景(用户自己的库
+  // 就是这个状态)——make_image_fixture 已经调过一次 ensure_default_
+  // presets(9 个新预设 + Origin 都已播种),这里手工再种一个 Warm 模拟老
+  // 库残留。
+  detail::seed_preset(db.handle(), "Warm", 5, detail::make_graded_lut(5, {}), 0);
+  auto warm_id = list_presets(db).back().id;
+  REQUIRE(set_image_recipe(db, fixture.image_id, warm_id).ok());
+
+  ensure_default_presets(db);  // 应该清掉 Warm,9 个新预设保持不变(已经播种过)
+
+  auto presets = list_presets(db);
+  for (auto& p : presets) CHECK(p.name != "Warm");
+  CHECK(presets.size() == 10);
+  CHECK(get_image_recipe(db, fixture.image_id) == std::nullopt);  // 外键 SET NULL 生效
 }
 
 TEST_CASE("list_versions returns empty for a preset with no versions created") {

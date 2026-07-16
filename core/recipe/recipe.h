@@ -43,25 +43,21 @@ std::vector<PresetSummary> list_presets(db::Database& db);
 // 过滤——`r` 菜单只展示未删除的，`pzt recipe list` 全部展示并标注状态。
 std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id);
 
-// 数据库第一次初始化、`recipes` 表刚建出来还没有任何内置预设时播种——用
-// INSERT OR IGNORE 配合 schema 里预设名字的局部唯一索引保证幂等，调用多
-// 次只有第一次真正插入。占位内容("Origin"=没有 base_lut，只用来承载亮
-// 度/白平衡这类细节调整，不代表任何"风格"；"Warm"=一个随手调的暖色偏移
-// LUT)只用来验证整条机制通不通，真正的调色设计留到后面随时可以补充，不
-// 阻塞其它 increment。
+// 播种内置预设——用 INSERT OR IGNORE 配合 schema 里预设名字的局部唯一索
+// 引保证幂等，且额外清理掉 increment 1 时代的占位预设"Warm"(如果存
+// 在)，调用多次只有第一次真正插入/删除。内置预设是"Origin"(没有
+// base_lut，只承载亮度/白平衡这类细节调整，不代表任何"风格")加 9 个
+// "城市+年份"命名的调过色的预设(6 彩色 + 3 黑白)，完整数值表见
+// docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
 //
 // "Origin" 固定用 id=0 播种(照抄"废片"系统标签固定占 0 号位的先例)，其
-// 它预设(目前只有 Warm)照常让 SQLite 自动分配 id。**待确认**:未来
-// increment 6 落地真正的 `r` 菜单编号时，需要把 Origin 从"按创建顺序动
-// 态编号 1-9"的列表里过滤掉、固定映射到数字 0(类比 `tags_for_menu` 过滤
-// is_system 标签的做法)——目前所有预设都是 `is_system=1`，不能单靠这个
-// 字段区分"Origin"和其它预设，需要按固定 id=0 或者名字判断。另外，`r`+
-// `0`/`r`+`r`(快捷清除)继续走 `recipe_id = NULL` 这条路径,不改成指向
-// Origin 预设本身——两者对"没有风格"这件事产出相同的视觉效果,但前者是
-// 零查询的最快路径,后者(选中 Origin 预设)是留给"只想调亮度/白平衡、不
-// 要任何风格化观感"这个场景的,两者并存，increment 6 设计交互时需要想清
-// 楚怎么把这个区别对用户讲清楚,不要让两个"看起来都叫 Origin"的东西显得
-// 混乱。
+// 它 9 个预设照常让 SQLite 自动分配 id，按插入顺序对应
+// `cli/menu/recipe_menu.cpp::presets_for_menu()` 映射的键盘 1-9(该函数
+// 按 id==0 把 Origin 从编号列表里过滤掉)。`r`+`0`/`r`+`r`(快捷清除)继
+// 续走 `recipe_id = NULL` 这条路径,不经过预设列表,不改成指向 Origin 预
+// 设本身——两者对"没有风格"这件事产出相同的视觉效果,但前者是零查询的最
+// 快路径,后者(选中 Origin 预设)留给"只想调亮度/白平衡、不要任何风格化
+// 观感"这个场景。
 void ensure_default_presets(db::Database& db);
 
 // increment 2:version 的增删改。这四个调整参数是这次先落地的最小集合

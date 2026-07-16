@@ -164,12 +164,61 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
   return out;
 }
 
+namespace {
+
+// 清理 increment 1 时代的占位预设——真实调过色的 9 个 City+Year 预设已经
+// 落地,不再需要"验证机制通不通"的占位符。preset_name_exists 保证第二次
+// 调用起(正常情况下每次 r 键都会跑一次这个函数)直接跳过,不会每次都发一
+// 条 DELETE。外键 ON DELETE CASCADE(parent_id)/ON DELETE SET NULL
+// (images.recipe_id)保证级联安全,见 docs/W2026-07-15_RecipeExpansion_
+// Eng_Design.md。
+void remove_legacy_warm_preset(sqlite3* conn) {
+  if (!preset_name_exists(conn, "Warm")) return;
+  Stmt stmt(conn, "DELETE FROM recipes WHERE name = ? AND parent_id IS NULL;");
+  sqlite3_bind_text(stmt.get(), 1, "Warm", -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("remove legacy Warm preset failed: ") +
+                              sqlite3_errmsg(conn));
+  }
+}
+
+struct BuiltinPreset {
+  const char* name;
+  detail::GradeParams params;
+  double grain_amount;
+};
+
+constexpr int kPresetLutSize = 17;
+
+// 9 个 City+Year 一级预设的数值表,数值是第一版工作假设,真机验证后按观
+// 感调整,不改变架构。完整设计依据见
+// docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第五节。键位=插入顺序,
+// 由 cli/menu/recipe_menu.cpp::presets_for_menu() 映射到键盘 1-9。
+const std::vector<BuiltinPreset>& builtin_presets() {
+  static const std::vector<BuiltinPreset> kPresets = {
+      {"Havana 1959", {15, -10, 35, 10, 5}, 0.25},
+      {"Tokyo 1966", {12, -8, -25, -15, 8}, 0.25},
+      {"Paris 1974", {10, -6, -15, -15, 5}, 0.25},
+      {"Miami 1986", {0, 0, 40, 25, 0}, 0.25},
+      {"New York 1994", {-8, 10, -30, 20, -5}, 0.55},
+      {"Shanghai 2010", {-5, 5, 35, 18, 3}, 0.10},
+      {"Munich 1951", {0, 0, -100, 45, -5}, 0.55},
+      {"Rome 1960", {0, 0, -100, -10, 10}, 0.25},
+      {"Berlin 1989", {0, 0, -100, 20, -8}, 0.55},
+  };
+  return kPresets;
+}
+
+}  // namespace
+
 void ensure_default_presets(db::Database& db) {
-  seed_origin_preset(db.handle());  // 没有 LUT 要算，INSERT OR IGNORE 本身足够便宜，不需要同样的守卫
-  if (!preset_name_exists(db.handle(), "Warm")) {
-    detail::seed_preset(db.handle(), "Warm", 17,
-                         detail::make_graded_lut(17, detail::GradeParams{15, -10, 0, 0, 0}),
-                         /*grain_amount=*/0);
+  sqlite3* conn = db.handle();
+  seed_origin_preset(conn);  // 没有 LUT 要算，INSERT OR IGNORE 本身足够便宜，不需要同样的守卫
+  remove_legacy_warm_preset(conn);
+  for (const auto& p : builtin_presets()) {
+    if (preset_name_exists(conn, p.name)) continue;  // 已播种过,跳过重新计算 LUT
+    detail::seed_preset(conn, p.name, kPresetLutSize,
+                         detail::make_graded_lut(kPresetLutSize, p.params), p.grain_amount);
   }
 }
 
