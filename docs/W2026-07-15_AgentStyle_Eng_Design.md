@@ -98,23 +98,23 @@ Result<StyleSuggestion, StyleError> request_style_suggestion_impl(
 
 ## 六、三个入口的接入
 
-**`plan_composer.py::compose_plan()`**：在 `Curate`/`Deliver` 之间插入 `StageSpec(name="Style", params={"provider": decision.get("provider", "gemini")}, gate="courtesy")`，复用已有的 `decision["provider"]` 字段。`gate_on_timeout` 用 `StageSpec` 默认值 `"proceed"`，正好是"超时自动放行"。
+**`plan_composer.py::compose_plan()`**：在 `Curate`/`Deliver` 之间插入 `StageSpec(name="Style", params={"provider": decision.get("provider", "gemini")})`，复用已有的 `decision["provider"]` 字段。**`Style` 的 `gate` 保持默认值 `"off"`，不单独带闸门**——这是实现过程中对原设计的修正，理由见下。
 
-**闸门档位 = `courtesy`**：问一句"已按 LLM 选择自动套用风格，是否需要调整？"，超时不回复就采纳 LLM 的选择继续走 `Deliver`——不阻断自动化流程这个初衷，出错了也就是一张照片的调色不合适，不是灾难性后果。
+**为什么不给 Style 单独加闸门（推翻了最初"courtesy"的设计）**：`Driver.advance()` 的闸门语义是"某个 Stage 即将运行前拦一下，给用户看的是*上游*已经算出来的状态"，不是"某个 Stage 跑完之后回头审核它自己的结果"。这跟 `session_router.py` 里 `Deliver` 现有的必选闸门完全一致——它在 `Deliver` 运行前拦住，展示的是 `Curate` 的选片结果，不是 `Deliver` 自己的输出（此时 `Deliver` 还没跑）。如果照最初设计给 `Style` 也挂一个闸门，它会在 `Style` *运行前*触发，这时候 `Style` 还没选出任何风格，闸门只能问"要不要让 LLM 自动选风格"这种空洞的事前许可，问不出"选的风格满不满意"——而后者才是这个功能真正要的东西。且 `Style` 的闸门解决之后 `Driver` 立刻会撞上 `Deliver` 自己的闸门，`session_router.py::_handle_gate` 的 approve 分支原来只在**当前**这次 `_drive_to_stop` 停下来的地方发消息，连续两个闸门会导致第二个闸门静默卡住、用户毫无提示。
 
-**三个入口都要接上 Style**（`run_telegram.py`/`run_intent.py`/`run_watchfolder.py` 各自的 `stages` dict 加 `"Style": StyleStage(client=client)`），但只有 `run_telegram.py`（走 `agent/router/session_router.py`）真正处理 `AWAITING_GATE` 状态、能问用户问题。`run_intent.py`/`run_watchfolder.py` 是无人值守的脚本化入口，这次给它们的主循环加一段：遇到 `AWAITING_GATE` 就立刻调 `Driver.timeout_gate(run)`（等价于闸门瞬间超时，直接采纳 LLM 的选择），不新写交互逻辑：
+**改用的方案**：`Style` 不带闸门，紧跟在 `Curate` 之后自动跑完，跟 `Evaluate`/`Dedup`/`Curate` 待遇一致。`Deliver` 现成的必选闸门本来就在 `Style` 跑完之后、`Deliver` 运行之前触发——这个时机恰好是"审核 LLM 选的风格、决定要不要调整"的天然位置，不需要新增一个闸门，只需要把这个闸门原本只展示选片结果的预览消息（`session_router.py::_send_preview`）顺带加上风格信息：
 
 ```python
-while run.status in (RunStatus.RUNNING, RunStatus.AWAITING_GATE):
-    if run.status == RunStatus.AWAITING_GATE:
-        driver.timeout_gate(run)
-        print(f"  Style 闸门自动放行(非交互入口) [{run.status.value}]")
-        continue
-    driver.advance(run)
-    print(...)
+style_output = run.outputs.get("Style")
+applied = style_output.data.get("applied", {}) if style_output else {}
+if applied:
+    picks = "，".join(f"{Path(p).name}→{name}" for p, name in applied.items())
+    summary += f"，已自动套用风格：{picks}"
 ```
 
-（`run_intent.py` 有两处这样的循环——初始一次 + `AWAITING_REVIEW` 调整之后重跑一次——两处都要改；`run_watchfolder.py` 只有一处。）
+用户在这一步说"换个更暖的"之类的调整，走的是 `_handle_gate` 现有的 `classify_gate_reply_fn` → `apply_adjustment` 路径——`Deliver.inputs=["Style"]`（见第七节）保证了这条路径对 `Style` 本身发起的调整同样生效，不需要专门为 `Style` 新写一套调整解析（`compose/adjustment_parser.py` 目前只认识 `set_count`/`set_apply_tag`/`swap_out` 三种动作，让它认识"换风格"是留给后续增量的范围，这次只保证机制打通）。
+
+**三个入口都要接上 Style**（`run_telegram.py`/`run_intent.py`/`run_watchfolder.py` 各自的 `stages` dict 加 `"Style": StyleStage(client=client)`）。因为 `Style` 全程不带闸门，`run_intent.py`/`run_watchfolder.py` 这两个无人值守的脚本化入口不需要任何额外的闸门处理逻辑——它们原有的 `while run.status == RunStatus.RUNNING` 主循环不用改。
 
 ## 七、`Deliver` 去重标记的修复
 
