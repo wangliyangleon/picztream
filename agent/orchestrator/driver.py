@@ -50,6 +50,13 @@ class Driver:
         self.store.save(run)
         return run
 
+    def peek_next_stage(self, run: RunState) -> str | None:
+        """无副作用地查询接下来会被 advance() 选中运行的 stage 名字，供
+        session_router.py 在运行前发进度消息用。复用 _next_pending 现有
+        的"下一个 PENDING 且依赖已满足"判断，不重复实现一遍。"""
+        spec = self._next_pending(run)
+        return spec.name if spec else None
+
     def resolve_gate(self, run: RunState, decision: str) -> RunState:
         if run.gate_state is None:
             raise ValueError("no gate is pending on this run")

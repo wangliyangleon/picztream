@@ -77,3 +77,48 @@ def test_each_stage_boundary_persists_run_state(tmp_path):
     driver.advance(run)
 
     assert store.load("run-1").stage_states["Ingest"] == StageStatus.DONE
+
+
+def test_peek_next_stage_returns_first_stage_name_without_side_effects(tmp_path):
+    a = FakeStage(name="Ingest")
+    b = FakeStage(name="Evaluate", inputs=["Ingest"])
+    plan = Plan(stages=[StageSpec(name="Ingest"), StageSpec(name="Evaluate")])
+    run = make_run(plan)
+    driver = Driver(stages={"Ingest": a, "Evaluate": b}, store=RunStore(tmp_path))
+
+    result = driver.peek_next_stage(run)
+
+    assert result == "Ingest"
+    # 纯查询，不该产生任何副作用。
+    assert run.stage_states == {"Ingest": StageStatus.PENDING, "Evaluate": StageStatus.PENDING}
+    assert run.outputs == {}
+    assert a.calls == []
+
+
+def test_peek_next_stage_tracks_advance_through_the_plan(tmp_path):
+    a = FakeStage(name="Ingest")
+    b = FakeStage(name="Evaluate", inputs=["Ingest"])
+    plan = Plan(stages=[StageSpec(name="Ingest"), StageSpec(name="Evaluate")])
+    run = make_run(plan)
+    driver = Driver(stages={"Ingest": a, "Evaluate": b}, store=RunStore(tmp_path))
+
+    assert driver.peek_next_stage(run) == "Ingest"
+    driver.advance(run)
+    assert run.stage_states["Ingest"] == StageStatus.DONE
+
+    assert driver.peek_next_stage(run) == "Evaluate"
+    driver.advance(run)
+    assert run.stage_states["Evaluate"] == StageStatus.DONE
+
+
+def test_peek_next_stage_returns_none_when_nothing_is_pending(tmp_path):
+    a = FakeStage(name="Ingest")
+    plan = Plan(stages=[StageSpec(name="Ingest")])
+    run = make_run(plan)
+    driver = Driver(stages={"Ingest": a}, store=RunStore(tmp_path))
+
+    driver.advance(run)
+    driver.advance(run)
+    assert run.status == RunStatus.AWAITING_REVIEW
+
+    assert driver.peek_next_stage(run) is None
