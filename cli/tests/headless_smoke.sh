@@ -271,6 +271,33 @@ assert_json_has "$out" "j['cleared'] == 0" "tag clear: unknown tag name is idemp
 assert_nonzero_exit_with_error "tag clear: unknown project fails with JSON error" \
   "$PZT" tag clear does-not-exist 精选 --json
 
+# --- pzt recipe suggest / pzt recipe apply ---
+# 目标三：Style Stage 用的两个 headless 命令。suggest 是"看图选风格"，
+# apply 是纯 set_image_recipe 包壳，两者独立可测。a.jpg 是不可解码的假
+# 字节(跟 eval 段同一批 fixture)，suggest 在解码这一步就会失败，走不到
+# 真正的网络调用，跟 eval 段"undecodable fixtures fail at decode"是同
+# 一个测试哲学——覆盖提交前的整段逻辑，不碰真网络。
+assert_nonzero_exit_with_error "recipe suggest: unknown provider fails with JSON error" \
+  "$PZT" recipe suggest smoke a.jpg --provider bogus --json
+
+assert_nonzero_exit_with_error "recipe suggest: unknown image path fails with JSON error" \
+  "$PZT" recipe suggest smoke nope.jpg --provider gemini --json
+
+assert_nonzero_exit_with_error "recipe suggest: undecodable fixture fails at decode, not at the network call" \
+  "$PZT" recipe suggest smoke a.jpg --provider gemini --json
+assert_json_has "$(cat /tmp/headless_smoke_stderr)" "j['error'] == 'image_unavailable'" \
+  "recipe suggest: undecodable fixture reports image_unavailable"
+
+assert_nonzero_exit_with_error "recipe apply: unknown image path fails with JSON error" \
+  "$PZT" recipe apply smoke nope.jpg "Havana 1959" --json
+
+assert_nonzero_exit_with_error "recipe apply: unknown recipe name fails with JSON error" \
+  "$PZT" recipe apply smoke a.jpg "Not A Real Preset" --json
+
+out="$("$PZT" recipe apply smoke a.jpg "Havana 1959" --json)"
+assert_json_has "$out" "j['applied'] == True and j['recipe_name'] == 'Havana 1959'" \
+  "recipe apply: applies a real preset by name"
+
 # --- pzt new --json ---
 PHOTOS2="$WORKDIR/photos2"
 mkdir -p "$PHOTOS2"

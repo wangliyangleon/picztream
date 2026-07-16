@@ -22,6 +22,7 @@
 #include "cli/text/text.h"
 #include "cli/ui/ui.h"
 #include "core/ai/evaluation.h"
+#include "core/ai/style.h"
 #include "core/api.h"
 #include "core/db/database.h"
 
@@ -995,6 +996,138 @@ std::optional<pzt::core::RecipeId> find_preset_by_name(const std::string& name) 
   return it == presets.end() ? std::nullopt : std::optional(it->id);
 }
 
+// decode_image_for_ai：把 image_id 解码成 DecodedImage，供 recipe suggest
+// 用。复刻 core/ai/evaluation_worker.cpp 里私有的 resolve_path 逻辑(RAW
+// 走 preview_cache_path，否则走 project_root/file_path)——这是一份小的、
+// 可接受的重复，不为此新增 core/api 门面函数。
+std::optional<pzt::core::DecodedImage> decode_image_for_ai(pzt::core::ImageId image_id) {
+  auto info = pzt::core::get_image(image_id);
+  if (!info) return std::nullopt;
+  auto project_summary = pzt::core::open_project(info->project_id);
+  if (!project_summary.ok()) return std::nullopt;
+
+  std::string path = (info->kind == "raw" && info->preview_cache_path)
+                          ? *info->preview_cache_path
+                          : project_summary.value().root_path + "/" + info->file_path;
+  auto decoded = pzt::core::decode_preview_file(path);
+  return decoded.ok() ? std::optional(decoded.value()) : std::nullopt;
+}
+
+// M4：StyleError 转成稳定的机读标识符，同 evaluation_error_str 的理由
+// (headless JSON 契约，不走 i18n 人读文案)。
+const char* style_error_str(pzt::core::ai::StyleError error) {
+  switch (error) {
+    case pzt::core::ai::StyleError::MissingApiKey:
+      return "missing_api_key";
+    case pzt::core::ai::StyleError::NetworkError:
+      return "network_error";
+    case pzt::core::ai::StyleError::HttpError:
+      return "http_error";
+    case pzt::core::ai::StyleError::ParseError:
+      return "parse_error";
+    case pzt::core::ai::StyleError::Hallucinated:
+      return "hallucinated";
+  }
+  return "unknown";
+}
+
+// headless：LLM 看图从 9 个预设(排除 Origin)里选一个合适的风格，只
+// 读，不改库——目标三 Style Stage 的"suggest"半步，"apply"半步是下面
+// 的 recipe_apply，两者拆开是为了给未来"用户点名风格"的手动路径留一
+// 个直接调 apply 的口子。见 docs/W2026-07-15_AgentStyle_Eng_Design.md。
+int recipe_suggest(const std::vector<std::string>& args) {
+  bool json = false;
+  std::string provider_str;
+  std::vector<std::string> positional;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--json") {
+      json = true;
+    } else if (args[i] == "--provider") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
+      provider_str = args[++i];
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  pzt::core::Provider provider;
+  if (provider_str == "gemini") {
+    provider = pzt::core::Provider::Gemini;
+  } else if (provider_str == "claude") {
+    provider = pzt::core::Provider::Claude;
+  } else if (provider_str == "local") {
+    provider = pzt::core::Provider::Local;
+  } else {
+    return emit_json_error("usage",
+                            "usage: pzt recipe suggest <project> <image_path> --provider "
+                            "<gemini|claude|local> --json");
+  }
+  if (positional.size() != 2 || !json) {
+    return emit_json_error("usage",
+                            "usage: pzt recipe suggest <project> <image_path> --provider "
+                            "<gemini|claude|local> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+  auto image_id = pzt::core::find_image_by_path(*project_id, positional[1]);
+  if (!image_id) return emit_json_error("image_not_found", "image not found: " + positional[1]);
+
+  auto decoded = decode_image_for_ai(*image_id);
+  if (!decoded) {
+    return emit_json_error("image_unavailable", "failed to decode image: " + positional[1]);
+  }
+
+  std::vector<std::string> preset_names;
+  for (const auto& p : pzt::core::list_presets()) {
+    if (p.id != 0) preset_names.push_back(p.name);
+  }
+
+  auto settings = pzt::core::load_settings();
+  pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
+
+  auto result =
+      pzt::core::ai::request_style_suggestion(*decoded, preset_names, provider, local_config);
+  if (!result.ok()) {
+    return emit_json_error(style_error_str(result.error()), "style suggestion failed");
+  }
+
+  emit_json({{"recipe_name", result.value().recipe_name}, {"reasoning", result.value().reasoning}});
+  return 0;
+}
+
+// headless：按名字把一个预设应用到一张图，纯 set_image_recipe 包壳，不
+// 碰 AI——见上面 recipe_suggest 的注释。
+int recipe_apply(const std::vector<std::string>& args) {
+  bool json = false;
+  std::vector<std::string> positional;
+  for (const auto& a : args) {
+    if (a == "--json") {
+      json = true;
+    } else {
+      positional.push_back(a);
+    }
+  }
+  if (positional.size() != 3 || !json) {
+    return emit_json_error("usage",
+                            "usage: pzt recipe apply <project> <image_path> <recipe_name> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+  auto image_id = pzt::core::find_image_by_path(*project_id, positional[1]);
+  if (!image_id) return emit_json_error("image_not_found", "image not found: " + positional[1]);
+  auto recipe_id = find_preset_by_name(positional[2]);
+  if (!recipe_id) return emit_json_error("recipe_not_found", "recipe not found: " + positional[2]);
+
+  auto result = pzt::core::set_image_recipe(*image_id, *recipe_id);
+  if (!result.ok()) {
+    return emit_json_error("set_recipe_failed", "failed to set recipe");
+  }
+
+  emit_json({{"applied", true}, {"recipe_name", positional[2]}});
+  return 0;
+}
+
 std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& preset_name,
                                                             int version_number) {
   auto preset_id = find_preset_by_name(preset_name);
@@ -1102,6 +1235,8 @@ int cmd_recipe(const std::vector<std::string>& args) {
   if (verb == "list") return recipe_list(rest);
   if (verb == "rename") return recipe_rename(rest);
   if (verb == "delete") return recipe_delete(rest);
+  if (verb == "suggest") return recipe_suggest(rest);
+  if (verb == "apply") return recipe_apply(rest);
 
   std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_unknown_subcommand(verb).c_str());
   print_recipe_usage();
