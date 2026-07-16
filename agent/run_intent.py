@@ -24,7 +24,6 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
-from stages.style import StyleStage
 from store.run_store import RunStore
 
 
@@ -69,6 +68,12 @@ def main() -> None:
         if not args.in_folder or not args.out_folder or not args.intent:
             parser.error("in_folder/out_folder/--intent 必填（或改用 --resume RUN_ID）")
         plan = validate_plan(compose_plan(args.intent, None, None))
+        # 子增量 E 这个入口只有 input() 阻塞式的对话循环，完全没有处理
+        # AWAITING_GATE 的代码；Style/StyleApplyAll 现在是必选闸门，硬塞
+        # 进这个入口工作量明显更大，范围上明确只给 run_telegram.py 用。
+        # compose_plan 是跟 run_telegram.py 共用的同一份 LLM 组装逻辑，
+        # 不在那边加分支参数，这里直接把这两个 stage 从 Plan 里过滤掉。
+        plan.stages = [s for s in plan.stages if s.name not in ("Style", "StyleApplyAll")]
         _fill_transport_params(plan, args.in_folder, args.out_folder)
         run_id = args.run_id or f"intent-{uuid.uuid4().hex[:8]}"
         run = RunState(run_id=run_id, project_id=run_id, plan=plan,
@@ -85,7 +90,6 @@ def main() -> None:
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
-        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
     driver = Driver(stages=stages, store=store)

@@ -9,7 +9,6 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
-from stages.style import StyleStage
 from store.run_store import RunStore
 
 
@@ -41,7 +40,6 @@ def _make_pipeline(tmp_path, client, transport):
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
-        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
 
@@ -58,14 +56,21 @@ def _fake_parse_adjustment(msg, run):
 
 
 def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
+    # 跟 run_intent.py::main() 的真实代码路径一致：先 validate_plan 一份
+    # 含 Style/StyleApplyAll 的完整 Plan，再把这两个 stage 过滤掉——子增
+    # 量 E 这个入口完全没有处理 AWAITING_GATE 的代码，Style 现在是必选
+    # 闸门，硬塞进这个入口工作量明显更大，范围上明确只给 run_telegram.py
+    # 用。
     plan = validate_plan(Plan(stages=[
         StageSpec(name="Ingest", params={"folder": str(tmp_path / "in")}),
         StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 1, "apply_tag": "精选"}),
-        StageSpec(name="Style", params={"provider": "gemini"}),
+        StageSpec(name="Style", params={"provider": "gemini"}, gate="required"),
+        StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver", params={"out_folder": str(tmp_path / "out")}),
     ]))
+    plan.stages = [s for s in plan.stages if s.name not in ("Style", "StyleApplyAll")]
     run = RunState(run_id="run-1", project_id="run-1", plan=plan,
                     stage_states={s.name: StageStatus.PENDING for s in plan.stages}, status=RunStatus.RUNNING)
 
@@ -76,7 +81,6 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
         "eval": '{"submitted": 2, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 2, "tagged": 0, "skipped_no_capture_time": 0}',
         "tag": '{}',
-        "recipe": '{"recipe_name": "Havana 1959", "reasoning": "x"}',
         "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
     }
 

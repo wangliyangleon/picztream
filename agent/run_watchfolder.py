@@ -18,7 +18,6 @@ from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
-from stages.style import StyleStage
 from store.run_store import RunStore
 from transport.watchfolder import WatchFolderTransport
 
@@ -30,7 +29,6 @@ def build_plan(in_folder: str, out_folder: str, count: int, provider: str, apply
         StageSpec(name="Evaluate", params={"provider": provider, "auto_reject": auto_reject}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": count, "apply_tag": apply_tag}),
-        StageSpec(name="Style", params={"provider": provider}),
         StageSpec(name="Deliver", params={"out_folder": out_folder}),
     ])
 
@@ -84,7 +82,6 @@ def main() -> None:
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
-        "Style": StyleStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
     }
     driver = Driver(stages=stages, store=store)

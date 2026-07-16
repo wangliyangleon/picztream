@@ -23,6 +23,7 @@ from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from stages.style import StyleStage
+from stages.style_apply_all import StyleApplyAllStage
 from store.run_store import RunStore
 from transport.telegram import TelegramTransport
 from transport.telegram_client import chat_id_from_env, token_from_env
@@ -46,8 +47,9 @@ def build_router(state_dir: Path, client: PztClient, transport: Any, chat_id: st
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
         "Style": StyleStage(client=client),
+        "StyleApplyAll": StyleApplyAllStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir,
-                                 staging_dir=staging_dir, chat_id=chat_id),
+                                 staging_dir=staging_dir, chat_id=chat_id, inputs=["StyleApplyAll"]),
     }
     driver = Driver(stages=stages, store=store)
     return SessionRouter(
