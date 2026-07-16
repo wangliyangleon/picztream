@@ -20,7 +20,7 @@ class DeliverStage:
     staging_dir: Path
     chat_id: str = "watchfolder"
     name: str = "Deliver"
-    inputs: List[str] = field(default_factory=lambda: ["Style"])
+    inputs: List[str] = field(default_factory=lambda: ["Curate"])
     cost_class: str = "local"
     criticality: str = "optional"  # 降级不死：交付失败不该抹掉前面已经算完的选片结果
 
@@ -30,9 +30,9 @@ class DeliverStage:
         # 会让同一个 run_id 的 Curate 输出换成不同的 selected 列表，
         # Deliver 子图重跑要能把新结果真的送出去；只用 run_id 当 marker
         # 会把"这次 Curate 换了新结果"误判成"上次已经交付过了"，新选
-        # 片永远发不出去。目标三加了 Style 之后同理：selected 路径列表
-        # 不变、只是单独调整了风格，也必须触发重新交付，否则新风格永
-        # 远到不了交付文件，见
+        # 片永远发不出去。加了 Style/StyleApplyAll 之后同理：selected
+        # 路径列表不变、只是单独调整了风格，也必须触发重新交付，否则
+        # 新风格永远到不了交付文件，见
         # docs/W2026-07-15_AgentStyle_Eng_Design.md 第七节。哈希只用来
         # 让文件名短且确定，不要求防碰撞级别的强度。
         style_sig = "|".join(f"{p}={applied_styles.get(p, '')}" for p in selected)
@@ -61,7 +61,7 @@ class DeliverStage:
         # src/dst 会撞成同一个文件，真机跑的时候 shutil.copy2 直接报
         # SameFileError。
         selected: List[str] = curate_output.data.get("selected", []) if curate_output else []
-        style_output = ctx.outputs.get("Style")
+        style_output = ctx.outputs.get("StyleApplyAll")
         applied_styles: Dict[str, str] = style_output.data.get("applied", {}) if style_output else {}
         marker_path = self._marker_path(ctx.run_id, selected, applied_styles)
         run_staging_dir = Path(self.staging_dir) / ctx.run_id

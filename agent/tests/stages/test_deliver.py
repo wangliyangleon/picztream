@@ -33,9 +33,17 @@ def make_curate_and_style_output_ctx(selected, applied):
         run_id="run-1", project_id="proj-1",
         outputs={
             "Curate": StageOutput(ok=True, data={"selected": selected}),
-            "Style": StageOutput(ok=True, data={"applied": applied}),
+            "StyleApplyAll": StageOutput(ok=True, data={"applied": applied}),
         },
     )
+
+
+def test_deliver_inputs_default_to_curate():
+    # 现在只有 run_telegram.py 的 Plan 才含 Style/StyleApplyAll，
+    # run_watchfolder.py/run_intent.py 完全不含这两个 stage，默认值不能
+    # 假设它们存在——需要 Style/StyleApplyAll 的调用方自己显式覆盖。
+    stage = DeliverStage(client=None, transport=None, marker_dir=None, staging_dir=None)
+    assert stage.inputs == ["Curate"]
 
 
 def test_deliver_exports_to_its_own_staging_dir_then_sends_each_selected_file(tmp_path):
@@ -162,7 +170,7 @@ def test_deliver_resends_when_curate_selection_changes_after_adjustment(tmp_path
 
 
 def test_deliver_resends_when_style_changed_for_the_same_selection(tmp_path):
-    # 目标三：Style 只调颜色不改文件路径，同样的 selected 列表配合不同
+    # StyleApplyAll 只调颜色不改文件路径，同样的 selected 列表配合不同
     # 的风格必须被当成"不同的一次交付"，不能被去重标记误判成已经交付
     # 过——见 docs/W2026-07-15_AgentStyle_Eng_Design.md 第七节。
     calls = []
