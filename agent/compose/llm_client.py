@@ -16,6 +16,12 @@ from typing import Callable, Dict, Optional, Tuple
 _CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
 _GEMINI_MODEL = "gemini-3.1-flash-lite"
 _CLAUDE_URL = "https://api.anthropic.com/v1/messages"
+# 本地 Ollama——跟 core/ai/ai.h::LocalModelConfig 的默认值保持一致，但这
+# 里是纯文本的意图/调整解析，不带图片，不需要 core::ai 那套 provider 无
+# 关的 request_json 通用层，是它在 Python 侧的镜像(见文件顶部说明)。不
+# 需要 API key(_get_api_key 只在 claude/gemini 分支调用)。
+_OLLAMA_BASE_URL = "http://localhost:11434"
+_OLLAMA_MODEL = "gemma4:e2b"
 
 
 class LlmRequestError(Exception):
@@ -107,13 +113,25 @@ def _parse_gemini_response(body: str) -> dict:
     return _parse_inner_json(text)
 
 
+def _parse_local_response(body: str) -> dict:
+    try:
+        outer = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise LlmRequestError("parse_error", str(e)) from e
+    try:
+        text = outer["message"]["content"]
+    except (KeyError, TypeError) as e:
+        raise LlmRequestError("parse_error", "unexpected local response shape") from e
+    return _parse_inner_json(text)
+
+
 def request_json(user_prompt: str, schema_instruction: str, provider: str,
                   http_post: Optional[HttpPostFn] = None) -> dict:
     post = http_post or _real_http_post
-    api_key = _get_api_key(provider)
     instruction_text = _build_instruction_text(user_prompt, schema_instruction)
 
     if provider == "claude":
+        api_key = _get_api_key(provider)
         url = _CLAUDE_URL
         headers = {
             "x-api-key": api_key,
@@ -126,9 +144,19 @@ def request_json(user_prompt: str, schema_instruction: str, provider: str,
             "messages": [{"role": "user", "content": instruction_text}],
         })
     elif provider == "gemini":
+        api_key = _get_api_key(provider)
         url = _gemini_url(api_key)
         headers = {"content-type": "application/json"}
         request_body = json.dumps({"contents": [{"parts": [{"text": instruction_text}]}]})
+    elif provider == "local":
+        url = f"{_OLLAMA_BASE_URL}/api/chat"
+        headers = {"content-type": "application/json"}
+        request_body = json.dumps({
+            "model": _OLLAMA_MODEL,
+            "format": "json",
+            "stream": False,
+            "messages": [{"role": "user", "content": instruction_text}],
+        })
     else:
         raise LlmRequestError("unknown_provider", f"unknown provider {provider!r}")
 
@@ -136,4 +164,8 @@ def request_json(user_prompt: str, schema_instruction: str, provider: str,
     if status_code < 200 or status_code >= 300:
         raise LlmRequestError("http_error", f"status={status_code} body={response_body[:200]}")
 
-    return _parse_claude_response(response_body) if provider == "claude" else _parse_gemini_response(response_body)
+    if provider == "claude":
+        return _parse_claude_response(response_body)
+    if provider == "gemini":
+        return _parse_gemini_response(response_body)
+    return _parse_local_response(response_body)

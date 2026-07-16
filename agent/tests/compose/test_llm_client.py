@@ -83,6 +83,35 @@ def test_malformed_inner_json_raises_parse_error(monkeypatch):
     assert exc_info.value.code == "parse_error"
 
 
+def test_local_happy_path_does_not_require_an_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    captured = {}
+
+    def fake_http_post(url, headers, body):
+        captured["url"] = url
+        captured["body"] = json.loads(body)
+        response = {"message": {"role": "assistant", "content": '{"count": 9}'}}
+        return 200, json.dumps(response)
+
+    result = request_json("留9张", "schema instruction", "local", http_post=fake_http_post)
+
+    assert result == {"count": 9}
+    assert captured["url"].endswith("/api/chat")
+    assert captured["body"]["format"] == "json"
+    assert captured["body"]["messages"][0]["content"].startswith("schema instruction")
+
+
+def test_local_malformed_response_shape_raises_parse_error():
+    def fake_http_post(url, headers, body):
+        return 200, json.dumps({"unexpected": "shape"})
+
+    with pytest.raises(LlmRequestError) as exc_info:
+        request_json("留9张", "schema", "local", http_post=fake_http_post)
+
+    assert exc_info.value.code == "parse_error"
+
+
 def test_injected_http_post_network_error_propagates(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
 
