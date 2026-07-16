@@ -80,6 +80,12 @@ namespace detail {
 
 decode::DecodedImage downscale_for_upload(const decode::DecodedImage& image);
 
+// 仅供单元测试使用——debug 日志把 prompt/response 原文压缩到固定长度上
+// 限时用的截断函数，按字节数砍容易把多字节 UTF-8 字符砍在中间，产生非
+// 法字节序列（真机复现：agent 侧 Python 用 text=True 读子进程 stderr 时
+// 直接 UnicodeDecodeError 崩溃）。
+std::string compact_for_debug_log(const std::string& text);
+
 }  // namespace detail
 
 }  // namespace pzt::core::ai

@@ -234,6 +234,10 @@ std::size_t write_callback(char* ptr, std::size_t size, std::size_t nmemb, void*
   return size * nmemb;
 }
 
+}  // namespace
+
+namespace detail {
+
 // debug 面板一次只滚动显示固定的最后几行(见 cli/commands/browse.cpp 的
 // kDebugRows)——prompt/response 原文经常自带换行(模板本身用 "\n\n" 分
 // 段)，一条日志展开成十几行会把整个面板刷屏，刷掉刚才 prefetch/按键那些
@@ -249,12 +253,39 @@ std::string compact_for_debug_log(const std::string& text) {
   }
   if (flat.size() > kMaxLen) {
     flat.resize(kMaxLen);
+    // 按字节数砍容易把多字节 UTF-8 字符砍在中间(比如目标三新增的中文
+    // 预设摘要 prompt)，产生非法字节序列——agent 侧 Python 用 text=True
+    // 读子进程 stderr 时会直接 UnicodeDecodeError 崩溃(真机复现)。往回
+    // 退到一个完整的字符边界:先跳过末尾连续的续字节(0x80-0xBF)，再看
+    // 剩下最后一个字节是不是一个"声明的序列长度"和"实际跟着的续字节
+    // 数"对得上的完整前导字节，对不上(前导字节本身也被砍了一部分或整
+    // 个丢了续字节)就连它一起退掉。
+    std::size_t i = flat.size();
+    std::size_t continuations = 0;
+    while (i > 0 && (static_cast<unsigned char>(flat[i - 1]) & 0xC0) == 0x80) {
+      --i;
+      ++continuations;
+    }
+    if (i > 0) {
+      unsigned char lead = static_cast<unsigned char>(flat[i - 1]);
+      std::size_t expected = 1;
+      if ((lead & 0xE0) == 0xC0) {
+        expected = 2;
+      } else if ((lead & 0xF0) == 0xE0) {
+        expected = 3;
+      } else if ((lead & 0xF8) == 0xF0) {
+        expected = 4;
+      }
+      if (expected != continuations + 1) {
+        flat.resize(i - 1);
+      }
+    }
     flat += "...";
   }
   return flat;
 }
 
-}  // namespace
+}  // namespace detail
 
 namespace detail {
 
@@ -388,7 +419,7 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
   const char* provider_name = to_string(provider);
   std::string debug_prompt = "task: " + user_prompt + " | schema: " + schema_instruction;
   std::fprintf(stderr, "[pzt ai] request (%s) prompt: %s\n", provider_name,
-               compact_for_debug_log(debug_prompt).c_str());
+               detail::compact_for_debug_log(debug_prompt).c_str());
   std::fflush(stderr);
 
   auto http_result = http_post(url, headers, request_body.dump());
@@ -396,7 +427,7 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
 
   const auto& response = http_result.value();
   std::fprintf(stderr, "[pzt ai] response (%s) status=%ld body: %s\n", provider_name,
-               response.status_code, compact_for_debug_log(response.body).c_str());
+               response.status_code, detail::compact_for_debug_log(response.body).c_str());
   std::fflush(stderr);
 
   if (response.status_code < 200 || response.status_code >= 300) {

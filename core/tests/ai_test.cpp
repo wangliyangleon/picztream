@@ -347,3 +347,32 @@ TEST_CASE("request_json skips the API key check for Provider::Local") {
   REQUIRE(result.ok());
   CHECK(called);
 }
+
+TEST_CASE("compact_for_debug_log does not cut a multi-byte UTF-8 character in half") {
+  // 239 个 ASCII 字符 + 一个 3 字节 UTF-8 字符("中")，字符恰好横跨 240
+  // 字节的截断点(前两个字节落在界内，第三个字节被砍掉)——真机复现的
+  // 场景：目标三新增的风格建议 prompt 里带中文预设摘要，恰好在这个位
+  // 置被砍断，产生的非法字节序列让 agent 侧 Python 的 text=True 子进
+  // 程读取直接 UnicodeDecodeError 崩溃。
+  std::string text(239, 'a');
+  text += "\xe4\xb8\xad";  // "中"
+  text += std::string(100, 'b');
+
+  std::string result = detail::compact_for_debug_log(text);
+
+  // 不完整的多字节字符(这里是"中"的第一个字节)必须整个被退掉,不能留
+  // 下孤立的前导字节。
+  CHECK(result == std::string(239, 'a') + "...");
+}
+
+TEST_CASE("compact_for_debug_log keeps a complete multi-byte character landing exactly on the boundary") {
+  // 237 个 ASCII 字符 + "中"(3 字节)恰好占满第 238-240 字节，截断点正
+  // 好落在一个完整字符的末尾——这种情况不该被误伤，字符要完整保留。
+  std::string text(237, 'a');
+  text += "\xe4\xb8\xad";
+  text += std::string(100, 'b');
+
+  std::string result = detail::compact_for_debug_log(text);
+
+  CHECK(result == std::string(237, 'a') + "\xe4\xb8\xad" + "...");
+}
