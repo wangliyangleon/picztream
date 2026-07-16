@@ -14,18 +14,21 @@ using namespace pzt::cli::ui;
 namespace pzt::cli::menu {
 namespace {
 
-// increment 6:`r` 前缀键完整交互。预设列表不需要像 tags_for_menu 那样过
-// 滤 is_system——目前所有预设(包括 Origin)都是 is_system,但这里没有"用
-// 户自建预设"这个对立面需要排除,直接按创建顺序编号 1-9。跟废片固定占 0
-// 号位不同,Origin 没有固定编号,它就是 list_presets() 里排第一的普通一
-// 项——`r` + `0`/`r` + `r`(清除)是完全独立于预设列表的快捷路径,直接把
-// recipe_id 设成 NULL,不经过"选中 Origin 预设"这条路,两者对"没有风格"
-// 这件事产出相同效果但走的是不同路径,见 core/recipe/recipe.h
-// ensure_default_presets 的说明。
+// increment 6:`r` 前缀键完整交互。Origin 固定 id=0,不参与数字编号——
+// r+0/r+r(清除)已经是独立于预设列表的快捷路径,直接把 recipe_id 设成
+// NULL,不需要 Origin 本身占一个键位。过滤之后剩下的 9 个 City+Year 预
+// 设按创建顺序(id 升序)映射到键 1-9,数量和顺序由
+// core/recipe/recipe.cpp::ensure_default_presets 里的表决定,见
+// docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
 std::vector<pzt::core::PresetSummary> presets_for_menu() {
   auto presets = pzt::core::list_presets();
-  if (presets.size() > 9) presets.resize(9);
-  return presets;
+  std::vector<pzt::core::PresetSummary> numbered;
+  for (auto& p : presets) {
+    if (p.id == 0) continue;
+    numbered.push_back(std::move(p));
+  }
+  if (numbered.size() > 9) numbered.resize(9);
+  return numbered;
 }
 
 // 应用/删除/新建三个流程都需要"这个预设下未软删除的 version"这份列表,
