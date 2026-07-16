@@ -33,17 +33,23 @@ _APPROVE_KEYWORDS = {"", "approve", "同意", "可以", "好", "好的", "ok"}
 _REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 
 # 长时间沉默体验不好——RUNNING 阶段每个 stage 开始前发一句进度提示，天
-# 然对齐 stage 边界，不需要引入线程/改 CLI 协议成流式输出。六个 stage
-# 统一处理，不特殊排除 Ingest(通常很快，一闪而过无害)/Deliver(补上此前
-# 完全沉默的交付环节)。
+# 然对齐 stage 边界，不需要引入线程/改 CLI 协议成流式输出。Style/
+# StyleApplyAll 不在这里：它们现在都是 gate="required"，_drive_to_stop
+# 会在它们即将运行前先发一句这里的通用进度消息，紧接着 advance() 就因
+# 为闸门暂停——对 Style 来说"正在自动套用风格..."会紧贴在闸门自己的
+# "想要什么风格？"提问前面，明显自相矛盾(一句话刚说"自动"，下一句就在
+# 问人)。它们自己的闸门消息（_send_style_preview / "想要什么风格？"）
+# 本身就是恰当的进度提示，不需要这里再补一条。Deliver 保留不动：它的闸
+# 门消息不预设"已经自动做了什么"，跟"正在交付..."不冲突。
 _STAGE_PROGRESS_MESSAGES = {
     "Ingest": "正在导入照片...",
     "Evaluate": "正在执行 AI 评估...",
     "Dedup": "正在执行去重...",
     "Curate": "正在筛选...",
-    "Style": "正在自动套用风格...",
     "Deliver": "正在交付...",
 }
+
+_STYLE_GATE_STAGES = ("Style", "StyleApplyAll")
 
 
 class SessionRouter:
@@ -185,6 +191,9 @@ class SessionRouter:
         text = (msg.text or "").strip()
         normalized = text.lower()
 
+        if run.gate_state.stage_name in _STYLE_GATE_STAGES:
+            return self._handle_style_gate(run, run.gate_state.stage_name, text, normalized)
+
         if normalized in _REJECT_KEYWORDS:
             self.driver.cancel(run)
             self.transport.send_text(self.chat_id, "已取消")
@@ -223,6 +232,35 @@ class SessionRouter:
             return run
 
         self.driver.apply_adjustment(run, reply.delta)
+        return self._drive_to_stop_and_notify(run)
+
+    def _handle_style_gate(self, run: RunState, stage_name: str, text: str, normalized: str) -> RunState:
+        # Style/StyleApplyAll 的闸门回复不走 classify_gate_reply_fn 那套
+        # "同意/拒绝/结构化调整"分类——这两个闸门问的是开放式问题("想要
+        # 什么风格？"/"这个风格 OK 吗？")，用户的自由文本回复本身就是答
+        # 案(新的风格描述)，不需要也不该套一层 LLM 分类。
+        if normalized in _REJECT_KEYWORDS:
+            self.driver.cancel(run)
+            self.transport.send_text(self.chat_id, "已取消")
+            return run
+
+        if stage_name == "StyleApplyAll" and normalized in _APPROVE_KEYWORDS:
+            self.driver.resolve_gate(run, "proceed")
+            return self._drive_to_stop_and_notify(run)
+
+        if stage_name == "Style" and not text:
+            # 第一次问描述时空回车没有意义，不能当成一句空描述丢给 LLM。
+            self.transport.send_text(self.chat_id, "跟我说说想要什么风格吧，比如\"复古暖色调\"")
+            return run
+
+        # 走到这里：Style 闸门收到了任意非空文本，或者 StyleApplyAll 闸
+        # 门收到了非同意非取消的文本——两种情况下这句话本身就是（新的）
+        # 风格描述。rerun_stage 会跳过 Style 自己的闸门直接重跑（因为这
+        # 句回复已经回答了闸门的问题，不需要再问一遍），见
+        # Driver.rerun_stage 的说明。
+        self.transport.send_text(
+            self.chat_id, "正在重新选风格..." if stage_name == "StyleApplyAll" else "正在选风格...")
+        self.driver.rerun_stage(run, "Style", {"style_description": text})
         return self._drive_to_stop_and_notify(run)
 
     def _handle_collecting(self, run: RunState, msg: InboundMessage) -> RunState:
@@ -386,7 +424,13 @@ class SessionRouter:
     def _drive_to_stop_and_notify(self, run: RunState) -> RunState:
         self._drive_to_stop(run)
         if run.status == RunStatus.AWAITING_GATE:
-            self._send_preview(run)
+            stage_name = run.gate_state.stage_name
+            if stage_name == "Style":
+                self.transport.send_text(self.chat_id, "想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
+            elif stage_name == "StyleApplyAll":
+                self._send_style_preview(run)
+            else:
+                self._send_preview(run)
         elif run.status == RunStatus.FAILED:
             self.transport.send_text(self.chat_id, f"处理失败：{self._first_failure_detail(run)}")
         return run
@@ -430,18 +474,50 @@ class SessionRouter:
                 except Exception:
                     failed_count += 1
         summary = f"选好了 {len(selected)} 张"
-        # 目标三：Style 在 Curate 之后、Deliver 之前自动跑完(gate="off",
-        # 不单独停下来问)，Deliver 这个原本就有的必选闸门顺带成了"审核
-        # LLM 选的风格"的天然时机——闸门是在 Deliver 即将运行前触发的,
-        # 这时 Style 已经跑完,run.outputs["Style"] 里的结果已经就绪,不
-        # 需要给 Style 单独加一个闸门。见
-        # docs/W2026-07-15_AgentStyle_Eng_Design.md 第六节。
-        style_output = run.outputs.get("Style")
+        # Style/StyleApplyAll 两段式闸门已经在这之前问过、确认过风格了
+        # （见 _handle_style_gate/_send_style_preview），走到 Deliver 的
+        # 闸门时 StyleApplyAll 已经跑完，run.outputs["StyleApplyAll"] 里
+        # 的完整套用结果已经就绪，这里顺带回显一句总结。
+        style_output = run.outputs.get("StyleApplyAll")
         applied = style_output.data.get("applied", {}) if style_output else {}
         if applied:
-            picks = "，".join(f"{Path(p).name}→{name}" for p, name in applied.items())
-            summary += f"，已自动套用风格：{picks}"
+            chosen_recipe = next(iter(applied.values()))
+            summary += f"，已套用风格「{chosen_recipe}」"
         if failed_count:
             summary += f"(其中 {failed_count} 张预览发送失败，交付时仍会正常导出)"
         summary += "，满意就回复\"好的\"，不满意说说想怎么调，不要了就说\"取消\""
         self.transport.send_text(self.chat_id, summary)
+
+    def _send_style_preview(self, run: RunState) -> None:
+        # StyleApplyAll 的闸门：展示 Style 已经套到代表图上的效果，等用
+        # 户确认这个风格 OK 不 OK。跟 _send_preview 一样要先过一次
+        # export-images 才有真字节可发（selected 是项目 root_path 相对
+        # 路径，不是能直接读的磁盘文件）。
+        style_output = run.outputs.get("Style")
+        chosen_recipe = style_output.data.get("chosen_recipe") if style_output else None
+        preview_photo = style_output.data.get("preview_photo") if style_output else None
+        if not chosen_recipe or not preview_photo:
+            self.transport.send_text(self.chat_id, "没能选出风格，直接说说想要什么风格吧")
+            return
+
+        preview_dir = self.preview_root / run.run_id
+        try:
+            self.client.call("export-images", run.project_id, preview_photo, str(preview_dir))
+        except PztCommandError as e:
+            self.transport.send_text(self.chat_id, f"预览导出失败：{e.message}")
+            return
+
+        preview_path = str(preview_dir / Path(preview_photo).name)
+        try:
+            self.transport.send_photo(self.chat_id, preview_path)
+        except Exception:
+            try:
+                self.transport.send_file(self.chat_id, preview_path)
+            except Exception:
+                self.transport.send_text(self.chat_id, "预览图发送失败，不过风格已经选好了")
+
+        self.transport.send_text(
+            self.chat_id,
+            f"这是用「{chosen_recipe}」套用的效果，OK 就回复\"好的\"，"
+            "不满意直接说说想要什么风格，不要了就说\"取消\"",
+        )

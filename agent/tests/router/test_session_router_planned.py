@@ -35,18 +35,23 @@ def test_approving_the_plan_confirmation_drives_pipeline_to_gate_and_sends_expor
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "b.jpg")))
     router.handle_message(_text_msg("筛一下留2张"))
 
-    run = router.handle_message(_text_msg("好的"))
+    router.handle_message(_text_msg("好的"))         # PLANNED -> RUNNING -> 停在 Style 闸门
+    router.handle_message(_text_msg("复古暖色调"))    # Style 闸门：给描述 -> 停在 StyleApplyAll 闸门
+    # StyleApplyAll 自己的单张预览也会发一次 a.jpg，只快照这一步之后新
+    # 增的 sent_photos，专门验证 Deliver 自己那次导出+发送全部选片的行为。
+    photos_before = list(transport.sent_photos)
+    run = router.handle_message(_text_msg("好的"))    # StyleApplyAll 闸门：同意 -> 停在 Deliver 闸门
 
     assert run.status == RunStatus.AWAITING_GATE
     preview_dir = tmp_path / "preview" / run.run_id
-    assert transport.sent_photos == [
+    assert transport.sent_photos[len(photos_before):] == [
         (CHAT_ID, str(preview_dir / "a.jpg")),
         (CHAT_ID, str(preview_dir / "b.jpg")),
     ]
     # 第一条是确认回显，最后一条是预览小结——中间还有"开始处理了"+每个
-    # stage 切换时的进度提示，具体条数不是这条测试要锁的东西（见
-    # test_session_router_timers.py/新增的进度播报功能），只关心首尾两
-    # 端语义没错。
+    # stage 切换时的进度提示、Style/StyleApplyAll 两段闸门自己的消息，具
+    # 体条数不是这条测试要锁的东西（见 test_session_router_timers.py/新
+    # 增的进度播报功能），只关心首尾两端语义没错。
     assert transport.sent_texts[0][1].startswith("理解你想")
     assert "选好了 2 张" in transport.sent_texts[-1][1]
 
@@ -187,7 +192,13 @@ def test_send_preview_falls_back_to_send_file_when_a_photo_is_too_big_and_still_
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "a.jpg")))
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID, file_path=str(downloaded / "b.jpg")))
     router.handle_message(_text_msg("筛一下留2张"))
+    router.handle_message(_text_msg("好的"))         # PLANNED -> RUNNING -> 停在 Style 闸门
+    router.handle_message(_text_msg("复古暖色调"))    # Style 闸门：给描述 -> 停在 StyleApplyAll 闸门
 
+    # StyleApplyAll 的单张预览也会发 a.jpg，这里只想测 Deliver 自己那次
+    # 预览的降级行为，所以在驱动过 Style/StyleApplyAll 两段闸门之后才装
+    # 这个"a.jpg 发不出去"的拦截器，并且从这一步开始快照 sent_photos/
+    # sent_files，只断言这一步新增的部分。
     original_send_photo = transport.send_photo
 
     def _send_photo_rejecting_a(chat_id, path):
@@ -196,13 +207,15 @@ def test_send_preview_falls_back_to_send_file_when_a_photo_is_too_big_and_still_
         original_send_photo(chat_id, path)
 
     transport.send_photo = _send_photo_rejecting_a
+    photos_before = list(transport.sent_photos)
+    files_before = list(transport.sent_files)
 
-    run = router.handle_message(_text_msg("好的"))
+    run = router.handle_message(_text_msg("好的"))    # StyleApplyAll 闸门：同意 -> 停在 Deliver 闸门
 
     assert run.status == RunStatus.AWAITING_GATE
     preview_dir = tmp_path / "preview" / run.run_id
-    assert transport.sent_photos == [(CHAT_ID, str(preview_dir / "b.jpg"))]
-    assert transport.sent_files == [(CHAT_ID, str(preview_dir / "a.jpg"))]
+    assert transport.sent_photos[len(photos_before):] == [(CHAT_ID, str(preview_dir / "b.jpg"))]
+    assert transport.sent_files[len(files_before):] == [(CHAT_ID, str(preview_dir / "a.jpg"))]
     assert any("选好了 2 张" in text for _, text in transport.sent_texts)
 
 

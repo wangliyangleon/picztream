@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+import json
+
 from compose.adjustment_parser import AdjustmentError, classify_gate_reply, refine_plan_confirmation
 from orchestrator.driver import Driver
 from orchestrator.types import Plan, StageSpec
@@ -23,6 +25,7 @@ from stages.deliver import DeliverStage
 from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from stages.style import StyleStage
+from stages.style_apply_all import StyleApplyAllStage
 from store.run_store import RunStore
 from transport.base import InboundMessage
 
@@ -34,9 +37,23 @@ _FIXED_RESPONSES = {
     "dedup": '{"groups": 2, "tagged": 0, "skipped_no_capture_time": 0}',
     "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
     "tag": '{}',
-    "recipe": '{"recipe_name": "Havana 1959", "reasoning": "warm mood fits"}',
+    "recipe": '{"applied": true, "recipe_name": "Havana 1959"}',
     "export-images": '{"exported": 2, "skipped": [], "created_dir": true}',
 }
+
+
+def _fake_style_http_post(recipe_name: str = "Havana 1959"):
+    # StyleStage.run() 现在直接调 compose/llm_client.py::request_json(...)
+    # 做文本匹配，不再经过 PztClient 那条子进程边界(那条已经被
+    # _fake_runner 接管)，需要单独给一个 http_post 假实现，否则测试跑
+    # 到 Style 真正执行时会打真实网络请求到本地 Ollama——这次会话已经
+    # 真机复现过一次因为漏了 fake 而导致 pytest 挂起的事故，同一类坑。
+    def fn(url, headers, body):
+        del url, headers, body
+        response = {"message": {"content": json.dumps(
+            {"recipe_name": recipe_name, "reasoning": "fits the mood"})}}
+        return 200, json.dumps(response)
+    return fn
 
 
 def _default_classify_collecting_message(text: str, photo_count: int):
@@ -64,7 +81,11 @@ def _fake_compose_plan(intent: str, profile: Optional[str], last_config: Optiona
         StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
-        StageSpec(name="Style", params={"provider": "gemini"}),
+        # provider="local"：request_json 的 gemini/claude 分支即使传了
+        # http_post 也会先无条件校验 API key(见 llm_client.py)，测试没
+        # 配 key，必须用 local 分支才能真正吃到下面注入的假 http_post。
+        StageSpec(name="Style", params={"provider": "local"}, gate="required"),
+        StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver"),
     ])
 
@@ -103,7 +124,8 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
                   runner: Callable = _fake_runner, now_fn: Callable[[], float] = time.time,
                   idle_reminder_seconds: float = 300.0, progress_interval_seconds: float = 60.0,
                   refine_plan_confirmation_fn: Callable = refine_plan_confirmation,
-                  classify_collecting_message_fn: Callable = _default_classify_collecting_message
+                  classify_collecting_message_fn: Callable = _default_classify_collecting_message,
+                  style_http_post: Callable = None,
                   ) -> Tuple[SessionRouter, RunStore, FakeTransport, PztClient]:
     client = PztClient(pzt_bin="/fake/pzt", runner=runner)
     transport = FakeTransport()
@@ -113,9 +135,10 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
         "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
-        "Style": StyleStage(client=client),
+        "Style": StyleStage(client=client, http_post=style_http_post or _fake_style_http_post()),
+        "StyleApplyAll": StyleApplyAllStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=tmp_path / "delivered",
-                                 staging_dir=tmp_path / "staging", chat_id=CHAT_ID),
+                                 staging_dir=tmp_path / "staging", chat_id=CHAT_ID, inputs=["StyleApplyAll"]),
     }
     driver = Driver(stages=stages, store=store)
     router = SessionRouter(
@@ -144,10 +167,15 @@ def _stage_source_photo(tmp_path: Path, name: str, content: bytes = b"x") -> str
 
 
 def _run_to_gate(router: SessionRouter):
+    # 停在 Curate 选片结果的 Deliver 闸门预览——这是这个 helper 对一大批
+    # 不关心 Style 细节的测试保持的既有契约，新增的 Style/StyleApplyAll
+    # 两段闸门在中途被这里顺手驱动过去，不暴露给调用方。
     tmp_path = router.incoming_root.parent
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID,
                                           file_path=_stage_source_photo(tmp_path, "a.jpg", b"a")))
     router.handle_message(InboundMessage(kind="photo", chat_id=CHAT_ID,
                                           file_path=_stage_source_photo(tmp_path, "b.jpg", b"b")))
     router.handle_message(_text_msg("筛一下留2张"))  # 现在只会停在 PLANNED，等确认
-    return router.handle_message(_text_msg("好的"))  # 确认后才真正开跑，到 AwaitingGate
+    router.handle_message(_text_msg("好的"))          # PLANNED -> RUNNING -> 停在 Style 闸门
+    router.handle_message(_text_msg("复古暖色调"))     # Style 闸门：给描述 -> 停在 StyleApplyAll 闸门
+    return router.handle_message(_text_msg("好的"))    # StyleApplyAll 闸门：同意 -> 停在 Deliver 闸门
