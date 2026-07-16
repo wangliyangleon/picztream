@@ -91,6 +91,28 @@ class Driver:
         self.store.save(run)
         return run
 
+    def rerun_stage(self, run: RunState, stage_name: str, params: dict) -> RunState:
+        """跳过 stage_name 自己的闸门，直接用新 params 重跑它，并把它的下
+        游重置成 PENDING——用于"闸门已经问过、调用方这次给的就是答案，不
+        需要闸门再问一遍"的场景（比如 Style 闸门首次拿到风格描述、或者
+        StyleApplyAll 闸门被拒绝后用新描述重新挑风格）。跟 apply_adjustment
+        的区别：apply_adjustment 只重置状态、把 gate_state 清空，下一次
+        advance() 发现目标 stage 又是 PENDING 且带闸门，会重新触发一次闸
+        门；rerun_stage 直接调 _run_stage，不经过 advance() 的闸门检查。
+        """
+        spec = self._spec_by_name(run, stage_name)
+        spec.params.update(params)
+
+        for name in self._downstream_of(run.plan, stage_name):
+            run.stage_states[name] = StageStatus.PENDING
+            run.outputs.pop(name, None)
+
+        run.gate_state = None
+        run.status = RunStatus.RUNNING
+        self._run_stage(run, spec)
+        self.store.save(run)
+        return run
+
     def apply_adjustment(self, run: RunState, delta: PlanDelta) -> RunState:
         spec = self._spec_by_name(run, delta.stage_name)
         spec.params.update(delta.params)
