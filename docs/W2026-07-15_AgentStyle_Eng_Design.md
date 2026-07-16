@@ -142,3 +142,11 @@ def _marker_path(self, run_id: str, selected: List[str], applied_styles: Dict[st
 7. 真机验证。
 
 具体步骤见 `.claude/plans/fully-understand-the-pzt-iterative-gosling.md`（本次实现用的 TDD 计划）。
+
+## 九、Provider 默认值改成 local（quota 考虑，实现过程中追加）
+
+跟目标三本身不是同一件事，但在接线过程中一起做了：`Evaluate`/`Style` 的视觉 provider 默认值、以及 `compose_plan`/`parse_adjustment` 等纯文本"意图/调整解析"用的 `meta_provider` 默认值，统一从 `"gemini"` 改成 `"local"`（Ollama）——避免每次开发/测试都消耗云端 API 额度。两者是完全独立的两条调用链路：视觉 provider 走 `core::ai::request_json`（`Provider::Local` 已在目标一落地），`meta_provider` 走 Python 侧 `agent/compose/llm_client.py`（这次新增了 Ollama 分支，不需要 API key，POST 到 `http://localhost:11434/api/chat`，响应形状是 `message.content`，是 `core/ai/ai.cpp` 对应逻辑的纯文本镜像）。
+
+**副作用发现**：`router/session_router.py` 里 `classify_gate_reply_fn`/`classify_collecting_message_fn`/`refine_plan_confirmation_fn` 三个回调调用点都没有注入 `http_post`，`agent/tests/router/router_fakes.py` 的共享测试 fixture `_run_to_gate` 一直隐式依赖"provider=gemini 时没设 `GEMINI_API_KEY` 会立刻报 `missing_api_key`"这个副作用来避免测试真的发网络请求。改成默认 `local` 之后没有 API key 检查这一步，会直接尝试连真实的 `localhost:11434`，在沙盒里既不成功也不快速失败，导致测试挂起。修法：`router_fakes.py` 给 `classify_collecting_message_fn` 一个默认就抛 `AdjustmentError` 的假实现（复现原来"分类失败就照老办法处理"的降级路径，不发真请求），需要测真实分类结果的测试照旧显式传自己的假函数覆盖。
+
+**生产环境的对应影响**：真实 bot 场景下，用户在闸门回复的文本如果不匹配"好的"/"取消"这类关键词，会走 `classify_gate_reply_fn` 尝试连本地 Ollama——如果 Ollama 没启动或很慢，这次回复会等到 60 秒超时才降级，不再是过去因为没配云端 key 而立刻报错。这是"默认走本地、省额度"这个选择本身自带的权衡，不是这次改动引入的新缺陷。
