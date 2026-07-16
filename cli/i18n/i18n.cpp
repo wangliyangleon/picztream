@@ -1619,65 +1619,65 @@ std::string recipe_menu_custom_full(const std::string &preset_name) {
 
 std::string recipe_menu_input_highlights() {
   if (g_lang == Lang::zh) {
-    return " 高光(直接 Enter = 0): ";
+    return " 高光(-100~100%,直接 Enter = 0): ";
   } else {
-    return " Highlights (Enter = 0): ";
+    return " Highlights (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_shadows() {
   if (g_lang == Lang::zh) {
-    return " 暗光(直接 Enter = 0): ";
+    return " 暗光(-100~100%,直接 Enter = 0): ";
   } else {
-    return " Shadows (Enter = 0): ";
+    return " Shadows (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_wb_r() {
   if (g_lang == Lang::zh) {
-    return " 白平衡-红(直接 Enter = 0): ";
+    return " 白平衡-红(-100~100%,直接 Enter = 0): ";
   } else {
-    return " WhiteBalance-Red (Enter = 0): ";
+    return " WhiteBalance-Red (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_wb_b() {
   if (g_lang == Lang::zh) {
-    return " 白平衡-蓝(直接 Enter = 0): ";
+    return " 白平衡-蓝(-100~100%,直接 Enter = 0): ";
   } else {
-    return " WhiteBalance-Blue (Enter = 0): ";
+    return " WhiteBalance-Blue (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_contrast() {
   if (g_lang == Lang::zh) {
-    return " 对比度(直接 Enter = 0): ";
+    return " 对比度(-100~100%,直接 Enter = 0): ";
   } else {
-    return " Contrast (Enter = 0): ";
+    return " Contrast (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_saturation() {
   if (g_lang == Lang::zh) {
-    return " 饱和度(直接 Enter = 0): ";
+    return " 饱和度(-100~100%,直接 Enter = 0): ";
   } else {
-    return " Saturation (Enter = 0): ";
+    return " Saturation (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_blacks() {
   if (g_lang == Lang::zh) {
-    return " 黑色(直接 Enter = 0): ";
+    return " 黑色(-100~100%,直接 Enter = 0): ";
   } else {
-    return " Blacks (Enter = 0): ";
+    return " Blacks (-100~100%, Enter = 0): ";
   }
 }
 
 std::string recipe_menu_input_whites() {
   if (g_lang == Lang::zh) {
-    return " 白色(直接 Enter = 0): ";
+    return " 白色(-100~100%,直接 Enter = 0): ";
   } else {
-    return " Whites (Enter = 0): ";
+    return " Whites (-100~100%, Enter = 0): ";
   }
 }
 
