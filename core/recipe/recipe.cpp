@@ -30,27 +30,6 @@ bool preset_name_exists(sqlite3* conn, const std::string& name) {
   return sqlite3_step(stmt.get()) == SQLITE_ROW;
 }
 
-void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
-                  const std::vector<float>& lut) {
-  Stmt stmt(conn, R"sql(
-    INSERT OR IGNORE INTO recipes
-      (parent_id, name, is_system, base_lut_size, base_lut, created_at)
-    VALUES (NULL, ?, 1, ?, ?, ?);
-  )sql");
-  sqlite3_bind_text(stmt.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int(stmt.get(), 2, lut_size);
-  sqlite3_bind_blob(stmt.get(), 3, lut.data(), static_cast<int>(lut.size() * sizeof(float)),
-                     SQLITE_TRANSIENT);
-  sqlite3_bind_int64(stmt.get(), 4, now_unix());
-  // F-17：`INSERT OR IGNORE` 命中已存在的预设名字时也返回 SQLITE_DONE
-  // (这是幂等播种的正常情形，不是错误)——只有真正的写入失败(磁盘满、
-  // 库损坏)才会拿到别的返回值，跟 project::/tagging:: 现有的"查了就
-  // throw"约定统一。
-  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-    throw std::runtime_error(std::string("seed preset failed: ") + sqlite3_errmsg(conn));
-  }
-}
-
 // "Origin" 没有 base_lut——它代表"没有基础调色风格，只有亮度/白平衡这
 // 类细节可调"，固定用 id=0(照抄"废片"系统标签固定占 0 号位的先例)。跟
 // seed_preset 不共用一个函数,因为它的行相比其它预设少了 base_lut_size/
@@ -126,6 +105,28 @@ std::vector<float> make_graded_lut(int n, const GradeParams& params) {
   return lut;
 }
 
+void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
+                  const std::vector<float>& lut, double grain_amount) {
+  Stmt stmt(conn, R"sql(
+    INSERT OR IGNORE INTO recipes
+      (parent_id, name, is_system, base_lut_size, base_lut, grain_amount, created_at)
+    VALUES (NULL, ?, 1, ?, ?, ?, ?);
+  )sql");
+  sqlite3_bind_text(stmt.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(stmt.get(), 2, lut_size);
+  sqlite3_bind_blob(stmt.get(), 3, lut.data(), static_cast<int>(lut.size() * sizeof(float)),
+                     SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt.get(), 4, grain_amount);
+  sqlite3_bind_int64(stmt.get(), 5, now_unix());
+  // F-17：`INSERT OR IGNORE` 命中已存在的预设名字时也返回 SQLITE_DONE
+  // (这是幂等播种的正常情形，不是错误)——只有真正的写入失败(磁盘满、
+  // 库损坏)才会拿到别的返回值，跟 project::/tagging:: 现有的"查了就
+  // throw"约定统一。
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("seed preset failed: ") + sqlite3_errmsg(conn));
+  }
+}
+
 }  // namespace detail
 
 std::vector<PresetSummary> list_presets(db::Database& db) {
@@ -166,8 +167,9 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id) 
 void ensure_default_presets(db::Database& db) {
   seed_origin_preset(db.handle());  // 没有 LUT 要算，INSERT OR IGNORE 本身足够便宜，不需要同样的守卫
   if (!preset_name_exists(db.handle(), "Warm")) {
-    seed_preset(db.handle(), "Warm", 17,
-                detail::make_graded_lut(17, detail::GradeParams{15, -10, 0, 0, 0}));
+    detail::seed_preset(db.handle(), "Warm", 17,
+                         detail::make_graded_lut(17, detail::GradeParams{15, -10, 0, 0, 0}),
+                         /*grain_amount=*/0);
   }
 }
 
@@ -304,21 +306,29 @@ std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId reci
 
 namespace {
 
-std::optional<color::Lut3D> load_lut(sqlite3* conn, RecipeId preset_id) {
-  Stmt stmt(conn, "SELECT base_lut_size, base_lut FROM recipes WHERE id = ?;");
-  sqlite3_bind_int64(stmt.get(), 1, preset_id);
-  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return std::nullopt;
+struct PresetLook {
+  std::optional<color::Lut3D> lut;
+  double grain_amount = 0;
+};
 
+PresetLook load_preset_look(sqlite3* conn, RecipeId preset_id) {
+  Stmt stmt(conn, "SELECT base_lut_size, base_lut, grain_amount FROM recipes WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, preset_id);
+  if (sqlite3_step(stmt.get()) != SQLITE_ROW) return {};
+
+  PresetLook look;
+  look.grain_amount = sqlite3_column_double(stmt.get(), 2);
   int size = sqlite3_column_int(stmt.get(), 0);
   const void* blob = sqlite3_column_blob(stmt.get(), 1);
   int blob_bytes = sqlite3_column_bytes(stmt.get(), 1);
-  if (!blob || size <= 0) return std::nullopt;
+  if (!blob || size <= 0) return look;  // 没有 LUT(比如 Origin)是合法状态,grain_amount 仍然有效
 
   color::Lut3D lut;
   lut.size = size;
   lut.data.resize(static_cast<std::size_t>(blob_bytes) / sizeof(float));
   std::memcpy(lut.data.data(), blob, static_cast<std::size_t>(blob_bytes));
-  return lut;
+  look.lut = std::move(lut);
+  return look;
 }
 
 }  // namespace
@@ -341,10 +351,12 @@ std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_i
     params.wb_shift_b = sqlite3_column_double(stmt.get(), 4);
   }
 
-  // load_lut 返回空是合法状态(比如 Origin 这个预设本身就没有
-  // base_lut),不是错误——不在这里拒绝,直接把"没有 LUT"这个事实带出去,
-  // 交给 render 决定要不要跳过 apply_lut。
-  return ResolvedRecipe{load_lut(conn, preset_id), params};
+  // load_preset_look 里 lut 为空是合法状态(比如 Origin 这个预设本身就没
+  // 有 base_lut),不是错误——不在这里拒绝,直接把"没有 LUT"这个事实带出
+  // 去,交给 render 决定要不要跳过 apply_lut。grain_amount 无论有没有
+  // LUT 都有效。
+  auto look = load_preset_look(conn, preset_id);
+  return ResolvedRecipe{look.lut, params, look.grain_amount};
 }
 
 Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
@@ -369,6 +381,12 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
   bool has_adjustments = p.highlights != 0 || p.shadows != 0 || p.wb_shift_r != 0 || p.wb_shift_b != 0;
   if (has_adjustments) {
     color::apply_adjustments(out, p.highlights, p.shadows, p.wb_shift_r, p.wb_shift_b, thread_count);
+  }
+  // grain_amount<=0 时完全跳过——跟"Origin 没有 LUT 就跳过 apply_lut"是
+  // 同一个优化精神,不做无意义的整图遍历。apply_grain 内部也有同样的判
+  // 断,这里是省"要不要走进 core::color 这一层"的调用开销。
+  if (resolved->grain_amount > 0) {
+    color::apply_grain(out, static_cast<float>(resolved->grain_amount), thread_count);
   }
   return Result<decode::DecodedImage, RenderRecipeError>::Ok(std::move(out));
 }

@@ -199,6 +199,11 @@ void initialize_schema(sqlite3* conn) {
   // PRAGMA table_info 检查一个已经不可能再发生的迁移是纯粹的浪费，删
   // 掉这个一次性清理逻辑（连同已经没有其它调用方的 ensure_column_
   // dropped 辅助函数）。
+  // 目标二：预设级烘焙好的颗粒强度(0..1)，跟 base_lut/base_lut_size 一样
+  // 是"预设的底子"，version 不能覆盖。默认值 0 让旧库迁移时所有已有预设
+  // (包括即将被清理的占位 Warm)行为不变，见
+  // docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
+  ensure_column(conn, "recipes", "grain_amount", "grain_amount REAL NOT NULL DEFAULT 0");
 }
 
 }  // namespace pzt::core::db

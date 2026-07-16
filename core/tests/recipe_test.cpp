@@ -518,3 +518,40 @@ TEST_CASE("make_graded_lut brightness adds a flat offset before clamping") {
   CHECK(lut[idx * 3 + 1] == doctest::Approx(0.7));
   CHECK(lut[idx * 3 + 2] == doctest::Approx(0.7));
 }
+
+TEST_CASE("resolve_recipe carries the preset's grain_amount, versions don't override it") {
+  auto db = Database::open_at(temp_db_path("recipe_grain_resolve"));
+  ensure_default_presets(db);
+  detail::seed_preset(db.handle(), "GrainTest", 5, detail::make_graded_lut(5, {}), /*grain_amount=*/0.4);
+  auto preset_id = list_presets(db).back().id;
+
+  auto resolved = resolve_recipe(db, preset_id);
+  REQUIRE(resolved.has_value());
+  CHECK(resolved->grain_amount == doctest::Approx(0.4));
+
+  auto version_id = create_version(db, preset_id, std::nullopt, VersionParams{}).value();
+  auto version_resolved = resolve_recipe(db, version_id);
+  REQUIRE(version_resolved.has_value());
+  CHECK(version_resolved->grain_amount == doctest::Approx(0.4));  // 来自父预设,不是自己这一行
+}
+
+TEST_CASE("render applies grain when the preset's grain_amount is nonzero") {
+  auto db = Database::open_at(temp_db_path("recipe_grain_render"));
+  ensure_default_presets(db);
+  detail::seed_preset(db.handle(), "GrainOn", 5, detail::make_graded_lut(5, {}), /*grain_amount=*/1.0);
+  detail::seed_preset(db.handle(), "GrainOff", 5, detail::make_graded_lut(5, {}), /*grain_amount=*/0.0);
+  auto presets = list_presets(db);
+  RecipeId on_id = presets[presets.size() - 2].id;
+  RecipeId off_id = presets[presets.size() - 1].id;
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 8;
+  src.height = 8;
+  src.rgba.assign(static_cast<std::size_t>(8) * 8 * 4, 128);
+
+  auto out_on = render(db, src, on_id);
+  auto out_off = render(db, src, off_id);
+  REQUIRE(out_on.ok());
+  REQUIRE(out_off.ok());
+  CHECK(out_on.value().rgba != out_off.value().rgba);  // 中性 LUT 相同,唯一差异是颗粒
+}

@@ -147,6 +147,7 @@ std::optional<RecipeDescription> describe_recipe(db::Database& db, RecipeId reci
 struct ResolvedRecipe {
   std::optional<color::Lut3D> lut;
   VersionParams params;
+  double grain_amount = 0;  // 来自预设行,version 不能覆盖——跟 lut 一样是烘焙好的"底子"
 };
 std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_id);
 
@@ -183,6 +184,12 @@ struct GradeParams {
 // 结束后三通道必然相等(collapse 到 luma),黑白预设直接复用这同一个函数,
 // 不需要单独的黑白代码路径。
 std::vector<float> make_graded_lut(int n, const GradeParams& params);
+
+// 仅供单元测试/ensure_default_presets 内部使用——按名字幂等插入一个预
+// 设(名字已存在时 INSERT OR IGNORE 静默跳过),真正对外的门面是
+// ensure_default_presets,不是这个函数本身。
+void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
+                  const std::vector<float>& lut, double grain_amount);
 
 }  // namespace detail
 
