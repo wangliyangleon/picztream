@@ -83,7 +83,7 @@ class GateReply:
 
 
 def parse_adjustment(msg: str, run: RunState, http_post: Optional[HttpPostFn] = None,
-                      meta_provider: str = "gemini") -> PlanDelta:
+                      meta_provider: str = "local") -> PlanDelta:
     decision = request_json(
         user_prompt=msg,
         schema_instruction=_SCHEMA_INSTRUCTION,
@@ -97,7 +97,7 @@ def parse_adjustment(msg: str, run: RunState, http_post: Optional[HttpPostFn] = 
 
 
 def classify_gate_reply(msg: str, run: RunState, http_post: Optional[HttpPostFn] = None,
-                         meta_provider: str = "gemini") -> GateReply:
+                         meta_provider: str = "local") -> GateReply:
     decision = request_json(
         user_prompt=msg,
         schema_instruction=_GATE_SCHEMA_INSTRUCTION,
@@ -183,7 +183,7 @@ class PlanConfirmationReply:
 
 def refine_plan_confirmation(original_intent: str, current_params: dict, followup_message: str,
                               http_post: Optional[HttpPostFn] = None,
-                              meta_provider: str = "gemini") -> PlanConfirmationReply:
+                              meta_provider: str = "local") -> PlanConfirmationReply:
     user_prompt = (
         f"原始意图：{original_intent}\n"
         f"你之前提出的方案：{json.dumps(current_params, ensure_ascii=False)}\n"
@@ -239,7 +239,7 @@ class CollectingReply:
 
 
 def classify_collecting_message(text: str, photo_count: int, http_post: Optional[HttpPostFn] = None,
-                                 meta_provider: str = "gemini") -> CollectingReply:
+                                 meta_provider: str = "local") -> CollectingReply:
     user_prompt = f"目前已收到 {photo_count} 张照片。用户消息：{text}"
     decision = request_json(
         user_prompt=user_prompt,

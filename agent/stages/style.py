@@ -19,7 +19,7 @@ class StyleStage:
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
         curate_output = ctx.outputs.get("Curate")
         selected: List[str] = curate_output.data.get("selected", []) if curate_output else []
-        provider = params.get("provider", "gemini")
+        provider = params.get("provider", "local")
 
         applied: Dict[str, str] = {}
         skipped: List[Dict[str, str]] = []

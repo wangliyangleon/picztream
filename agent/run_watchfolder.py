@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument("in_folder", nargs="?", help="待处理的照片文件夹")
     parser.add_argument("out_folder", nargs="?", help="产出 keeper 落地的文件夹")
     parser.add_argument("--count", type=int, default=9)
-    parser.add_argument("--provider", default="gemini", choices=["gemini", "claude"])
+    parser.add_argument("--provider", default="local", choices=["local", "gemini", "claude"])
     parser.add_argument("--apply-tag", default="精选")
     parser.add_argument("--no-auto-reject", action="store_true")
     parser.add_argument("--run-id")

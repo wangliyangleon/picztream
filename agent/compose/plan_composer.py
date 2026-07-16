@@ -16,18 +16,18 @@ from orchestrator.types import Plan, StageSpec
 _SCHEMA_INSTRUCTION = (
     "You are translating a user's free-text photo-culling request into structured "
     "pipeline parameters. Respond with a single JSON object with exactly these fields: "
-    '"provider" (string, either "gemini" or "claude", pick "gemini" unless the user '
-    'explicitly asks for Claude), "auto_reject" (boolean, whether photos that fail '
-    "quality evaluation should be automatically discarded, default true unless the "
-    'user says to keep everything), "count" (integer, how many final photos the user '
-    'wants, a reasonable default is 9 if unspecified), "apply_tag" (string, the tag '
-    'name to apply to the selected photos, default "精选" unless the user names a '
+    '"provider" (string, one of "local", "gemini", or "claude", pick "local" unless the '
+    'user explicitly asks for a cloud provider by name), "auto_reject" (boolean, whether '
+    "photos that fail quality evaluation should be automatically discarded, default true "
+    'unless the user says to keep everything), "count" (integer, how many final photos '
+    'the user wants, a reasonable default is 9 if unspecified), "apply_tag" (string, the '
+    'tag name to apply to the selected photos, default "精选" unless the user names a '
     "specific tag, album, or audience)."
 )
 
 
 def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan],
-                  http_post: Optional[HttpPostFn] = None, meta_provider: str = "gemini") -> Plan:
+                  http_post: Optional[HttpPostFn] = None, meta_provider: str = "local") -> Plan:
     del profile, last_config  # 子增量 E 未实现，签名锁定见本文件顶部说明
     decision = request_json(
         user_prompt=intent,
@@ -38,7 +38,7 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
     return Plan(stages=[
         StageSpec(name="Ingest"),
         StageSpec(name="Evaluate", params={
-            "provider": decision.get("provider", "gemini"),
+            "provider": decision.get("provider", "local"),
             "auto_reject": decision.get("auto_reject", True),
         }),
         StageSpec(name="Dedup"),
@@ -47,7 +47,7 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
             "apply_tag": decision.get("apply_tag", "精选"),
         }),
         StageSpec(name="Style", params={
-            "provider": decision.get("provider", "gemini"),
+            "provider": decision.get("provider", "local"),
         }),
         StageSpec(name="Deliver"),
     ])

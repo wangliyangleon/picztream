@@ -17,7 +17,7 @@ class EvaluateStage:
     criticality: str = "critical"
 
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
-        args = ["eval", ctx.project_id, "--scope", "*", "--provider", params.get("provider", "gemini")]
+        args = ["eval", ctx.project_id, "--scope", "*", "--provider", params.get("provider", "local")]
         if params.get("auto_reject", True):
             args.append("--auto-reject")
         try:

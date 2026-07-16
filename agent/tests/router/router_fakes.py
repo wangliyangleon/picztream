@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from compose.adjustment_parser import classify_collecting_message, classify_gate_reply, refine_plan_confirmation
+from compose.adjustment_parser import AdjustmentError, classify_gate_reply, refine_plan_confirmation
 from orchestrator.driver import Driver
 from orchestrator.types import Plan, StageSpec
 from pzt_client import PztClient
@@ -37,6 +37,19 @@ _FIXED_RESPONSES = {
     "recipe": '{"recipe_name": "Havana 1959", "reasoning": "warm mood fits"}',
     "export-images": '{"exported": 2, "skipped": [], "created_dir": true}',
 }
+
+
+def _default_classify_collecting_message(text: str, photo_count: int):
+    # _run_to_gate 发的"筛一下留2张"意图消息会经过 _handle_collecting 的
+    # classify_collecting_message_fn 这一步——真实实现现在默认走本地
+    # Ollama(meta_provider="local")，测试里没有真的 Ollama 可连，用一个
+    # 立刻失败的假实现复现"分类只是锦上添花，失败就照老办法当意图处
+    # 理"这条既有降级路径(router/session_router.py::_handle_collecting
+    # 的 try/except)，不让测试真的发网络请求。需要测分类结果本身的用
+    # classify_collecting_message_fn= 显式传自己的假实现覆盖这个默认值
+    # (见 test_session_router_query.py)。
+    del text, photo_count
+    raise AdjustmentError("no_llm_in_tests", "classify_collecting_message not faked in this test")
 
 
 def _fake_runner(argv: List[str]) -> subprocess.CompletedProcess:
@@ -90,7 +103,7 @@ def _make_router(tmp_path: Path, compose_plan_fn: Callable = _fake_compose_plan,
                   runner: Callable = _fake_runner, now_fn: Callable[[], float] = time.time,
                   idle_reminder_seconds: float = 300.0,
                   refine_plan_confirmation_fn: Callable = refine_plan_confirmation,
-                  classify_collecting_message_fn: Callable = classify_collecting_message
+                  classify_collecting_message_fn: Callable = _default_classify_collecting_message
                   ) -> Tuple[SessionRouter, RunStore, FakeTransport, PztClient]:
     client = PztClient(pzt_bin="/fake/pzt", runner=runner)
     transport = FakeTransport()

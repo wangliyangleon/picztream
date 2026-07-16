@@ -8,7 +8,7 @@ from __future__ import annotations
 from orchestrator.types import Plan
 
 _EXPECTED_STAGE_NAMES = ["Ingest", "Evaluate", "Dedup", "Curate", "Style", "Deliver"]
-_VALID_PROVIDERS = ("gemini", "claude")
+_VALID_PROVIDERS = ("local", "gemini", "claude")
 # 1 到 50：下限 1 是"至少选一张"这个最基本的合法性，交给 curate 自己
 # 处理"候选不够"这种更细的场景；上限 50 对齐 PRD 示例(一天出去玩拍
 # 40 张、挑 9 到 12 张)的量级上限，用来拦住模型编出"挑 500 张"这种

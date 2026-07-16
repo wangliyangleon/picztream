@@ -13,8 +13,11 @@ from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec
 
 
 def _fake_http_post(decision_json):
+    # 目标三：meta_provider 默认值改成 "local"（Ollama），不再需要
+    # GEMINI_API_KEY，响应形状也跟着换成 message.content（见
+    # compose/llm_client.py::_parse_local_response）。
     def fake(url, headers, body):
-        response = {"candidates": [{"content": {"parts": [{"text": json.dumps(decision_json)}]}}]}
+        response = {"message": {"role": "assistant", "content": json.dumps(decision_json)}}
         return 200, json.dumps(response)
     return fake
 
@@ -33,7 +36,6 @@ def _make_run(selected, exclude=None):
 
 
 def test_parse_adjustment_set_count(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg"])
 
     delta = parse_adjustment("留12张", run, http_post=_fake_http_post({"action": "set_count", "count": 12}))
@@ -43,7 +45,6 @@ def test_parse_adjustment_set_count(monkeypatch):
 
 
 def test_parse_adjustment_set_apply_tag(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg"])
 
     delta = parse_adjustment(
@@ -56,7 +57,6 @@ def test_parse_adjustment_set_apply_tag(monkeypatch):
 
 
 def test_parse_adjustment_swap_out_resolves_index_against_selected_order(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
     delta = parse_adjustment("换掉第3张", run, http_post=_fake_http_post({"action": "swap_out", "index": 3}))
@@ -66,7 +66,6 @@ def test_parse_adjustment_swap_out_resolves_index_against_selected_order(monkeyp
 
 
 def test_parse_adjustment_swap_out_merges_with_existing_exclude(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"], exclude=["x.jpg"])
 
     delta = parse_adjustment("换掉第2张", run, http_post=_fake_http_post({"action": "swap_out", "index": 2}))
@@ -75,7 +74,6 @@ def test_parse_adjustment_swap_out_merges_with_existing_exclude(monkeypatch):
 
 
 def test_parse_adjustment_swap_out_out_of_range_raises(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
     with pytest.raises(AdjustmentError) as exc_info:
@@ -85,7 +83,6 @@ def test_parse_adjustment_swap_out_out_of_range_raises(monkeypatch):
 
 
 def test_parse_adjustment_unknown_action_raises(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg"])
 
     with pytest.raises(AdjustmentError) as exc_info:
@@ -95,7 +92,6 @@ def test_parse_adjustment_unknown_action_raises(monkeypatch):
 
 
 def test_classify_gate_reply_recognizes_casual_approval(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
     reply = classify_gate_reply("挺好的，就这三张吧", run, http_post=_fake_http_post({"action": "approve"}))
@@ -105,7 +101,6 @@ def test_classify_gate_reply_recognizes_casual_approval(monkeypatch):
 
 
 def test_classify_gate_reply_recognizes_reject(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg"])
 
     reply = classify_gate_reply("算了不要了", run, http_post=_fake_http_post({"action": "reject"}))
@@ -115,7 +110,6 @@ def test_classify_gate_reply_recognizes_reject(monkeypatch):
 
 
 def test_classify_gate_reply_still_resolves_adjustments_with_a_delta(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
     reply = classify_gate_reply("换掉第3张", run, http_post=_fake_http_post({"action": "swap_out", "index": 3}))
@@ -126,7 +120,6 @@ def test_classify_gate_reply_still_resolves_adjustments_with_a_delta(monkeypatch
 
 
 def test_classify_gate_reply_unknown_action_raises(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg"])
 
     with pytest.raises(AdjustmentError) as exc_info:
@@ -136,7 +129,6 @@ def test_classify_gate_reply_unknown_action_raises(monkeypatch):
 
 
 def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
 
     reply = refine_plan_confirmation(
@@ -149,7 +141,6 @@ def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monke
 
 
 def test_refine_plan_confirmation_merges_specific_correction_and_keeps_the_rest(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
 
     reply = refine_plan_confirmation(
@@ -165,7 +156,6 @@ def test_refine_plan_confirmation_merges_specific_correction_and_keeps_the_rest(
 
 
 def test_refine_plan_confirmation_unknown_action_raises(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
 
     with pytest.raises(AdjustmentError) as exc_info:
@@ -178,7 +168,6 @@ def test_refine_plan_confirmation_unknown_action_raises(monkeypatch):
 
 
 def test_classify_gate_reply_recognizes_a_status_query(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
     reply = classify_gate_reply("选了几张呀？", run, http_post=_fake_http_post({"action": "query"}))
@@ -187,7 +176,6 @@ def test_classify_gate_reply_recognizes_a_status_query(monkeypatch):
 
 
 def test_refine_plan_confirmation_recognizes_a_status_query(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
 
     reply = refine_plan_confirmation(
@@ -199,7 +187,6 @@ def test_refine_plan_confirmation_recognizes_a_status_query(monkeypatch):
 
 
 def test_refine_plan_confirmation_recognizes_natural_language_approval(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
 
     reply = refine_plan_confirmation(
@@ -211,7 +198,6 @@ def test_refine_plan_confirmation_recognizes_natural_language_approval(monkeypat
 
 
 def test_refine_plan_confirmation_recognizes_natural_language_rejection(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     current_params = {"provider": "gemini", "auto_reject": True, "count": 9, "apply_tag": "精选"}
 
     reply = refine_plan_confirmation(
@@ -223,7 +209,6 @@ def test_refine_plan_confirmation_recognizes_natural_language_rejection(monkeypa
 
 
 def test_classify_collecting_message_recognizes_a_status_query(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
 
     reply = classify_collecting_message("你收到几张图片了？", 7, http_post=_fake_http_post({"action": "query"}))
 
@@ -231,7 +216,6 @@ def test_classify_collecting_message_recognizes_a_status_query(monkeypatch):
 
 
 def test_classify_collecting_message_recognizes_a_real_intent(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
 
     reply = classify_collecting_message("帮我选几张发朋友圈", 7, http_post=_fake_http_post({"action": "intent"}))
 
@@ -239,7 +223,6 @@ def test_classify_collecting_message_recognizes_a_real_intent(monkeypatch):
 
 
 def test_classify_collecting_message_unknown_action_raises(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
 
     with pytest.raises(AdjustmentError) as exc_info:
         classify_collecting_message("随便说点什么", 7, http_post=_fake_http_post({"action": "do_something_else"}))
