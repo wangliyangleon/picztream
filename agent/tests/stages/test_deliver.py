@@ -28,6 +28,16 @@ def make_curate_output_ctx(selected):
     )
 
 
+def make_curate_and_style_output_ctx(selected, applied):
+    return StageContext(
+        run_id="run-1", project_id="proj-1",
+        outputs={
+            "Curate": StageOutput(ok=True, data={"selected": selected}),
+            "Style": StageOutput(ok=True, data={"applied": applied}),
+        },
+    )
+
+
 def test_deliver_exports_to_its_own_staging_dir_then_sends_each_selected_file(tmp_path):
     captured = {}
 
@@ -148,6 +158,29 @@ def test_deliver_resends_when_curate_selection_changes_after_adjustment(tmp_path
     assert len(calls) == 2  # export-images 对两次不同的选片都真的调用了
     assert len(transport.sent_files) == 2
     assert transport.sent_files[1][1].endswith("b.jpg")
+    assert output.data.get("already_delivered") is not True
+
+
+def test_deliver_resends_when_style_changed_for_the_same_selection(tmp_path):
+    # 目标三：Style 只调颜色不改文件路径，同样的 selected 列表配合不同
+    # 的风格必须被当成"不同的一次交付"，不能被去重标记误判成已经交付
+    # 过——见 docs/W2026-07-15_AgentStyle_Eng_Design.md 第七节。
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout='{"exported": 1, "skipped": [], "created_dir": true}\n', stderr="")
+
+    client = PztClient(pzt_bin="/fake/pzt", runner=fake_runner)
+    transport = FakeTransport()
+    marker_dir = tmp_path / "delivered"
+    stage = DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=tmp_path / "staging")
+
+    stage.run(make_curate_and_style_output_ctx(["a.jpg"], {"a.jpg": "Havana 1959"}), {})
+    output = stage.run(make_curate_and_style_output_ctx(["a.jpg"], {"a.jpg": "Tokyo 1966"}), {})
+
+    assert len(calls) == 2  # export-images 对两次不同的风格都真的调用了
+    assert len(transport.sent_files) == 2
     assert output.data.get("already_delivered") is not True
 
 
