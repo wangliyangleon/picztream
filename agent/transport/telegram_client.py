@@ -9,9 +9,10 @@ transport/telegram.py::TelegramTransport 的活)，只是给 Task 2 一个小
 from __future__ import annotations
 
 import os
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 import telegram
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 
 
@@ -56,6 +57,19 @@ class TelegramBotClient:
 
     async def send_text(self, chat_id: str, text: str) -> None:
         await self._bot.send_message(chat_id=chat_id, text=text)
+
+    async def send_text_with_buttons(self, chat_id: str, text: str,
+                                      buttons: List[Tuple[str, str]]) -> None:
+        # buttons: [(label, callback_data), ...]，单行排布（一个闸门只有
+        # 2-3 个选项，不需要多行）。callback_data 上限 64 字节，调用方保证
+        # （"approve:tg-xxxxxxxx" 这类远低于上限）。
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data)
+                                          for label, data in buttons]])
+        await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
+    async def answer_callback_query(self, callback_query_id: str) -> None:
+        # 必须应答，否则用户端按钮一直转圈。不带文案，只是消掉 loading。
+        await self._bot.answer_callback_query(callback_query_id)
 
     async def send_photo_bytes(self, chat_id: str, path: str) -> None:
         with open(path, "rb") as f:

@@ -53,6 +53,19 @@ _STYLE_GATE_STAGES = ("Style", "StyleApplyAll")
 _INFRA_ERROR_HINTS = ("network_error", "http_error", "missing_api_key", "unknown_provider",
                        "timed out", "Connection", "connection")
 
+# inline 按钮的动作 token。callback_data 拼成 "{token}:{run_id}"，点击回
+# 来时校验 run_id 防误触旧消息（见 _handle_callback）。真机反馈：所有
+# yes/no 确认点都改按钮，精确关键词匹配 + "非关键词一律当新风格描述" 太
+# 容易踩坑（"不错"/"ok好的" 被当描述 -> hallucinate）。打字仍然照旧可
+# 用（关键词批准/自由文本调整/重描述），按钮只是额外的无歧义快路径。
+_BTN_APPROVE = "approve"
+_BTN_REJECT = "reject"
+_BTN_RESTYLE = "restyle"
+_CONFIRM_BUTTONS = [("好的 ✅", _BTN_APPROVE), ("取消 ✖", _BTN_REJECT)]
+_DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("取消 ✖", _BTN_REJECT)]
+_STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE), ("取消 ✖", _BTN_REJECT)]
+_STYLE_ASK_BUTTONS = [("取消 ✖", _BTN_REJECT)]  # 问描述是开放式，只给取消
+
 
 class SessionConsumer:
     def __init__(self, store: Any, driver: Any, transport: Any, chat_id: str,
@@ -118,7 +131,11 @@ class SessionConsumer:
             print(f"[consumer] 忽略非白名单 chat_id={msg.chat_id}", flush=True)
             return
         print(f"[consumer] 收到 kind={msg.kind} text={(msg.text or '')!r} "
-              f"file={msg.file_path!r} status={self.view.status}", flush=True)
+              f"file={msg.file_path!r} data={getattr(msg, 'data', None)!r} "
+              f"status={self.view.status}", flush=True)
+        if msg.kind == "callback":
+            self._handle_callback(getattr(msg, "data", None))
+            return
         if (self.view.status == RunStatus.RUNNING and not self.view.drive_active
                 and self.active_drive_job is None and self.view.run_id is not None):
             # worker job 崩过、run 停在检查点：下一条用户消息触发续跑
@@ -178,6 +195,36 @@ class SessionConsumer:
             self._reset_session()
             return
         self._send("现在没有在处理的批次")
+
+    def _handle_callback(self, data: Optional[str]) -> None:
+        """inline 按钮点击。callback_data 形如 "approve:tg-xxxxxxxx"，校验
+        run_id 防误触旧消息里的按钮（换了 run 或已进入 drive 的旧按钮一律
+        算过期）。批准/取消/重选映射到跟打字关键词完全一致的处理路径。"""
+        action, _, run_id = (data or "").partition(":")
+        print(f"[consumer] 按钮点击 action={action!r} run_id={run_id!r}", flush=True)
+        if self.view.drive_active or self.run is None or self.view.run_id != run_id:
+            self._send("这个选项已经过期了，看我最新的消息哈")
+            return
+        self._touch_activity()
+        if action == _BTN_REJECT:
+            self.driver.cancel(self.run)
+            self._send("已取消")
+            self._reset_session()
+            return
+        if action == _BTN_APPROVE:
+            if self.run.status == RunStatus.PLANNED:
+                self._begin_running()
+                return
+            if self.run.status == RunStatus.AWAITING_GATE:
+                # StyleApplyAll 预览确认、Deliver 选图确认都是"批准即推进"。
+                # Style 问描述那步没有批准按钮，不会走到这里。
+                self._enqueue_drive("resolve_gate", self.run.run_id)
+                return
+        if action == _BTN_RESTYLE and self.run.status == RunStatus.AWAITING_GATE:
+            # 重选：不带新描述，回到"等一句风格描述"，用户下一条文字即新描述。
+            self._send("想要什么风格？直接打字告诉我，比如\"复古暖色调\"")
+            return
+        self._send("这个操作现在用不了，看我最新的消息哈")
 
     def _reset_session(self) -> None:
         self.generation += 1  # 之后到达的旧事件全部过期丢弃
@@ -432,7 +479,7 @@ class SessionConsumer:
             self.view.gate_stage = event.stage
         payload = event.payload
         if event.stage == "Style":
-            self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
+            self._send_buttons("想要什么风格？用一句话描述就行，比如\"复古暖色调\"", _STYLE_ASK_BUTTONS)
         elif event.stage == "StyleApplyAll":
             self._render_style_apply_all_gate(payload)
         else:
@@ -448,8 +495,9 @@ class SessionConsumer:
             return
         if not payload.get("preview_sent"):
             self._send("预览图发送失败，不过风格已经选好了")
-        self._send(f"这是用「{chosen}」套用的效果，OK 就回复\"好的\"，"
-                   "不满意直接说说想要什么风格，不要了就说\"取消\"")
+        self._send_buttons(f"这是用「{chosen}」套用的效果，满意点\"满意\"，"
+                           "想换点\"重选\"或直接打字说想要什么风格，不要了点\"取消\"",
+                           _STYLE_APPLY_ALL_BUTTONS)
 
     def _render_deliver_gate(self, payload: dict) -> None:
         if payload.get("export_error"):
@@ -460,8 +508,8 @@ class SessionConsumer:
             summary += f"，已套用风格「{payload['applied_recipe']}」"
         if payload.get("preview_failed_count"):
             summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，交付时仍会正常导出)"
-        summary += "，满意就回复\"好的\"，不满意说说想怎么调，不要了就说\"取消\""
-        self._send(summary)
+        summary += "，满意点\"满意\"，想调整直接打字说，不要了点\"取消\""
+        self._send_buttons(summary, _DELIVER_BUTTONS)
 
     def _on_run_finished(self, event: RunFinished) -> None:
         self.active_drive_job = None
@@ -582,6 +630,19 @@ class SessionConsumer:
         print(f"[consumer] 回复: {text!r}", flush=True)
         self.transport.send_text(self.chat_id, text)
 
+    def _send_buttons(self, text: str, actions: list) -> None:
+        """带 inline 按钮发一条确认。transport 没有 send_buttons 能力时
+        （run_watchfolder 等非 Telegram 入口，或旧版 transport）降级成纯文
+        本——打字关键词/自由文本那套仍然照常工作，不至于卡死。"""
+        run_id = self.view.run_id or (self.run.run_id if self.run else None)
+        send_buttons = getattr(self.transport, "send_buttons", None)
+        if send_buttons is None or run_id is None:
+            self._send(text)
+            return
+        options = [(label, f"{token}:{run_id}") for label, token in actions]
+        print(f"[consumer] 回复(带按钮): {text!r} buttons={[l for l, _ in actions]}", flush=True)
+        send_buttons(self.chat_id, text, options)
+
     def _current_plan_params(self, run: RunState) -> dict:
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
@@ -598,10 +659,11 @@ class SessionConsumer:
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
         auto_reject_desc = "自动剔除不合格照片" if evaluate.params["auto_reject"] else "不自动剔除照片"
-        self._send(
+        self._send_buttons(
             f"理解你想：留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，"
             f"{auto_reject_desc}，对吗？"
-            "\n满意就说\"好的\"，不对就直接说想怎么改，不要了就说\"取消\"",
+            "\n满意点\"好的\"，想改直接打字说，不要了点\"取消\"",
+            _CONFIRM_BUTTONS,
         )
 
 

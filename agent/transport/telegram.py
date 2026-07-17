@@ -80,6 +80,10 @@ class TelegramTransport:
                         pass  # 连报错消息都发不出去就算了，不要再往外抛
 
     async def _handle_update(self, update: Any) -> None:
+        callback = getattr(update, "callback_query", None)
+        if callback is not None:
+            await self._handle_callback_query(callback)
+            return
         message = getattr(update, "message", None)
         if message is None:
             return
@@ -107,6 +111,21 @@ class TelegramTransport:
                   f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
                   f"document={getattr(message, 'document', 'N/A')!r}")
 
+    async def _handle_callback_query(self, callback: Any) -> None:
+        # inline 按钮点击：先应答消掉客户端 loading 转圈，再把 callback_data
+        # 当作一条 kind="callback" 的入站消息投进队列，交给上层
+        # SessionConsumer 解析（形如 "approve:tg-xxxxxxxx"）。
+        message = getattr(callback, "message", None)
+        chat_id = str(message.chat.id) if message is not None else None
+        try:
+            await self._bot_client.answer_callback_query(callback.id)
+        except Exception as e:  # noqa: BLE001 应答失败只是转圈没消掉，不该拖垮轮询
+            print(f"[TelegramTransport] answer_callback_query 失败：{e!r}")
+        if chat_id != self.chat_id:
+            return
+        self._inbound.put(InboundMessage(kind="callback", chat_id=self.chat_id,
+                                          data=getattr(callback, "data", None)))
+
     def receive(self) -> List[InboundMessage]:
         messages: List[InboundMessage] = []
         while True:
@@ -118,6 +137,14 @@ class TelegramTransport:
 
     def send_text(self, chat_id: str, text: str) -> None:
         future = asyncio.run_coroutine_threadsafe(self._bot_client.send_text(chat_id, text), self._loop)
+        future.result(timeout=30)
+
+    def send_buttons(self, chat_id: str, text: str, options: List[Any]) -> None:
+        # options: [(label, callback_data), ...]。SessionConsumer 用 getattr
+        # 探测这个方法是否存在（见 consumer._send_buttons），所以它只在真机
+        # TelegramTransport 上有，其它 transport 不实现、自动降级成纯文本。
+        future = asyncio.run_coroutine_threadsafe(
+            self._bot_client.send_text_with_buttons(chat_id, text, options), self._loop)
         future.result(timeout=30)
 
     def send_photo(self, chat_id: str, path: str) -> None:

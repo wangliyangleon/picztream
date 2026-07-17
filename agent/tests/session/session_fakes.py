@@ -76,6 +76,7 @@ class FakeTransport:
         self.sent_texts: List[Tuple[str, str]] = []
         self.sent_photos: List[Tuple[str, str]] = []
         self.sent_files: List[Tuple[str, str]] = []
+        self.sent_buttons: List[Tuple[str, str, List]] = []
 
     def receive(self):
         messages, self.inbox = self.inbox, []
@@ -83,6 +84,17 @@ class FakeTransport:
 
     def send_text(self, chat_id: str, text: str) -> None:
         self.sent_texts.append((chat_id, text))
+
+    def send_buttons(self, chat_id: str, text: str, options: List) -> None:
+        # 也记进 sent_texts，让既有的 texts() 文案断言对带按钮的消息一样生效。
+        self.sent_texts.append((chat_id, text))
+        self.sent_buttons.append((chat_id, text, options))
+
+    def button_tokens(self) -> List[str]:
+        # 最近一条带按钮消息的动作 token（去掉 ":run_id" 后缀），方便断言。
+        if not self.sent_buttons:
+            return []
+        return [data.split(":", 1)[0] for _, data in self.sent_buttons[-1][2]]
 
     def send_photo(self, chat_id: str, path: str) -> None:
         self.sent_photos.append((chat_id, path))
@@ -245,6 +257,10 @@ class ConsumerEnv:
         self.transport.inbox.append(InboundMessage(kind="photo", chat_id=CHAT_ID,
                                                     file_path=str(src)))
         return src
+
+    def push_callback(self, data: str) -> None:
+        from transport.base import InboundMessage
+        self.transport.inbox.append(InboundMessage(kind="callback", chat_id=CHAT_ID, data=data))
 
     def drain_jobs(self) -> list:
         out = []

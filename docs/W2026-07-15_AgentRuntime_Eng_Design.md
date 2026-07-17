@@ -197,6 +197,10 @@ worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 jo
 - **确认/快照文案去掉 provider**：评估 provider 由 Settings 决定，对用户是无用信息，`_send_plan_confirmation` 与 `describe()` 都不再显示（provider 仍保留在 plan 参数里，refine 想改仍可改）。对齐清单第 9、10 条的文案据此更新。
 - **compose/分类失败区分基础设施错误**：命中 `network_error`/`http_error`/`missing_api_key` 等痕迹时回"AI 服务好像连不上"，而非误导性的"没看懂这句意图"。
 - **apply_tag 依目的地/受众取名**（`compose/plan_composer.py` prompt）：给出"发朋友圈→朋友圈、发ins→ins"等具体例子，只有完全没提目的地/受众/标签时才回落默认"精选"，纠正真机上"标签永远叫精选"的问题。
+- **所有 yes/no 确认点改 inline 按钮**（真机反馈第二轮）：起因是风格闸门用精确关键词匹配、非关键词一律当"新风格描述"，用户回"不错"/"ok好的"被当描述丢给 style_matcher → `hallucinated`。改法是给四个确认点挂 Telegram inline 按钮：方案确认 `[好的][取消]`、Style 问描述 `[取消]`（开放式，无批准）、StyleApplyAll 预览 `[满意][重选][取消]`、Deliver 选图 `[满意][取消]`。实现分层：
+  - **transport**：`InboundMessage` 加 `kind="callback"` + `data` 字段；`TelegramBotClient` 加 `send_text_with_buttons`（`InlineKeyboardMarkup`）与 `answer_callback_query`；`TelegramTransport._handle_update` 优先处理 `callback_query`（应答消 loading，转成 `kind="callback"` 入站），并加同步桥 `send_buttons`。`send_buttons` 是**可选能力**，不进 `Transport` Protocol 必需集，`WatchFolderTransport` 等不实现。
+  - **consumer**：`callback_data` 拼成 `"{action}:{run_id}"`，点击回来校验 `run_id`（换 run 或已进 drive 的旧按钮一律"过期"，防误触）；approve/reject/restyle 映射到与打字关键词完全一致的处理路径。打字仍照旧（关键词批准/自由文本调整/重描述），按钮只是额外的无歧义快路径。`_send_buttons` 在 transport 无按钮能力时降级为纯文本，非 Telegram 入口不受影响。
+  - **未做**：不改已发出消息的按钮态（点完不回收/置灰旧按钮），靠 `run_id` 过期判定兜底；够用，真机若嫌旧按钮可点再议。
 
 ## 九、复用与不动清单
 

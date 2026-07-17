@@ -263,8 +263,9 @@ def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
         "chosen_recipe": "Havana 1959", "preview_sent": True, "export_error": None}))
     env.consumer.step()
 
-    assert ("这是用「Havana 1959」套用的效果，OK 就回复\"好的\"，"
-            "不满意直接说说想要什么风格，不要了就说\"取消\"") in env.transport.texts()
+    assert ("这是用「Havana 1959」套用的效果，满意点\"满意\"，"
+            "想换点\"重选\"或直接打字说想要什么风格，不要了点\"取消\"") in env.transport.texts()
+    assert env.transport.button_tokens() == ["approve", "restyle", "reject"]
 
     env.push_text("好的")
     env.consumer.step()
@@ -295,7 +296,8 @@ def test_gate_deliver_summary_then_llm_adjustment(tmp_path):
     env.consumer.step()
 
     assert ("选好了 2 张，已套用风格「Havana 1959」，"
-            "满意就回复\"好的\"，不满意说说想怎么调，不要了就说\"取消\"") in env.transport.texts()
+            "满意点\"满意\"，想调整直接打字说，不要了点\"取消\"") in env.transport.texts()
+    assert env.transport.button_tokens() == ["approve", "reject"]
 
     env.push_text("换掉第1张")
     env.consumer.step()
