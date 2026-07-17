@@ -403,24 +403,7 @@ class SessionConsumer:
             return  # 防御：串行协议下不应发生
         result = event.result
         if event.kind == "collecting":
-            if self.run is None:
-                # 还没发照片：取消就说没有批次，其余一律给帮助（含误判成
-                # intent 的情况——没照片也没法真的开跑）。
-                if result.action == "cancel":
-                    self._send("现在没有在处理的批次")
-                else:
-                    self._send_help()
-                return
-            if result.action == "query":
-                self._send(self.view.describe())
-            elif result.action == "cancel":
-                self._prompt_cancel_confirmation()
-            elif result.action == "other":
-                # 不是选图指令（打招呼/闲聊/听不懂）：给帮助，别硬编个默认
-                # 方案（真机反馈：乱输入会回"留9张标签精选"的默认值）。
-                self._send_help()
-            else:
-                self._submit_compose(inflight["text"])
+            self._on_collecting_reply(result, inflight["text"])
             return
         if event.kind == "refine_plan":
             self._on_refine_reply(result)
@@ -437,6 +420,36 @@ class SessionConsumer:
         if event.kind == "cancel_confirm":
             self._on_cancel_confirm_reply(result, inflight["text"])
             return
+
+    def _on_collecting_reply(self, reply: Any, text: str) -> None:
+        # collecting -> planned 的转变有三条路（真机反馈"意图先于照片会被丢"）：
+        # ① 有照片后直接说完整意图 -> compose；② 有草稿方案（intent_raw）后
+        # 一句"开始" -> 用草稿 compose；③ 超时没新图 -> 见 _check_idle_reminder。
+        if self.run is None:
+            # 还没发照片（run is None ⟺ 无暂存照片）
+            if reply.action == "intent":
+                self._mint_collecting_run(draft_intent=text)  # 记草稿，等照片
+            elif reply.action == "start":
+                self._send("还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\"")
+            elif reply.action == "cancel":
+                self._send("现在没有在处理的批次")
+            else:
+                self._send_help()
+            return
+        # 已有照片（COLLECTING）
+        if reply.action == "intent":
+            self._submit_compose(text)  # 完整意图，直接组方案
+        elif reply.action == "start":
+            if self.run.intent_raw:
+                self._submit_compose(self.run.intent_raw)  # 用草稿方案开跑
+            else:
+                self._send("还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\"")
+        elif reply.action == "query":
+            self._send(self.view.describe())
+        elif reply.action == "cancel":
+            self._prompt_cancel_confirmation()
+        else:  # other：打招呼/闲聊/听不懂，给帮助，别硬编默认方案
+            self._send_help()
 
     def _on_style_gate_reply(self, reply: Any, text: str) -> None:
         # 预览确认闸门。approve→套全批；redescribe→拿这句当新描述重挑；
@@ -595,6 +608,10 @@ class SessionConsumer:
         self.view = view_from_run(run, self.incoming_root)
         if self.view.gate_stage is None:
             self.view.gate_stage = event.stage
+        # 闸门弹出＝现在才开始"等用户回复"，把 idle 计时器归零。否则跑了
+        # 几分钟 eval 之后，last_activity_at 停在用户上一条消息的时刻、早
+        # 已超时，闸门提问后会立刻又追一句 idle 提醒（真机反馈）。
+        self._touch_activity()
         payload = event.payload
         if event.stage == "Style":
             # 问描述是开放式，只能打字，不挂按钮。
@@ -671,11 +688,24 @@ class SessionConsumer:
         if now - run.last_activity_at < self.idle_reminder_seconds:
             return
         if run.status == RunStatus.COLLECTING:
-            self._send(f"看到你发了 {self.view.photo_count()} 张，想怎么处理？")
+            count = self.view.photo_count()
+            if run.intent_raw and count > 0 and self.inflight is None:
+                # 有草稿方案 + 有照片 + 一段时间没新图：直接按草稿组方案，交
+                # 给用户在 PLANNED 确认（草稿三条转变路径之一，见真机反馈）。
+                self._submit_compose(run.intent_raw)
+            elif run.intent_raw and count == 0:
+                self._send(f"还没收到照片哦，发几张我就按\"{run.intent_raw}\"开始～")
+            else:
+                self._send(f"看到你发了 {count} 张，想怎么处理？")
         elif run.status == RunStatus.PLANNED:
-            self._send("还在等你确认要不要这么处理，满意就说\"好的\"")
+            self._send("还在等你确认要不要这么处理，满意就点\"好的\"")
         elif run.status == RunStatus.AWAITING_GATE:
-            self._send("还在等你的回复呢，满意就点按钮，想调整直接打字说")
+            # Style 问描述那步没有按钮，别提示"点按钮"（真机反馈）。
+            gate = self.view.gate_stage or (run.gate_state.stage_name if run.gate_state else None)
+            if gate == "Style":
+                self._send("还在等你说想要什么风格呢，一句话描述就行，比如\"复古暖色调\"")
+            else:
+                self._send("还在等你的回复呢，满意就点按钮，想调整直接打字说")
         else:
             return
         run.reminder_sent = True
@@ -721,10 +751,11 @@ class SessionConsumer:
 
     # -- helpers --
 
-    def _mint_collecting_run(self) -> None:
+    def _mint_collecting_run(self, draft_intent: str = "") -> None:
         run = new_collecting_run(new_run_id())
         run.last_activity_at = self.now_fn()
         run.last_progress_notified_at = self.now_fn()
+        run.intent_raw = draft_intent  # 草稿方案：意图先于照片到达时先记下
         moved = drain_queue_into(self.incoming_root, run.run_id)
         self.store.save(run)
         self._adopt(run)
@@ -732,7 +763,11 @@ class SessionConsumer:
         # 全静默的（尤其图多时延迟明显），给用户一个"收到、任务开始了"的
         # 即时反馈（真机反馈）。只在新建 run 时发一次，后续照片仍逐张不回
         # 复、不刷屏。
-        if moved:
+        if draft_intent:
+            # 意图先来、照片还没来：记下草稿，等照片 + 一句"开始"或超时再组方案。
+            self._send(f"好的，记下了。把照片发给我，发完说一声（或直接说\"开始\"）"
+                       f"我就按\"{draft_intent}\"来～")
+        elif moved:
             self._send(f"收到～新任务开始了！之前排队的 {len(moved)} 张也并进这一批了，"
                        "照片尽管发，发完告诉我想怎么处理就行")
         else:

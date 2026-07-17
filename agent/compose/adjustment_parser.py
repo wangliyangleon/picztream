@@ -153,18 +153,22 @@ def _resolve_swap_out(index: int, run: RunState) -> PlanDelta:
 _CONFIRMATION_SCHEMA_INSTRUCTION = (
     "You proposed a photo-culling plan and asked the user to confirm it. You are given "
     "the user's original intent, the plan you proposed (as JSON), and the user's reply. "
-    "Respond with a single JSON object in one of five shapes: "
+    "The two adjustable fields are count (how many photos to keep) and apply_tag (the "
+    "tag/album/audience name). Respond with a single JSON object in one of five shapes: "
     '{"action": "approve"} if the user is satisfied and wants to proceed, even if '
     'phrased casually or indirectly (for example "好的，处理吧", "可以", "没问题"); '
     '{"action": "reject"} if the user wants to abandon this plan entirely (for example '
     '"算了", "不要了", "cancel"); '
-    '{"action": "query"} if the message is just a question about the current status '
-    '(for example "你收到几张图片了？", "现在的方案是什么？"), not an instruction to '
-    "change or approve anything; "
     '{"action": "confirmed", "provider": <string>, "auto_reject": <boolean>, '
-    '"count": <integer>, "apply_tag": <string>} if the reply lets you determine a '
-    "complete updated plan (for any field the user didn't ask to change, keep the same "
-    "value as the plan you proposed); "
+    '"count": <integer>, "apply_tag": <string>} if the reply asks to CHANGE any field. '
+    "Requests to change the number of photos or the tag are ALWAYS 'confirmed', never "
+    "'query'. Copy every field from the proposed plan and overwrite only what the user "
+    'asked to change. Examples (proposed count=3): "选六张吧"/"改成6张"/"要6张" -> count 6; '
+    '"留9张" -> count 9; "标签叫ins"/"发到ins" -> apply_tag "ins"; "6张，标签叫朋友圈" -> '
+    "count 6 and apply_tag \"朋友圈\"; "
+    '{"action": "query"} ONLY if the message is purely a question that asks for '
+    'information and requests NO change (for example "你收到几张图片了？", "现在留几张？"); '
+    'a message that states a new number or tag is NOT a query; '
     '{"action": "clarify", "question": <string>} if the reply seems to want a change but '
     'is too vague to safely act on (for example just "不对"/"no" with no specifics) - '
     "write a short, specific follow-up question to ask the user in that case."
@@ -222,12 +226,14 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
 
 
 _COLLECTING_SCHEMA_INSTRUCTION = (
-    "The user has been sending photos to a photo-culling bot and hasn't yet given a "
-    "processing instruction. You are given how many photos have been received so far "
-    "and the user's message. Respond with a single JSON object in one of four shapes: "
-    '{"action": "intent"} if the message is an actual instruction describing how to '
-    'process/cull/select the photos (for example "帮我选几张发朋友圈", "筛一下", '
-    '"挑5张精修", "把糊的去掉"); '
+    "The user is sending photos to a photo-culling bot and giving instructions. You are "
+    "given how many photos have been received so far and the user's message. Respond "
+    "with a single JSON object in one of five shapes: "
+    '{"action": "intent"} if the message describes HOW to process/cull/select the photos '
+    '(for example "帮我选几张发朋友圈", "筛一下", "挑5张精修", "把糊的去掉"); '
+    '{"action": "start"} if the message just says to begin now WITHOUT describing how - '
+    'a plain go-ahead, typically after they have already said what they want or finished '
+    'sending photos (for example "开始吧", "好了", "就这些", "可以了", "发完了", "弄吧"); '
     '{"action": "query"} if the message is just a question about the current status '
     '(for example "收到几张了？", "how many photos so far?"), not an instruction; '
     '{"action": "cancel"} if the message expresses wanting to abort/stop/cancel this '
@@ -241,7 +247,7 @@ _COLLECTING_SCHEMA_INSTRUCTION = (
 
 @dataclass
 class CollectingReply:
-    action: Literal["query", "intent", "cancel", "other"]
+    action: Literal["query", "intent", "start", "cancel", "other"]
 
 
 def classify_collecting_message(text: str, photo_count: int, http_post: Optional[HttpPostFn] = None,
@@ -254,7 +260,7 @@ def classify_collecting_message(text: str, photo_count: int, http_post: Optional
         http_post=http_post,
     )
     action = decision.get("action")
-    if action not in ("query", "intent", "cancel", "other"):
+    if action not in ("query", "intent", "start", "cancel", "other"):
         raise AdjustmentError("unknown_action", f"unrecognized collecting message action {action!r}")
     return CollectingReply(action=action)
 

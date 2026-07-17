@@ -17,6 +17,7 @@ step() 单步驱动是测试口径，线程只是 run() 这层薄壳。
 from __future__ import annotations
 
 import queue
+import shutil
 import threading
 import traceback
 from pathlib import Path
@@ -278,6 +279,11 @@ class SessionWorker:
         # selected 是项目 root_path 相对路径，必须先过一次 export-images
         # 才有真字节可发（跟旧 _send_preview / stages/deliver.py 同理）。
         preview_dir = self.preview_root / run.run_id
+        # 先清掉上一次导出的预览：export-images 遇到同名目标会消歧成
+        # name_2.jpg（core/export/export.cpp::resolve_collision），而
+        # _send_preview_media 永远发 name.jpg——不清就会把换风格前的旧预览
+        # 又发一遍（真机反馈：换滤镜后预览图没跟着变，但交付的图是对的）。
+        shutil.rmtree(preview_dir, ignore_errors=True)
         try:
             self.client.call("export-images", run.project_id, *selected, str(preview_dir))
         except PztCommandError as e:

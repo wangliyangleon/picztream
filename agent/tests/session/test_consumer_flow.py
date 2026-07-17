@@ -538,3 +538,72 @@ def test_gate_reject_via_llm_prompts_confirmation_not_immediate_cancel(tmp_path)
 
     assert any("确定要取消整批吗" in t for t in env.transport.texts())
     assert env.store.load(job.run_id).status == RunStatus.AWAITING_GATE  # 二次确认前不取消
+
+
+def test_intent_before_photos_is_kept_as_draft(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_text("选三张发朋友圈")
+    env.consumer.step()
+    [job] = env.drain_jobs()
+    assert job.kind == "collecting"  # 无 run，先分类
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+
+    # 记成草稿：建了 run、intent_raw 存下，不丢
+    [run] = env.store.list_active()
+    assert run.status == RunStatus.COLLECTING
+    assert run.intent_raw == "选三张发朋友圈"
+    assert any("记下了" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []  # 还没照片，不 compose
+
+
+def test_draft_then_photos_then_start_composes_from_draft(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_text("选三张发朋友圈")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+    env.push_photo("a.jpg", b"a")
+    env.consumer.step()
+
+    env.push_text("好了开始吧")
+    env.consumer.step()
+    [job] = env.drain_jobs()
+    assert job.kind == "collecting"
+    env.put_event(ClassifyDone(env.consumer.generation, "collecting",
+                                CollectingReply(action="start")))
+    env.consumer.step()
+
+    [compose_job] = env.drain_jobs()
+    assert isinstance(compose_job, ComposeJob)
+    assert compose_job.intent_text == "选三张发朋友圈"  # 用的是草稿
+
+
+def test_start_without_draft_asks_for_intent(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg", b"a")
+    env.consumer.step()
+
+    env.push_text("开始吧")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="start"))
+
+    assert any("还没告诉我想怎么处理" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []
+
+
+def test_idle_with_draft_and_photos_auto_composes(tmp_path):
+    from session_fakes import FakeClock
+    clock = FakeClock()
+    env = make_consumer(tmp_path, clock=clock)
+    env.push_text("选三张发朋友圈")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+    env.push_photo("a.jpg", b"a")
+    env.consumer.step()
+    env.drain_jobs()
+
+    clock.advance(300)
+    env.consumer.step()
+
+    [compose_job] = env.drain_jobs()
+    assert isinstance(compose_job, ComposeJob)
+    assert compose_job.intent_text == "选三张发朋友圈"

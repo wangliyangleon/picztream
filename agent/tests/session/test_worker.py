@@ -264,3 +264,19 @@ def test_unexpected_exception_emits_job_crashed(tmp_path):
     assert isinstance(event, JobCrashed)
     assert event.generation == 7
     assert "boom" in event.error
+
+
+def test_export_previews_clears_stale_files_before_reexport(tmp_path):
+    # 换滤镜后重新导出预览：必须先清掉上一次的 name.jpg，否则 export-images
+    # 会消歧成 name_2.jpg，而发送端永远发 name.jpg -> 发的还是旧滤镜预览。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    preview_dir = tmp_path / "preview" / run.run_id
+    preview_dir.mkdir(parents=True)
+    stale = preview_dir / "a.jpg"
+    stale.write_bytes(b"old-recipe-preview")
+
+    err = env.worker._export_previews(run, ["a.jpg"])
+
+    assert err is None
+    assert not stale.exists()  # 旧预览已清，不会把旧滤镜图又发一遍
