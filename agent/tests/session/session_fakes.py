@@ -1,8 +1,7 @@
 """tests/session 专用共享 fake/helper，命名 session_fakes 不叫 fakes：
 pytest 默认 import mode 下裸模块名全局只认一个（tests/orchestrator/
-fakes.py 已占用），跟 tests/router/router_fakes.py 的既有约定一致。
-FakeTransport 与 router_fakes 里的实现重复是有意的——per-test-dir 独立
-helper 模块、互不跨目录 import（跨目录裸模块导入依赖 sys.path 插入顺
+fakes.py 已占用），所以每个 test 目录用带前缀的 helper 模块名。各目录的
+fake 各自独立、互不跨目录 import（跨目录裸模块导入依赖 sys.path 插入顺
 序，单跑一个文件时不可靠）。
 """
 from __future__ import annotations
@@ -118,7 +117,7 @@ class FakeClock:
 
 
 def _fake_style_http_post(recipe_name: str = "Havana 1959"):
-    # 同 router_fakes：StyleStage 的文本匹配不经过 FakeClient 的子进程
+    # StyleStage 的文本匹配不经过 FakeClient 的子进程
     # 边界，必须单独假掉，否则测试会真打本地 Ollama。
     def fn(url, headers, body):
         del url, headers, body
@@ -134,8 +133,7 @@ def _raising_classify(*args, **kwargs):
 
 def bare_compose_plan() -> Plan:
     # compose_plan 的输出形状：还没经过 consumer 的参数注入（无 Ingest
-    # folder / Deliver out_folder / Deliver 闸门），对应旧 router_fakes
-    # 的 _fake_compose_plan。
+    # folder / Deliver out_folder / Deliver 闸门）。
     return Plan(stages=[
         StageSpec(name="Ingest"),
         StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),

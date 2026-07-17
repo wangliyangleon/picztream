@@ -17,8 +17,7 @@ from typing import Optional, Tuple
 from orchestrator.types import RunState, RunStatus
 from router.collecting import incoming_dir_for
 
-# 旧 router/session_router.py::_STAGE_PROGRESS_MESSAGES 原样迁入（该文件
-# 删除时此表成为唯一副本）。Style/StyleApplyAll 仍然故意缺席：它们是
+# stage 运行前发给用户的"正在…"进度文案。Style/StyleApplyAll 故意缺席：它们是
 # required 闸门，advance() 会在运行前停下问人，"正在自动套用风格..."紧
 # 贴着闸门自己的提问会自相矛盾，闸门消息本身就是恰当的进度提示。
 STAGE_PROGRESS_MESSAGES = {

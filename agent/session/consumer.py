@@ -1,6 +1,6 @@
 """SessionConsumer：2.0 运行时的消息线程（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第七节），旧 router/session_router.py 的会话逻辑按状态迁
-入，LLM 调用点全部换成投 job + 等事件。它是唯一渲染与发送对话文本的
+Eng_Design.md 第七节）：会话逻辑按状态分派，LLM 调用点全部走投 job + 等
+事件（取代了早期单线程同步 router）。它是唯一渲染与发送对话文本的
 线程；对话文案逐字对齐旧实现（对齐清单见 Eng Design 第八节）。
 
 所有权：非 DriveJob 活跃期间独占 RunState（self.run 非 None 即持有）；

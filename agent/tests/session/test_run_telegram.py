@@ -1,4 +1,4 @@
-"""run_telegram2.build_runtime 的接线测试 + 一个真线程端到端冒烟。前者
+"""run_telegram.build_runtime 的接线测试 + 一个真线程端到端冒烟。前者
 验证 wiring（stages/client/queue 都接对、compose/classify 用真函数、
 Deliver chat_id 对）；后者起真 worker 线程，用假 transport 把一条完整
 的收图->意图->确认->drive->两段风格闸门->交付走通，验证双线程 + 队列
@@ -12,7 +12,7 @@ import time
 from typing import List, Tuple
 
 from compose.adjustment_parser import AdjustmentError
-from run_telegram2 import build_runtime
+from run_telegram import build_runtime
 from transport.base import InboundMessage
 
 from session_fakes import CHAT_ID, FakeClient, _fake_style_http_post, bare_compose_plan

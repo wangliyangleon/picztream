@@ -223,9 +223,9 @@ worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 jo
 
 **修改**：`pzt_client.py`（加可取消路径，默认路径不动）。
 
-**新增**：`session/{protocol,view,worker,consumer}.py`、`run_telegram2.py`、`tests/session/`。
+**新增**：`session/{protocol,view,worker,consumer}.py`、`run_telegram.py`（新运行时入口）、`tests/session/`。
 
-**并行期约束**：`router/session_router.py` 及其测试原样保留；两个入口不能同时连同一个 bot（getUpdates 单消费者，双开会 409）。真机验证通过后 run_telegram2.py 转正、删旧 router 与旧入口测试中不再适用的部分（可迁移断言先移植）。
+**切换已完成（2026-07-17 真机验证通过）**：本文档正文里出现的 `run_telegram2.py` 是并行开发期的临时文件名，已转正为 `run_telegram.py`；旧的单线程 `router/session_router.py` 及其全部测试（`tests/router/test_session_router*`、`router_fakes.py`、`test_run_telegram_helpers.py`）已删除。`router/collecting.py`（纯函数）保留、被 session 模块复用。`run_intent.py`/`run_watchfolder.py` 仍是旧 Curate→Deliver 形状、不受影响。
 
 ## 十、测试策略
 
