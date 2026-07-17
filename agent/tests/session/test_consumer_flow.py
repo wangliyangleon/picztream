@@ -149,7 +149,7 @@ def test_cancel_without_active_run_replies_gently(tmp_path):
     assert env.store.list_active() == []
 
 
-def test_cancel_in_collecting_cancels_run_and_discards_session(tmp_path):
+def test_cancel_in_collecting_prompts_confirmation_then_cancels(tmp_path):
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")
     env.consumer.step()
@@ -158,10 +158,52 @@ def test_cancel_in_collecting_cancels_run_and_discards_session(tmp_path):
     env.push_text("取消")
     env.consumer.step()
 
+    # 二次确认：还没真取消
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+    assert env.transport.button_tokens() == ["confirm_cancel", "keep"]
+    assert env.store.load(run.run_id).status == RunStatus.COLLECTING
+
+    env.push_text("确认取消")
+    env.consumer.step()
+
     assert env.store.load(run.run_id).status == RunStatus.CANCELLED
     assert "已取消" in env.transport.texts()
     assert env.consumer.view.run_id is None
     assert env.consumer.generation == 1
+
+
+def test_cancel_confirmation_declined_keeps_run(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+    [run] = env.store.list_active()
+
+    env.push_text("取消")
+    env.consumer.step()
+    env.push_text("不取消")
+    env.consumer.step()
+
+    assert "好，继续" in env.transport.texts()
+    assert env.store.load(run.run_id).status == RunStatus.COLLECTING
+    assert env.consumer.run is not None
+
+
+def test_cancel_confirmation_dismissed_by_unrelated_text(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+
+    env.push_text("取消")
+    env.consumer.step()
+    # 没明确确认，改发了别的意图：撤掉待确认，当普通意图处理（不取消）
+    env.push_text("筛一下留2张")
+    env.consumer.step()
+
+    assert env.consumer._cancel_confirm_pending is False
+    [run] = env.store.list_active()
+    assert run.status == RunStatus.COLLECTING
+    [job] = env.drain_jobs()
+    assert isinstance(job, ClassifyJob)  # 当成了新意图
 
 
 def test_photo_during_drive_queues_to_pending(tmp_path):
@@ -201,11 +243,17 @@ def test_stage_started_renders_text_only_for_message_stages(tmp_path):
     assert env.consumer.view.current_stage == "Style"
 
 
-def test_cancel_during_drive_acks_sets_event_and_confirms_on_finish(tmp_path):
+def test_cancel_during_drive_confirms_then_sets_event(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
 
     env.push_text("取消")
+    env.consumer.step()
+    # drive 中也先弹二次确认，不立即掐
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+    assert not job.cancel_event.is_set()
+
+    env.push_callback(f"confirm_cancel:{job.run_id}")
     env.consumer.step()
 
     assert "正在停下来..." in env.transport.texts()
@@ -223,6 +271,8 @@ def test_stale_generation_events_are_dropped_after_cancel(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
     env.push_text("取消")
+    env.consumer.step()
+    env.push_callback(f"confirm_cancel:{job.run_id}")
     env.consumer.step()
     before = len(env.transport.texts())
 
@@ -264,8 +314,8 @@ def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
     env.consumer.step()
 
     assert ("这是用「Havana 1959」套用的效果，满意点\"满意\"，"
-            "想换点\"重选\"或直接打字说想要什么风格，不要了点\"取消\"") in env.transport.texts()
-    assert env.transport.button_tokens() == ["approve", "restyle", "reject"]
+            "想换风格点\"重选\"或直接打字描述，想取消打字说\"取消\"") in env.transport.texts()
+    assert env.transport.button_tokens() == ["approve", "restyle"]
 
     env.push_text("好的")
     env.consumer.step()
@@ -296,8 +346,8 @@ def test_gate_deliver_summary_then_llm_adjustment(tmp_path):
     env.consumer.step()
 
     assert ("选好了 2 张，已套用风格「Havana 1959」，"
-            "满意点\"满意\"，想调整直接打字说，不要了点\"取消\"") in env.transport.texts()
-    assert env.transport.button_tokens() == ["approve", "reject"]
+            "满意点\"满意\"，想调整点\"重选\"或直接打字说，想取消打字说\"取消\"") in env.transport.texts()
+    assert env.transport.button_tokens() == ["approve", "restyle"]
 
     env.push_text("换掉第1张")
     env.consumer.step()

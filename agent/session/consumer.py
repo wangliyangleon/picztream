@@ -58,13 +58,23 @@ _INFRA_ERROR_HINTS = ("network_error", "http_error", "missing_api_key", "unknown
 # yes/no 确认点都改按钮，精确关键词匹配 + "非关键词一律当新风格描述" 太
 # 容易踩坑（"不错"/"ok好的" 被当描述 -> hallucinate）。打字仍然照旧可
 # 用（关键词批准/自由文本调整/重描述），按钮只是额外的无歧义快路径。
+#
+# 取消是"炸掉整批"的危险操作，**故意不放进任何确认按钮**（真机反馈：太
+# 容易误点）。它只能靠打字关键词触发，且触发后先弹一道二次确认
+# （[确认取消]/[不取消]），确认了才真的取消——把这颗炸弹放到用户不容易
+# 碰到的地方。
 _BTN_APPROVE = "approve"
-_BTN_REJECT = "reject"
 _BTN_RESTYLE = "restyle"
-_CONFIRM_BUTTONS = [("好的 ✅", _BTN_APPROVE), ("取消 ✖", _BTN_REJECT)]
-_DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("取消 ✖", _BTN_REJECT)]
-_STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE), ("取消 ✖", _BTN_REJECT)]
-_STYLE_ASK_BUTTONS = [("取消 ✖", _BTN_REJECT)]  # 问描述是开放式，只给取消
+_BTN_CONFIRM_CANCEL = "confirm_cancel"
+_BTN_KEEP = "keep"
+_CONFIRM_BUTTONS = [("好的 ✅", _BTN_APPROVE)]
+_DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
+_STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
+_CANCEL_CONFIRM_BUTTONS = [("确认取消 ⚠️", _BTN_CONFIRM_CANCEL), ("不取消", _BTN_KEEP)]
+
+# 二次确认的打字兜底（按钮之外，用户也能直接打字确认/否决）。
+_CONFIRM_CANCEL_KEYWORDS = {"确认取消", "确定取消", "取消吧", "就取消", "confirm"}
+_KEEP_KEYWORDS = {"不取消", "不要取消", "先不取消", "继续", "不"}
 
 
 class SessionConsumer:
@@ -97,6 +107,7 @@ class SessionConsumer:
         self.active_drive_job: Optional[DriveJob] = None
         self.cancelling_run_id: Optional[str] = None
         self._last_eval_poll_at: Optional[float] = None
+        self._cancel_confirm_pending: bool = False
 
     # -- 生命周期 --
 
@@ -147,8 +158,12 @@ class SessionConsumer:
         text = (msg.text or "").strip()
         if not text:
             return
-        if text.lower() in _REJECT_KEYWORDS:
-            self._handle_cancel()
+        normalized = text.lower()
+        if self._cancel_confirm_pending:
+            self._resolve_cancel_confirmation_text(text, normalized)
+            return
+        if normalized in _REJECT_KEYWORDS:
+            self._prompt_cancel_confirmation()
             return
         self._touch_activity()
         self.pending_texts.append(text)
@@ -174,8 +189,41 @@ class SessionConsumer:
                 queue_incoming_photo(self.incoming_root, msg.file_path)
             self._send("先帮你收着，这批处理完就接着看这些新照片")
 
-    def _handle_cancel(self) -> None:
-        """"取消"跳过文本串行队列的全局快路径（含旧实现缺失的 Collecting 态）。"""
+    def _has_active_batch(self) -> bool:
+        return (self.view.drive_active or self.run is not None
+                or (self.view.status == RunStatus.RUNNING and self.view.run_id is not None))
+
+    def _prompt_cancel_confirmation(self) -> None:
+        """打字"取消"不立即执行——先弹二次确认。取消会炸掉整批（照片 +
+        处理结果都丢），是危险操作，故意让用户多确认一步（真机反馈）。"""
+        if not self._has_active_batch():
+            self._send("现在没有在处理的批次")
+            return
+        self._touch_activity()
+        self._cancel_confirm_pending = True
+        self._send_buttons(
+            "确定要取消整批吗？取消后这批照片和已处理的结果都会作废。",
+            _CANCEL_CONFIRM_BUTTONS,
+        )
+
+    def _resolve_cancel_confirmation_text(self, text: str, normalized: str) -> None:
+        if normalized in _CONFIRM_CANCEL_KEYWORDS:
+            self._do_cancel()
+            return
+        if normalized in _KEEP_KEYWORDS:
+            self._cancel_confirm_pending = False
+            self._send("好，继续")
+            return
+        # 没明确确认取消：安全起见撤掉待确认、不取消，把这条当普通消息处理
+        # （用户很可能已经改主意、直接发了新指令）。
+        self._cancel_confirm_pending = False
+        self._touch_activity()
+        self.pending_texts.append(text)
+
+    def _do_cancel(self) -> None:
+        """真正执行取消（已过二次确认）。覆盖 drive 中 / 持有 run / 崩后
+        无主 RUNNING 三种情形。"""
+        self._cancel_confirm_pending = False
         if self.view.drive_active and self.active_drive_job is not None:
             self._send("正在停下来...")
             self.active_drive_job.cancel_event.set()
@@ -198,19 +246,20 @@ class SessionConsumer:
 
     def _handle_callback(self, data: Optional[str]) -> None:
         """inline 按钮点击。callback_data 形如 "approve:tg-xxxxxxxx"，校验
-        run_id 防误触旧消息里的按钮（换了 run 或已进入 drive 的旧按钮一律
-        算过期）。批准/取消/重选映射到跟打字关键词完全一致的处理路径。"""
+        run_id 防误触旧消息里的按钮。批准/重选映射到跟打字关键词完全一致
+        的处理路径。取消的二次确认（confirm_cancel/keep）单独处理——它在
+        drive 进行中也要能用（此时 run 归 worker，常规按钮的校验会拦掉）。"""
         action, _, run_id = (data or "").partition(":")
         print(f"[consumer] 按钮点击 action={action!r} run_id={run_id!r}", flush=True)
+
+        if action in (_BTN_CONFIRM_CANCEL, _BTN_KEEP):
+            self._resolve_cancel_confirmation_button(action, run_id)
+            return
+
         if self.view.drive_active or self.run is None or self.view.run_id != run_id:
             self._send("这个选项已经过期了，看我最新的消息哈")
             return
         self._touch_activity()
-        if action == _BTN_REJECT:
-            self.driver.cancel(self.run)
-            self._send("已取消")
-            self._reset_session()
-            return
         if action == _BTN_APPROVE:
             if self.run.status == RunStatus.PLANNED:
                 self._begin_running()
@@ -221,10 +270,26 @@ class SessionConsumer:
                 self._enqueue_drive("resolve_gate", self.run.run_id)
                 return
         if action == _BTN_RESTYLE and self.run.status == RunStatus.AWAITING_GATE:
-            # 重选：不带新描述，回到"等一句风格描述"，用户下一条文字即新描述。
-            self._send("想要什么风格？直接打字告诉我，比如\"复古暖色调\"")
+            # 重选：不带新内容，提示用户打字说想怎么改，下一条文字走既有路径
+            # （StyleApplyAll -> rerun_style 换风格；Deliver -> gate_reply 调整）。
+            gate = self.view.gate_stage or (
+                self.run.gate_state.stage_name if self.run.gate_state else None)
+            if gate == "StyleApplyAll":
+                self._send("想要什么风格？直接打字告诉我，比如\"复古暖色调\"")
+            else:
+                self._send("想怎么调整？直接打字告诉我，比如\"换掉第3张\"、\"留5张\"")
             return
         self._send("这个操作现在用不了，看我最新的消息哈")
+
+    def _resolve_cancel_confirmation_button(self, action: str, run_id: str) -> None:
+        if not self._cancel_confirm_pending or (self.view.run_id or "") != run_id:
+            self._send("这个选项已经过期了，看我最新的消息哈")
+            return
+        if action == _BTN_CONFIRM_CANCEL:
+            self._do_cancel()
+        else:  # _BTN_KEEP
+            self._cancel_confirm_pending = False
+            self._send("好，继续")
 
     def _reset_session(self) -> None:
         self.generation += 1  # 之后到达的旧事件全部过期丢弃
@@ -233,6 +298,7 @@ class SessionConsumer:
         self.run = None
         self.view = SessionView(incoming_root=self.incoming_root)
         self.active_drive_job = None
+        self._cancel_confirm_pending = False
 
     # -- 文本串行处理 --
 
@@ -479,7 +545,8 @@ class SessionConsumer:
             self.view.gate_stage = event.stage
         payload = event.payload
         if event.stage == "Style":
-            self._send_buttons("想要什么风格？用一句话描述就行，比如\"复古暖色调\"", _STYLE_ASK_BUTTONS)
+            # 问描述是开放式，只能打字，不挂按钮。
+            self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
         elif event.stage == "StyleApplyAll":
             self._render_style_apply_all_gate(payload)
         else:
@@ -496,7 +563,7 @@ class SessionConsumer:
         if not payload.get("preview_sent"):
             self._send("预览图发送失败，不过风格已经选好了")
         self._send_buttons(f"这是用「{chosen}」套用的效果，满意点\"满意\"，"
-                           "想换点\"重选\"或直接打字说想要什么风格，不要了点\"取消\"",
+                           "想换风格点\"重选\"或直接打字描述，想取消打字说\"取消\"",
                            _STYLE_APPLY_ALL_BUTTONS)
 
     def _render_deliver_gate(self, payload: dict) -> None:
@@ -508,7 +575,7 @@ class SessionConsumer:
             summary += f"，已套用风格「{payload['applied_recipe']}」"
         if payload.get("preview_failed_count"):
             summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，交付时仍会正常导出)"
-        summary += "，满意点\"满意\"，想调整直接打字说，不要了点\"取消\""
+        summary += "，满意点\"满意\"，想调整点\"重选\"或直接打字说，想取消打字说\"取消\""
         self._send_buttons(summary, _DELIVER_BUTTONS)
 
     def _on_run_finished(self, event: RunFinished) -> None:
@@ -662,7 +729,7 @@ class SessionConsumer:
         self._send_buttons(
             f"理解你想：留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，"
             f"{auto_reject_desc}，对吗？"
-            "\n满意点\"好的\"，想改直接打字说，不要了点\"取消\"",
+            "\n满意就点\"好的\"，想改或想取消直接打字说",
             _CONFIRM_BUTTONS,
         )
 

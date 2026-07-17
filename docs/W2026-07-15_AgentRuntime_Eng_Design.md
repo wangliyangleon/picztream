@@ -201,6 +201,10 @@ worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 jo
   - **transport**：`InboundMessage` 加 `kind="callback"` + `data` 字段；`TelegramBotClient` 加 `send_text_with_buttons`（`InlineKeyboardMarkup`）与 `answer_callback_query`；`TelegramTransport._handle_update` 优先处理 `callback_query`（应答消 loading，转成 `kind="callback"` 入站），并加同步桥 `send_buttons`。`send_buttons` 是**可选能力**，不进 `Transport` Protocol 必需集，`WatchFolderTransport` 等不实现。
   - **consumer**：`callback_data` 拼成 `"{action}:{run_id}"`，点击回来校验 `run_id`（换 run 或已进 drive 的旧按钮一律"过期"，防误触）；approve/reject/restyle 映射到与打字关键词完全一致的处理路径。打字仍照旧（关键词批准/自由文本调整/重描述），按钮只是额外的无歧义快路径。`_send_buttons` 在 transport 无按钮能力时降级为纯文本，非 Telegram 入口不受影响。
   - **未做**：不改已发出消息的按钮态（点完不回收/置灰旧按钮），靠 `run_id` 过期判定兜底；够用，真机若嫌旧按钮可点再议。
+- **取消从按钮里彻底移除 + 二次确认**（真机反馈第三轮）：取消是"炸掉整批（照片 + 已处理结果全丢）"的危险操作，之前每个确认按钮都带 `[取消]`，太容易误点。改法：
+  - 所有确认按钮**去掉取消**——方案确认只剩 `[好的]`，Style 问描述纯文本无按钮，StyleApplyAll/Deliver 只剩 `[满意][重选]`（`重选` 按 gate 提示打字：StyleApplyAll→新风格描述走 rerun_style，Deliver→调整走 gate_reply）。
+  - 取消只能**打字关键词**（`取消`/`cancel`/`算了`）触发，且触发后不立即执行，先弹一道**二次确认** `[确认取消 ⚠️][不取消]`（也可打字 `确认取消`/`不取消`）。只有确认了才真的 cancel。drive 进行中同样先确认再置 `cancel_event`。二次确认态下发别的指令＝安全撤销、当普通消息处理（绝不误取消）。
+  - `confirm_cancel`/`keep` 回调独立于常规按钮校验（drive 中 run 归 worker、`self.run` 为 None，常规校验会拦掉，取消确认必须能穿透），只校验 `_cancel_confirm_pending` + `run_id`。
 
 ## 九、复用与不动清单
 

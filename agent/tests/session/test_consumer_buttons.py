@@ -18,11 +18,12 @@ def _reach_style_apply_all_gate(env, run_id):
     env.consumer.step()
 
 
-def test_plan_confirmation_attaches_approve_reject_buttons(tmp_path):
+def test_plan_confirmation_attaches_approve_button_only(tmp_path):
     env = make_consumer(tmp_path)
     to_planned(env)
 
-    assert env.transport.button_tokens() == ["approve", "reject"]
+    # 取消不再是按钮（危险操作），只留正向的"好的"
+    assert env.transport.button_tokens() == ["approve"]
     chat, text, options = env.transport.sent_buttons[-1]
     run_id = env.consumer.view.run_id
     assert options[0] == ("好的 ✅", f"approve:{run_id}")
@@ -42,11 +43,25 @@ def test_approve_button_at_planned_starts_drive(tmp_path):
     assert env.store.load(run.run_id).status == RunStatus.RUNNING
 
 
-def test_reject_button_at_planned_cancels(tmp_path):
+def test_typed_cancel_prompts_confirmation_buttons(tmp_path):
     env = make_consumer(tmp_path)
     run = to_planned(env)
 
-    env.push_callback(f"reject:{run.run_id}")
+    env.push_text("取消")
+    env.consumer.step()
+
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+    assert env.transport.button_tokens() == ["confirm_cancel", "keep"]
+    assert env.store.load(run.run_id).status == RunStatus.PLANNED  # 还没真取消
+
+
+def test_confirm_cancel_button_cancels(tmp_path):
+    env = make_consumer(tmp_path)
+    run = to_planned(env)
+    env.push_text("取消")
+    env.consumer.step()
+
+    env.push_callback(f"confirm_cancel:{run.run_id}")
     env.consumer.step()
 
     assert env.store.load(run.run_id).status == RunStatus.CANCELLED
@@ -54,11 +69,36 @@ def test_reject_button_at_planned_cancels(tmp_path):
     assert env.consumer.view.run_id is None
 
 
+def test_keep_button_dismisses_cancel(tmp_path):
+    env = make_consumer(tmp_path)
+    run = to_planned(env)
+    env.push_text("取消")
+    env.consumer.step()
+
+    env.push_callback(f"keep:{run.run_id}")
+    env.consumer.step()
+
+    assert "好，继续" in env.transport.texts()
+    assert env.store.load(run.run_id).status == RunStatus.PLANNED
+    assert env.consumer._cancel_confirm_pending is False
+
+
+def test_confirm_cancel_button_without_pending_is_stale(tmp_path):
+    env = make_consumer(tmp_path)
+    run = to_planned(env)  # 没先打"取消"，没有待确认
+
+    env.push_callback(f"confirm_cancel:{run.run_id}")
+    env.consumer.step()
+
+    assert "这个选项已经过期了，看我最新的消息哈" in env.transport.texts()
+    assert env.store.load(run.run_id).status == RunStatus.PLANNED
+
+
 def test_approve_button_at_style_apply_all_resolves_gate(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
     _reach_style_apply_all_gate(env, job.run_id)
-    assert env.transport.button_tokens() == ["approve", "restyle", "reject"]
+    assert env.transport.button_tokens() == ["approve", "restyle"]
 
     env.push_callback(f"approve:{job.run_id}")
     env.consumer.step()
@@ -110,14 +150,17 @@ def test_callback_during_drive_is_treated_as_stale(tmp_path):
     assert env.drain_jobs() == []
 
 
-def test_style_ask_gate_only_offers_cancel_button(tmp_path):
+def test_style_ask_gate_has_no_buttons(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
     worker_saves_gate(env, job.run_id, "Style")
+    before = len(env.transport.sent_buttons)
     env.put_event(GateReached(0, job.run_id, "Style", {}))
     env.consumer.step()
 
-    assert env.transport.button_tokens() == ["reject"]  # 问描述是开放式，无批准按钮
+    # 问描述是开放式，纯文本，不挂任何按钮
+    assert len(env.transport.sent_buttons) == before
+    assert "想要什么风格？用一句话描述就行，比如\"复古暖色调\"" in env.transport.texts()
 
 
 def test_degrades_to_plain_text_without_send_buttons_capability(tmp_path):
