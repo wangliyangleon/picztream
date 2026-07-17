@@ -62,8 +62,11 @@ class ScriptedTransport:
 
 def test_build_runtime_wires_queues_stages_and_real_functions(tmp_path, monkeypatch):
     from compose.adjustment_parser import (
+        classify_cancel_confirmation,
         classify_collecting_message,
         classify_gate_reply,
+        classify_running_message,
+        classify_style_gate_reply,
         refine_plan_confirmation,
     )
     from compose.plan_composer import compose_plan
@@ -71,16 +74,21 @@ def test_build_runtime_wires_queues_stages_and_real_functions(tmp_path, monkeypa
     transport = ScriptedTransport()
     consumer, worker = build_runtime(state_dir=tmp_path, transport=transport, chat_id="42")
 
-    # 同一对 job/event 队列
-    assert consumer.jobs is worker.jobs
+    # 两条 lane 各一对队列 + 共享 event 队列
+    assert consumer.classify_jobs is worker.classify_jobs
+    assert consumer.drive_jobs is worker.drive_jobs
     assert consumer.events is worker.events
+    assert worker.classify_jobs is not worker.drive_jobs
     # worker 与 consumer 用不同 client 实例（布防 vs 只读）
     assert worker.client is not consumer.readonly_client
-    # 真函数接上
+    # 真函数接上（含三个新分类器）
     assert worker.compose_plan_fn is compose_plan
     assert worker.classify_gate_reply_fn is classify_gate_reply
     assert worker.refine_plan_confirmation_fn is refine_plan_confirmation
     assert worker.classify_collecting_message_fn is classify_collecting_message
+    assert worker.classify_style_gate_reply_fn is classify_style_gate_reply
+    assert worker.classify_running_message_fn is classify_running_message
+    assert worker.classify_cancel_confirmation_fn is classify_cancel_confirmation
     # Deliver 的 chat_id 与目录
     assert worker.driver.stages["Deliver"].chat_id == "42"
     assert (tmp_path / "incoming").is_dir()
@@ -98,8 +106,11 @@ def _wait_until(predicate, timeout=3.0):
 
 
 def test_two_thread_end_to_end_smoke(tmp_path):
-    # 用假 client/分类函数把 LLM 和 pzt 子进程都短路掉，只验证 consumer
-    # 主循环 + 真 worker 线程 + 两个队列在真并发下把整条链路走通。
+    # 验证 consumer 主循环 + 两条真 worker 线程（classify + drive）+ 三个
+    # 队列在真并发下把整条链路走通。确认点用 inline 按钮回调（确定性路
+    # 径，不需要假一堆分类器）；风格描述这步是直接打字（不经分类）。
+    from compose.adjustment_parser import CollectingReply
+
     transport = ScriptedTransport()
     consumer, worker = build_runtime(state_dir=tmp_path, transport=transport, chat_id=CHAT_ID)
 
@@ -109,11 +120,13 @@ def test_two_thread_end_to_end_smoke(tmp_path):
     worker.driver.stages["Style"].http_post = _fake_style_http_post()
     worker.client = fake_client
     worker.compose_plan_fn = lambda intent, profile, last: bare_compose_plan()
-    worker.classify_collecting_message_fn = _raising_collecting
+    worker.classify_collecting_message_fn = lambda text, n: CollectingReply(action="intent")
 
     stop_event = threading.Event()
-    worker_thread = threading.Thread(target=worker.run, args=(stop_event, 0.05), daemon=True)
-    worker_thread.start()
+    classify_thread = threading.Thread(target=worker.run_classify, args=(stop_event, 0.05), daemon=True)
+    drive_thread = threading.Thread(target=worker.run_drive, args=(stop_event, 0.05), daemon=True)
+    classify_thread.start()
+    drive_thread.start()
 
     def pump(msg, until, timeout=3.0):
         transport.feed(msg)
@@ -125,30 +138,35 @@ def test_two_thread_end_to_end_smoke(tmp_path):
             time.sleep(0.02)
         return False
 
+    def approve_callback():
+        return InboundMessage(kind="callback", chat_id=CHAT_ID,
+                              data=f"approve:{consumer.view.run_id}")
+
     try:
         assert pump(InboundMessage(kind="photo", chat_id=CHAT_ID,
                                     file_path=_write(tmp_path, "a.jpg", b"a")),
                      lambda: (tmp_path / "incoming").exists() and any(
                          (tmp_path / "incoming").glob("tg-*/a.jpg")))
-        # 意图 -> classify 降级 -> compose -> PLANNED 确认文案
+        # 意图 -> collecting 分类(intent) -> compose -> PLANNED 确认(带按钮)
         assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="筛一下留2张"),
                      lambda: any("理解你想" in t for t in transport.texts()))
-        # 确认 -> drive 到 Style 闸门
-        assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="好的"),
+        # 点"好的"按钮 -> begin_running -> drive 到 Style 闸门
+        assert pump(approve_callback(),
                      lambda: any("想要什么风格" in t for t in transport.texts()))
-        # 给描述 -> StyleApplyAll 预览闸门
+        # 打字给描述 -> StyleApplyAll 预览闸门
         assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="复古暖色调"),
                      lambda: any("套用的效果" in t for t in transport.texts()))
-        # 确认风格 -> Deliver 闸门
-        assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="好的"),
+        # 点"满意"按钮 -> resolve -> Deliver 闸门
+        assert pump(approve_callback(),
                      lambda: any("选好了 2 张" in t for t in transport.texts()))
-        # 确认交付 -> 完成（Deliver stage 自己发文件）
-        assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="好的"),
+        # 点"满意"按钮 -> deliver -> 完成（Deliver stage 自己发文件）
+        assert pump(approve_callback(),
                      lambda: any(kind == "file" for kind, _ in transport.log))
         assert _wait_until(lambda: consumer.store.list_active() == [])
     finally:
         stop_event.set()
-        worker_thread.join(timeout=2)
+        classify_thread.join(timeout=2)
+        drive_thread.join(timeout=2)
 
 
 def _write(tmp_path, name, content):

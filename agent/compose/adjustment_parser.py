@@ -257,3 +257,105 @@ def classify_collecting_message(text: str, photo_count: int, http_post: Optional
     if action not in ("query", "intent", "cancel", "other"):
         raise AdjustmentError("unknown_action", f"unrecognized collecting message action {action!r}")
     return CollectingReply(action=action)
+
+
+# 以下三个分类器是"彻底去掉文本精确匹配"引入的（真机反馈）：风格预览闸
+# 门、处理中、取消二次确认这三处以前是关键词精确匹配，现在都交 LLM。都
+# 是小而紧的 schema（贴合各自上下文的有界动作集），比通用分类更不容易
+# 幻觉。按钮回调仍是确定性即时路径，不经过这些。
+
+_STYLE_GATE_SCHEMA_INSTRUCTION = (
+    "The user was shown one representative photo with a color style/filter applied, and "
+    "asked whether this style is OK. You are given the user's reply. Respond with a "
+    "single JSON object in one of four shapes: "
+    '{"action": "approve"} if the user is satisfied with this style and wants to apply '
+    'it to the whole batch (for example "满意", "不错", "就这个", "可以了", "挺好看的"); '
+    '{"action": "redescribe"} if the user is NOT satisfied and is describing a different '
+    'style they want instead (for example "再暖一点", "太冷了", "换个复古的", "黑白的"); '
+    '{"action": "cancel"} if the user wants to abort/cancel the whole batch (for example '
+    '"取消", "算了不弄了", "不要了"); '
+    '{"action": "query"} if the message is just a question about the current status, not '
+    "a decision. When unsure between approve and redescribe, prefer redescribe."
+)
+
+
+@dataclass
+class StyleGateReply:
+    action: Literal["approve", "redescribe", "cancel", "query"]
+
+
+def classify_style_gate_reply(text: str, http_post: Optional[HttpPostFn] = None,
+                               meta_provider: str = "local") -> StyleGateReply:
+    decision = request_json(
+        user_prompt=text,
+        schema_instruction=_STYLE_GATE_SCHEMA_INSTRUCTION,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action not in ("approve", "redescribe", "cancel", "query"):
+        raise AdjustmentError("unknown_action", f"unrecognized style gate action {action!r}")
+    return StyleGateReply(action=action)
+
+
+_RUNNING_SCHEMA_INSTRUCTION = (
+    "A photo-culling batch is currently being processed (evaluating/deduping/selecting). "
+    "The user sent a message while it runs. Respond with a single JSON object in one of "
+    "three shapes: "
+    '{"action": "cancel"} if the user wants to abort/stop/cancel the running batch (for '
+    'example "取消", "停一下", "别弄了", "算了", "不想要了"); '
+    '{"action": "query"} if the user is asking about progress/status (for example '
+    '"到哪了？", "还要多久", "怎么样了"); '
+    '{"action": "other"} for anything else (small talk, unrelated, gibberish).'
+)
+
+
+@dataclass
+class RunningReply:
+    action: Literal["cancel", "query", "other"]
+
+
+def classify_running_message(text: str, http_post: Optional[HttpPostFn] = None,
+                             meta_provider: str = "local") -> RunningReply:
+    decision = request_json(
+        user_prompt=text,
+        schema_instruction=_RUNNING_SCHEMA_INSTRUCTION,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action not in ("cancel", "query", "other"):
+        raise AdjustmentError("unknown_action", f"unrecognized running message action {action!r}")
+    return RunningReply(action=action)
+
+
+_CANCEL_CONFIRM_SCHEMA_INSTRUCTION = (
+    "The user asked to cancel the whole batch, and was asked to confirm (this is "
+    "destructive - all photos and results in this batch will be discarded). You are "
+    "given the user's reply. Respond with a single JSON object in one of three shapes: "
+    '{"action": "confirm"} if the user confirms they really want to cancel (for example '
+    '"确认取消", "对就取消", "嗯取消吧", "是的"); '
+    '{"action": "deny"} if the user does NOT want to cancel after all / wants to continue '
+    '(for example "不取消", "继续", "算了还是不取消了", "点错了"); '
+    '{"action": "other"} if the reply is unrelated to this yes/no confirmation. When '
+    "unsure, prefer other (never destructively cancel on an ambiguous reply)."
+)
+
+
+@dataclass
+class CancelConfirmReply:
+    action: Literal["confirm", "deny", "other"]
+
+
+def classify_cancel_confirmation(text: str, http_post: Optional[HttpPostFn] = None,
+                                 meta_provider: str = "local") -> CancelConfirmReply:
+    decision = request_json(
+        user_prompt=text,
+        schema_instruction=_CANCEL_CONFIRM_SCHEMA_INSTRUCTION,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action not in ("confirm", "deny", "other"):
+        raise AdjustmentError("unknown_action", f"unrecognized cancel confirmation action {action!r}")
+    return CancelConfirmReply(action=action)

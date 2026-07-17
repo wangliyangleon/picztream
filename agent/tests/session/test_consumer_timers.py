@@ -124,6 +124,11 @@ def test_bootstrap_adopts_planned_run(tmp_path):
 
     env.push_text("好的")
     env.consumer.step()
+    env.drain_jobs()  # refine_plan ClassifyJob
+    from compose.adjustment_parser import PlanConfirmationReply
+    from session.protocol import ClassifyDone
+    env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(action="approve")))
+    env.consumer.step()
     [job] = env.drain_jobs()
     assert job.action == "start"
 

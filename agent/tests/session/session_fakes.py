@@ -166,11 +166,28 @@ def to_planned(env: "ConsumerEnv") -> RunState:
 
 
 def to_running(env: "ConsumerEnv"):
-    """to_planned -> "好的" -> DriveJob(start)。返回 DriveJob。"""
+    """to_planned -> "好的"(refine 分类判 approve) -> DriveJob(start)。返回 DriveJob。"""
+    from compose.adjustment_parser import PlanConfirmationReply
+    from session.protocol import ClassifyDone
+
     to_planned(env)
     env.push_text("好的")
     env.consumer.step()
+    env.drain_jobs()  # 排掉 refine_plan ClassifyJob
+    gen = env.consumer.generation
+    env.put_event(ClassifyDone(gen, "refine_plan", PlanConfirmationReply(action="approve")))
+    env.consumer.step()
     return env.drain_jobs()[-1]
+
+
+def deliver_classify(env: "ConsumerEnv", kind: str, reply) -> None:
+    """模拟 classify lane 返回：排掉 consumer 刚投的 ClassifyJob，回一个
+    ClassifyDone(kind, reply) 事件再 step。彻底去关键词后，几乎每条用户文
+    本都要过这一步。"""
+    from session.protocol import ClassifyDone
+    env.drain_jobs()
+    env.put_event(ClassifyDone(env.consumer.generation, kind, reply))
+    env.consumer.step()
 
 
 def worker_saves_gate(env: "ConsumerEnv", run_id: str, stage: str) -> None:
@@ -197,17 +214,35 @@ def make_fixed_plan(incoming_dir: str, out_folder: str) -> Plan:
 
 
 class WorkerEnv:
-    def __init__(self, tmp_path: Path, worker: SessionWorker, jobs: "queue.Queue",
-                 events: "queue.Queue", store: RunStore, transport: FakeTransport,
-                 client: FakeClient, driver: Driver) -> None:
+    def __init__(self, tmp_path: Path, worker: SessionWorker, classify_jobs: "queue.Queue",
+                 drive_jobs: "queue.Queue", events: "queue.Queue", store: RunStore,
+                 transport: FakeTransport, client: FakeClient, driver: Driver) -> None:
         self.tmp_path = tmp_path
         self.worker = worker
-        self.jobs = jobs
+        self.classify_jobs = classify_jobs
+        self.drive_jobs = drive_jobs
         self.events = events
         self.store = store
         self.transport = transport
         self.client = client
         self.driver = driver
+
+    def put_classify(self, job) -> None:
+        self.classify_jobs.put(job)
+
+    def put_drive(self, job) -> None:
+        self.drive_jobs.put(job)
+
+    def step_classify(self) -> bool:
+        return self.worker.step_classify()
+
+    def step_drive(self) -> bool:
+        return self.worker.step_drive()
+
+    def step(self) -> bool:
+        # 测试便利：先跑 classify lane 再跑 drive lane（测试一次通常只投一
+        # 种 job），返回是否执行了 job。
+        return self.worker.step_classify() or self.worker.step_drive()
 
     def drain_events(self) -> list:
         out = []
@@ -232,12 +267,14 @@ class WorkerEnv:
 
 
 class ConsumerEnv:
-    def __init__(self, tmp_path: Path, consumer, jobs: "queue.Queue", events: "queue.Queue",
+    def __init__(self, tmp_path: Path, consumer, classify_jobs: "queue.Queue",
+                 drive_jobs: "queue.Queue", events: "queue.Queue",
                  store: RunStore, transport: FakeTransport, client: FakeClient,
                  clock: FakeClock) -> None:
         self.tmp_path = tmp_path
         self.consumer = consumer
-        self.jobs = jobs
+        self.classify_jobs = classify_jobs
+        self.drive_jobs = drive_jobs
         self.events = events
         self.store = store
         self.transport = transport
@@ -263,12 +300,15 @@ class ConsumerEnv:
         self.transport.inbox.append(InboundMessage(kind="callback", chat_id=CHAT_ID, data=data))
 
     def drain_jobs(self) -> list:
+        # 两条 lane 合并排空，保持大量"投了哪个 job"断言不用区分 lane。
         out = []
-        while True:
-            try:
-                out.append(self.jobs.get_nowait())
-            except queue.Empty:
-                return out
+        for q in (self.classify_jobs, self.drive_jobs):
+            while True:
+                try:
+                    out.append(q.get_nowait())
+                except queue.Empty:
+                    break
+        return out
 
     def put_event(self, event) -> None:
         self.events.put(event)
@@ -285,19 +325,22 @@ def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
     client = client or FakeClient()
     transport = FakeTransport()
     store = RunStore(tmp_path / "runs")
-    jobs: "queue.Queue" = queue.Queue()
+    classify_jobs: "queue.Queue" = queue.Queue()
+    drive_jobs: "queue.Queue" = queue.Queue()
     events: "queue.Queue" = queue.Queue()
     # consumer 只用 driver.cancel/approve，这两个方法不碰 stages。
     driver = Driver(stages={}, store=store)
     consumer = SessionConsumer(
         store=store, driver=driver, transport=transport, chat_id=CHAT_ID,
         incoming_root=tmp_path / "incoming", deliver_out_folder=tmp_path / "deliver-out",
-        jobs=jobs, events=events, readonly_client=client, now_fn=clock,
+        classify_jobs=classify_jobs, drive_jobs=drive_jobs, events=events,
+        readonly_client=client, now_fn=clock,
         idle_reminder_seconds=idle_reminder_seconds,
         progress_interval_seconds=progress_interval_seconds,
         eval_poll_interval_seconds=eval_poll_interval_seconds,
     )
-    return ConsumerEnv(tmp_path=tmp_path, consumer=consumer, jobs=jobs, events=events,
+    return ConsumerEnv(tmp_path=tmp_path, consumer=consumer, classify_jobs=classify_jobs,
+                       drive_jobs=drive_jobs, events=events,
                        store=store, transport=transport, client=client, clock=clock)
 
 
@@ -307,11 +350,15 @@ def make_worker(tmp_path: Path,
                 classify_collecting_message_fn: Callable = _raising_classify,
                 classify_gate_reply_fn: Callable = _raising_classify,
                 refine_plan_confirmation_fn: Callable = _raising_classify,
+                classify_style_gate_reply_fn: Callable = _raising_classify,
+                classify_running_message_fn: Callable = _raising_classify,
+                classify_cancel_confirmation_fn: Callable = _raising_classify,
                 ) -> WorkerEnv:
     client = client or FakeClient()
     transport = FakeTransport()
     store = RunStore(tmp_path / "runs")
-    jobs: "queue.Queue" = queue.Queue()
+    classify_jobs: "queue.Queue" = queue.Queue()
+    drive_jobs: "queue.Queue" = queue.Queue()
     events: "queue.Queue" = queue.Queue()
     stages = {
         "Ingest": IngestStage(client=client),
@@ -327,13 +374,18 @@ def make_worker(tmp_path: Path,
     }
     driver = Driver(stages=stages, store=store)
     worker = SessionWorker(
-        jobs=jobs, events=events, driver=driver, store=store, client=client,
+        classify_jobs=classify_jobs, drive_jobs=drive_jobs, events=events,
+        driver=driver, store=store, client=client,
         transport=transport, chat_id=CHAT_ID, preview_root=tmp_path / "preview",
         compose_plan_fn=compose_plan_fn or (lambda intent, profile, last: make_fixed_plan(
             str(tmp_path / "incoming" / "unused"), str(tmp_path / "deliver-out"))),
         classify_collecting_message_fn=classify_collecting_message_fn,
         classify_gate_reply_fn=classify_gate_reply_fn,
         refine_plan_confirmation_fn=refine_plan_confirmation_fn,
+        classify_style_gate_reply_fn=classify_style_gate_reply_fn,
+        classify_running_message_fn=classify_running_message_fn,
+        classify_cancel_confirmation_fn=classify_cancel_confirmation_fn,
     )
-    return WorkerEnv(tmp_path=tmp_path, worker=worker, jobs=jobs, events=events,
+    return WorkerEnv(tmp_path=tmp_path, worker=worker, classify_jobs=classify_jobs,
+                     drive_jobs=drive_jobs, events=events,
                      store=store, transport=transport, client=client, driver=driver)

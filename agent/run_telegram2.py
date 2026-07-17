@@ -19,8 +19,11 @@ from pathlib import Path
 from typing import Any, Tuple
 
 from compose.adjustment_parser import (
+    classify_cancel_confirmation,
     classify_collecting_message,
     classify_gate_reply,
+    classify_running_message,
+    classify_style_gate_reply,
     refine_plan_confirmation,
 )
 from compose.plan_composer import compose_plan
@@ -72,20 +75,26 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
                                  chat_id=chat_id, inputs=["StyleApplyAll"]),
     }
     driver = Driver(stages=stages, store=store)
-    jobs: "queue.Queue" = queue.Queue()
+    classify_jobs: "queue.Queue" = queue.Queue()
+    drive_jobs: "queue.Queue" = queue.Queue()
     events: "queue.Queue" = queue.Queue()
     worker = SessionWorker(
-        jobs=jobs, events=events, driver=driver, store=store, client=worker_client,
+        classify_jobs=classify_jobs, drive_jobs=drive_jobs, events=events,
+        driver=driver, store=store, client=worker_client,
         transport=transport, chat_id=chat_id, preview_root=preview_root,
         compose_plan_fn=compose_plan,
         classify_collecting_message_fn=classify_collecting_message,
         classify_gate_reply_fn=classify_gate_reply,
         refine_plan_confirmation_fn=refine_plan_confirmation,
+        classify_style_gate_reply_fn=classify_style_gate_reply,
+        classify_running_message_fn=classify_running_message,
+        classify_cancel_confirmation_fn=classify_cancel_confirmation,
     )
     consumer = SessionConsumer(
         store=store, driver=driver, transport=transport, chat_id=chat_id,
         incoming_root=incoming_root, deliver_out_folder=deliver_out_folder,
-        jobs=jobs, events=events, readonly_client=readonly_client,
+        classify_jobs=classify_jobs, drive_jobs=drive_jobs, events=events,
+        readonly_client=readonly_client,
         idle_reminder_seconds=idle_reminder_seconds,
         progress_interval_seconds=progress_interval_seconds,
         eval_poll_interval_seconds=eval_poll_interval_seconds,
@@ -119,11 +128,16 @@ def main() -> None:
     )
 
     stop_event = threading.Event()
-    worker_thread = threading.Thread(target=worker.run, args=(stop_event,),
-                                      daemon=True, name="pzt-session-worker")
+    # 两条 lane 各一条线程：classify（纯 LLM，轻）和 drive（pzt 子进程，
+    # 重）并发跑，处理中也能跑取消/进度的 LLM 分类（见 SessionWorker）。
+    classify_thread = threading.Thread(target=worker.run_classify, args=(stop_event,),
+                                        daemon=True, name="pzt-session-classify")
+    drive_thread = threading.Thread(target=worker.run_drive, args=(stop_event,),
+                                     daemon=True, name="pzt-session-drive")
 
     transport.start()
-    worker_thread.start()
+    classify_thread.start()
+    drive_thread.start()
     consumer.bootstrap()  # RUNNING 自动续跑/遗留 AWAITING_REVIEW 收尾在这里
     print(f"Telegram runner 2.0 已启动，chat_id={chat_id}，state_dir={state_dir}，"
           f"poll_interval={args.poll_interval}s")
@@ -142,7 +156,8 @@ def main() -> None:
         stop_event.set()
         # worker 若正卡在长 stage 里就不等它：daemon 线程随进程退出，run
         # 停在最后一次落盘的检查点，下次启动 bootstrap 自动续跑。
-        worker_thread.join(timeout=2)
+        classify_thread.join(timeout=2)
+        drive_thread.join(timeout=2)
         transport.stop()
 
 

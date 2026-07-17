@@ -44,12 +44,9 @@ from session.protocol import (
 )
 from session.view import STAGE_PROGRESS_MESSAGES, SessionView, view_from_run
 
-_APPROVE_KEYWORDS = {"", "approve", "同意", "可以", "好", "好的", "ok"}
-# 打字取消的即时关键词路径（instant，drive 中也生效，不依赖 LLM/worker）。
-# 更自然的取消措辞由 LLM 分类兜底（collecting 的 cancel action / 各闸门的
-# reject），都统一走二次确认，见 _prompt_cancel_confirmation。
-_REJECT_KEYWORDS = {"取消", "cancel", "算了", "别弄了", "不弄了", "不要了", "停", "停止", "退出"}
-_STYLE_GATE_STAGES = ("Style", "StyleApplyAll")
+# 真机反馈"彻底去文本精确匹配"：不再有任何 _APPROVE/_REJECT/_CONFIRM 之
+# 类的关键词集，所有用户文本都交 LLM 分类（见各状态的 _submit_classify）。
+# 唯一的确定性即时路径是 inline 按钮回调（callback_data token，不经文本）。
 
 # LLM/网络这类基础设施失败的痕迹：命中就说"AI 连不上"而不是"没看懂"
 # （后者会误导用户以为是自己表述的问题，见真机反馈）。
@@ -60,12 +57,11 @@ _INFRA_ERROR_HINTS = ("network_error", "http_error", "missing_api_key", "unknown
 # 来时校验 run_id 防误触旧消息（见 _handle_callback）。真机反馈：所有
 # yes/no 确认点都改按钮，精确关键词匹配 + "非关键词一律当新风格描述" 太
 # 容易踩坑（"不错"/"ok好的" 被当描述 -> hallucinate）。打字仍然照旧可
-# 用（关键词批准/自由文本调整/重描述），按钮只是额外的无歧义快路径。
+# 用（LLM 判批准/调整/重描述），按钮只是额外的无歧义快路径。
 #
 # 取消是"炸掉整批"的危险操作，**故意不放进任何确认按钮**（真机反馈：太
-# 容易误点）。它只能靠打字关键词触发，且触发后先弹一道二次确认
-# （[确认取消]/[不取消]），确认了才真的取消——把这颗炸弹放到用户不容易
-# 碰到的地方。
+# 容易误点）。它靠 LLM 识别取消意图触发，且触发后先弹一道二次确认
+# （[确认取消]/[不取消] 按钮，或打字由 LLM 判断），确认了才真的取消。
 _BTN_APPROVE = "approve"
 _BTN_RESTYLE = "restyle"
 _BTN_CONFIRM_CANCEL = "confirm_cancel"
@@ -75,15 +71,12 @@ _DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _CANCEL_CONFIRM_BUTTONS = [("确认取消 ⚠️", _BTN_CONFIRM_CANCEL), ("不取消", _BTN_KEEP)]
 
-# 二次确认的打字兜底（按钮之外，用户也能直接打字确认/否决）。
-_CONFIRM_CANCEL_KEYWORDS = {"确认取消", "确定取消", "取消吧", "就取消", "confirm"}
-_KEEP_KEYWORDS = {"不取消", "不要取消", "先不取消", "继续", "不"}
-
 
 class SessionConsumer:
     def __init__(self, store: Any, driver: Any, transport: Any, chat_id: str,
                  incoming_root: Path, deliver_out_folder: Path,
-                 jobs: "queue.Queue", events: "queue.Queue", readonly_client: Any,
+                 classify_jobs: "queue.Queue", drive_jobs: "queue.Queue",
+                 events: "queue.Queue", readonly_client: Any,
                  now_fn: Callable[[], float] = time.time,
                  idle_reminder_seconds: float = 300.0,
                  progress_interval_seconds: float = 60.0,
@@ -94,7 +87,8 @@ class SessionConsumer:
         self.chat_id = chat_id
         self.incoming_root = Path(incoming_root)
         self.deliver_out_folder = Path(deliver_out_folder)
-        self.jobs = jobs
+        self.classify_jobs = classify_jobs  # LLM lane：分类/编排
+        self.drive_jobs = drive_jobs        # pzt lane：drive
         self.events = events
         self.readonly_client = readonly_client  # 只读亚秒级查询(eval 进度轮询)的唯一例外
         self.now_fn = now_fn
@@ -161,13 +155,8 @@ class SessionConsumer:
         text = (msg.text or "").strip()
         if not text:
             return
-        normalized = text.lower()
-        if self._cancel_confirm_pending:
-            self._resolve_cancel_confirmation_text(text, normalized)
-            return
-        if normalized in _REJECT_KEYWORDS:
-            self._prompt_cancel_confirmation()
-            return
+        # 全部文本走 LLM（含取消意图、二次确认的打字回复），串行入队，由
+        # _process_text 按当前状态分派给对应分类器。没有任何关键词短路。
         self._touch_activity()
         self.pending_texts.append(text)
 
@@ -208,20 +197,6 @@ class SessionConsumer:
             "确定要取消整批吗？取消后这批照片和已处理的结果都会作废。",
             _CANCEL_CONFIRM_BUTTONS,
         )
-
-    def _resolve_cancel_confirmation_text(self, text: str, normalized: str) -> None:
-        if normalized in _CONFIRM_CANCEL_KEYWORDS:
-            self._do_cancel()
-            return
-        if normalized in _KEEP_KEYWORDS:
-            self._cancel_confirm_pending = False
-            self._send("好，继续")
-            return
-        # 没明确确认取消：安全起见撤掉待确认、不取消，把这条当普通消息处理
-        # （用户很可能已经改主意、直接发了新指令）。
-        self._cancel_confirm_pending = False
-        self._touch_activity()
-        self.pending_texts.append(text)
 
     def _do_cancel(self) -> None:
         """真正执行取消（已过二次确认）。覆盖 drive 中 / 持有 run / 崩后
@@ -310,22 +285,27 @@ class SessionConsumer:
             self._process_text(self.pending_texts.popleft())
 
     def _process_text(self, text: str) -> None:
-        normalized = text.lower()
+        if self._cancel_confirm_pending:
+            # 二次确认的打字回复交 LLM 判 confirm/deny/other（按钮仍是即时
+            # 确定性路径，见 _handle_callback）。
+            self._submit_classify("cancel_confirm", text, {})
+            return
         if self.view.drive_active:
-            # RUNNING 期间不做 LLM 分类（单 worker 正被 drive 占用，排队
-            # 等于饿死）：模板应答足够回答"到哪了"。
-            self._send(self.view.describe())
+            # 处理中：交 running 分类器判 cancel/query/other。这是拆双 lane
+            # 的意义所在——drive 占着 pzt lane，classify lane 仍空闲。
+            self._submit_classify("running", text, {})
             return
         if self.run is None:
-            self._mint_collecting_run()
+            # 还没发过照片（run is None ⟺ 无暂存照片）：不 mint，交 collecting
+            # 分类器决定回什么（见 _on_classify_done 的 run is None 分支），
+            # 避免因为一句"取消"/"你好"就凭空建一个空批次。
+            self._submit_classify("collecting", text, {"photo_count": 0})
+            return
 
         if self.run.status == RunStatus.COLLECTING:
             self._submit_classify("collecting", text, {"photo_count": self.view.photo_count()})
             return
         if self.run.status == RunStatus.PLANNED:
-            if normalized in _APPROVE_KEYWORDS:
-                self._begin_running()
-                return
             self._submit_classify("refine_plan", text, {
                 "intent_raw": self.run.intent_raw,
                 "current_params": self._current_plan_params(self.run),
@@ -335,36 +315,30 @@ class SessionConsumer:
             gate_stage = self.view.gate_stage
             if gate_stage is None and self.run.gate_state is not None:
                 gate_stage = self.run.gate_state.stage_name
-            if gate_stage in _STYLE_GATE_STAGES:
-                self._handle_style_gate_text(gate_stage, text, normalized)
+            if gate_stage == "Style":
+                # 问描述那步：还没有预览可批准，任何文本都是（新的）风格描
+                # 述，直接重跑 Style，不需要分类。
+                self._send("正在选风格...")
+                self._enqueue_drive("rerun_style", self.run.run_id, {"style_description": text})
                 return
-            if normalized in _APPROVE_KEYWORDS:
-                self._enqueue_drive("resolve_gate", self.run.run_id)
+            if gate_stage == "StyleApplyAll":
+                # 预览确认：交 style_gate 分类器判 approve/redescribe/cancel/query。
+                self._submit_classify("style_gate", text, {"run_id": self.run.run_id})
                 return
             self._submit_classify("gate_reply", text, {"run_id": self.run.run_id})
             return
         self._send(self.view.describe())
 
-    def _handle_style_gate_text(self, stage: str, text: str, normalized: str) -> None:
-        # 风格闸门不走 LLM 分类：自由文本本身就是（新的）风格描述（旧
-        # _handle_style_gate）。空文本在入站处已过滤，旧实现"空回车引导"
-        # 分支在 2.0 不可达。
-        if stage == "StyleApplyAll" and normalized in _APPROVE_KEYWORDS:
-            self._enqueue_drive("resolve_gate", self.run.run_id)
-            return
-        self._send("正在重新选风格..." if stage == "StyleApplyAll" else "正在选风格...")
-        self._enqueue_drive("rerun_style", self.run.run_id, {"style_description": text})
-
     # -- job 投递 --
 
     def _submit_classify(self, kind: str, text: str, context: dict) -> None:
         self.inflight = {"type": kind, "text": text}
-        self._enqueue_job(ClassifyJob(generation=self.generation, kind=kind, text=text,
-                                       context=context))
+        self._enqueue_classify(ClassifyJob(generation=self.generation, kind=kind, text=text,
+                                            context=context))
 
     def _submit_compose(self, intent_text: str) -> None:
         self.inflight = {"type": "compose", "text": intent_text}
-        self._enqueue_job(ComposeJob(generation=self.generation, intent_text=intent_text))
+        self._enqueue_classify(ComposeJob(generation=self.generation, intent_text=intent_text))
 
     def _begin_running(self) -> None:
         self._send(f"开始处理了，共 {self.view.photo_count()} 张")
@@ -383,7 +357,7 @@ class SessionConsumer:
         self.view.gate_stage = None
         self.view.stage_progress = None
         self._last_eval_poll_at = None
-        self._enqueue_job(job)
+        self._enqueue_drive_job(job)
 
     # -- 事件应用 --
 
@@ -429,6 +403,14 @@ class SessionConsumer:
             return  # 防御：串行协议下不应发生
         result = event.result
         if event.kind == "collecting":
+            if self.run is None:
+                # 还没发照片：取消就说没有批次，其余一律给帮助（含误判成
+                # intent 的情况——没照片也没法真的开跑）。
+                if result.action == "cancel":
+                    self._send("现在没有在处理的批次")
+                else:
+                    self._send_help()
+                return
             if result.action == "query":
                 self._send(self.view.describe())
             elif result.action == "cancel":
@@ -445,17 +427,82 @@ class SessionConsumer:
             return
         if event.kind == "gate_reply":
             self._on_gate_reply(result)
+            return
+        if event.kind == "style_gate":
+            self._on_style_gate_reply(result, inflight["text"])
+            return
+        if event.kind == "running":
+            self._on_running_reply(result)
+            return
+        if event.kind == "cancel_confirm":
+            self._on_cancel_confirm_reply(result, inflight["text"])
+            return
+
+    def _on_style_gate_reply(self, reply: Any, text: str) -> None:
+        # 预览确认闸门。approve→套全批；redescribe→拿这句当新描述重挑；
+        # cancel→二次确认；query→报状态。redescribe 用原文本当风格描述。
+        if self.run is None or self.run.status != RunStatus.AWAITING_GATE:
+            return
+        if reply.action == "approve":
+            self._enqueue_drive("resolve_gate", self.run.run_id)
+            return
+        if reply.action == "cancel":
+            self._prompt_cancel_confirmation()
+            return
+        if reply.action == "query":
+            self._send(self.view.describe())
+            return
+        self._send("正在重新选风格...")
+        self._enqueue_drive("rerun_style", self.run.run_id, {"style_description": text})
+
+    def _on_running_reply(self, reply: Any) -> None:
+        # 处理中：只区分取消/问进度/其它，都不打断 drive。
+        if reply.action == "cancel":
+            self._prompt_cancel_confirmation()
+            return
+        self._send(self.view.describe())  # query / other 都回当前进度
+
+    def _on_cancel_confirm_reply(self, reply: Any, text: str) -> None:
+        if not self._cancel_confirm_pending:
+            return  # 期间已被按钮解决或会话重置
+        if reply.action == "confirm":
+            self._do_cancel()
+            return
+        if reply.action == "deny":
+            self._cancel_confirm_pending = False
+            self._send("好，继续")
+            return
+        # other：没明确确认，安全起见撤掉待确认、不取消，把这条当普通消息重
+        # 新处理（用户很可能改了主意、直接发了新指令）。
+        self._cancel_confirm_pending = False
+        self.pending_texts.appendleft(text)
 
     def _on_classify_failed(self, event: ClassifyFailed) -> None:
         inflight, self.inflight = self.inflight, None
         if inflight is None:
             return
         if event.kind == "collecting":
+            if self.run is None:
+                self._send_help()  # 没照片还没法处理，给帮助
+                return
             # 分类只是锦上添花，失败照旧当意图处理（旧降级路径）。
             self._submit_compose(inflight["text"])
             return
-        # 旧实现只捕获 AdjustmentError，LlmRequestError 会让整条消息被主
-        # 循环跳过（用户侧无声）；2.0 统一回引导文案，不再静默。
+        if event.kind == "cancel_confirm":
+            # 取消确认分类失败：安全起见当作"没确认"，撤掉待确认、重新处理。
+            self._cancel_confirm_pending = False
+            self.pending_texts.appendleft(inflight["text"])
+            return
+        if event.kind == "running":
+            self._send(self.view.describe())  # 分类失败就回进度
+            return
+        if event.kind == "style_gate":
+            # 分类失败：退回"当作新风格描述"（历史默认），不卡住用户。
+            if self.run is not None and self.run.status == RunStatus.AWAITING_GATE:
+                self._send("正在重新选风格...")
+                self._enqueue_drive("rerun_style", self.run.run_id,
+                                     {"style_description": inflight["text"]})
+            return
         if event.kind == "gate_reply":
             self._send("没听懂这句话，能再说清楚点吗？满意就点\"满意\"，想调整直接说想怎么调")
             return
@@ -705,9 +752,13 @@ class SessionConsumer:
             run.reminder_sent = False
             self.store.save(run)
 
-    def _enqueue_job(self, job: Any) -> None:
-        print(f"[consumer] 投递 {type(job).__name__} gen={job.generation}", flush=True)
-        self.jobs.put(job)
+    def _enqueue_classify(self, job: Any) -> None:
+        print(f"[consumer] 投递(classify lane) {type(job).__name__} gen={job.generation}", flush=True)
+        self.classify_jobs.put(job)
+
+    def _enqueue_drive_job(self, job: Any) -> None:
+        print(f"[consumer] 投递(drive lane) {type(job).__name__} gen={job.generation}", flush=True)
+        self.drive_jobs.put(job)
 
     def _send(self, text: str) -> None:
         print(f"[consumer] 回复: {text!r}", flush=True)

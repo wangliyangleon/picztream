@@ -5,10 +5,11 @@
 """
 from __future__ import annotations
 
+from compose.adjustment_parser import PlanConfirmationReply, StyleGateReply
 from orchestrator.types import RunStatus
-from session.protocol import DriveJob, GateReached
+from session.protocol import ClassifyDone, DriveJob, GateReached
 
-from session_fakes import make_consumer, to_planned, to_running, worker_saves_gate
+from session_fakes import deliver_classify, make_consumer, to_planned, to_running, worker_saves_gate
 
 
 def _reach_style_apply_all_gate(env, run_id):
@@ -43,12 +44,18 @@ def test_approve_button_at_planned_starts_drive(tmp_path):
     assert env.store.load(run.run_id).status == RunStatus.RUNNING
 
 
+def _prompt_cancel_at_planned(env):
+    # PLANNED 态打字取消：走 refine 分类判 reject -> 二次确认。
+    env.push_text("不想弄了")
+    env.consumer.step()
+    deliver_classify(env, "refine_plan", PlanConfirmationReply(action="reject"))
+
+
 def test_typed_cancel_prompts_confirmation_buttons(tmp_path):
     env = make_consumer(tmp_path)
     run = to_planned(env)
 
-    env.push_text("取消")
-    env.consumer.step()
+    _prompt_cancel_at_planned(env)
 
     assert any("确定要取消整批吗" in t for t in env.transport.texts())
     assert env.transport.button_tokens() == ["confirm_cancel", "keep"]
@@ -58,8 +65,7 @@ def test_typed_cancel_prompts_confirmation_buttons(tmp_path):
 def test_confirm_cancel_button_cancels(tmp_path):
     env = make_consumer(tmp_path)
     run = to_planned(env)
-    env.push_text("取消")
-    env.consumer.step()
+    _prompt_cancel_at_planned(env)
 
     env.push_callback(f"confirm_cancel:{run.run_id}")
     env.consumer.step()
@@ -72,8 +78,7 @@ def test_confirm_cancel_button_cancels(tmp_path):
 def test_keep_button_dismisses_cancel(tmp_path):
     env = make_consumer(tmp_path)
     run = to_planned(env)
-    env.push_text("取消")
-    env.consumer.step()
+    _prompt_cancel_at_planned(env)
 
     env.push_callback(f"keep:{run.run_id}")
     env.consumer.step()
@@ -119,8 +124,12 @@ def test_restyle_button_prompts_for_new_description(tmp_path):
     assert env.drain_jobs() == []  # 只是提示，不触发任何 drive
     assert env.consumer.view.status == RunStatus.AWAITING_GATE  # 还停在闸门
 
-    # 用户接着打字给新描述 -> 走既有的 rerun_style 路径
+    # 用户接着打字给新描述 -> style_gate 分类判 redescribe -> rerun_style
     env.push_text("再冷一点")
+    env.consumer.step()
+    [cj] = env.drain_jobs()
+    assert cj.kind == "style_gate"
+    env.put_event(ClassifyDone(0, "style_gate", StyleGateReply(action="redescribe")))
     env.consumer.step()
     [job2] = env.drain_jobs()
     assert job2.action == "rerun_style"

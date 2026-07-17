@@ -270,3 +270,72 @@ def test_stop_joins_background_thread(tmp_path):
     transport.stop()
 
     assert transport._thread.is_alive() is False
+
+
+class FakeCallbackQuery:
+    def __init__(self, query_id, chat_id, data) -> None:
+        self.id = query_id
+        self.message = FakeMessage(chat_id)
+        self.data = data
+
+
+class FakeCallbackUpdate:
+    def __init__(self, update_id, callback_query) -> None:
+        self.update_id = update_id
+        self.message = None
+        self.callback_query = callback_query
+
+
+class FakeBotClientWithCallbacks(FakeBotClientWithUpdates):
+    def __init__(self, updates) -> None:
+        super().__init__(updates)
+        self.answered = []
+
+    async def answer_callback_query(self, callback_query_id):
+        await asyncio.sleep(0)
+        self.answered.append(callback_query_id)
+
+
+def test_callback_query_becomes_callback_inbound_and_is_answered(tmp_path):
+    updates = [FakeCallbackUpdate(1, FakeCallbackQuery("q1", "123", "approve:tg-abc"))]
+    fake = FakeBotClientWithCallbacks(updates)
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        messages = []
+        while time.monotonic() < deadline:
+            messages = transport.receive()
+            if messages:
+                break
+            time.sleep(0.05)
+        assert len(messages) == 1
+        assert messages[0].kind == "callback"
+        assert messages[0].chat_id == "123"
+        assert messages[0].data == "approve:tg-abc"
+        assert fake.answered == ["q1"]  # loading 转圈被消掉
+    finally:
+        transport.stop()
+
+
+def test_callback_query_from_other_chat_is_dropped_but_still_answered(tmp_path):
+    updates = [FakeCallbackUpdate(1, FakeCallbackQuery("q9", "999", "approve:tg-x"))]
+    fake = FakeBotClientWithCallbacks(updates)
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if fake.answered:
+                break
+            time.sleep(0.05)
+        assert transport.receive() == []      # 非白名单 chat 不产生入站
+        assert fake.answered == ["q9"]         # 但仍要应答，别让对方一直转圈
+    finally:
+        transport.stop()

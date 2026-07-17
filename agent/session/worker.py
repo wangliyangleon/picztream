@@ -45,12 +45,23 @@ KILLABLE_STAGES = ("Evaluate", "Dedup")
 
 
 class SessionWorker:
-    def __init__(self, jobs: "queue.Queue", events: "queue.Queue", driver: Any, store: Any,
+    """双 lane：分类/编排 lane（`classify_jobs`，纯 LLM，轻）和 drive lane
+    （`drive_jobs`，pzt 子进程，重）各一条线程并发跑（见 Eng Design 真机
+    反馈"彻底去关键词"一节）。拆开是为了让"处理中"也能跑取消/进度的 LLM
+    分类——单 lane 时 classify 会排在几分钟的 drive 后面饿死。两 lane 无
+    共享可变态：classify/compose 是纯 LLM（不碰 self.client、不改 run），
+    drive 独占 run 的变更与落盘；唯一交集是线程安全的 event 队列。"""
+
+    def __init__(self, classify_jobs: "queue.Queue", drive_jobs: "queue.Queue",
+                 events: "queue.Queue", driver: Any, store: Any,
                  client: Any, transport: Any, chat_id: str, preview_root: Path,
                  compose_plan_fn: Callable, classify_collecting_message_fn: Callable,
                  classify_gate_reply_fn: Callable, refine_plan_confirmation_fn: Callable,
+                 classify_style_gate_reply_fn: Callable, classify_running_message_fn: Callable,
+                 classify_cancel_confirmation_fn: Callable,
                  killable_stages: Tuple[str, ...] = KILLABLE_STAGES) -> None:
-        self.jobs = jobs
+        self.classify_jobs = classify_jobs
+        self.drive_jobs = drive_jobs
         self.events = events
         self.driver = driver
         self.store = store
@@ -62,23 +73,35 @@ class SessionWorker:
         self.classify_collecting_message_fn = classify_collecting_message_fn
         self.classify_gate_reply_fn = classify_gate_reply_fn
         self.refine_plan_confirmation_fn = refine_plan_confirmation_fn
+        self.classify_style_gate_reply_fn = classify_style_gate_reply_fn
+        self.classify_running_message_fn = classify_running_message_fn
+        self.classify_cancel_confirmation_fn = classify_cancel_confirmation_fn
         self.killable_stages = set(killable_stages)
 
-    # -- 线程壳 --
+    # -- 线程壳（两条 lane 各起一条线程） --
 
-    def run(self, stop_event: threading.Event, poll_seconds: float = 0.5) -> None:
+    def run_classify(self, stop_event: threading.Event, poll_seconds: float = 0.5) -> None:
         while not stop_event.is_set():
-            self.step(timeout=poll_seconds)
+            self.step_classify(timeout=poll_seconds)
 
-    def step(self, timeout: float = 0.0) -> bool:
-        """执行一个 job；队列空返回 False。未预期异常兜底成 JobCrashed
-        事件——worker 线程本身永不带病死掉（对齐旧主循环"单条消息炸了
-        不拖死常驻进程"的语义）。"""
+    def run_drive(self, stop_event: threading.Event, poll_seconds: float = 0.5) -> None:
+        while not stop_event.is_set():
+            self.step_drive(timeout=poll_seconds)
+
+    def step_classify(self, timeout: float = 0.0) -> bool:
+        return self._step(self.classify_jobs, timeout)
+
+    def step_drive(self, timeout: float = 0.0) -> bool:
+        return self._step(self.drive_jobs, timeout)
+
+    def _step(self, jobs: "queue.Queue", timeout: float) -> bool:
+        """从指定 lane 取一个 job 执行；队列空返回 False。未预期异常兜底
+        成 JobCrashed 事件——worker 线程本身永不带病死掉。"""
         try:
             if timeout:
-                job = self.jobs.get(timeout=timeout)
+                job = jobs.get(timeout=timeout)
             else:
-                job = self.jobs.get_nowait()
+                job = jobs.get_nowait()
         except queue.Empty:
             return False
         print(f"[worker] 开始 {self._describe_job(job)}", flush=True)
@@ -130,6 +153,12 @@ class SessionWorker:
             elif job.kind == "refine_plan":
                 result = self.refine_plan_confirmation_fn(
                     job.context["intent_raw"], job.context["current_params"], job.text)
+            elif job.kind == "style_gate":
+                result = self.classify_style_gate_reply_fn(job.text)
+            elif job.kind == "running":
+                result = self.classify_running_message_fn(job.text)
+            elif job.kind == "cancel_confirm":
+                result = self.classify_cancel_confirmation_fn(job.text)
             else:
                 raise ValueError(f"unknown classify kind: {job.kind!r}")
         except AdjustmentError:

@@ -210,6 +210,12 @@ worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 jo
   - 取消意图除关键词即时路径外，也走 LLM：`classify_collecting_message` 扩成 `intent`/`query`/`cancel`/`other` 四类，collecting 态的自然语言取消（"这批别弄了"）判成 `cancel`；各闸门/refine 的 LLM `reject` 同样都改成走二次确认（`_prompt_cancel_confirmation`），不再即时 cancel。keyword 路径保留给 drive 中（worker 忙、无法分类）和零延迟场景，关键词表略放宽（别弄了/不弄了/停 等）。
 - **非选图消息给帮助，不硬编默认方案**（真机反馈第四轮）：`classify_collecting_message` 新增 `other` 类——打招呼/闲聊/听不懂的消息判成 `other`，consumer 回一段 help（说明"发照片 + 一句话说想怎么弄"并给例子），不再无脑丢给 `compose_plan`（它对任何输入都会填出"留9张/精选"的默认方案，真机上误导明显）。
 - **一批开始与结束都有反馈**（真机反馈第三、四轮）：新建 collecting run 时立即回一句"收到～新任务开始了…"（补初始那波图后台下载时的静默）；交付完成（run DONE）在 DeliverStage 的"选好了 N 张"之后补一句"这批就处理完啦～想开新的一批随时发照片"，明确批次收尾。
+- **彻底去掉文本精确匹配 + worker 拆双 lane**（真机反馈第五轮，架构级）：之前还剩 approve/reject/confirm-cancel/keep 几组关键词精确匹配，其中风格预览闸门"精确命中 approve 否则一律当新风格描述"仍会让"不错"被误判成描述→hallucinate。彻底改法：
+  - **所有用户文本都交 LLM 分类，零关键词短路**。删掉 `_APPROVE/_REJECT/_CONFIRM_CANCEL/_KEEP_KEYWORDS`。唯一的确定性即时路径是 **inline 按钮回调**——走 `callback_data` 结构化 token（`"approve:tg-xxxx"`），跟按钮显示文字无关、不经文本/NLP，天然豁免。
+  - 新增三个小分类器（`compose/adjustment_parser.py`）：`classify_style_gate_reply`（预览确认 approve/redescribe/cancel/query）、`classify_running_message`（处理中 cancel/query/other）、`classify_cancel_confirmation`（二次确认 confirm/deny/other）。各是贴合上下文的紧 schema，比通用分类更不易幻觉。
+  - **worker 拆双 lane**（各一线程/一队列）：classify+编排 lane（纯 LLM，轻）+ drive lane（pzt 子进程，重）。动因：要让"处理中"也能跑取消/进度的 LLM 分类，classify 必须与 drive **并发**——单 lane 时 classify 排在几分钟的 drive 后面会饿死（旧版"RUNNING 不做 LLM 分类"限制的根源，现已解除）。两 lane 无共享可变态（classify 不碰 client/run；drive 独占 run），唯一交集是线程安全 event 队列，故并发安全。`SessionWorker` 改为 `classify_jobs`/`drive_jobs` 双队列 + `run_classify`/`run_drive`，`run_telegram2.py` 起两条 worker 线程。
+  - **代价（已接受）**：打字确认（"好的"/"满意"）也要一次 LLM 往返、不再瞬时；点按钮仍瞬时。取消/二次确认即使 LLM 误判，也有二次确认兜底，绝不会误判直接炸批。
+  - **no-run 文本不再 mint**：`run is None ⟺ 还没发照片`，此时文本只分类不建批次（取消→"没有批次"，其余→help），不再因一句话凭空建空批。第七节 `_process_text` 各状态分派、第八节对齐清单第 12/14 条据此更新为"交对应分类器"。
 
 ## 九、复用与不动清单
 

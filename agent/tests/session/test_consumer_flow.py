@@ -5,7 +5,14 @@
 """
 from __future__ import annotations
 
-from compose.adjustment_parser import CollectingReply, GateReply, PlanConfirmationReply
+from compose.adjustment_parser import (
+    CancelConfirmReply,
+    CollectingReply,
+    GateReply,
+    PlanConfirmationReply,
+    RunningReply,
+    StyleGateReply,
+)
 from orchestrator.types import PlanDelta, RunStatus
 from session.protocol import (
     ClassifyDone,
@@ -23,6 +30,7 @@ from session.protocol import (
 
 from session_fakes import (
     bare_compose_plan,
+    deliver_classify,
     make_consumer,
     to_planned,
     to_running,
@@ -103,11 +111,15 @@ def test_second_text_waits_until_inflight_classify_resolves(tmp_path):
     assert job.text == "筛一下"
 
 
-def test_planned_approve_keyword_starts_drive(tmp_path):
+def test_planned_approve_via_refine_llm_starts_drive(tmp_path):
     env = make_consumer(tmp_path)
     run = to_planned(env)
 
-    env.push_text("好的")
+    env.push_text("好的就这样")
+    env.consumer.step()
+    [job] = env.drain_jobs()
+    assert job.kind == "refine_plan"  # 不再关键词短路，走 LLM
+    env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(action="approve")))
     env.consumer.step()
 
     assert "开始处理了，共 1 张" in env.transport.texts()
@@ -148,7 +160,11 @@ def test_planned_refine_confirmed_updates_params_and_reconfirms(tmp_path):
 def test_cancel_without_active_run_replies_gently(tmp_path):
     env = make_consumer(tmp_path)
     env.push_text("取消")
-
+    env.consumer.step()
+    # 无 run：不 mint，交 collecting 分类；判成 cancel -> 无批次可取消
+    [job] = env.drain_jobs()
+    assert job.kind == "collecting"
+    env.put_event(ClassifyDone(0, "collecting", CollectingReply(action="cancel")))
     env.consumer.step()
 
     assert env.transport.texts() == ["现在没有在处理的批次"]
@@ -161,16 +177,18 @@ def test_cancel_in_collecting_prompts_confirmation_then_cancels(tmp_path):
     env.consumer.step()
     [run] = env.store.list_active()
 
-    env.push_text("取消")
+    env.push_text("别弄了")
     env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="cancel"))
 
     # 二次确认：还没真取消
     assert any("确定要取消整批吗" in t for t in env.transport.texts())
     assert env.transport.button_tokens() == ["confirm_cancel", "keep"]
     assert env.store.load(run.run_id).status == RunStatus.COLLECTING
 
-    env.push_text("确认取消")
+    env.push_text("对，取消吧")
     env.consumer.step()
+    deliver_classify(env, "cancel_confirm", CancelConfirmReply(action="confirm"))
 
     assert env.store.load(run.run_id).status == RunStatus.CANCELLED
     assert "已取消" in env.transport.texts()
@@ -184,10 +202,12 @@ def test_cancel_confirmation_declined_keeps_run(tmp_path):
     env.consumer.step()
     [run] = env.store.list_active()
 
-    env.push_text("取消")
+    env.push_text("别弄了")
     env.consumer.step()
-    env.push_text("不取消")
+    deliver_classify(env, "collecting", CollectingReply(action="cancel"))
+    env.push_text("算了还是不取消")
     env.consumer.step()
+    deliver_classify(env, "cancel_confirm", CancelConfirmReply(action="deny"))
 
     assert "好，继续" in env.transport.texts()
     assert env.store.load(run.run_id).status == RunStatus.COLLECTING
@@ -199,17 +219,21 @@ def test_cancel_confirmation_dismissed_by_unrelated_text(tmp_path):
     env.push_photo("a.jpg")
     env.consumer.step()
 
-    env.push_text("取消")
+    env.push_text("别弄了")
     env.consumer.step()
-    # 没明确确认，改发了别的意图：撤掉待确认，当普通意图处理（不取消）
+    deliver_classify(env, "collecting", CollectingReply(action="cancel"))
+    # cancel_confirm 判成 other：撤掉待确认，把这条重新当普通消息处理（不取消）
     env.push_text("筛一下留2张")
     env.consumer.step()
+    deliver_classify(env, "cancel_confirm", CancelConfirmReply(action="other"))
 
     assert env.consumer._cancel_confirm_pending is False
     [run] = env.store.list_active()
     assert run.status == RunStatus.COLLECTING
+    # 重新入队后被当作 collecting 意图分类
     [job] = env.drain_jobs()
-    assert isinstance(job, ClassifyJob)  # 当成了新意图
+    assert isinstance(job, ClassifyJob)
+    assert job.kind == "collecting"
 
 
 def test_photo_during_drive_queues_to_pending(tmp_path):
@@ -223,7 +247,7 @@ def test_photo_during_drive_queues_to_pending(tmp_path):
     assert "先帮你收着，这批处理完就接着看这些新照片" in env.transport.texts()
 
 
-def test_text_during_drive_gets_template_reply_without_llm(tmp_path):
+def test_text_during_drive_goes_to_running_classifier(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
     env.put_event(StageStarted(0, job.run_id, "Evaluate"))
@@ -232,9 +256,12 @@ def test_text_during_drive_gets_template_reply_without_llm(tmp_path):
 
     env.push_text("到哪了")
     env.consumer.step()
+    [j] = env.drain_jobs()
+    assert j.kind == "running"  # 处理中也走 LLM（classify lane 并发）
+    env.put_event(ClassifyDone(0, "running", RunningReply(action="query")))
+    env.consumer.step()
 
-    assert env.drain_jobs() == []  # 不投任何 LLM job
-    assert "正在执行 AI 评估" in env.transport.texts()[-1]  # 模板进度应答
+    assert "正在执行 AI 评估" in env.transport.texts()[-1]  # query -> 回进度
 
 
 def test_stage_started_renders_text_only_for_message_stages(tmp_path):
@@ -253,8 +280,9 @@ def test_cancel_during_drive_confirms_then_sets_event(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
 
-    env.push_text("取消")
+    env.push_text("停一下别弄了")
     env.consumer.step()
+    deliver_classify(env, "running", RunningReply(action="cancel"))
     # drive 中也先弹二次确认，不立即掐
     assert any("确定要取消整批吗" in t for t in env.transport.texts())
     assert not job.cancel_event.is_set()
@@ -276,8 +304,9 @@ def test_cancel_during_drive_confirms_then_sets_event(tmp_path):
 def test_stale_generation_events_are_dropped_after_cancel(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
-    env.push_text("取消")
+    env.push_text("停一下别弄了")
     env.consumer.step()
+    deliver_classify(env, "running", RunningReply(action="cancel"))
     env.push_callback(f"confirm_cancel:{job.run_id}")
     env.consumer.step()
     before = len(env.transport.texts())
@@ -323,7 +352,11 @@ def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
             "想换风格点\"重选\"或直接打字描述") in env.transport.texts()
     assert env.transport.button_tokens() == ["approve", "restyle"]
 
-    env.push_text("好的")
+    env.push_text("不错就这个")
+    env.consumer.step()
+    [j] = env.drain_jobs()
+    assert j.kind == "style_gate"  # 预览确认走 LLM，不再关键词
+    env.put_event(ClassifyDone(0, "style_gate", StyleGateReply(action="approve")))
     env.consumer.step()
 
     [next_job] = env.drain_jobs()
@@ -438,8 +471,9 @@ def test_job_crash_marks_idle_and_next_message_resumes(tmp_path):
     env.consumer.step()
 
     jobs = env.drain_jobs()
-    assert [j.action for j in jobs if isinstance(j, DriveJob)] == ["resume"]
-    assert jobs[0].run_id == job.run_id
+    drive_jobs = [j for j in jobs if isinstance(j, DriveJob)]
+    assert [j.action for j in drive_jobs] == ["resume"]  # 下一条消息触发续跑
+    assert drive_jobs[0].run_id == job.run_id
 
 
 def test_collecting_cancel_intent_prompts_confirmation(tmp_path):
