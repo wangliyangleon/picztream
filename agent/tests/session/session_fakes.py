@@ -15,7 +15,7 @@ from typing import Callable, List, Optional, Tuple
 
 from compose.adjustment_parser import AdjustmentError
 from orchestrator.driver import Driver
-from orchestrator.types import Plan, RunState, RunStatus, StageSpec, StageStatus
+from orchestrator.types import GateState, Plan, RunState, RunStatus, StageSpec, StageStatus
 from pzt_client import PztCancelledError
 from router.collecting import incoming_dir_for
 from session.worker import SessionWorker
@@ -38,6 +38,12 @@ _FIXED_RESPONSES = {
     "tag": {},
     "recipe": {"applied": True, "recipe_name": "Havana 1959"},
     "export-images": {"exported": 2, "skipped": [], "created_dir": True},
+    # consumer 的 Evaluate 进度轮询用（cli/commands/commands.cpp::cmd_images
+    # 的输出形状，逐张带 evaluated 布尔）。
+    "images": {"project": "run-1", "images": [
+        {"path": "a.jpg", "evaluated": True, "tags": []},
+        {"path": "b.jpg", "evaluated": False, "tags": []},
+    ]},
 }
 
 
@@ -66,12 +72,14 @@ class FakeClient:
 
 class FakeTransport:
     def __init__(self) -> None:
+        self.inbox: List = []
         self.sent_texts: List[Tuple[str, str]] = []
         self.sent_photos: List[Tuple[str, str]] = []
         self.sent_files: List[Tuple[str, str]] = []
 
     def receive(self):
-        return []
+        messages, self.inbox = self.inbox, []
+        return messages
 
     def send_text(self, chat_id: str, text: str) -> None:
         self.sent_texts.append((chat_id, text))
@@ -81,6 +89,9 @@ class FakeTransport:
 
     def send_file(self, chat_id: str, path: str) -> None:
         self.sent_files.append((chat_id, path))
+
+    def texts(self) -> List[str]:
+        return [text for _, text in self.sent_texts]
 
 
 class FakeClock:
@@ -107,6 +118,56 @@ def _fake_style_http_post(recipe_name: str = "Havana 1959"):
 
 def _raising_classify(*args, **kwargs):
     raise AdjustmentError("no_llm_in_tests", "classify fn not faked in this test")
+
+
+def bare_compose_plan() -> Plan:
+    # compose_plan 的输出形状：还没经过 consumer 的参数注入（无 Ingest
+    # folder / Deliver out_folder / Deliver 闸门），对应旧 router_fakes
+    # 的 _fake_compose_plan。
+    return Plan(stages=[
+        StageSpec(name="Ingest"),
+        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
+        StageSpec(name="Dedup"),
+        StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
+        StageSpec(name="Style", params={"provider": "local"}, gate="required"),
+        StageSpec(name="StyleApplyAll", gate="required"),
+        StageSpec(name="Deliver"),
+    ])
+
+
+def to_planned(env: "ConsumerEnv") -> RunState:
+    """photo -> 意图文本 -> classify 降级 -> compose 成功 -> PLANNED。"""
+    from session.protocol import ClassifyFailed, ComposeDone
+
+    env.push_photo("a.jpg", b"a")
+    env.consumer.step()
+    env.push_text("筛一下留2张")
+    env.consumer.step()
+    env.drain_jobs()
+    gen = env.consumer.generation
+    env.put_event(ClassifyFailed(gen, "collecting", retryable=True))
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ComposeDone(gen, bare_compose_plan()))
+    env.consumer.step()
+    return env.consumer.run
+
+
+def to_running(env: "ConsumerEnv"):
+    """to_planned -> "好的" -> DriveJob(start)。返回 DriveJob。"""
+    to_planned(env)
+    env.push_text("好的")
+    env.consumer.step()
+    return env.drain_jobs()[-1]
+
+
+def worker_saves_gate(env: "ConsumerEnv", run_id: str, stage: str) -> None:
+    """模拟 worker 停在闸门时的落盘（GateReached 事件发出前 run 已是
+    AWAITING_GATE + gate_state，见 Driver.advance）。"""
+    run = env.store.load(run_id)
+    run.status = RunStatus.AWAITING_GATE
+    run.gate_state = GateState(stage_name=stage, setting="required")
+    env.store.save(run)
 
 
 def make_fixed_plan(incoming_dir: str, out_folder: str) -> Plan:
@@ -156,6 +217,72 @@ class WorkerEnv:
         )
         self.store.save(run)
         return run
+
+
+class ConsumerEnv:
+    def __init__(self, tmp_path: Path, consumer, jobs: "queue.Queue", events: "queue.Queue",
+                 store: RunStore, transport: FakeTransport, client: FakeClient,
+                 clock: FakeClock) -> None:
+        self.tmp_path = tmp_path
+        self.consumer = consumer
+        self.jobs = jobs
+        self.events = events
+        self.store = store
+        self.transport = transport
+        self.client = client
+        self.clock = clock
+
+    def push_text(self, text: str) -> None:
+        from transport.base import InboundMessage
+        self.transport.inbox.append(InboundMessage(kind="text", chat_id=CHAT_ID, text=text))
+
+    def push_photo(self, name: str, content: bytes = b"x") -> Path:
+        from transport.base import InboundMessage
+        src_dir = self.tmp_path / "downloaded"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        src = src_dir / name
+        src.write_bytes(content)
+        self.transport.inbox.append(InboundMessage(kind="photo", chat_id=CHAT_ID,
+                                                    file_path=str(src)))
+        return src
+
+    def drain_jobs(self) -> list:
+        out = []
+        while True:
+            try:
+                out.append(self.jobs.get_nowait())
+            except queue.Empty:
+                return out
+
+    def put_event(self, event) -> None:
+        self.events.put(event)
+
+
+def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
+                  client: Optional[FakeClient] = None,
+                  idle_reminder_seconds: float = 300.0,
+                  progress_interval_seconds: float = 60.0,
+                  eval_poll_interval_seconds: float = 60.0) -> ConsumerEnv:
+    from session.consumer import SessionConsumer
+
+    clock = clock or FakeClock()
+    client = client or FakeClient()
+    transport = FakeTransport()
+    store = RunStore(tmp_path / "runs")
+    jobs: "queue.Queue" = queue.Queue()
+    events: "queue.Queue" = queue.Queue()
+    # consumer 只用 driver.cancel/approve，这两个方法不碰 stages。
+    driver = Driver(stages={}, store=store)
+    consumer = SessionConsumer(
+        store=store, driver=driver, transport=transport, chat_id=CHAT_ID,
+        incoming_root=tmp_path / "incoming", deliver_out_folder=tmp_path / "deliver-out",
+        jobs=jobs, events=events, readonly_client=client, now_fn=clock,
+        idle_reminder_seconds=idle_reminder_seconds,
+        progress_interval_seconds=progress_interval_seconds,
+        eval_poll_interval_seconds=eval_poll_interval_seconds,
+    )
+    return ConsumerEnv(tmp_path=tmp_path, consumer=consumer, jobs=jobs, events=events,
+                       store=store, transport=transport, client=client, clock=clock)
 
 
 def make_worker(tmp_path: Path,

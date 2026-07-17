@@ -1,0 +1,139 @@
+"""SessionConsumer 的三个 timer（idle 提醒/收图播报沿用旧语义，Evaluate
+进度轮询是 2.0 新增）与启动恢复三分支（docs/W2026-07-15_AgentRuntime_
+Eng_Design.md 第七节第 6、7 条）。时间全部走注入的 FakeClock。
+"""
+from __future__ import annotations
+
+from orchestrator.types import RunState, RunStatus, StageStatus
+from session.protocol import DriveJob, StageStarted
+from store.run_store import RunStore
+
+from session_fakes import (
+    FakeClock,
+    make_consumer,
+    make_fixed_plan,
+    to_running,
+)
+
+
+def test_idle_reminder_fires_once_and_resets_on_activity(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+
+    env.clock.advance(300)
+    env.consumer.step()
+    assert env.transport.texts().count("看到你发了 1 张，想怎么处理？") == 1
+
+    env.consumer.step()  # 一次性：不重复提醒
+    assert env.transport.texts().count("看到你发了 1 张，想怎么处理？") == 1
+
+    env.push_photo("b.jpg")  # 活动重置提醒标记
+    env.consumer.step()
+    env.clock.advance(300)
+    env.consumer.step()
+    assert env.transport.texts().count("看到你发了 2 张，想怎么处理？") == 1
+
+
+def test_collecting_progress_broadcast_waits_full_interval(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.push_photo("b.jpg")
+    env.consumer.step()
+    assert "已收到 2 张图片" not in env.transport.texts()  # 首播也要等满间隔
+
+    env.clock.advance(60)
+    env.consumer.step()
+
+    assert "已收到 2 张图片" in env.transport.texts()
+
+
+def test_eval_progress_poll_counts_evaluated_images(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
+    env.consumer.step()
+    assert not any(args[0] == "images" for args in env.client.calls)
+
+    env.clock.advance(60)
+    env.consumer.step()
+
+    assert ("images", job.run_id) in env.client.calls  # 只读查询，project_id == run_id
+    assert env.consumer.view.stage_progress == (1, 2)  # fake images: 2 张中 1 张已评估
+    assert "评估进行中，已完成 1/2 张" in env.transport.texts()
+
+    env.clock.advance(30)
+    env.consumer.step()  # 没到下一个间隔，不再轮询
+    assert sum(1 for args in env.client.calls if args[0] == "images") == 1
+
+
+def test_eval_poll_failure_is_tolerated_silently(tmp_path):
+    env = make_consumer(tmp_path)
+
+    def exploding_call(*args):
+        raise RuntimeError("db locked")
+
+    env.client.call = exploding_call
+    job = to_running(env)
+    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
+    env.consumer.step()
+    before = len(env.transport.texts())
+
+    env.clock.advance(60)
+    env.consumer.step()  # 不炸、不发进度
+
+    assert len(env.transport.texts()) == before
+    assert env.consumer.view.stage_progress is None
+
+
+def _prefill_run(tmp_path, run_id: str, status: RunStatus) -> RunState:
+    store = RunStore(tmp_path / "runs")
+    plan = make_fixed_plan(str(tmp_path / "incoming" / run_id), str(tmp_path / "deliver-out"))
+    run = RunState(
+        run_id=run_id, project_id=run_id, plan=plan,
+        stage_states={s.name: StageStatus.PENDING for s in plan.stages},
+        status=status, intent_raw="筛一下留2张",
+    )
+    store.save(run)
+    return run
+
+
+def test_bootstrap_resumes_running_run(tmp_path):
+    _prefill_run(tmp_path, "tg-boot1", RunStatus.RUNNING)
+    env = make_consumer(tmp_path)
+
+    env.consumer.bootstrap()
+
+    assert "上次处理被中断，正在接着跑…" in env.transport.texts()
+    [job] = env.drain_jobs()
+    assert isinstance(job, DriveJob)
+    assert job.action == "resume"
+    assert job.run_id == "tg-boot1"
+    assert env.consumer.view.drive_active is True
+
+
+def test_bootstrap_adopts_planned_run(tmp_path):
+    _prefill_run(tmp_path, "tg-boot2", RunStatus.PLANNED)
+    env = make_consumer(tmp_path)
+
+    env.consumer.bootstrap()
+
+    assert env.transport.texts() == []  # 不重发闸门/确认提示，靠 idle 提醒兜底
+    assert env.consumer.view.status == RunStatus.PLANNED
+    assert env.consumer.run is not None
+
+    env.push_text("好的")
+    env.consumer.step()
+    [job] = env.drain_jobs()
+    assert job.action == "start"
+
+
+def test_bootstrap_approves_leftover_awaiting_review(tmp_path):
+    _prefill_run(tmp_path, "tg-boot3", RunStatus.AWAITING_REVIEW)
+    env = make_consumer(tmp_path)
+
+    env.consumer.bootstrap()
+
+    assert env.store.load("tg-boot3").status == RunStatus.DONE
+    assert env.store.list_active() == []
+    assert env.consumer.run is None
