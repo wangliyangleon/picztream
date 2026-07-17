@@ -312,7 +312,8 @@ class SessionRouter:
     def _send_plan_confirmation(self, run: RunState) -> None:
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
-        auto_reject_desc = "自动剔除不合格照片" if evaluate.params["auto_reject"] else "不自动剔除照片"
+        auto_reject_desc = ("自动剔除不合格和重复的照片" if evaluate.params["auto_reject"]
+                            else "只去重复、保留不合格的照片")
         self.transport.send_text(
             self.chat_id,
             f"理解你想：用 {evaluate.params['provider']} 评估，{auto_reject_desc}，"

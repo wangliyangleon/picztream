@@ -86,7 +86,7 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     assert ingest.params["folder"] == str(tmp_path / "incoming" / run.run_id)
     assert deliver.params["out_folder"] == str(tmp_path / "deliver-out")
     assert deliver.gate == "required"
-    assert "理解你想：留 2 张，标签叫\"精选\"，自动剔除不合格照片，对吗？" in \
+    assert "理解你想：留 2 张，标签叫\"精选\"，自动剔除不合格和重复的照片，对吗？" in \
         env.transport.texts()[-1]
 
 
@@ -153,7 +153,7 @@ def test_planned_refine_confirmed_updates_params_and_reconfirms(tmp_path):
     assert curate.params["apply_tag"] == "ins"
     assert evaluate.params["auto_reject"] is False
     assert "留 6 张" in env.transport.texts()[-1]
-    assert "不自动剔除照片" in env.transport.texts()[-1]
+    assert "只去重复、保留不合格的照片" in env.transport.texts()[-1]
     assert env.drain_jobs() == []
 
 

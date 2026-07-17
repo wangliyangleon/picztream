@@ -802,7 +802,10 @@ class SessionConsumer:
         # （真机反馈）。仍保留在 plan 参数里，refine 想改 provider 仍可改。
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
-        auto_reject_desc = "自动剔除不合格照片" if evaluate.params["auto_reject"] else "不自动剔除照片"
+        # 去重（Dedup）总会做，跟 auto_reject 无关；auto_reject 只控制"要
+        # 不要连不合格的也一起剔"。所以两个分支都点明"重复照片会去掉"。
+        auto_reject_desc = ("自动剔除不合格和重复的照片" if evaluate.params["auto_reject"]
+                            else "只去重复、保留不合格的照片")
         self._send_buttons(
             f"理解你想：留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，"
             f"{auto_reject_desc}，对吗？"
