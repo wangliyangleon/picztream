@@ -65,8 +65,8 @@ class SessionView:
             base = STAGE_PROGRESS_MESSAGES.get(self.current_stage or "", "正在处理...")
             progress = ""
             if self.stage_progress is not None:
-                progress = f"已完成 {self.stage_progress[0]}/{self.stage_progress[1]} 张，"
-            return f"{base}{progress}说\"取消\"可以停"
+                progress = f"，已完成 {self.stage_progress[0]}/{self.stage_progress[1]} 张"
+            return f"{base.rstrip('.')}{progress}"
         return "没什么可说的"
 
 

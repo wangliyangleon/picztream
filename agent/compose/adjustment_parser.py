@@ -224,18 +224,24 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
 _COLLECTING_SCHEMA_INSTRUCTION = (
     "The user has been sending photos to a photo-culling bot and hasn't yet given a "
     "processing instruction. You are given how many photos have been received so far "
-    "and the user's message. Respond with a single JSON object in one of two shapes: "
-    '{"action": "query"} if the message is just a question about the current status '
-    '(for example "收到几张了？", "how many photos so far?"), not an instruction to '
-    "start processing; "
+    "and the user's message. Respond with a single JSON object in one of four shapes: "
     '{"action": "intent"} if the message is an actual instruction describing how to '
-    'process the photos (for example "帮我选几张发朋友圈", "筛一下").'
+    'process/cull/select the photos (for example "帮我选几张发朋友圈", "筛一下", '
+    '"挑5张精修", "把糊的去掉"); '
+    '{"action": "query"} if the message is just a question about the current status '
+    '(for example "收到几张了？", "how many photos so far?"), not an instruction; '
+    '{"action": "cancel"} if the message expresses wanting to abort/stop/cancel this '
+    'batch (for example "取消", "算了不弄了", "别处理了", "停一下", "不想要了"); '
+    '{"action": "other"} if the message is NOT related to photo culling at all - a '
+    "greeting, small talk, an unrelated question, or gibberish (for example \"你好\", "
+    '"今天天气不错", "你是谁", "asdfgh"). Do NOT guess an "intent" for messages that '
+    "are not clearly photo-processing instructions; use \"other\" instead."
 )
 
 
 @dataclass
 class CollectingReply:
-    action: Literal["query", "intent"]
+    action: Literal["query", "intent", "cancel", "other"]
 
 
 def classify_collecting_message(text: str, photo_count: int, http_post: Optional[HttpPostFn] = None,
@@ -248,6 +254,6 @@ def classify_collecting_message(text: str, photo_count: int, http_post: Optional
         http_post=http_post,
     )
     action = decision.get("action")
-    if action not in ("query", "intent"):
+    if action not in ("query", "intent", "cancel", "other"):
         raise AdjustmentError("unknown_action", f"unrecognized collecting message action {action!r}")
     return CollectingReply(action=action)

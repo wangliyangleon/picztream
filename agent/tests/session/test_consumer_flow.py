@@ -234,7 +234,7 @@ def test_text_during_drive_gets_template_reply_without_llm(tmp_path):
     env.consumer.step()
 
     assert env.drain_jobs() == []  # 不投任何 LLM job
-    assert "说\"取消\"可以停" in env.transport.texts()[-1]
+    assert "正在执行 AI 评估" in env.transport.texts()[-1]  # 模板进度应答
 
 
 def test_stage_started_renders_text_only_for_message_stages(tmp_path):
@@ -320,7 +320,7 @@ def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
     env.consumer.step()
 
     assert ("这是用「Havana 1959」套用的效果，满意点\"满意\"，"
-            "想换风格点\"重选\"或直接打字描述，想取消打字说\"取消\"") in env.transport.texts()
+            "想换风格点\"重选\"或直接打字描述") in env.transport.texts()
     assert env.transport.button_tokens() == ["approve", "restyle"]
 
     env.push_text("好的")
@@ -352,7 +352,7 @@ def test_gate_deliver_summary_then_llm_adjustment(tmp_path):
     env.consumer.step()
 
     assert ("选好了 2 张，已套用风格「Havana 1959」，"
-            "满意点\"满意\"，想调整点\"重选\"或直接打字说，想取消打字说\"取消\"") in env.transport.texts()
+            "满意点\"满意\"，想调整点\"重选\"或直接打字说") in env.transport.texts()
     assert env.transport.button_tokens() == ["approve", "restyle"]
 
     env.push_text("换掉第1张")
@@ -385,8 +385,8 @@ def test_gate_classify_not_understood_replies_guidance(tmp_path):
     env.put_event(ClassifyFailed(0, "gate_reply", retryable=False))
     env.consumer.step()
 
-    assert ("没听懂这句话，能再说清楚点吗？满意就说\"好的\"，"
-            "不满意说说想怎么调，不要了就说\"取消\"") in env.transport.texts()
+    assert ("没听懂这句话，能再说清楚点吗？满意就点\"满意\"，"
+            "想调整直接说想怎么调") in env.transport.texts()
 
 
 def test_compose_failed_keeps_collecting_and_allows_retry(tmp_path):
@@ -440,3 +440,67 @@ def test_job_crash_marks_idle_and_next_message_resumes(tmp_path):
     jobs = env.drain_jobs()
     assert [j.action for j in jobs if isinstance(j, DriveJob)] == ["resume"]
     assert jobs[0].run_id == job.run_id
+
+
+def test_collecting_cancel_intent_prompts_confirmation(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+    env.push_text("这批先别弄了吧")  # 非关键词，走 LLM 分类
+    env.consumer.step()
+    env.drain_jobs()
+
+    env.put_event(ClassifyDone(0, "collecting", CollectingReply(action="cancel")))
+    env.consumer.step()
+
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+    assert env.transport.button_tokens() == ["confirm_cancel", "keep"]
+    [run] = env.store.list_active()
+    assert run.status == RunStatus.COLLECTING  # 还没真取消
+
+
+def test_collecting_non_intent_message_gets_help_not_default_plan(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+    env.push_text("你好呀你是谁")
+    env.consumer.step()
+    env.drain_jobs()
+
+    env.put_event(ClassifyDone(0, "collecting", CollectingReply(action="other")))
+    env.consumer.step()
+
+    assert any("我是帮你选照片的小助手" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []  # 不投 compose，不硬编默认方案
+    [run] = env.store.list_active()
+    assert run.status == RunStatus.COLLECTING
+
+
+def test_run_finished_done_sends_batch_wrapup(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    env.put_event(RunFinished(0, job.run_id, "done", None))
+    env.consumer.step()
+
+    assert "这批就处理完啦～想开新的一批，随时把照片发给我就行 📷" in env.transport.texts()
+    assert env.consumer.view.run_id is None
+
+
+def test_gate_reject_via_llm_prompts_confirmation_not_immediate_cancel(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Deliver")
+    env.put_event(GateReached(0, job.run_id, "Deliver", {
+        "selected_count": 2, "applied_recipe": None,
+        "preview_failed_count": 0, "export_error": None}))
+    env.consumer.step()
+
+    env.push_text("这几张都不满意，不想要了")  # 非关键词，走 LLM 分类
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "gate_reply", GateReply(action="reject")))
+    env.consumer.step()
+
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+    assert env.store.load(job.run_id).status == RunStatus.AWAITING_GATE  # 二次确认前不取消

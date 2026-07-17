@@ -83,7 +83,7 @@ def test_from_run_awaiting_gate_restores_selected_count(tmp_path):
     assert view.describe() == "已经选好了 2 张，等你回复"
 
 
-def test_describe_running_with_progress_mentions_counts_and_cancel(tmp_path):
+def test_describe_running_with_progress_mentions_counts(tmp_path):
     view = SessionView(incoming_root=tmp_path / "incoming", run_id="tg-r1",
                        status=RunStatus.RUNNING, current_stage="Evaluate",
                        stage_progress=(34, 120))
@@ -92,7 +92,7 @@ def test_describe_running_with_progress_mentions_counts_and_cancel(tmp_path):
 
     assert "正在执行 AI 评估" in text
     assert "34/120" in text
-    assert "取消" in text
+    assert "取消" not in text  # 不再提示取消（真机反馈）
 
 
 def test_describe_running_without_progress_still_names_stage(tmp_path):

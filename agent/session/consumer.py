@@ -45,7 +45,10 @@ from session.protocol import (
 from session.view import STAGE_PROGRESS_MESSAGES, SessionView, view_from_run
 
 _APPROVE_KEYWORDS = {"", "approve", "同意", "可以", "好", "好的", "ok"}
-_REJECT_KEYWORDS = {"取消", "cancel", "算了"}
+# 打字取消的即时关键词路径（instant，drive 中也生效，不依赖 LLM/worker）。
+# 更自然的取消措辞由 LLM 分类兜底（collecting 的 cancel action / 各闸门的
+# reject），都统一走二次确认，见 _prompt_cancel_confirmation。
+_REJECT_KEYWORDS = {"取消", "cancel", "算了", "别弄了", "不弄了", "不要了", "停", "停止", "退出"}
 _STYLE_GATE_STAGES = ("Style", "StyleApplyAll")
 
 # LLM/网络这类基础设施失败的痕迹：命中就说"AI 连不上"而不是"没看懂"
@@ -428,6 +431,12 @@ class SessionConsumer:
         if event.kind == "collecting":
             if result.action == "query":
                 self._send(self.view.describe())
+            elif result.action == "cancel":
+                self._prompt_cancel_confirmation()
+            elif result.action == "other":
+                # 不是选图指令（打招呼/闲聊/听不懂）：给帮助，别硬编个默认
+                # 方案（真机反馈：乱输入会回"留9张标签精选"的默认值）。
+                self._send_help()
             else:
                 self._submit_compose(inflight["text"])
             return
@@ -448,9 +457,9 @@ class SessionConsumer:
         # 旧实现只捕获 AdjustmentError，LlmRequestError 会让整条消息被主
         # 循环跳过（用户侧无声）；2.0 统一回引导文案，不再静默。
         if event.kind == "gate_reply":
-            self._send("没听懂这句话，能再说清楚点吗？满意就说\"好的\"，不满意说说想怎么调，不要了就说\"取消\"")
+            self._send("没听懂这句话，能再说清楚点吗？满意就点\"满意\"，想调整直接说想怎么调")
             return
-        self._send("没听懂，满意就说\"好的\"，不满意说说想怎么改，不要了就说\"取消\"")
+        self._send("没听懂，满意就点\"好的\"，想改直接说想怎么改")
 
     def _on_refine_reply(self, reply: Any) -> None:
         if self.run is None or self.run.status != RunStatus.PLANNED:
@@ -465,9 +474,7 @@ class SessionConsumer:
             self._begin_running()
             return
         if reply.action == "reject":
-            self.driver.cancel(self.run)
-            self._send("已取消")
-            self._reset_session()
+            self._prompt_cancel_confirmation()  # LLM 判成取消也要二次确认
             return
         # confirmed：更新参数、重新回显确认，不自动开跑（PLANNED 的存在
         # 意义就是"改完参数必须再看一眼"，旧拍板保持）。
@@ -488,9 +495,7 @@ class SessionConsumer:
             self._enqueue_drive("resolve_gate", self.run.run_id)
             return
         if reply.action == "reject":
-            self.driver.cancel(self.run)
-            self._send("已取消")
-            self._reset_session()
+            self._prompt_cancel_confirmation()  # LLM 判成取消也要二次确认
             return
         if reply.action == "query":
             self._send(self.view.describe())
@@ -563,7 +568,7 @@ class SessionConsumer:
         if not payload.get("preview_sent"):
             self._send("预览图发送失败，不过风格已经选好了")
         self._send_buttons(f"这是用「{chosen}」套用的效果，满意点\"满意\"，"
-                           "想换风格点\"重选\"或直接打字描述，想取消打字说\"取消\"",
+                           "想换风格点\"重选\"或直接打字描述",
                            _STYLE_APPLY_ALL_BUTTONS)
 
     def _render_deliver_gate(self, payload: dict) -> None:
@@ -575,14 +580,17 @@ class SessionConsumer:
             summary += f"，已套用风格「{payload['applied_recipe']}」"
         if payload.get("preview_failed_count"):
             summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，交付时仍会正常导出)"
-        summary += "，满意点\"满意\"，想调整点\"重选\"或直接打字说，想取消打字说\"取消\""
+        summary += "，满意点\"满意\"，想调整点\"重选\"或直接打字说"
         self._send_buttons(summary, _DELIVER_BUTTONS)
 
     def _on_run_finished(self, event: RunFinished) -> None:
         self.active_drive_job = None
         if event.status == RunStatus.FAILED.value:
             self._send(f"处理失败：{event.detail or '未知错误'}")
-        # DONE 不发额外消息：Deliver stage 自己已说"选好了 N 张"（旧行为）。
+        elif event.status == RunStatus.DONE.value:
+            # Deliver stage 自己已说"选好了 N 张"，这里补一句收尾，明确告诉
+            # 用户这批结束了、可以开新的（真机反馈）。
+            self._send("这批就处理完啦～想开新的一批，随时把照片发给我就行 📷")
         self.run = None
         self.view = SessionView(incoming_root=self.incoming_root)
 
@@ -620,7 +628,7 @@ class SessionConsumer:
         elif run.status == RunStatus.PLANNED:
             self._send("还在等你确认要不要这么处理，满意就说\"好的\"")
         elif run.status == RunStatus.AWAITING_GATE:
-            self._send("还在等你的回复呢，满意就说\"好的\"，不满意说说想怎么调，不要了就说\"取消\"")
+            self._send("还在等你的回复呢，满意就点按钮，想调整直接打字说")
         else:
             return
         run.reminder_sent = True
@@ -705,6 +713,16 @@ class SessionConsumer:
         print(f"[consumer] 回复: {text!r}", flush=True)
         self.transport.send_text(self.chat_id, text)
 
+    def _send_help(self) -> None:
+        self._send(
+            "我是帮你选照片的小助手 📷\n"
+            "把要处理的照片发给我，再用一句话说想怎么弄就行，比如：\n"
+            "· 选3张发朋友圈\n"
+            "· 挑5张精修\n"
+            "· 筛一下，糊的去掉\n"
+            "发完照片说一声，我就开始～"
+        )
+
     def _send_buttons(self, text: str, actions: list) -> None:
         """带 inline 按钮发一条确认。transport 没有 send_buttons 能力时
         （run_watchfolder 等非 Telegram 入口，或旧版 transport）降级成纯文
@@ -737,7 +755,7 @@ class SessionConsumer:
         self._send_buttons(
             f"理解你想：留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，"
             f"{auto_reject_desc}，对吗？"
-            "\n满意就点\"好的\"，想改或想取消直接打字说",
+            "\n满意就点\"好的\"，想改直接打字说",
             _CONFIRM_BUTTONS,
         )
 

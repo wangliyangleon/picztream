@@ -205,6 +205,11 @@ worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 jo
   - 所有确认按钮**去掉取消**——方案确认只剩 `[好的]`，Style 问描述纯文本无按钮，StyleApplyAll/Deliver 只剩 `[满意][重选]`（`重选` 按 gate 提示打字：StyleApplyAll→新风格描述走 rerun_style，Deliver→调整走 gate_reply）。
   - 取消只能**打字关键词**（`取消`/`cancel`/`算了`）触发，且触发后不立即执行，先弹一道**二次确认** `[确认取消 ⚠️][不取消]`（也可打字 `确认取消`/`不取消`）。只有确认了才真的 cancel。drive 进行中同样先确认再置 `cancel_event`。二次确认态下发别的指令＝安全撤销、当普通消息处理（绝不误取消）。
   - `confirm_cancel`/`keep` 回调独立于常规按钮校验（drive 中 run 归 worker、`self.run` 为 None，常规校验会拦掉，取消确认必须能穿透），只校验 `_cancel_confirm_pending` + `run_id`。
+- **取消提示全部撤掉 + 取消意图交 LLM**（真机反馈第四轮）：
+  - 所有常规提示语不再出现"取消"字样（方案/风格/交付确认、idle 提醒、没听懂引导、RUNNING 模板应答都去掉）。取消不需要教用户，靠自然语言识别。
+  - 取消意图除关键词即时路径外，也走 LLM：`classify_collecting_message` 扩成 `intent`/`query`/`cancel`/`other` 四类，collecting 态的自然语言取消（"这批别弄了"）判成 `cancel`；各闸门/refine 的 LLM `reject` 同样都改成走二次确认（`_prompt_cancel_confirmation`），不再即时 cancel。keyword 路径保留给 drive 中（worker 忙、无法分类）和零延迟场景，关键词表略放宽（别弄了/不弄了/停 等）。
+- **非选图消息给帮助，不硬编默认方案**（真机反馈第四轮）：`classify_collecting_message` 新增 `other` 类——打招呼/闲聊/听不懂的消息判成 `other`，consumer 回一段 help（说明"发照片 + 一句话说想怎么弄"并给例子），不再无脑丢给 `compose_plan`（它对任何输入都会填出"留9张/精选"的默认方案，真机上误导明显）。
+- **一批开始与结束都有反馈**（真机反馈第三、四轮）：新建 collecting run 时立即回一句"收到～新任务开始了…"（补初始那波图后台下载时的静默）；交付完成（run DONE）在 DeliverStage 的"选好了 N 张"之后补一句"这批就处理完啦～想开新的一批随时发照片"，明确批次收尾。
 
 ## 九、复用与不动清单
 
