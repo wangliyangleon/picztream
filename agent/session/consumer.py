@@ -48,6 +48,11 @@ _APPROVE_KEYWORDS = {"", "approve", "同意", "可以", "好", "好的", "ok"}
 _REJECT_KEYWORDS = {"取消", "cancel", "算了"}
 _STYLE_GATE_STAGES = ("Style", "StyleApplyAll")
 
+# LLM/网络这类基础设施失败的痕迹：命中就说"AI 连不上"而不是"没看懂"
+# （后者会误导用户以为是自己表述的问题，见真机反馈）。
+_INFRA_ERROR_HINTS = ("network_error", "http_error", "missing_api_key", "unknown_provider",
+                       "timed out", "Connection", "connection")
+
 
 class SessionConsumer:
     def __init__(self, store: Any, driver: Any, transport: Any, chat_id: str,
@@ -110,7 +115,10 @@ class SessionConsumer:
 
     def _handle_inbound(self, msg: Any) -> None:
         if msg.chat_id != self.chat_id:
+            print(f"[consumer] 忽略非白名单 chat_id={msg.chat_id}", flush=True)
             return
+        print(f"[consumer] 收到 kind={msg.kind} text={(msg.text or '')!r} "
+              f"file={msg.file_path!r} status={self.view.status}", flush=True)
         if (self.view.status == RunStatus.RUNNING and not self.view.drive_active
                 and self.active_drive_job is None and self.view.run_id is not None):
             # worker job 崩过、run 停在检查点：下一条用户消息触发续跑
@@ -235,12 +243,12 @@ class SessionConsumer:
 
     def _submit_classify(self, kind: str, text: str, context: dict) -> None:
         self.inflight = {"type": kind, "text": text}
-        self.jobs.put(ClassifyJob(generation=self.generation, kind=kind, text=text,
-                                   context=context))
+        self._enqueue_job(ClassifyJob(generation=self.generation, kind=kind, text=text,
+                                       context=context))
 
     def _submit_compose(self, intent_text: str) -> None:
         self.inflight = {"type": "compose", "text": intent_text}
-        self.jobs.put(ComposeJob(generation=self.generation, intent_text=intent_text))
+        self._enqueue_job(ComposeJob(generation=self.generation, intent_text=intent_text))
 
     def _begin_running(self) -> None:
         self._send(f"开始处理了，共 {self.view.photo_count()} 张")
@@ -259,7 +267,7 @@ class SessionConsumer:
         self.view.gate_stage = None
         self.view.stage_progress = None
         self._last_eval_poll_at = None
-        self.jobs.put(job)
+        self._enqueue_job(job)
 
     # -- 事件应用 --
 
@@ -269,6 +277,8 @@ class SessionConsumer:
                 event = self.events.get_nowait()
             except queue.Empty:
                 return
+            stale = "" if event.generation == self.generation else " [过期丢弃]"
+            print(f"[consumer] 事件 {type(event).__name__} gen={event.generation}{stale}", flush=True)
             self._apply_event(event)
 
     def _apply_event(self, event: Any) -> None:
@@ -398,7 +408,10 @@ class SessionConsumer:
     def _on_compose_failed(self, event: ComposeFailed) -> None:
         self.inflight = None
         # 留在 Collecting，已收的照片不丢，下一条消息还能重试（旧行为）。
-        self._send(f"没看懂这句意图，能换个说法再说一次吗？（{event.message}）")
+        if _looks_like_infra_error(event.message):
+            self._send(f"AI 服务好像连不上，稍后再发一次试试（{event.message}）")
+        else:
+            self._send(f"没看懂这句意图，能换个说法再说一次吗？（{event.message}）")
 
     def _on_stage_started(self, event: StageStarted) -> None:
         self.view.current_stage = event.stage
@@ -460,11 +473,18 @@ class SessionConsumer:
 
     def _on_job_crashed(self, event: JobCrashed) -> None:
         # run 停在最后一次落盘检查点；视图保持 RUNNING，下一条用户消息触
-        # 发 resume（见 _handle_inbound），不自动重试防崩溃循环。
-        print(f"[session] worker job 崩了（已兜底）：{event.error}")
+        # 发 resume（见 _handle_inbound），不自动重试防崩溃循环。静默崩溃
+        # 是最糟的失败模式，必须回一句话过去（真机反馈：脚本没输出、用户
+        # 也不知道发生了什么）。
+        print(f"[consumer] worker job 崩了（已兜底）：{event.error}", flush=True)
+        was_driving = self.view.drive_active
         self.inflight = None
         self.active_drive_job = None
         self.view.drive_active = False
+        if was_driving:
+            self._send("处理过程中出了点问题，这批先停在这儿了，回句话我接着试")
+        else:
+            self._send("刚才那条没能处理，能再说一次吗？")
 
     # -- timers --
 
@@ -554,7 +574,12 @@ class SessionConsumer:
             run.reminder_sent = False
             self.store.save(run)
 
+    def _enqueue_job(self, job: Any) -> None:
+        print(f"[consumer] 投递 {type(job).__name__} gen={job.generation}", flush=True)
+        self.jobs.put(job)
+
     def _send(self, text: str) -> None:
+        print(f"[consumer] 回复: {text!r}", flush=True)
         self.transport.send_text(self.chat_id, text)
 
     def _current_plan_params(self, run: RunState) -> dict:
@@ -568,11 +593,17 @@ class SessionConsumer:
         }
 
     def _send_plan_confirmation(self, run: RunState) -> None:
+        # 不显示 provider（评估模型）：它由 Settings 决定，对用户是无用信息
+        # （真机反馈）。仍保留在 plan 参数里，refine 想改 provider 仍可改。
         evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
         auto_reject_desc = "自动剔除不合格照片" if evaluate.params["auto_reject"] else "不自动剔除照片"
         self._send(
-            f"理解你想：用 {evaluate.params['provider']} 评估，{auto_reject_desc}，"
-            f"留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，对吗？"
+            f"理解你想：留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，"
+            f"{auto_reject_desc}，对吗？"
             "\n满意就说\"好的\"，不对就直接说想怎么改，不要了就说\"取消\"",
         )
+
+
+def _looks_like_infra_error(message: str) -> bool:
+    return any(hint in message for hint in _INFRA_ERROR_HINTS)

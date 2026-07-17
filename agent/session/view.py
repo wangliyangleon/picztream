@@ -55,8 +55,8 @@ class SessionView:
         if self.status == RunStatus.COLLECTING:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:
+            # 不显示 provider（评估模型对用户是无用信息，见真机反馈）。
             return (f"目前收到 {self.photo_count()} 张照片，方案是："
-                    f"用 {self.plan_summary['provider']} 评估，"
                     f"留 {self.plan_summary['count']} 张，"
                     f"标签叫\"{self.plan_summary['apply_tag']}\"")
         if self.status == RunStatus.AWAITING_GATE:

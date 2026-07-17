@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Tuple
 
@@ -80,11 +81,29 @@ class SessionWorker:
                 job = self.jobs.get_nowait()
         except queue.Empty:
             return False
+        print(f"[worker] 开始 {self._describe_job(job)}", flush=True)
         try:
             self._execute(job)
         except Exception as e:  # noqa: BLE001 兜底见 docstring
+            # 静默崩溃是最糟的失败模式（用户和终端都看不到）：打全栈 +
+            # 发 JobCrashed 让 consumer 回一句话过去。
+            print(f"[worker] 崩了 {self._describe_job(job)}：{e!r}", flush=True)
+            traceback.print_exc()
             self.events.put(JobCrashed(generation=job.generation, error=repr(e)))
+        else:
+            print(f"[worker] 完成 {self._describe_job(job)}", flush=True)
         return True
+
+    @staticmethod
+    def _describe_job(job: Any) -> str:
+        kind = type(job).__name__
+        if isinstance(job, DriveJob):
+            return f"{kind}(action={job.action}, gen={job.generation})"
+        if isinstance(job, ClassifyJob):
+            return f"{kind}(kind={job.kind}, gen={job.generation}, text={job.text!r})"
+        if isinstance(job, ComposeJob):
+            return f"{kind}(gen={job.generation}, text={job.intent_text!r})"
+        return f"{kind}(gen={getattr(job, 'generation', '?')})"
 
     # -- job 分派 --
 
@@ -154,6 +173,7 @@ class SessionWorker:
                 return
             next_stage = self.driver.peek_next_stage(run)
             if next_stage is not None:
+                print(f"[worker] run={run.run_id} 运行 stage={next_stage}", flush=True)
                 # 每个 stage 都发事件（view 要 current_stage）；哪些渲染
                 # 成"正在..."文案是 consumer 按消息表判断的事。
                 self.events.put(StageStarted(job.generation, run.run_id, next_stage))

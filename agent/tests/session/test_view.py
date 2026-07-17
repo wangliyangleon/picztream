@@ -68,7 +68,7 @@ def test_from_run_planned_fills_plan_summary_and_describe(tmp_path):
         "provider": "local", "auto_reject": True, "count": 5, "apply_tag": "精选",
     }
     assert view.describe() == (
-        "目前收到 1 张照片，方案是：用 local 评估，留 5 张，标签叫\"精选\""
+        "目前收到 1 张照片，方案是：留 5 张，标签叫\"精选\""
     )
 
 

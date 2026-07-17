@@ -21,8 +21,11 @@ _SCHEMA_INSTRUCTION = (
     "photos that fail quality evaluation should be automatically discarded, default true "
     'unless the user says to keep everything), "count" (integer, how many final photos '
     'the user wants, a reasonable default is 9 if unspecified), "apply_tag" (string, the '
-    'tag name to apply to the selected photos, default "精选" unless the user names a '
-    "specific tag, album, or audience)."
+    "tag name to apply to the selected photos. Derive it from the destination or audience "
+    "the user mentions, using that as the tag name itself: "
+    '"发朋友圈"/"发朋友圈的" -> "朋友圈", "发到ins"/"发instagram" -> "ins", '
+    '"给我妈看" -> "家人", "选几张精修" -> "精修". Only fall back to the default "精选" when '
+    "the user names no destination, audience, album, or tag at all)."
 )
 
 

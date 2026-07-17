@@ -191,6 +191,13 @@ worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 jo
 
 新增行为（旧实现不存在，PRD 验收标准来源）：collecting 态取消、RUNNING 态照片排队/模板应答/秒级取消、Evaluate 量化进度播报、启动自动续跑。
 
+**真机反馈的刻意偏离（2026-07-17 首轮真机后，切换时勿"还原"成旧文案）**：
+- **可观测性**：2.0 重写掉了旧主循环的 `[收到消息]` 等 print，导致真机跑起来终端是黑盒。consumer/worker 全程 print 关键事件（收消息/投 job/收事件/回复、worker 执行 job/运行 stage/崩溃全栈），对齐旧入口的调试体感。
+- **JobCrashed 不再静默**：worker 未预期异常除打全栈外，consumer 收到 `JobCrashed` 会回一句话（drive 中"这批先停在这儿了，回句话我接着试"／分类中"刚才那条没能处理"），不再只 print。
+- **确认/快照文案去掉 provider**：评估 provider 由 Settings 决定，对用户是无用信息，`_send_plan_confirmation` 与 `describe()` 都不再显示（provider 仍保留在 plan 参数里，refine 想改仍可改）。对齐清单第 9、10 条的文案据此更新。
+- **compose/分类失败区分基础设施错误**：命中 `network_error`/`http_error`/`missing_api_key` 等痕迹时回"AI 服务好像连不上"，而非误导性的"没看懂这句意图"。
+- **apply_tag 依目的地/受众取名**（`compose/plan_composer.py` prompt）：给出"发朋友圈→朋友圈、发ins→ins"等具体例子，只有完全没提目的地/受众/标签时才回落默认"精选"，纠正真机上"标签永远叫精选"的问题。
+
 ## 九、复用与不动清单
 
 **零改动**：`orchestrator/driver.py`（含 `peek_next_stage`）、`orchestrator/types.py`、全部 `stages/*`（DeliverStage 的 transport 发送与逐张 marker 原样）、`store/run_store.py`、`router/collecting.py`（纯函数，2.0 直接 import）、`compose/*`、`transport/*`、`run_intent.py`、`run_watchfolder.py`、core/cli 全部。

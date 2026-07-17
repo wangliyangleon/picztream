@@ -72,7 +72,7 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     assert ingest.params["folder"] == str(tmp_path / "incoming" / run.run_id)
     assert deliver.params["out_folder"] == str(tmp_path / "deliver-out")
     assert deliver.gate == "required"
-    assert "理解你想：用 gemini 评估，自动剔除不合格照片，留 2 张，标签叫\"精选\"，对吗？" in \
+    assert "理解你想：留 2 张，标签叫\"精选\"，自动剔除不合格照片，对吗？" in \
         env.transport.texts()[-1]
 
 
@@ -374,6 +374,7 @@ def test_job_crash_marks_idle_and_next_message_resumes(tmp_path):
     env.consumer.step()
     assert env.consumer.view.drive_active is False
     assert env.consumer.view.status == RunStatus.RUNNING  # run 停在检查点
+    assert "处理过程中出了点问题，这批先停在这儿了，回句话我接着试" in env.transport.texts()
 
     env.push_text("继续吧")
     env.consumer.step()
