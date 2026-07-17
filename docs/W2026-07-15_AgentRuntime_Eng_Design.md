@@ -74,7 +74,6 @@ ClassifyFailed(generation, kind, retryable) # AdjustmentError -> retryable=False
 ComposeDone(generation, plan)
 ComposeFailed(generation, message)          # ValidationError/LlmRequestError 的 message
 StageStarted(generation, run_id, stage)
-StageProgress(generation, run_id, stage, done, total)   # 本期仅 StyleApplyAll 逐张上报
 GateReached(generation, run_id, stage, payload)         # payload 见第五节
 RunFinished(generation, run_id, status, detail)         # DONE/FAILED/CANCELLED; detail=失败明细
 JobCrashed(generation, error)               # worker 内未预期异常的兜底

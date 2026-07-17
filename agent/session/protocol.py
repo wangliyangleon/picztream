@@ -81,13 +81,9 @@ class StageStarted:
     stage: str
 
 
-@dataclass
-class StageProgress:
-    generation: int
-    run_id: str
-    stage: str
-    done: int
-    total: int
+# 注意没有 StageProgress 事件：Evaluate 的量化进度是 consumer 侧轮询
+# `pzt images --json` 得来的（worker 阻塞在 eval 子进程里报不了）；其余
+# stage 秒级不需要。视图的 stage_progress 字段由 consumer 自己填。
 
 
 @dataclass
