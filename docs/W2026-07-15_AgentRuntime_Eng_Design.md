@@ -134,7 +134,7 @@ class SessionView:
 - **可杀白名单 = {Evaluate, Dedup}**：仅有的分钟级 stage。`pzt eval` 逐张落库、重跑自动跳过已评估；dedup 可重算——SIGTERM 安全（SQLite busy_timeout=5000 + 事务，最坏回滚最后一笔）。
 - **其余 stage 跑完为止**：Ingest（`pzt new` 杀了会留半个项目、重跑撞已存在）、Curate/recipe apply/export（秒级，DB 写或本地导出）、StyleApplyAll（逐张 `recipe apply` 纯 DB 指针写、整段秒级——PRD 里"循环边界生效"一句按此修正，见文末）、Deliver（必选闸门确认后才开始，且有逐张 marker，中断语义交给既有断点续传）。
 
-**`PztClient` 改动**：`call(*args, cancel_event: Optional[threading.Event] = None)`。不传时行为与现状完全一致（`subprocess.run` 路径不动，兄弟入口零影响）。传入时走 `Popen`：轮询 `proc.poll()`（100ms），`cancel_event` 置位→`terminate()`，2s 宽限后 `kill()`，抛 `PztCancelledError`（新异常，**不是** `PztCommandError` 子类——stage 的 `except PztCommandError` 不会吞它，它穿透 stage.run 和 driver.advance 直达 worker 的推进循环，worker 捕获后走 cancel 收尾）。测试注入：现有 `runner` 缝保留给非取消路径，新增 `popen_factory` 缝给可取消路径。
+**`PztClient` 改动**：实例新增 `cancel_event: Optional[threading.Event]` 布防点（挂在实例上而不是 `call()` 参数——stages 内部的 `client.call(...)` 才能零改动吃到取消能力）。未布防时 `call()` 行为与现状完全一致（`subprocess.run` 路径不动，兄弟入口零影响）。布防时走 `Popen`：`communicate(timeout=0.1)` 轮询（超时重试不丢输出），`cancel_event` 置位→`terminate()`，2s 宽限后 `kill()`，抛 `PztCancelledError`（新异常，**不是** `PztCommandError` 子类——stage 的 `except PztCommandError` 不会吞它，它穿透 stage.run 和 driver.advance 直达 worker 的推进循环，worker 捕获后走 cancel 收尾）。测试注入：现有 `runner` 缝保留给非取消路径，新增 `popen_factory` 缝给可取消路径。
 
 worker 布防方式：推进循环里 `peek_next_stage()` ∈ 白名单时把 job 的 `cancel_event` 挂到自己 client 实例上（worker 专属 client，consumer 用另一个实例做只读查询，互不影响），advance 返回后摘除。stages 代码零改动。
 
