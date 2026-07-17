@@ -30,7 +30,7 @@ from session_fakes import (
 )
 
 
-def test_first_photo_mints_collecting_run_without_reply(tmp_path):
+def test_first_photo_mints_collecting_run_with_single_ack(tmp_path):
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")
 
@@ -39,7 +39,13 @@ def test_first_photo_mints_collecting_run_without_reply(tmp_path):
     [run] = env.store.list_active()
     assert run.status == RunStatus.COLLECTING
     assert (tmp_path / "incoming" / run.run_id / "a.jpg").exists()
-    assert env.transport.texts() == []  # 逐张不回复
+    # 一批开始回一句确认（真机反馈：初始那波图静默体验差）
+    assert env.transport.texts() == ["收到～新任务开始了！照片尽管发，发完告诉我想怎么处理就行，比如\"选3张发朋友圈\""]
+
+    # 后续照片仍逐张不回复、不刷屏
+    env.push_photo("b.jpg")
+    env.consumer.step()
+    assert len(env.transport.texts()) == 1
 
 
 def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):

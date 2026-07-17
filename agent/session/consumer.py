@@ -672,9 +672,17 @@ class SessionConsumer:
         run.last_progress_notified_at = self.now_fn()
         moved = drain_queue_into(self.incoming_root, run.run_id)
         self.store.save(run)
-        if moved:
-            self._send(f"之前排队的 {len(moved)} 张已经并进这一批了")
         self._adopt(run)
+        # 一批的开始立刻回一句确认：初始那波照片在后台逐张下载时之前是完
+        # 全静默的（尤其图多时延迟明显），给用户一个"收到、任务开始了"的
+        # 即时反馈（真机反馈）。只在新建 run 时发一次，后续照片仍逐张不回
+        # 复、不刷屏。
+        if moved:
+            self._send(f"收到～新任务开始了！之前排队的 {len(moved)} 张也并进这一批了，"
+                       "照片尽管发，发完告诉我想怎么处理就行")
+        else:
+            self._send("收到～新任务开始了！照片尽管发，发完告诉我想怎么处理就行，"
+                       "比如\"选3张发朋友圈\"")
 
     def _adopt(self, run: RunState) -> None:
         self.run = run
