@@ -67,6 +67,65 @@ def test_eval_progress_poll_counts_evaluated_images(tmp_path):
     assert sum(1 for args in env.client.calls if args[0] == "images") == 1
 
 
+def test_collecting_progress_edits_in_place_on_later_ticks(tmp_path):
+    # AG-16.3：同一批的收图进度只占一条消息，后续 tick 走 editMessageText。
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+    env.clock.advance(60)
+    env.consumer.step()  # 首播 -> 发新
+    assert "已收到 1 张图片" in env.transport.texts()
+    n_sends = sum(1 for t in env.transport.texts() if "已收到" in t)
+
+    env.push_photo("b.jpg")
+    env.consumer.step()
+    env.clock.advance(60)
+    env.consumer.step()  # 第二次 -> 编辑同一条
+
+    assert any(t == "已收到 2 张图片" for _, t in env.transport.sent_edits)
+    assert sum(1 for t in env.transport.texts() if "已收到" in t) == n_sends  # 没新发
+
+
+def test_progress_unchanged_text_is_not_resent_or_edited(tmp_path):
+    # AG-16.3：内容没变（照片数没变）就既不发也不编辑，不刷屏。
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+    env.clock.advance(60)
+    env.consumer.step()  # 首播 "已收到 1 张图片"
+    sends = sum(1 for t in env.transport.texts() if "已收到" in t)
+    edits = len(env.transport.sent_edits)
+
+    env.clock.advance(60)
+    env.consumer.step()  # 还是 1 张，内容不变
+
+    assert sum(1 for t in env.transport.texts() if "已收到" in t) == sends
+    assert len(env.transport.sent_edits) == edits
+
+
+def test_eval_progress_edits_in_place_on_later_ticks(tmp_path):
+    # AG-16.3：Evaluate 进度后续 tick 也原地编辑。造两次不同的 evaluated 计数。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
+    env.consumer.step()
+
+    counts = iter([  # 第一次 1/2，第二次 2/2
+        {"images": [{"evaluated": True}, {"evaluated": False}]},
+        {"images": [{"evaluated": True}, {"evaluated": True}]},
+    ])
+    env.client.call = lambda *a: next(counts)
+
+    env.clock.advance(60)
+    env.consumer.step()  # 首播 1/2 -> 发新
+    assert "评估进行中，已完成 1/2 张" in env.transport.texts()
+
+    env.clock.advance(60)
+    env.consumer.step()  # 2/2 -> 编辑
+
+    assert any(t == "评估进行中，已完成 2/2 张" for _, t in env.transport.sent_edits)
+
+
 def test_eval_poll_failure_is_tolerated_silently(tmp_path):
     env = make_consumer(tmp_path)
 

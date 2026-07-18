@@ -55,8 +55,12 @@ class TelegramBotClient:
     async def get_updates(self, offset: Optional[int] = None, timeout: int = 25) -> List[Any]:
         return await self._bot.get_updates(offset=offset, timeout=timeout)
 
-    async def send_text(self, chat_id: str, text: str) -> None:
-        await self._bot.send_message(chat_id=chat_id, text=text)
+    async def send_text(self, chat_id: str, text: str) -> Optional[str]:
+        msg = await self._bot.send_message(chat_id=chat_id, text=text)
+        return str(msg.message_id)
+
+    async def edit_message_text(self, chat_id: str, message_id: str, text: str) -> None:
+        await self._bot.edit_message_text(chat_id=chat_id, message_id=int(message_id), text=text)
 
     async def send_text_with_buttons(self, chat_id: str, text: str,
                                       buttons: List[Tuple[str, str]]) -> None:

@@ -129,6 +129,9 @@ class SessionConsumer:
         self.cancelling_run_id: Optional[str] = None
         self._last_eval_poll_at: Optional[float] = None
         self._cancel_confirm_pending: bool = False
+        # 进度消息原地编辑的 (message_id, last_text) 槽（AG-16.3）。
+        self._collecting_progress: Optional[tuple] = None
+        self._eval_progress: Optional[tuple] = None
 
     # -- 生命周期 --
 
@@ -389,6 +392,8 @@ class SessionConsumer:
         self.view = SessionView(incoming_root=self.incoming_root)
         self.active_drive_job = None
         self._cancel_confirm_pending = False
+        self._collecting_progress = None  # 进度消息槽随会话重置（AG-16.3）
+        self._eval_progress = None
 
     # -- 文本串行处理 --
 
@@ -761,6 +766,7 @@ class SessionConsumer:
         if event.stage == "Evaluate":
             # 轮询基线设在 stage 开始时刻：第一次播报也等满一个间隔。
             self._last_eval_poll_at = self.now_fn()
+            self._eval_progress = None  # 新一轮评估新进度消息（AG-16.3）
         message = STAGE_PROGRESS_MESSAGES.get(event.stage)
         if message:
             self._send(message)
@@ -909,7 +915,7 @@ class SessionConsumer:
         count = self.view.photo_count()
         if count == 0:
             return
-        self._send(f"已收到 {count} 张图片")
+        self._send_progress(f"已收到 {count} 张图片", "_collecting_progress")
         run.last_progress_notified_at = now
         self.store.save(run)
 
@@ -935,11 +941,12 @@ class SessionConsumer:
         images = result.get("images", [])
         done = sum(1 for item in images if item.get("evaluated"))
         self.view.stage_progress = (done, len(images))
-        self._send(f"评估进行中，已完成 {done}/{len(images)} 张")
+        self._send_progress(f"评估进行中，已完成 {done}/{len(images)} 张", "_eval_progress")
 
     # -- helpers --
 
     def _mint_collecting_run(self, draft_intent: str = "") -> None:
+        self._collecting_progress = None  # 新批新进度消息（AG-16.3）
         run = new_collecting_run(new_run_id())
         run.last_activity_at = self.now_fn()
         run.last_progress_notified_at = self.now_fn()
@@ -983,19 +990,38 @@ class SessionConsumer:
         print(f"[consumer] 投递(drive lane) {type(job).__name__} gen={job.generation}", flush=True)
         self.drive_jobs.put(job)
 
-    def _send(self, text: str) -> None:
+    def _send(self, text: str) -> Optional[str]:
         print(f"[consumer] 回复: {text!r}", flush=True)
         # Telegram 抖动/超时是真机常见故障：退避重试一次后放弃，不外抛（否则
         # 会把整轮 step 拖挂、连累同批消息，AG-11）。不追求消息不丢的强保证。
+        # 返回 message_id（progress 原地编辑用，AG-16.3），失败/不支持则 None。
         try:
-            self.transport.send_text(self.chat_id, text)
+            return self.transport.send_text(self.chat_id, text)
         except Exception as e:  # noqa: BLE001
             print(f"[consumer] send_text 失败，退避重试一次：{e!r}", flush=True)
             time.sleep(self.send_retry_backoff_seconds)
             try:
-                self.transport.send_text(self.chat_id, text)
+                return self.transport.send_text(self.chat_id, text)
             except Exception as e2:  # noqa: BLE001
                 print(f"[consumer] send_text 重试仍失败，放弃这条：{e2!r}", flush=True)
+                return None
+
+    def _send_progress(self, text: str, slot: str) -> None:
+        # 进度播报原地编辑（AG-16.3）：同一批的进度只占一条消息。slot 是存
+        # (message_id, last_text) 的实例属性名。
+        prev = getattr(self, slot)
+        if prev is not None and prev[1] == text:
+            return  # 内容没变，不刷不编辑（省掉 Telegram "message is not modified"）
+        edit = getattr(self.transport, "edit_text", None)
+        if edit is not None and prev is not None:
+            try:
+                edit(self.chat_id, prev[0], text)
+                setattr(self, slot, (prev[0], text))
+                return
+            except Exception as e:  # noqa: BLE001 消息太老/被删等 -> 降级发新
+                print(f"[consumer] 进度消息编辑失败，改发新的：{e!r}", flush=True)
+        mid = self._send(text)
+        setattr(self, slot, (mid, text) if mid is not None else None)
 
     def _handle_command(self, text: str) -> None:
         # /命令快路径（AG-16.2）。取首 token、去 @botname 后缀、小写。

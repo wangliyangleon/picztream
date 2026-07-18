@@ -42,6 +42,7 @@ class FakeBotClient:
         self.download_calls = []
         self.sent_photos = []  # (path, caption)
         self.registered_commands = None
+        self.edits = []  # (message_id, text)
 
     async def set_my_commands(self, commands):
         await asyncio.sleep(0)
@@ -54,6 +55,11 @@ class FakeBotClient:
     async def send_text(self, chat_id, text):
         await asyncio.sleep(0)
         self.sent.append((chat_id, text))
+        return "42"
+
+    async def edit_message_text(self, chat_id, message_id, text):
+        await asyncio.sleep(0)
+        self.edits.append((message_id, text))
 
     async def send_photo_bytes(self, chat_id, path, caption=None):
         await asyncio.sleep(0)
@@ -228,6 +234,23 @@ def test_document_image_with_caption_also_emits_a_text_message(tmp_path):
         assert messages[0].kind == "file"
         assert messages[1].kind == "text"
         assert messages[1].text == "留5张就行"
+    finally:
+        transport.stop()
+
+
+def test_send_text_returns_id_and_edit_text_passes_through(tmp_path):
+    # AG-16.3：send_text 返回 message_id，edit_text 透传到 bot.edit_message_text。
+    fake = FakeBotClient()
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        mid = transport.send_text("123", "进度 1")
+        assert mid == "42"
+        transport.edit_text("123", mid, "进度 2")
+        assert fake.edits == [("42", "进度 2")]
     finally:
         transport.stop()
 

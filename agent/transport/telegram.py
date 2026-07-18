@@ -156,8 +156,14 @@ class TelegramTransport:
         except Exception as e:  # noqa: BLE001
             print(f"[TelegramTransport] set_my_commands 失败（忽略）：{e!r}")
 
-    def send_text(self, chat_id: str, text: str) -> None:
+    def send_text(self, chat_id: str, text: str) -> Optional[str]:
         future = asyncio.run_coroutine_threadsafe(self._bot_client.send_text(chat_id, text), self._loop)
+        return future.result(timeout=30)
+
+    def edit_text(self, chat_id: str, message_id: str, text: str) -> None:
+        # 原地更新一条已发消息（进度播报，AG-16.3）。调用方对失败降级发新。
+        future = asyncio.run_coroutine_threadsafe(
+            self._bot_client.edit_message_text(chat_id, message_id, text), self._loop)
         future.result(timeout=30)
 
     def send_buttons(self, chat_id: str, text: str, options: List[Any]) -> None:

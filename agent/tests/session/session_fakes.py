@@ -84,13 +84,20 @@ class FakeTransport:
         self.sent_photo_captions: List = []  # 与 sent_photos 一一对应的 caption
         self.sent_files: List[Tuple[str, str]] = []
         self.sent_buttons: List[Tuple[str, str, List]] = []
+        self.sent_edits: List[Tuple[str, str]] = []  # (message_id, text)
+        self._next_msg_id = 0
 
     def receive(self):
         messages, self.inbox = self.inbox, []
         return messages
 
-    def send_text(self, chat_id: str, text: str) -> None:
+    def send_text(self, chat_id: str, text: str):
         self.sent_texts.append((chat_id, text))
+        self._next_msg_id += 1
+        return str(self._next_msg_id)
+
+    def edit_text(self, chat_id: str, message_id: str, text: str) -> None:
+        self.sent_edits.append((message_id, text))
 
     def send_buttons(self, chat_id: str, text: str, options: List) -> None:
         # 也记进 sent_texts，让既有的 texts() 文案断言对带按钮的消息一样生效。

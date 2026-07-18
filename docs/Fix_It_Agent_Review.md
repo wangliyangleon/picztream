@@ -229,7 +229,7 @@
 按预期价值排序:
 1. **"不要滤镜/原图直出"路径** ✅ 已随"Style 闸门健壮化"增量落地(2026-07-18):与 AG-01/AG-02 联动,风格闸门支持 skip,StyleApplyAll/Deliver 按无风格走(管线已天然支持 `chosen_recipe=None` 的空跑)。空描述软化为 skip、StyleApplyAll 见 chosen=None 自动推进到交付闸门。
 2. **Telegram /命令快路径** ✅ 已落地(2026-07-18):/status、/cancel、/help 注册为 bot commands,确定性零 LLM 零延迟,与按钮互补(按钮只在闸门消息上,命令随时可用);本地模型分类 10s+ 首响时价值明显。实现:consumer 模块级 `BOT_COMMANDS` 单一来源,`_handle_inbound` 在 resume 触发前拦截 `/` 前缀文本走 `_handle_command`(不进 pending_texts/不走 LLM);/help 遍历 `BOT_COMMANDS` 逐条列全;/status 回 view.describe()(无批次给提示、不误触 resume);/cancel 走全局二次确认;未知命令回提示。`telegram_client.set_my_commands` + `transport.register_commands`(best-effort) + `run_telegram.main` 注册菜单。全量 303 条绿。
-3. **进度消息原地编辑**:收图播报与 Evaluate 轮询播报改用 editMessageText 更新同一条消息,长批次不再每 60s 刷一条屏。
+3. **进度消息原地编辑** ✅ 已落地(2026-07-18):收图播报与 Evaluate 轮询播报改用 editMessageText 更新同一条消息,长批次不再每 60s 刷一条屏。实现:transport `send_text` 返回 message_id + 可选 `edit_text`(能力探测,镜像 send_buttons; 非 Telegram 降级发新); consumer `_send_progress(text, slot)` 存 (message_id, last_text)——内容不变不刷、有 edit_text 则原地编辑、失败降级发新; 两处播报改调它, slot 在 reset/新批/新一轮 Evaluate 处清。全量 307 条绿。
 4. **风格候选一览** ✅ 基础版已随上述增量落地(2026-07-18):Style 问描述闸门的 query 分类返回 9 个 preset 名 + 一句话描述(新增 `style_matcher.describe_presets()`,单一数据来源 `_PRESET_DESCRIPTIONS`);进阶版发多风格对比预览(算力代价大)仍后置。
 5. **多会话/多 chat_id**:Eng Design 已明确留给部署周,不预留半成品抽象,此处仅记录。
 
