@@ -242,6 +242,32 @@ def test_gated_deliver_stage_started_fires_after_gate_not_before(tmp_path):
     assert "Deliver" in _started_stages(after_approve)  # 批准后才发
 
 
+def test_deliver_export_failure_fails_run(tmp_path):
+    # AG-06：交付 export-images 失败 = run FAILED（而非旧的 optional 吞成
+    # SKIPPED -> DONE -> 误报"这批就处理完啦"）。Style/StyleApplyAll 只用
+    # recipe apply 不用 export-images，所以让所有 export-images 失败只会让
+    # 预览在闸门 payload 里降级为 export_error，不挡路，最终真正卡在 Deliver。
+    env = make_worker(tmp_path, client=FakeClient(raise_command_on=("export-images",)))
+    run = env.make_running_run()
+    for action, args in [
+        ("start", {}),
+        ("rerun_style", {"style_description": "复古暖色调"}),
+        ("resolve_gate", {}),  # 放行 StyleApplyAll -> 停 Deliver 闸门
+        ("resolve_gate", {}),  # 放行 Deliver -> 真正交付, export 失败
+    ]:
+        env.put_drive(DriveJob(generation=1, action=action, run_id=run.run_id, args=args))
+        env.step()
+        events = env.drain_events()
+
+    finished = events[-1]
+    assert isinstance(finished, RunFinished)
+    assert finished.status == "failed"
+    assert "Deliver" in (finished.detail or "")
+    saved = env.store.load(run.run_id)
+    assert saved.status == RunStatus.FAILED
+    assert saved.stage_states["Deliver"] == StageStatus.FAILED
+
+
 def test_pre_set_cancel_stops_before_any_stage(tmp_path):
     env = make_worker(tmp_path)
     run = env.make_running_run()

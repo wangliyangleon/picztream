@@ -46,6 +46,13 @@ def test_deliver_inputs_default_to_curate():
     assert stage.inputs == ["Curate"]
 
 
+def test_deliver_is_critical():
+    # AG-06 拍板：交付是用户点"满意"后的明确诉求，导出失败必须让 run FAILED，
+    # 不能被 optional 吞成 SKIPPED 让 run 误报"这批就处理完啦"。
+    stage = DeliverStage(client=None, transport=None, marker_dir=None, staging_dir=None)
+    assert stage.criticality == "critical"
+
+
 def test_deliver_exports_to_its_own_staging_dir_then_sends_each_selected_file(tmp_path):
     captured = {}
 

@@ -15,7 +15,7 @@ from typing import Callable, List, Optional, Tuple
 from compose.adjustment_parser import AdjustmentError
 from orchestrator.driver import Driver
 from orchestrator.types import GateState, Plan, RunState, RunStatus, StageSpec, StageStatus
-from pzt_client import PztCancelledError
+from pzt_client import PztCancelledError, PztCommandError
 from router.collecting import incoming_dir_for
 from session.worker import SessionWorker
 from stages.curate import CurateStage
@@ -53,11 +53,15 @@ class FakeClient:
     进程执行途中被 terminate"——真实 terminate/kill 机械已在
     tests/test_pzt_client_cancel.py 单测过，这里不重复 Popen 细节。"""
 
-    def __init__(self, raise_cancelled_on: Tuple[str, ...] = ()) -> None:
+    def __init__(self, raise_cancelled_on: Tuple[str, ...] = (),
+                 raise_command_on: Tuple[str, ...] = ()) -> None:
         self.cancel_event = None
         self.calls: List[Tuple[str, ...]] = []
         self.armed_during: dict = {}
         self.raise_cancelled_on = set(raise_cancelled_on)
+        # 命中这些子命令时抛 PztCommandError，模拟子进程返回非零（如
+        # export-images 导出失败），测 stage 的 ok=False 通路。
+        self.raise_command_on = set(raise_command_on)
 
     def call(self, *args: str) -> dict:
         subcommand = args[0]
@@ -66,6 +70,8 @@ class FakeClient:
         if self.cancel_event is not None and (
                 subcommand in self.raise_cancelled_on or self.cancel_event.is_set()):
             raise PztCancelledError(list(args))
+        if subcommand in self.raise_command_on:
+            raise PztCommandError("fake_error", f"{subcommand} failed in test")
         return copy.deepcopy(_FIXED_RESPONSES[subcommand])
 
 

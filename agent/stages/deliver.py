@@ -22,7 +22,10 @@ class DeliverStage:
     name: str = "Deliver"
     inputs: List[str] = field(default_factory=lambda: ["Curate"])
     cost_class: str = "local"
-    criticality: str = "optional"  # 降级不死：交付失败不该抹掉前面已经算完的选片结果
+    # 交付是用户点"满意"后的明确诉求（session 恒挂 required 闸门，只在确认后执行），
+    # 失败就是失败：不能被 optional 吞成 SKIPPED 让 run 误报"这批就处理完啦"（AG-06）。
+    # 选片结果仍持久化在 run.outputs，run FAILED 不会抹掉它。
+    criticality: str = "critical"
 
     def _marker_path(self, run_id: str, selected: List[str], applied_styles: Dict[str, str]) -> Path:
         # marker 必须跟"这批具体交付的是哪几张、什么顺序、套了什么风
