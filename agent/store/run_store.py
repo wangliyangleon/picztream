@@ -37,3 +37,23 @@ class RunStore:
     def list_active(self) -> list[RunState]:
         runs = [self.load(p.stem) for p in self.root.glob("*.json")]
         return [r for r in runs if r.status not in _TERMINAL_STATUSES]
+
+    # -- cancelling 标记（AG-12）--
+    # drive 期取消是"置 cancel_event + 立即重置会话"，盘上 run 要等 worker
+    # 收尾才变 CANCELLED。落一个 sidecar 标记，worker 若在收尾前崩了，下次
+    # bootstrap 见标记即补 cancel、不把取消过的批次当"中断"复活。
+
+    def _cancelling_path(self, run_id: str) -> Path:
+        return self.root / f"{run_id}.cancelling"
+
+    def mark_cancelling(self, run_id: str) -> None:
+        self._cancelling_path(run_id).write_text("")
+
+    def is_cancelling(self, run_id: str) -> bool:
+        return self._cancelling_path(run_id).exists()
+
+    def list_cancelling(self) -> list[str]:
+        return [p.stem for p in self.root.glob("*.cancelling")]
+
+    def clear_cancelling(self, run_id: str) -> None:
+        self._cancelling_path(run_id).unlink(missing_ok=True)

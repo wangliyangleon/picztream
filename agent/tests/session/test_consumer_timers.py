@@ -133,6 +133,41 @@ def test_bootstrap_adopts_planned_run(tmp_path):
     assert job.action == "start"
 
 
+def test_bootstrap_self_heals_multiple_active_runs(tmp_path):
+    # AG-12：取消/崩溃竞态留下多个非终态 run，bootstrap 不再 assert 拒绝启动，
+    # 保留 last_activity_at 最新的、其余 cancel 落盘。
+    older = _prefill_run(tmp_path, "tg-old", RunStatus.RUNNING)
+    newer = _prefill_run(tmp_path, "tg-new", RunStatus.RUNNING)
+    store = RunStore(tmp_path / "runs")
+    older.last_activity_at = 100.0
+    newer.last_activity_at = 200.0
+    store.save(older)
+    store.save(newer)
+    env = make_consumer(tmp_path)
+
+    env.consumer.bootstrap()  # 不抛 AssertionError
+
+    assert store.load("tg-old").status == RunStatus.CANCELLED  # 较旧的被取消
+    [job] = env.drain_jobs()
+    assert job.action == "resume" and job.run_id == "tg-new"  # 最新的续跑
+
+
+def test_bootstrap_does_not_revive_a_cancelling_run(tmp_path):
+    # AG-12：用户明确取消过、worker 崩在收尾前的 RUNNING run，bootstrap 补
+    # cancel、不复活。
+    _prefill_run(tmp_path, "tg-cxl", RunStatus.RUNNING)
+    store = RunStore(tmp_path / "runs")
+    store.mark_cancelling("tg-cxl")
+    env = make_consumer(tmp_path)
+
+    env.consumer.bootstrap()
+
+    assert store.load("tg-cxl").status == RunStatus.CANCELLED
+    assert "上次处理被中断，正在接着跑…" not in env.transport.texts()
+    assert env.drain_jobs() == []  # 不 resume
+    assert store.is_cancelling("tg-cxl") is False  # 标记清掉
+
+
 def test_bootstrap_approves_leftover_awaiting_review(tmp_path):
     _prefill_run(tmp_path, "tg-boot3", RunStatus.AWAITING_REVIEW)
     env = make_consumer(tmp_path)

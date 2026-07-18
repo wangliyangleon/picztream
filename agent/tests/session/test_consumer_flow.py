@@ -215,6 +215,28 @@ def test_cancel_confirmation_declined_keeps_run(tmp_path):
     assert env.consumer.run is not None
 
 
+def test_drive_cancel_marks_cancelling_and_receipt_clears_it(tmp_path):
+    # AG-12：drive 期取消落 cancelling 标记（worker 崩了 bootstrap 靠它补
+    # cancel）；worker 正常收尾的 CANCELLED 回执到达后标记被清。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    env.push_text("取消")
+    env.consumer.step()
+    deliver_classify(env, "running", RunningReply(action="cancel"))
+    env.push_text("确认取消")
+    env.consumer.step()
+    deliver_classify(env, "cancel_confirm", CancelConfirmReply(action="confirm"))
+
+    assert env.store.is_cancelling(job.run_id) is True
+
+    env.put_event(RunFinished(0, job.run_id, "cancelled", None))
+    env.consumer.step()
+
+    assert "已取消" in env.transport.texts()
+    assert env.store.is_cancelling(job.run_id) is False
+
+
 def test_cancel_confirmation_dismissed_by_unrelated_text(tmp_path):
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")

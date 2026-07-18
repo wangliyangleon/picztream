@@ -161,7 +161,7 @@
 
 ---
 
-**AG-12 取消/崩溃竞态可留下双活跃 run,bootstrap 的 assert 直接拒绝启动**
+**AG-12 取消/崩溃竞态可留下双活跃 run,bootstrap 的 assert 直接拒绝启动** ✅ 已修复
 类别: 健壮性 | 来源视角: 架构
 
 现象: drive 期取消走"置 cancel_event + 立即 `_reset_session`",盘上旧 run 要等 worker 收尾才变 CANCELLED;此窗口内用户发照片会 mint 新 COLLECTING run,瞬时存在两个非终态 run。正常情况下 worker 几秒内收尾,但若 worker 恰在此期间崩溃(或进程被杀),旧 run 永久停在 RUNNING:下次启动 `bootstrap` 的 `assert len(active) <= 1`(consumer.py:114)直接 AssertionError,常驻进程起不来,需要手工删 JSON 才能恢复;即使只有旧 run 一个,bootstrap 也会把用户明确取消过的批次当"上次被中断"自动复活续跑。
@@ -169,6 +169,8 @@
 修法: bootstrap 把 assert 换成自愈:多个活跃 run 时保留 `last_activity_at` 最新的一个,其余直接 `driver.cancel` 落盘并打印;取消路径在 `_do_cancel` 时把 `cancelling_run_id` 落一个小标记文件,bootstrap 看到即不复活、直接补 cancel。
 
 难度 S | 复杂度 中 | 优先级 P2
+
+修复记录(2026-07-18): RunStore 加 `{run_id}.cancelling` sidecar 标记(mark/is/list/clear); bootstrap 先补 cancel 带标记的未收尾 run(不复活)、再对多活跃 run 保留 last_activity_at 最新的其余 cancel(取代 assert); `_do_cancel` drive 分支 mark_cancelling, 取消回执到达时 clear_cancelling。store+consumer 改动 + 五条测试(marker CRUD/不漏进 list_active/多活跃自愈/不复活取消过的/drive 取消落标记+回执清), 全量 286 条绿。
 
 ---
 

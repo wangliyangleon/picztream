@@ -46,6 +46,30 @@ def test_list_active_excludes_terminal_runs(tmp_path):
     assert active_ids == {"running", "gated"}
 
 
+def test_cancelling_marker_crud(tmp_path):
+    # AG-12：cancelling sidecar 标记的 mark/is/list/clear。
+    store = RunStore(tmp_path)
+    assert store.is_cancelling("run-1") is False
+    assert store.list_cancelling() == []
+
+    store.mark_cancelling("run-1")
+    store.mark_cancelling("run-2")
+    assert store.is_cancelling("run-1") is True
+    assert set(store.list_cancelling()) == {"run-1", "run-2"}
+
+    store.clear_cancelling("run-1")
+    assert store.is_cancelling("run-1") is False
+    assert store.list_cancelling() == ["run-2"]
+    store.clear_cancelling("run-1")  # 幂等，不报错
+
+
+def test_cancelling_marker_does_not_leak_into_list_active(tmp_path):
+    store = RunStore(tmp_path)
+    store.save(make_run("running", RunStatus.RUNNING))
+    store.mark_cancelling("running")
+    assert {r.run_id for r in store.list_active()} == {"running"}  # .cancelling 不干扰 *.json
+
+
 def test_save_overwrites_previous_state_for_same_run_id(tmp_path):
     store = RunStore(tmp_path)
     run = make_run("run-1", RunStatus.RUNNING)

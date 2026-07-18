@@ -112,9 +112,30 @@ class SessionConsumer:
     # -- 生命周期 --
 
     def bootstrap(self) -> None:
-        """启动恢复（Eng Design 第七节第 7 条）。"""
-        active = self.store.list_active()
-        assert len(active) <= 1, f"单聊天单活跃 run 的既有约束被打破：{len(active)} 个"
+        """启动恢复（Eng Design 第七节第 7 条）+ 取消/崩溃竞态自愈（AG-12）。"""
+        _terminal = (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED)
+        # 曾被取消但 worker 没来得及收尾就崩了：补 cancel、不复活。标记无论如
+        # 何都清掉，避免陈旧堆积。
+        for run_id in self.store.list_cancelling():
+            try:
+                r = self.store.load(run_id)
+            except FileNotFoundError:
+                self.store.clear_cancelling(run_id)
+                continue
+            if r.status not in _terminal:
+                print(f"[consumer] 启动自愈：{run_id} 曾被取消未收尾，补 cancel 不复活", flush=True)
+                self.driver.cancel(r)
+            self.store.clear_cancelling(run_id)
+        active = self.store.list_active()  # 上面 cancel 过的已终态、被排除
+        if len(active) > 1:
+            # 取消瞬间发新照片 mint 了新批、旧批还没被 worker 收尾等竞态会留下
+            # 多个非终态 run。不再 assert 拒绝启动：保留 last_activity_at 最新
+            # 的一个，其余直接 cancel 落盘。
+            active.sort(key=lambda r: r.last_activity_at or 0, reverse=True)
+            for r in active[1:]:
+                print(f"[consumer] 启动自愈：多活跃 run，取消较旧的 {r.run_id}", flush=True)
+                self.driver.cancel(r)
+            active = active[:1]
         if not active:
             return
         run = active[0]
@@ -214,6 +235,10 @@ class SessionConsumer:
             self._send("正在停下来...")
             self.active_drive_job.cancel_event.set()
             self.cancelling_run_id = self.view.run_id
+            # 落 cancelling 标记：盘上 run 要等 worker 收尾才终态，worker 若在
+            # 收尾前崩了，下次 bootstrap 靠这个标记补 cancel、不复活（AG-12）。
+            if self.view.run_id is not None:
+                self.store.mark_cancelling(self.view.run_id)
             self._reset_session()
             return
         if self.run is not None:
@@ -388,6 +413,7 @@ class SessionConsumer:
                 and event.run_id == self.cancelling_run_id):
             # 取消回执唯一例外地跨代接收：用户要的就是"真的停了"这句确认。
             self.cancelling_run_id = None
+            self.store.clear_cancelling(event.run_id)  # 正常收尾即清标记（AG-12）
             self._send("已取消")
             return
         if event.generation != self.generation:
