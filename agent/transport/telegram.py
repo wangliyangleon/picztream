@@ -146,6 +146,16 @@ class TelegramTransport:
                 break
         return messages
 
+    def register_commands(self, commands: List[Any]) -> None:
+        # 注册 bot 命令菜单（AG-16.2）。best-effort：注册失败（网络等）不该拦
+        # 启动，命令能不能用不依赖它（拦截在 consumer 侧）。
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._bot_client.set_my_commands(commands), self._loop)
+            future.result(timeout=30)
+        except Exception as e:  # noqa: BLE001
+            print(f"[TelegramTransport] set_my_commands 失败（忽略）：{e!r}")
+
     def send_text(self, chat_id: str, text: str) -> None:
         future = asyncio.run_coroutine_threadsafe(self._bot_client.send_text(chat_id, text), self._loop)
         future.result(timeout=30)

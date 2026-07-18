@@ -30,7 +30,7 @@ from compose.adjustment_parser import (
 from compose.plan_composer import compose_plan
 from orchestrator.driver import Driver
 from pzt_client import PztClient
-from session.consumer import SessionConsumer
+from session.consumer import BOT_COMMANDS, SessionConsumer
 from session.worker import SessionWorker
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
@@ -149,6 +149,7 @@ def main() -> None:
                                      daemon=True, name="pzt-session-drive")
 
     transport.start()
+    transport.register_commands(BOT_COMMANDS)  # Telegram 命令菜单（AG-16.2）
     classify_thread.start()
     drive_thread.start()
     consumer.bootstrap()  # RUNNING 自动续跑/遗留 AWAITING_REVIEW 收尾在这里

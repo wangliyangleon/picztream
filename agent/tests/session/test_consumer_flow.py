@@ -750,6 +750,55 @@ def test_send_retries_once_then_gives_up(tmp_path):
     assert len(calls) == 2    # 一次 + 退避重试一次
 
 
+def test_help_command_lists_all_quick_paths(tmp_path):
+    # AG-16.2：/help 逐条列出全部命令快路径。
+    env = make_consumer(tmp_path)
+    env.push_text("/help")
+    env.consumer.step()
+
+    joined = "\n".join(env.transport.texts())
+    assert "/status" in joined and "/cancel" in joined and "/help" in joined
+
+
+def test_start_command_shows_help(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_text("/start")
+    env.consumer.step()
+    assert any("/status" in t for t in env.transport.texts())
+
+
+def test_status_command_no_batch_and_during_drive(tmp_path):
+    # /status 无批次 -> 提示；drive 中 -> 进度描述且不触发 resume。
+    env = make_consumer(tmp_path)
+    env.push_text("/status")
+    env.consumer.step()
+    assert any("现在没有在处理的批次" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []
+
+    to_running(env)
+    env.push_text("/status@somebot")  # 带 @后缀仍识别
+    env.consumer.step()
+    assert env.drain_jobs() == []  # 不触发 resume
+    assert env.consumer.view.status == RunStatus.RUNNING
+
+
+def test_cancel_command_prompts_confirmation(tmp_path):
+    env = make_consumer(tmp_path)
+    to_running(env)
+    env.push_text("/cancel")
+    env.consumer.step()
+    assert env.consumer._cancel_confirm_pending is True
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+
+
+def test_unknown_command_hints_help(tmp_path):
+    env = make_consumer(tmp_path)
+    env.push_text("/frobnicate")
+    env.consumer.step()
+    assert any("发 /help" in t for t in env.transport.texts())
+    assert not env.consumer.pending_texts  # 未进文本队列
+
+
 def test_collecting_cancel_intent_prompts_confirmation(tmp_path):
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")

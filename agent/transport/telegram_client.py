@@ -71,6 +71,10 @@ class TelegramBotClient:
         # 必须应答，否则用户端按钮一直转圈。不带文案，只是消掉 loading。
         await self._bot.answer_callback_query(callback_query_id)
 
+    async def set_my_commands(self, commands: List[Tuple[str, str]]) -> None:
+        # 让 Telegram 输入框弹出命令菜单（AG-16.2）。commands: [(name, desc), ...]。
+        await self._bot.set_my_commands([telegram.BotCommand(name, desc) for name, desc in commands])
+
     async def send_photo_bytes(self, chat_id: str, path: str, caption: Optional[str] = None) -> None:
         with open(path, "rb") as f:
             await self._bot.send_photo(chat_id=chat_id, photo=f, caption=caption)

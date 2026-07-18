@@ -74,6 +74,15 @@ _DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _CANCEL_CONFIRM_BUTTONS = [("确认取消 ⚠️", _BTN_CONFIRM_CANCEL), ("不取消", _BTN_KEEP)]
 
+# Telegram /命令快路径（AG-16.2）：确定性、零 LLM、零延迟，随时可用，与按钮
+# 互补（按钮只挂在闸门消息上）。这一份是单一来源——/help 文案和 bot 菜单注
+# 册（run_telegram.main -> transport.register_commands）都读它。
+BOT_COMMANDS = [
+    ("status", "看当前进度到哪了"),
+    ("cancel", "取消当前这批（会再确认一次）"),
+    ("help", "看可用命令"),
+]
+
 
 class SessionConsumer:
     def __init__(self, store: Any, driver: Any, transport: Any, chat_id: str,
@@ -202,6 +211,11 @@ class SessionConsumer:
               f"status={self.view.status}", flush=True)
         if msg.kind == "callback":
             self._handle_callback(getattr(msg, "data", None))
+            return
+        if msg.kind == "text" and (msg.text or "").strip().startswith("/"):
+            # /命令是确定性即时路径：不进 pending_texts、不触发 resume、不走
+            # LLM（AG-16.2）。
+            self._handle_command((msg.text or "").strip())
             return
         if (self.view.status == RunStatus.RUNNING and not self.view.drive_active
                 and self.active_drive_job is None and self.view.run_id is not None):
@@ -982,6 +996,31 @@ class SessionConsumer:
                 self.transport.send_text(self.chat_id, text)
             except Exception as e2:  # noqa: BLE001
                 print(f"[consumer] send_text 重试仍失败，放弃这条：{e2!r}", flush=True)
+
+    def _handle_command(self, text: str) -> None:
+        # /命令快路径（AG-16.2）。取首 token、去 @botname 后缀、小写。
+        cmd = text.split()[0].split("@", 1)[0].lower()
+        if cmd in ("/help", "/start"):
+            self._send(self._command_help_text())
+        elif cmd == "/status":
+            self._send(self._status_text())
+        elif cmd == "/cancel":
+            # 取消是炸整批的危险操作，沿用全局二次确认（无活跃批次时它自己回
+            # "现在没有在处理的批次"）。
+            self._prompt_cancel_confirmation()
+        else:
+            self._send("没有这个命令哦，发 /help 看看能用哪些～")
+
+    def _status_text(self) -> str:
+        if not self._has_active_batch():
+            return "现在没有在处理的批次～把照片发给我就能开始"
+        return self.view.describe()
+
+    @staticmethod
+    def _command_help_text() -> str:
+        lines = "\n".join(f"/{name} - {desc}" for name, desc in BOT_COMMANDS)
+        return ("可以随时发这些命令：\n" + lines +
+                "\n\n平时把照片发给我、再说一句想怎么处理就行，比如\"选3张发朋友圈\"。")
 
     def _send_help(self) -> None:
         self._send(

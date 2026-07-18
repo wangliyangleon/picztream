@@ -41,6 +41,11 @@ class FakeBotClient:
         self.sent = []
         self.download_calls = []
         self.sent_photos = []  # (path, caption)
+        self.registered_commands = None
+
+    async def set_my_commands(self, commands):
+        await asyncio.sleep(0)
+        self.registered_commands = list(commands)
 
     async def get_updates(self, offset=None, timeout=25):
         await asyncio.sleep(0.01)
@@ -223,6 +228,21 @@ def test_document_image_with_caption_also_emits_a_text_message(tmp_path):
         assert messages[0].kind == "file"
         assert messages[1].kind == "text"
         assert messages[1].text == "留5张就行"
+    finally:
+        transport.stop()
+
+
+def test_register_commands_calls_set_my_commands(tmp_path):
+    # AG-16.2：register_commands 透传到 bot.set_my_commands。
+    fake = FakeBotClient()
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        transport.register_commands([("status", "看进度"), ("help", "帮助")])
+        assert fake.registered_commands == [("status", "看进度"), ("help", "帮助")]
     finally:
         transport.stop()
 
