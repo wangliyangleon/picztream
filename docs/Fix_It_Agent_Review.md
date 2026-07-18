@@ -122,7 +122,7 @@
 
 ---
 
-**AG-09 照片 caption 里的意图被静默丢弃**
+**AG-09 照片 caption 里的意图被静默丢弃** ✅ 已修复
 类别: 交互打磨 + 需求proposal | 来源视角: 用户
 
 现象: Telegram 用户最自然的用法是发图时把"帮我选3张发朋友圈"写在照片 caption 里(尤其相册多选一次发)。`transport/telegram.py::_handle_update` 的 photo/document 分支只取文件,caption 被丢弃(只在"不认识的消息形状"诊断打印里出现过,telegram.py:111)。用户视角看就是"说了话没人理",还得再打一遍字。
@@ -130,6 +130,8 @@
 修法: photo/document 分支读 `message.caption`,非空时在照片入站消息之后追加一条同 chat 的 text 入站消息(复用现有文本管线,不需要新 kind);相册多张只有第一张带 caption,天然只触发一次。
 
 难度 S | 复杂度 低 | 优先级 P2
+
+修复记录(2026-07-18): transport 新增 `_enqueue_caption(message)`, photo/document 分支各调一次(排在照片/文件消息之后)。复用现有 text 管线, 无新 kind。加两条 transport 测试(photo/document 带 caption), 全量 276 条绿。
 
 ---
 

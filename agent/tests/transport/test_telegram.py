@@ -20,11 +20,12 @@ class FakeDocument:
 
 
 class FakeMessage:
-    def __init__(self, chat_id: str, text=None, photo=None, document=None) -> None:
+    def __init__(self, chat_id: str, text=None, photo=None, document=None, caption=None) -> None:
         self.chat = FakeChat(chat_id)
         self.text = text
         self.photo = photo or []
         self.document = document
+        self.caption = caption
 
 
 class FakeUpdate:
@@ -169,6 +170,57 @@ def test_image_sent_as_document_is_downloaded_as_a_file_message(tmp_path):
         assert Path(messages[0].file_path).parent == tmp_path
         assert Path(messages[0].file_path).suffix == ".jpg"
         assert fake.download_calls == [messages[0].file_path]
+    finally:
+        transport.stop()
+
+
+def _drain(transport, want, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    messages = []
+    while time.monotonic() < deadline:
+        messages += transport.receive()
+        if len(messages) >= want:
+            break
+        time.sleep(0.05)
+    return messages
+
+
+def test_photo_with_caption_also_emits_a_text_message(tmp_path):
+    # AG-09：发图时把意图写在 caption 里 -> 图之后追加一条 text 消息，复用文本管线。
+    updates = [FakeUpdate(1, FakeMessage("123", photo=[{"file_id": "abc", "file_size": 100}],
+                                          caption="帮我选3张发朋友圈"))]
+    fake = FakeBotClientWithUpdates(updates)
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        messages = _drain(transport, 2)
+        assert len(messages) == 2
+        assert messages[0].kind == "photo"
+        assert messages[1].kind == "text"
+        assert messages[1].text == "帮我选3张发朋友圈"
+        assert messages[1].chat_id == "123"
+    finally:
+        transport.stop()
+
+
+def test_document_image_with_caption_also_emits_a_text_message(tmp_path):
+    doc = FakeDocument(file_id="doc1", file_name="IMG_0001.jpg", mime_type="image/jpeg")
+    updates = [FakeUpdate(1, FakeMessage("123", document=doc, caption="留5张就行"))]
+    fake = FakeBotClientWithUpdates(updates)
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        messages = _drain(transport, 2)
+        assert len(messages) == 2
+        assert messages[0].kind == "file"
+        assert messages[1].kind == "text"
+        assert messages[1].text == "留5张就行"
     finally:
         transport.stop()
 

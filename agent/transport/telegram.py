@@ -94,6 +94,7 @@ class TelegramTransport:
             dest_path = self.download_dir / f"{uuid.uuid4().hex}.jpg"
             await self._bot_client.download_photo(update, dest_path=str(dest_path))
             self._inbound.put(InboundMessage(kind="photo", chat_id=self.chat_id, file_path=str(dest_path)))
+            self._enqueue_caption(message)
         elif document is not None and (document.mime_type or "").startswith("image/"):
             # 手机相册"以文件方式发送"(不压缩)的图片走 document，不是
             # photo，真机验证时发现之前完全没处理这种情况，见
@@ -102,6 +103,7 @@ class TelegramTransport:
             dest_path = self.download_dir / f"{uuid.uuid4().hex}{suffix}"
             await self._bot_client.download_document(update, dest_path=str(dest_path))
             self._inbound.put(InboundMessage(kind="file", chat_id=self.chat_id, file_path=str(dest_path)))
+            self._enqueue_caption(message)
         elif getattr(message, "text", None):
             self._inbound.put(InboundMessage(kind="text", chat_id=self.chat_id, text=message.text))
         else:
@@ -110,6 +112,15 @@ class TelegramTransport:
             print(f"[TelegramTransport] 收到不认识的消息形状，已跳过：photo={getattr(message, 'photo', 'N/A')!r} "
                   f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
                   f"document={getattr(message, 'document', 'N/A')!r}")
+
+    def _enqueue_caption(self, message: Any) -> None:
+        # 发图带的文字说明（caption）当一条普通文本入站消息接着投进队列，
+        # 复用现有文本管线当意图处理（AG-09）。排在照片/文件消息之后：消费
+        # 端先 mint/加照片、再处理意图。相册只有第一张带 caption，天然只触
+        # 发一次。
+        caption = (getattr(message, "caption", None) or "").strip()
+        if caption:
+            self._inbound.put(InboundMessage(kind="text", chat_id=self.chat_id, text=caption))
 
     async def _handle_callback_query(self, callback: Any) -> None:
         # inline 按钮点击：先应答消掉客户端 loading 转圈，再把 callback_data
