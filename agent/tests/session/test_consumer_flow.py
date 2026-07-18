@@ -11,6 +11,7 @@ from compose.adjustment_parser import (
     GateReply,
     PlanConfirmationReply,
     RunningReply,
+    StyleDescribeReply,
     StyleGateReply,
 )
 from orchestrator.types import PlanDelta, RunStatus
@@ -330,13 +331,102 @@ def test_gate_style_prompts_then_rerun_with_description(tmp_path):
     assert env.consumer.view.status == RunStatus.AWAITING_GATE
     assert env.consumer.run is not None  # 所有权交回
 
+    # 文本现在过 style_describe 分类器（AG-02）：describe -> rerun_style。
     env.push_text("复古暖色调")
+    env.consumer.step()
+    [classify_job] = env.drain_jobs()
+    assert classify_job.kind == "style_describe"
+    env.put_event(ClassifyDone(0, "style_describe", StyleDescribeReply(action="describe")))
     env.consumer.step()
 
     assert "正在选风格..." in env.transport.texts()
     [next_job] = env.drain_jobs()
     assert next_job.action == "rerun_style"
     assert next_job.args == {"style_description": "复古暖色调"}
+
+
+def test_gate_style_describe_skip_runs_original_no_filter(tmp_path):
+    # AG-16.1：说"原图就行" -> skip -> rerun_style 空描述（chosen_recipe None 空跑）。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    env.push_text("原图就行不用滤镜")
+    env.consumer.step()
+    deliver_classify(env, "style_describe", StyleDescribeReply(action="skip"))
+
+    assert any("不套滤镜" in t for t in env.transport.texts())
+    [next_job] = env.drain_jobs()
+    assert next_job.action == "rerun_style"
+    assert next_job.args == {"style_description": ""}
+
+
+def test_gate_style_describe_cancel_prompts_confirmation(tmp_path):
+    # AG-02：说"算了不弄了" -> cancel -> 二次确认，而不是被当风格描述。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    env.push_text("算了不弄了")
+    env.consumer.step()
+    deliver_classify(env, "style_describe", StyleDescribeReply(action="cancel"))
+
+    assert env.consumer._cancel_confirm_pending is True
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+    assert not env.drain_jobs()  # 没有 rerun_style
+
+
+def test_gate_style_describe_query_lists_presets(tmp_path):
+    # AG-16.4 基础版：说"有哪些风格" -> query -> 列出 9 个 preset。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    env.push_text("有哪些风格可以选")
+    env.consumer.step()
+    deliver_classify(env, "style_describe", StyleDescribeReply(action="query"))
+
+    texts = " ".join(env.transport.texts())
+    assert "Havana 1959" in texts and "Berlin 1989" in texts
+    assert not env.drain_jobs()
+
+
+def test_gate_style_match_failed_reprompts_without_failing(tmp_path):
+    # AG-01：GateReached(Style, match_failed) -> 原地重问，不报"处理失败"。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+
+    env.put_event(GateReached(0, job.run_id, "Style", {"match_failed": True}))
+    env.consumer.step()
+
+    assert any("没能选出对应的风格" in t for t in env.transport.texts())
+    assert env.consumer.view.status == RunStatus.AWAITING_GATE  # 没报废
+
+
+def test_gate_style_describe_classify_failure_falls_back_to_description(tmp_path):
+    # 分类失败降级为当描述，不卡用户。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    env.push_text("暖一点的")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyFailed(0, "style_describe", retryable=False))
+    env.consumer.step()
+
+    [next_job] = env.drain_jobs()
+    assert next_job.action == "rerun_style"
+    assert next_job.args == {"style_description": "暖一点的"}
 
 
 def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
@@ -363,7 +453,9 @@ def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
     assert next_job.action == "resolve_gate"
 
 
-def test_gate_style_apply_all_without_chosen_recipe_asks_for_description(tmp_path):
+def test_gate_style_apply_all_without_chosen_recipe_auto_proceeds(tmp_path):
+    # AG-16.1：原图直出（chosen_recipe None）在 StyleApplyAll 无预览可确认，
+    # 自动推进到交付闸门，不再问"没能选出风格"。
     env = make_consumer(tmp_path)
     job = to_running(env)
     worker_saves_gate(env, job.run_id, "StyleApplyAll")
@@ -371,7 +463,9 @@ def test_gate_style_apply_all_without_chosen_recipe_asks_for_description(tmp_pat
     env.put_event(GateReached(0, job.run_id, "StyleApplyAll", {"chosen_recipe": None}))
     env.consumer.step()
 
-    assert "没能选出风格，直接说说想要什么风格吧" in env.transport.texts()
+    assert any("不套滤镜" in t for t in env.transport.texts())
+    [next_job] = env.drain_jobs()
+    assert next_job.action == "resolve_gate"
 
 
 def test_gate_deliver_summary_then_llm_adjustment(tmp_path):

@@ -34,6 +34,14 @@ class StyleMatchError(Exception):
         self.message = message
 
 
+def describe_presets() -> str:
+    """把内置 preset 一览拼成一段面向用户的文本（Style 问描述闸门 query
+    分类的回复）。数据只有 _PRESET_DESCRIPTIONS 这一份来源。"""
+    lines = "\n".join(f"- {name}：{desc}" for name, desc in _PRESET_DESCRIPTIONS)
+    return ("可选的风格有：\n" + lines +
+            "\n直接一句话描述你想要的就行，或者说\"原图就行\"不套滤镜")
+
+
 def _schema_instruction(names: List[str]) -> str:
     return (
         "You are matching a user's free-text description of a desired photo color-grading "

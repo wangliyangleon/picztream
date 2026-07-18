@@ -59,7 +59,7 @@ class SessionWorker:
                  compose_plan_fn: Callable, classify_collecting_message_fn: Callable,
                  classify_gate_reply_fn: Callable, refine_plan_confirmation_fn: Callable,
                  classify_style_gate_reply_fn: Callable, classify_running_message_fn: Callable,
-                 classify_cancel_confirmation_fn: Callable,
+                 classify_cancel_confirmation_fn: Callable, classify_style_describe_fn: Callable,
                  killable_stages: Tuple[str, ...] = KILLABLE_STAGES) -> None:
         self.classify_jobs = classify_jobs
         self.drive_jobs = drive_jobs
@@ -77,6 +77,7 @@ class SessionWorker:
         self.classify_style_gate_reply_fn = classify_style_gate_reply_fn
         self.classify_running_message_fn = classify_running_message_fn
         self.classify_cancel_confirmation_fn = classify_cancel_confirmation_fn
+        self.classify_style_describe_fn = classify_style_describe_fn
         self.killable_stages = set(killable_stages)
 
     # -- 线程壳（两条 lane 各起一条线程） --
@@ -156,6 +157,8 @@ class SessionWorker:
             elif job.kind == "refine_plan":
                 result = self.refine_plan_confirmation_fn(
                     job.context["intent_raw"], job.context["current_params"], job.text)
+            elif job.kind == "style_describe":
+                result = self.classify_style_describe_fn(job.text)
             elif job.kind == "style_gate":
                 result = self.classify_style_gate_reply_fn(job.text)
             elif job.kind == "running":
@@ -202,6 +205,14 @@ class SessionWorker:
             # rerun_style 跳过闸门直接跑 Style，同样在 driver 内部运行，补发。
             self.events.put(StageStarted(job.generation, run.run_id, "Style"))
             self.driver.rerun_stage(run, "Style", {"style_description": job.args["style_description"]})
+            style_out = run.outputs.get("Style")
+            if style_out is not None and style_out.data.get("match_failed"):
+                # 描述没匹配上任何 preset：软失败，退回 Style 闸门重新问，不往下
+                # 推进（AG-01）。不走 _drive_to_stop/_report_stop。
+                self.driver.rearm_gate(run, "Style")
+                self.events.put(GateReached(job.generation, run.run_id, "Style",
+                                            {"match_failed": True}))
+                return
         elif job.action != "resume":
             raise ValueError(f"unknown drive action: {job.action!r}")
         self._drive_to_stop(run, job)

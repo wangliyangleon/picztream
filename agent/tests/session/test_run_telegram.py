@@ -108,8 +108,9 @@ def _wait_until(predicate, timeout=3.0):
 def test_two_thread_end_to_end_smoke(tmp_path):
     # 验证 consumer 主循环 + 两条真 worker 线程（classify + drive）+ 三个
     # 队列在真并发下把整条链路走通。确认点用 inline 按钮回调（确定性路
-    # 径，不需要假一堆分类器）；风格描述这步是直接打字（不经分类）。
-    from compose.adjustment_parser import CollectingReply
+    # 径，不需要假一堆分类器）；风格描述这步经 style_describe 分类器（AG-02），
+    # 冒烟里假成 describe。
+    from compose.adjustment_parser import CollectingReply, StyleDescribeReply
 
     transport = ScriptedTransport()
     consumer, worker = build_runtime(state_dir=tmp_path, transport=transport, chat_id=CHAT_ID)
@@ -121,6 +122,7 @@ def test_two_thread_end_to_end_smoke(tmp_path):
     worker.client = fake_client
     worker.compose_plan_fn = lambda intent, profile, last: bare_compose_plan()
     worker.classify_collecting_message_fn = lambda text, n: CollectingReply(action="intent")
+    worker.classify_style_describe_fn = lambda text: StyleDescribeReply(action="describe")
 
     stop_event = threading.Event()
     classify_thread = threading.Thread(target=worker.run_classify, args=(stop_event, 0.05), daemon=True)

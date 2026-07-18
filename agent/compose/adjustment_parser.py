@@ -270,6 +270,41 @@ def classify_collecting_message(text: str, photo_count: int, http_post: Optional
 # 是小而紧的 schema（贴合各自上下文的有界动作集），比通用分类更不容易
 # 幻觉。按钮回调仍是确定性即时路径，不经过这些。
 
+_STYLE_DESCRIBE_SCHEMA_INSTRUCTION = (
+    "The user is being asked to describe, in free text, the photo color style/filter they "
+    "want applied to their selected photos. They have NOT been shown any preview yet. "
+    "You are given the user's reply. Respond with a single JSON object in one of four shapes: "
+    '{"action": "describe"} if the user is describing a style they want (for example '
+    '"复古暖色调", "黑白胶片", "冷一点的电影感", "日系清新", "再暖一点"); '
+    '{"action": "skip"} if the user does NOT want any filter and wants the original photos '
+    'as-is (for example "不要滤镜", "原图就行", "不用调色", "保持原样", "别加滤镜"); '
+    '{"action": "cancel"} if the user wants to abort/cancel the whole batch (for example '
+    '"取消", "算了不弄了", "不弄了", "不想要了"); '
+    '{"action": "query"} if the user is just asking a question about the available styles '
+    'or what to do, not making a choice (for example "有哪些风格？", "都能选什么", "这是啥"). '
+    "When unsure, prefer describe."
+)
+
+
+@dataclass
+class StyleDescribeReply:
+    action: Literal["describe", "skip", "cancel", "query"]
+
+
+def classify_style_describe(text: str, http_post: Optional[HttpPostFn] = None,
+                            meta_provider: str = "local") -> StyleDescribeReply:
+    decision = request_json(
+        user_prompt=text,
+        schema_instruction=_STYLE_DESCRIBE_SCHEMA_INSTRUCTION,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action not in ("describe", "skip", "cancel", "query"):
+        raise AdjustmentError("unknown_action", f"unrecognized style describe action {action!r}")
+    return StyleDescribeReply(action=action)
+
+
 _STYLE_GATE_SCHEMA_INSTRUCTION = (
     "The user was shown one representative photo with a color style/filter applied, and "
     "asked whether this style is OK. You are given the user's reply. Respond with a "

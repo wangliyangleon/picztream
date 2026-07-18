@@ -161,6 +161,24 @@ def test_rerun_stage_resets_downstream_state_and_outputs(tmp_path):
     assert a.calls[-1]["params"]["style_description"] == "重新描述一次"
 
 
+def test_rearm_gate_puts_run_back_to_awaiting_gate_at_the_stage(tmp_path):
+    # AG-01：Style 描述没匹配上时退回它自己的闸门重新问——stage 已 DONE，
+    # rearm_gate 把 run 重新挂回 AWAITING_GATE、gate_state 指向该 stage。
+    a = FakeStage(name="Style")
+    plan = Plan(stages=[StageSpec(name="Style", gate="required")])
+    run = make_run(plan)
+    driver = Driver(stages={"Style": a}, store=RunStore(tmp_path))
+    driver.rerun_stage(run, "Style", {"style_description": "匹配不上的描述"})
+    assert run.status == RunStatus.RUNNING
+
+    driver.rearm_gate(run, "Style")
+
+    assert run.status == RunStatus.AWAITING_GATE
+    assert run.gate_state is not None
+    assert run.gate_state.stage_name == "Style"
+    assert run.gate_state.setting == "required"
+
+
 def test_rerun_stage_marks_run_failed_when_target_stage_fails(tmp_path):
     a = FakeStage(name="Style", result=StageOutput(ok=False, error="boom"), criticality="critical")
     plan = Plan(stages=[StageSpec(name="Style", gate="required")])

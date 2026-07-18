@@ -357,6 +357,7 @@ def make_worker(tmp_path: Path,
                 classify_style_gate_reply_fn: Callable = _raising_classify,
                 classify_running_message_fn: Callable = _raising_classify,
                 classify_cancel_confirmation_fn: Callable = _raising_classify,
+                classify_style_describe_fn: Callable = _raising_classify,
                 ) -> WorkerEnv:
     client = client or FakeClient()
     transport = FakeTransport()
@@ -389,6 +390,7 @@ def make_worker(tmp_path: Path,
         classify_style_gate_reply_fn=classify_style_gate_reply_fn,
         classify_running_message_fn=classify_running_message_fn,
         classify_cancel_confirmation_fn=classify_cancel_confirmation_fn,
+        classify_style_describe_fn=classify_style_describe_fn,
     )
     return WorkerEnv(tmp_path=tmp_path, worker=worker, classify_jobs=classify_jobs,
                      drive_jobs=drive_jobs, events=events,

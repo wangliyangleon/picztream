@@ -77,6 +77,17 @@ class Driver:
         self.store.save(run)
         return run
 
+    def rearm_gate(self, run: RunState, stage_name: str) -> RunState:
+        """把一个已经运行过、但需要重新征询用户的 stage 重新挂回它的闸门。
+        当前用于 Style：描述没匹配上任何 preset 时退回去重新问（AG-01）——
+        stage 已 DONE，但 rerun_stage 直接调 _run_stage、不看 stage 状态，
+        所以重挂闸门后用户再给新描述仍能重跑。"""
+        spec = self._spec_by_name(run, stage_name)
+        run.gate_state = GateState(stage_name=stage_name, setting=spec.gate)
+        run.status = RunStatus.AWAITING_GATE
+        self.store.save(run)
+        return run
+
     def timeout_gate(self, run: RunState) -> RunState:
         if run.gate_state is None or run.gate_state.setting != "courtesy":
             raise ValueError("no courtesy gate is pending on this run")

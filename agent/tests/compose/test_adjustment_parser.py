@@ -6,6 +6,7 @@ from compose.adjustment_parser import (
     AdjustmentError,
     classify_collecting_message,
     classify_gate_reply,
+    classify_style_describe,
     parse_adjustment,
     refine_plan_confirmation,
 )
@@ -226,5 +227,18 @@ def test_classify_collecting_message_unknown_action_raises(monkeypatch):
 
     with pytest.raises(AdjustmentError) as exc_info:
         classify_collecting_message("随便说点什么", 7, http_post=_fake_http_post({"action": "do_something_else"}))
+
+    assert exc_info.value.code == "unknown_action"
+
+
+def test_classify_style_describe_recognizes_all_four_actions():
+    for action in ("describe", "skip", "cancel", "query"):
+        reply = classify_style_describe("随便一句", http_post=_fake_http_post({"action": action}))
+        assert reply.action == action
+
+
+def test_classify_style_describe_unknown_action_raises():
+    with pytest.raises(AdjustmentError) as exc_info:
+        classify_style_describe("随便你", http_post=_fake_http_post({"action": "do_something_else"}))
 
     assert exc_info.value.code == "unknown_action"

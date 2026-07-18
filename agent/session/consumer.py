@@ -20,6 +20,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from compose.style_matcher import describe_presets
 from orchestrator.types import RunState, RunStatus, StageStatus
 from router.collecting import (
     drain_queue_into,
@@ -316,10 +317,9 @@ class SessionConsumer:
             if gate_stage is None and self.run.gate_state is not None:
                 gate_stage = self.run.gate_state.stage_name
             if gate_stage == "Style":
-                # 问描述那步：还没有预览可批准，任何文本都是（新的）风格描
-                # 述，直接重跑 Style，不需要分类。
-                self._send("正在选风格...")
-                self._enqueue_drive("rerun_style", self.run.run_id, {"style_description": text})
+                # 问描述那步：交 style_describe 分类器判 describe/skip/cancel/query
+                # （AG-01/AG-02）。不再把"算了不弄了"/"有哪些风格"当风格描述。
+                self._submit_classify("style_describe", text, {"run_id": self.run.run_id})
                 return
             if gate_stage == "StyleApplyAll":
                 # 预览确认：交 style_gate 分类器判 approve/redescribe/cancel/query。
@@ -411,6 +411,9 @@ class SessionConsumer:
         if event.kind == "gate_reply":
             self._on_gate_reply(result)
             return
+        if event.kind == "style_describe":
+            self._on_style_describe_reply(result, inflight["text"])
+            return
         if event.kind == "style_gate":
             self._on_style_gate_reply(result, inflight["text"])
             return
@@ -450,6 +453,25 @@ class SessionConsumer:
             self._prompt_cancel_confirmation()
         else:  # other：打招呼/闲聊/听不懂，给帮助，别硬编默认方案
             self._send_help()
+
+    def _on_style_describe_reply(self, reply: Any, text: str) -> None:
+        # 问描述闸门（还没预览）。describe→拿这句当描述重跑 Style；skip→原图
+        # 直出（空描述空跑）；cancel→二次确认；query→列出可选 preset（AG-01/
+        # AG-02/AG-16）。
+        if self.run is None or self.run.status != RunStatus.AWAITING_GATE:
+            return
+        if reply.action == "cancel":
+            self._prompt_cancel_confirmation()
+            return
+        if reply.action == "query":
+            self._send(describe_presets())
+            return
+        if reply.action == "skip":
+            self._send("好，这批不套滤镜，用原图直出～")
+            self._enqueue_drive("rerun_style", self.run.run_id, {"style_description": ""})
+            return
+        self._send("正在选风格...")
+        self._enqueue_drive("rerun_style", self.run.run_id, {"style_description": text})
 
     def _on_style_gate_reply(self, reply: Any, text: str) -> None:
         # 预览确认闸门。approve→套全批；redescribe→拿这句当新描述重挑；
@@ -509,10 +531,10 @@ class SessionConsumer:
         if event.kind == "running":
             self._send(self.view.describe())  # 分类失败就回进度
             return
-        if event.kind == "style_gate":
+        if event.kind in ("style_describe", "style_gate"):
             # 分类失败：退回"当作新风格描述"（历史默认），不卡住用户。
             if self.run is not None and self.run.status == RunStatus.AWAITING_GATE:
-                self._send("正在重新选风格...")
+                self._send("正在选风格...")
                 self._enqueue_drive("rerun_style", self.run.run_id,
                                      {"style_description": inflight["text"]})
             return
@@ -615,7 +637,12 @@ class SessionConsumer:
         payload = event.payload
         if event.stage == "Style":
             # 问描述是开放式，只能打字，不挂按钮。
-            self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
+            if payload.get("match_failed"):
+                # 上一句描述没匹配上任何 preset：原地重问，不报废整批（AG-01）。
+                self._send("没能选出对应的风格，换个说法再说说？比如\"复古暖色调\"、"
+                           "\"黑白胶片\"；不想套滤镜就说\"原图就行\"")
+            else:
+                self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
         elif event.stage == "StyleApplyAll":
             self._render_style_apply_all_gate(payload)
         else:
@@ -624,7 +651,11 @@ class SessionConsumer:
     def _render_style_apply_all_gate(self, payload: dict) -> None:
         chosen = payload.get("chosen_recipe")
         if not chosen:
-            self._send("没能选出风格，直接说说想要什么风格吧")
+            # 无风格（用户选了原图直出）：没有预览可确认，直接推进到交付闸门。
+            # 匹配失败现在已在 Style 闸门就拦下重问，这里 chosen=None 只可能是
+            # skip（AG-16.1）。
+            self._send("这批不套滤镜，直接看选片吧")
+            self._enqueue_drive("resolve_gate", self.run.run_id)
             return
         if payload.get("export_error"):
             self._send(f"预览导出失败：{payload['export_error']}")

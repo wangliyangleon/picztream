@@ -21,6 +21,7 @@ from compose.adjustment_parser import (
     classify_collecting_message,
     classify_gate_reply,
     classify_running_message,
+    classify_style_describe,
     classify_style_gate_reply,
     refine_plan_confirmation,
 )
@@ -87,6 +88,7 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
         classify_style_gate_reply_fn=classify_style_gate_reply,
         classify_running_message_fn=classify_running_message,
         classify_cancel_confirmation_fn=classify_cancel_confirmation,
+        classify_style_describe_fn=classify_style_describe,
     )
     consumer = SessionConsumer(
         store=store, driver=driver, transport=transport, chat_id=chat_id,

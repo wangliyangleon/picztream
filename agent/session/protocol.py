@@ -19,10 +19,11 @@ from typing import Any, Optional
 @dataclass
 class ClassifyJob:
     generation: int
-    kind: str  # "collecting" | "gate_reply" | "refine_plan"
+    kind: str  # collecting | gate_reply | refine_plan | style_describe |
+               # style_gate | running | cancel_confirm
     text: str
     context: dict = field(default_factory=dict)
-    # collecting: {photo_count}; gate_reply: {run_id};
+    # collecting: {photo_count}; gate_reply/style_describe/style_gate: {run_id};
     # refine_plan: {intent_raw, current_params}
 
 

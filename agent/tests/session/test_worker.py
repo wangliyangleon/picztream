@@ -30,7 +30,7 @@ from session.protocol import (
     StageStarted,
 )
 
-from session_fakes import FakeClient, make_worker
+from session_fakes import FakeClient, _fake_style_http_post, make_worker
 
 
 def test_step_returns_false_on_empty_queue(tmp_path):
@@ -266,6 +266,51 @@ def test_deliver_export_failure_fails_run(tmp_path):
     saved = env.store.load(run.run_id)
     assert saved.status == RunStatus.FAILED
     assert saved.stage_states["Deliver"] == StageStatus.FAILED
+
+
+def test_rerun_style_match_failure_reprompts_style_gate(tmp_path):
+    # AG-01：描述匹配不上任何 preset（Style 软失败 match_failed）-> 退回 Style
+    # 闸门重新问，不报废整批、不往下推进。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.worker.driver.stages["Style"].http_post = _fake_style_http_post("Not A Real Preset")
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+    env.step()
+    env.drain_events()
+
+    env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
+                           args={"style_description": "匹配不上的乱描述"}))
+    env.step()
+    events = env.drain_events()
+
+    gate = events[-1]
+    assert isinstance(gate, GateReached)
+    assert gate.stage == "Style"
+    assert gate.payload.get("match_failed") is True
+    saved = env.store.load(run.run_id)
+    assert saved.status == RunStatus.AWAITING_GATE
+    assert saved.gate_state.stage_name == "Style"
+
+
+def test_rerun_style_skip_empty_description_runs_no_style(tmp_path):
+    # AG-16.1：原图直出（空描述）-> Style 空跑 chosen_recipe None -> 越过 Style
+    # 停在 StyleApplyAll 闸门，payload chosen_recipe None（consumer 会自动推进）。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+    env.step()
+    env.drain_events()
+
+    env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
+                           args={"style_description": ""}))
+    env.step()
+    events = env.drain_events()
+
+    gate = events[-1]
+    assert isinstance(gate, GateReached)
+    assert gate.stage == "StyleApplyAll"
+    assert gate.payload.get("chosen_recipe") is None
+    assert env.store.load(run.run_id).stage_states["Style"] == StageStatus.DONE
 
 
 def test_pre_set_cancel_stops_before_any_stage(tmp_path):

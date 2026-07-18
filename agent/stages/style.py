@@ -16,8 +16,10 @@ class StyleStage:
     name: str = "Style"
     inputs: List[str] = field(default_factory=lambda: ["Curate"])
     cost_class: str = "cloud"
-    # 现在只有一次风格决策(挑 preset + 套到代表图)，失败了下游 StyleApplyAll/
-    # Deliver 都没有意义，不再是旧版"部分照片失败可以跳过"的语义。
+    # criticality 仍是 critical，但只对"套 recipe 到代表图真失败"这种硬故障
+    # 生效：风格没匹配上任何 preset、或用户不要滤镜（空描述），都不是失败，
+    # 而是软化为 chosen_recipe=None（AG-01/AG-16.1）——匹配失败由 worker 退回
+    # Style 闸门重新问，空描述则原图直出、管线空跑。
     criticality: str = "critical"
     # 测试用的 fake 注入点：match_style_description 直接调
     # compose/llm_client.py::request_json(..., http_post=...)，不经过
@@ -27,19 +29,25 @@ class StyleStage:
 
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
         description = (params.get("style_description") or "").strip()
-        if not description:
-            return StageOutput(ok=False, error="missing style_description")
 
         curate_output = ctx.outputs.get("Curate")
         selected: List[str] = curate_output.data.get("selected", []) if curate_output else []
         if not selected:
             return StageOutput(ok=True, data={"chosen_recipe": None, "preview_photo": None})
 
+        if not description:
+            # 空描述 = 不套滤镜/原图直出（skip 路径传的就是 ""）。不是失败，
+            # 管线按 chosen_recipe=None 空跑（AG-16.1）。
+            return StageOutput(ok=True, data={"chosen_recipe": None, "preview_photo": None})
+
         provider = params.get("provider", "local")
         try:
             recipe_name = match_style_description(description, http_post=self.http_post, meta_provider=provider)
-        except (StyleMatchError, LlmRequestError) as e:
-            return StageOutput(ok=False, error=str(e))
+        except (StyleMatchError, LlmRequestError):
+            # 描述没映射到任何 preset（本地小模型常见）：软失败，不报废整批。
+            # worker 见到 match_failed 会退回 Style 闸门重新问（AG-01）。
+            return StageOutput(ok=True, data={"chosen_recipe": None, "preview_photo": None,
+                                              "match_failed": True})
 
         preview_photo = selected[0]
         try:

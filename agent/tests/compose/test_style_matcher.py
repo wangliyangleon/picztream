@@ -3,7 +3,20 @@ import json
 import pytest
 
 from compose.llm_client import LlmRequestError
-from compose.style_matcher import StyleMatchError, match_style_description
+from compose.style_matcher import (
+    describe_presets,
+    match_style_description,
+    StyleMatchError,
+)
+
+
+def test_describe_presets_lists_all_nine_with_skip_hint():
+    text = describe_presets()
+    for name in ("Havana 1959", "Tokyo 1966", "Paris 1974", "Miami 1986",
+                 "New York 1994", "Shanghai 2010", "Munich 1951", "Rome 1960",
+                 "Berlin 1989"):
+        assert name in text
+    assert "原图就行" in text
 
 
 def _ollama_response(recipe_name: str) -> str:

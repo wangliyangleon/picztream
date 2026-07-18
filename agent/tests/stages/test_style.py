@@ -55,25 +55,29 @@ def test_style_matches_a_preset_and_applies_it_to_the_representative_photo_only(
     assert output.data == {"chosen_recipe": "Havana 1959", "preview_photo": "a.jpg"}
 
 
-def test_style_fails_without_a_description():
+def test_style_without_a_description_is_skip_no_style():
+    # 空描述 = 不套滤镜/原图直出（skip 路径），软化为 chosen_recipe=None 空跑，
+    # 不再是失败（AG-16.1）。
     call_log = []
     client = _make_client(call_log)
     stage = StyleStage(client=client, http_post=_fake_http_post())
 
     output = stage.run(_ctx(["a.jpg"]), {})
 
-    assert output.ok is False
+    assert output.ok is True
+    assert output.data == {"chosen_recipe": None, "preview_photo": None}
     assert call_log == []
 
 
-def test_style_with_blank_description_fails():
+def test_style_with_blank_description_is_skip_no_style():
     call_log = []
     client = _make_client(call_log)
     stage = StyleStage(client=client, http_post=_fake_http_post())
 
     output = stage.run(_ctx(["a.jpg"]), {"style_description": "   "})
 
-    assert output.ok is False
+    assert output.ok is True
+    assert output.data == {"chosen_recipe": None, "preview_photo": None}
     assert call_log == []
 
 
@@ -89,18 +93,21 @@ def test_style_with_no_selected_photos_is_a_no_op():
     assert call_log == []
 
 
-def test_style_fails_when_the_matcher_hallucinates():
+def test_style_soft_fails_when_the_matcher_hallucinates():
+    # 描述没匹配上任何 preset：软失败（ok=True + match_failed），不报废整批；
+    # worker 会据此退回 Style 闸门重新问（AG-01）。
     call_log = []
     client = _make_client(call_log)
     stage = StyleStage(client=client, http_post=_fake_http_post("Not A Real Preset"))
 
     output = stage.run(_ctx(["a.jpg"]), {"style_description": "暖色调怀旧"})
 
-    assert output.ok is False
+    assert output.ok is True
+    assert output.data == {"chosen_recipe": None, "preview_photo": None, "match_failed": True}
     assert call_log == []
 
 
-def test_style_fails_when_the_matcher_raises_llm_request_error():
+def test_style_soft_fails_when_the_matcher_raises_llm_request_error():
     def bad_http_post(url, headers, body):
         del url, headers, body
         return 200, "not valid json"
@@ -111,7 +118,8 @@ def test_style_fails_when_the_matcher_raises_llm_request_error():
 
     output = stage.run(_ctx(["a.jpg"]), {"style_description": "暖色调怀旧"})
 
-    assert output.ok is False
+    assert output.ok is True
+    assert output.data.get("match_failed") is True
     assert call_log == []
 
 
