@@ -125,6 +125,13 @@ class TelegramTransport:
             print(f"[TelegramTransport] 收到不认识的消息形状，已跳过：photo={getattr(message, 'photo', 'N/A')!r} "
                   f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
                   f"document={getattr(message, 'document', 'N/A')!r}")
+            # 视频/语音/贴纸等：用户侧也回一句，别让人以为没收到（AG-18）。
+            # best-effort：发失败别触发外层 _poll_loop 的"收一条消息失败了"误导文案。
+            try:
+                await self._bot_client.send_text(
+                    self.chat_id, "目前只认识照片哦，把要处理的照片发给我就行～")
+            except Exception:  # noqa: BLE001
+                pass
 
     def _enqueue_caption(self, message: Any) -> None:
         # 发图带的文字说明（caption）当一条普通文本入站消息接着投进队列，

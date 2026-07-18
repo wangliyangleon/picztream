@@ -502,3 +502,24 @@ def test_poll_loop_recovers_after_get_updates_failure(tmp_path):
         assert messages[0].text == "hello"
     finally:
         transport.stop()
+
+
+def test_unknown_message_shape_replies_to_user(tmp_path):
+    # AG-18：视频/语音/贴纸等不认识的消息，用户侧也回一句，别静默。
+    updates = [FakeUpdate(1, FakeMessage("123"))]  # 无 photo/document/text
+    fake = FakeBotClientWithUpdates(updates)
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if fake.sent:
+                break
+            time.sleep(0.05)
+        assert any("只认识照片" in text for _, text in fake.sent)
+        assert transport.receive() == []  # 不产生入站消息
+    finally:
+        transport.stop()
