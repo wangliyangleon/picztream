@@ -237,12 +237,14 @@
 
 ---
 
-**AG-17 get_updates 失败无退避,故障期 0.1s 热重试**
+**AG-17 get_updates 失败无退避,故障期 0.1s 热重试** ✅ 已修复
 类别: 健壮性 | 来源视角: 工程
 
 `transport/telegram.py:59-62` 对 get_updates 异常统一 `sleep(0.1)` 后重试,断网/Telegram 故障期约 10 次/秒空转并刷屏打印。改指数退避(0.1s 起、封顶 30s,成功即复位)即可。
 
 难度 S | 复杂度 低 | 优先级 P3
+
+修复记录(2026-07-18): `_poll_loop` 的 get_updates except 改指数退避(纯函数 `_next_backoff`=min(cur*2,30), 0.1s 起、成功一轮即复位)+ 打一行(频率被退避自然节流)。加两条测试(_next_backoff 翻倍封顶 / 故障后恢复), 全量 309 条绿。
 
 ---
 

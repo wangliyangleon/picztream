@@ -16,6 +16,14 @@ from typing import Any, Callable, List, Optional
 from .base import InboundMessage
 from .telegram_client import TelegramBotClient
 
+# get_updates 失败的指数退避（AG-17）：0.1s 起、每次翻倍、封顶 30s，成功即复位。
+_POLL_BACKOFF_MIN = 0.1
+_POLL_BACKOFF_MAX = 30.0
+
+
+def _next_backoff(cur: float) -> float:
+    return min(cur * 2, _POLL_BACKOFF_MAX)
+
 
 class TelegramTransport:
     def __init__(self, token: str, chat_id: str, download_dir: Path,
@@ -54,12 +62,17 @@ class TelegramTransport:
             self._thread.join(timeout=2)
 
     async def _poll_loop(self) -> None:
+        backoff = _POLL_BACKOFF_MIN
         while True:
             try:
                 updates = await self._bot_client.get_updates(offset=self._offset, timeout=self.poll_timeout)
-            except Exception:
-                await asyncio.sleep(0.1)
+            except Exception as e:  # noqa: BLE001
+                # 断网/Telegram 故障期指数退避，别 10 次/秒空转刷屏（AG-17）。
+                print(f"[TelegramTransport] get_updates 失败，{backoff:.1f}s 后重试：{e!r}")
+                await asyncio.sleep(backoff)
+                backoff = _next_backoff(backoff)
                 continue
+            backoff = _POLL_BACKOFF_MIN  # 成功一轮即复位
             for update in updates:
                 self._offset = update.update_id + 1
                 try:

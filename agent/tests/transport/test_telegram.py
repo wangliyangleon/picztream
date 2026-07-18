@@ -4,7 +4,7 @@ import asyncio
 import time
 from pathlib import Path
 
-from transport.telegram import TelegramTransport
+from transport.telegram import TelegramTransport, _next_backoff
 
 
 class FakeChat:
@@ -449,5 +449,56 @@ def test_callback_query_from_other_chat_is_dropped_but_still_answered(tmp_path):
             time.sleep(0.05)
         assert transport.receive() == []      # 非白名单 chat 不产生入站
         assert fake.answered == ["q9"]         # 但仍要应答，别让对方一直转圈
+    finally:
+        transport.stop()
+
+
+def test_next_backoff_doubles_and_caps_at_30():
+    # AG-17：get_updates 失败退避 0.1->0.2->0.4...，封顶 30。
+    b = 0.1
+    seen = []
+    for _ in range(12):
+        seen.append(b)
+        b = _next_backoff(b)
+    assert seen[0] == 0.1
+    assert abs(seen[1] - 0.2) < 1e-9
+    assert abs(seen[2] - 0.4) < 1e-9
+    assert seen[-1] == 30.0  # 已封顶
+    assert _next_backoff(30.0) == 30.0
+
+
+class FakeBotClientGetUpdatesFailsOnce(FakeBotClient):
+    """首次 get_updates 抛异常，之后正常服务一批 update 一次。"""
+
+    def __init__(self, updates):
+        super().__init__()
+        self._updates = updates
+        self._failed = False
+        self._served = False
+
+    async def get_updates(self, offset=None, timeout=25):
+        await asyncio.sleep(0.01)
+        if not self._failed:
+            self._failed = True
+            raise RuntimeError("network down")
+        if not self._served:
+            self._served = True
+            return self._updates
+        return []
+
+
+def test_poll_loop_recovers_after_get_updates_failure(tmp_path):
+    # AG-17：get_updates 故障不拖死轮询，退避后恢复，update 最终到达。
+    updates = [FakeUpdate(1, FakeMessage("123", text="hello"))]
+    fake = FakeBotClientGetUpdatesFailsOnce(updates)
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        messages = _drain(transport, 1)
+        assert len(messages) == 1
+        assert messages[0].text == "hello"
     finally:
         transport.stop()
