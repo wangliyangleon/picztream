@@ -345,6 +345,47 @@ def test_gate_style_prompts_then_rerun_with_description(tmp_path):
     assert next_job.args == {"style_description": "复古暖色调"}
 
 
+def test_gate_style_reprompt_skipped_when_description_already_answered(tmp_path):
+    # AG-04：Deliver 闸门调整选片会连带把 Style 重置回闸门，但风格早已答过
+    # （style_description 幸存在 spec.params）：不再重问，按上次的自动重套。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    run = env.store.load(job.run_id)
+    next(s for s in run.plan.stages if s.name == "Style").params["style_description"] = "复古暖色调"
+    env.store.save(run)
+    worker_saves_gate(env, job.run_id, "Style")
+
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    texts = env.transport.texts()
+    assert not any("想要什么风格" in t for t in texts)
+    assert any("还按「复古暖色调」重新套用" in t for t in texts)
+    [next_job] = env.drain_jobs()
+    assert next_job.action == "rerun_style"
+    assert next_job.args == {"style_description": "复古暖色调"}
+
+
+def test_gate_style_reprompt_skipped_keeps_no_filter_when_previously_skipped(tmp_path):
+    # AG-04 skip 变体：上次选了原图直出（style_description==""），调整选片后
+    # 仍不重问、不套滤镜。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    run = env.store.load(job.run_id)
+    next(s for s in run.plan.stages if s.name == "Style").params["style_description"] = ""
+    env.store.save(run)
+    worker_saves_gate(env, job.run_id, "Style")
+
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    assert not any("想要什么风格" in t for t in env.transport.texts())
+    assert any("不套滤镜" in t for t in env.transport.texts())
+    [next_job] = env.drain_jobs()
+    assert next_job.action == "rerun_style"
+    assert next_job.args == {"style_description": ""}
+
+
 def test_gate_style_describe_skip_runs_original_no_filter(tmp_path):
     # AG-16.1：说"原图就行" -> skip -> rerun_style 空描述（chosen_recipe None 空跑）。
     env = make_consumer(tmp_path)

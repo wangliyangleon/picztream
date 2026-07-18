@@ -641,9 +641,19 @@ class SessionConsumer:
                 # 上一句描述没匹配上任何 preset：原地重问，不报废整批（AG-01）。
                 self._send("没能选出对应的风格，换个说法再说说？比如\"复古暖色调\"、"
                            "\"黑白胶片\"；不想套滤镜就说\"原图就行\"")
-            else:
-                self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
-        elif event.stage == "StyleApplyAll":
+                return
+            style_spec = next((s for s in run.plan.stages if s.name == "Style"), None)
+            prev = style_spec.params.get("style_description") if style_spec else None
+            if prev is not None:
+                # 调整选片后 Style 被 apply_adjustment 连带重置，但风格早已答过
+                # （style_description key 只有答过才有）：不重问，按上次的重套
+                # 用（AG-04）。想换仍可在 StyleApplyAll 预览闸门重选。
+                self._send(f"还按「{prev}」重新套用" if prev.strip() else "这批还是不套滤镜，用原图～")
+                self._enqueue_drive("rerun_style", run.run_id, {"style_description": prev})
+                return
+            self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
+            return
+        if event.stage == "StyleApplyAll":
             self._render_style_apply_all_gate(payload)
         else:
             self._render_deliver_gate(payload)
