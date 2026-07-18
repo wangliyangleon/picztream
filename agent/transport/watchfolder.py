@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 from .base import InboundMessage
 
@@ -31,7 +31,8 @@ class WatchFolderTransport:
         with (self.out_dir / "messages.log").open("a") as f:
             f.write(text + "\n")
 
-    def send_photo(self, chat_id: str, path: str) -> None:
+    def send_photo(self, chat_id: str, path: str, caption: Optional[str] = None) -> None:
+        del caption  # 落盘无 caption 概念
         self.send_file(chat_id, path)
 
     def send_file(self, chat_id: str, path: str) -> None:

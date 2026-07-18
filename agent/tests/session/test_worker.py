@@ -203,6 +203,8 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     assert gate.payload["applied_recipe"] == "Havana 1959"
     assert gate.payload["preview_failed_count"] == 0
     assert len(env.transport.sent_photos) == 3  # 又发了 2 张选片预览
+    # Deliver 选片预览逐张带"第 N 张"编号（AG-15）；StyleApplyAll 单张代表图不编号。
+    assert env.transport.sent_photo_captions == [None, "第 1 张", "第 2 张"]
 
     # 确认交付 -> Deliver 真正执行(stage 自己发文件) -> AWAITING_REVIEW 自动 approve
     env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
@@ -240,6 +242,30 @@ def test_gated_deliver_stage_started_fires_after_gate_not_before(tmp_path):
     env.step()
     after_approve = env.drain_events()
     assert "Deliver" in _started_stages(after_approve)  # 批准后才发
+
+
+def test_preview_send_total_failure_emits_ordered_placeholder(tmp_path):
+    # AG-15：某张图和文件都发不出去时，发"第 N 张预览发送失败"文本占位保序，
+    # 并计入 failed。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+
+    def boom(*a, **k):
+        raise RuntimeError("too big")
+    env.worker.transport.send_photo = boom
+    env.worker.transport.send_file = boom
+
+    preview_dir = tmp_path / "preview" / run.run_id
+    preview_dir.mkdir(parents=True)
+    for name in ("a.jpg", "b.jpg"):
+        (preview_dir / name).write_bytes(b"x")
+
+    failed = env.worker._send_preview_media(run, ["a.jpg", "b.jpg"], numbered=True)
+
+    assert failed == 2
+    texts = env.transport.texts()
+    assert "第 1 张预览发送失败" in texts
+    assert "第 2 张预览发送失败" in texts
 
 
 def test_deliver_export_failure_fails_run(tmp_path):

@@ -40,6 +40,7 @@ class FakeBotClient:
     def __init__(self) -> None:
         self.sent = []
         self.download_calls = []
+        self.sent_photos = []  # (path, caption)
 
     async def get_updates(self, offset=None, timeout=25):
         await asyncio.sleep(0.01)
@@ -49,8 +50,9 @@ class FakeBotClient:
         await asyncio.sleep(0)
         self.sent.append((chat_id, text))
 
-    async def send_photo_bytes(self, chat_id, path):
+    async def send_photo_bytes(self, chat_id, path, caption=None):
         await asyncio.sleep(0)
+        self.sent_photos.append((path, caption))
 
     async def send_document(self, chat_id, path):
         await asyncio.sleep(0)
@@ -221,6 +223,21 @@ def test_document_image_with_caption_also_emits_a_text_message(tmp_path):
         assert messages[0].kind == "file"
         assert messages[1].kind == "text"
         assert messages[1].text == "留5张就行"
+    finally:
+        transport.stop()
+
+
+def test_send_photo_passes_caption_through(tmp_path):
+    # AG-15：send_photo 的 caption 透传到 bot 层。
+    fake = FakeBotClient()
+    transport = TelegramTransport(
+        token="t", chat_id="123", download_dir=tmp_path,
+        bot_client_factory=lambda token: fake,
+    )
+    transport.start()
+    try:
+        transport.send_photo("123", "/tmp/x.jpg", caption="第 2 张")
+        assert fake.sent_photos == [("/tmp/x.jpg", "第 2 张")]
     finally:
         transport.stop()
 

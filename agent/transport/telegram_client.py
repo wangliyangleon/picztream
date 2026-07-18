@@ -71,9 +71,9 @@ class TelegramBotClient:
         # 必须应答，否则用户端按钮一直转圈。不带文案，只是消掉 loading。
         await self._bot.answer_callback_query(callback_query_id)
 
-    async def send_photo_bytes(self, chat_id: str, path: str) -> None:
+    async def send_photo_bytes(self, chat_id: str, path: str, caption: Optional[str] = None) -> None:
         with open(path, "rb") as f:
-            await self._bot.send_photo(chat_id=chat_id, photo=f)
+            await self._bot.send_photo(chat_id=chat_id, photo=f, caption=caption)
 
     async def send_document(self, chat_id: str, path: str) -> None:
         with open(path, "rb") as f:

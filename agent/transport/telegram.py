@@ -158,8 +158,9 @@ class TelegramTransport:
             self._bot_client.send_text_with_buttons(chat_id, text, options), self._loop)
         future.result(timeout=30)
 
-    def send_photo(self, chat_id: str, path: str) -> None:
-        future = asyncio.run_coroutine_threadsafe(self._bot_client.send_photo_bytes(chat_id, path), self._loop)
+    def send_photo(self, chat_id: str, path: str, caption: Optional[str] = None) -> None:
+        future = asyncio.run_coroutine_threadsafe(
+            self._bot_client.send_photo_bytes(chat_id, path, caption), self._loop)
         future.result(timeout=30)
 
     def send_file(self, chat_id: str, path: str) -> None:

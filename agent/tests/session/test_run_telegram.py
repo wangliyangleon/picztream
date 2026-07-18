@@ -47,7 +47,7 @@ class ScriptedTransport:
         with self._lock:
             self.log.append(("text", text))
 
-    def send_photo(self, chat_id, path):
+    def send_photo(self, chat_id, path, caption=None):
         with self._lock:
             self.log.append(("photo", path))
 

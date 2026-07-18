@@ -298,7 +298,7 @@ class SessionWorker:
         if export_error is not None:
             payload["export_error"] = export_error
             return payload
-        payload["preview_failed_count"] = self._send_preview_media(run, selected)
+        payload["preview_failed_count"] = self._send_preview_media(run, selected, numbered=True)
         return payload
 
     def _export_previews(self, run: RunState, selected: list) -> "str | None":
@@ -316,18 +316,27 @@ class SessionWorker:
             return e.message
         return None
 
-    def _send_preview_media(self, run: RunState, selected: list) -> int:
+    def _send_preview_media(self, run: RunState, selected: list, numbered: bool = False) -> int:
         # 逐张 图->文件 降级重试，最后统计失败数（旧 _send_preview 的
-        # "一张超标图不能带崩整个预览循环"语义原样保留）。
+        # "一张超标图不能带崩整个预览循环"语义原样保留）。numbered=True 时每
+        # 张带"第 N 张"caption（Deliver 的"换掉第3张"以此为锚，AG-15）。
         preview_dir = self.preview_root / run.run_id
         failed = 0
-        for path in selected:
+        for i, path in enumerate(selected, start=1):
             preview_path = str(preview_dir / Path(path).name)
+            caption = f"第 {i} 张" if numbered else None
             try:
-                self.transport.send_photo(self.chat_id, preview_path)
+                self.transport.send_photo(self.chat_id, preview_path, caption=caption)
             except Exception:  # noqa: BLE001 Telegram 体积上限等，降级不挑异常
                 try:
                     self.transport.send_file(self.chat_id, preview_path)
                 except Exception:  # noqa: BLE001
+                    if numbered:
+                        # 保序占位：这张发不出去也占个位，用户按"第 N 张"调整
+                        # 不会数错（AG-15）。
+                        try:
+                            self.transport.send_text(self.chat_id, f"第 {i} 张预览发送失败")
+                        except Exception:  # noqa: BLE001
+                            pass
                     failed += 1
         return failed

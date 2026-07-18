@@ -81,6 +81,7 @@ class FakeTransport:
         self.inbox: List = []
         self.sent_texts: List[Tuple[str, str]] = []
         self.sent_photos: List[Tuple[str, str]] = []
+        self.sent_photo_captions: List = []  # 与 sent_photos 一一对应的 caption
         self.sent_files: List[Tuple[str, str]] = []
         self.sent_buttons: List[Tuple[str, str, List]] = []
 
@@ -102,8 +103,9 @@ class FakeTransport:
             return []
         return [data.split(":", 1)[0] for _, data in self.sent_buttons[-1][2]]
 
-    def send_photo(self, chat_id: str, path: str) -> None:
+    def send_photo(self, chat_id: str, path: str, caption=None) -> None:
         self.sent_photos.append((chat_id, path))
+        self.sent_photo_captions.append(caption)
 
     def send_file(self, chat_id: str, path: str) -> None:
         self.sent_files.append((chat_id, path))

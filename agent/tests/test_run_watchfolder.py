@@ -66,7 +66,7 @@ class FakeTransport:
     def send_file(self, chat_id, path):
         self.sent_files.append(path)
 
-    def send_photo(self, chat_id, path):
+    def send_photo(self, chat_id, path, caption=None):
         self.sent_files.append(path)
 
     def send_text(self, chat_id, text):
