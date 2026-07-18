@@ -83,6 +83,10 @@ BOT_COMMANDS = [
     ("help", "看可用命令"),
 ]
 
+# 重复文案收敛（AG-20）。
+_MSG_EXPIRED = "这个选项已经过期了，看我最新的消息哈"
+_MSG_NEED_INTENT = "还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\""
+
 
 class SessionConsumer:
     def __init__(self, store: Any, driver: Any, transport: Any, chat_id: str,
@@ -237,6 +241,9 @@ class SessionConsumer:
         self.pending_texts.append(text)
 
     def _handle_photo(self, msg: Any) -> None:
+        # 取消二次确认挂起时又发照片：显然不想取消了，安全撤销待确认，与文本
+        # other 分支的"安全撤销"语义对齐（AG-20）。
+        self._cancel_confirm_pending = False
         if self.view.drive_active:
             # RUNNING 是 2.0 新可达状态：对齐 AwaitingGate 的排队行为。
             if msg.file_path:
@@ -320,7 +327,7 @@ class SessionConsumer:
             return
 
         if self.view.drive_active or self.run is None or self.view.run_id != run_id:
-            self._send("这个选项已经过期了，看我最新的消息哈")
+            self._send(_MSG_EXPIRED)
             return
         if self.inflight is not None:
             # 文本分类在途时点按钮会用旧参数抢跑（比如"改成6张"还没解析完就点
@@ -353,7 +360,7 @@ class SessionConsumer:
 
     def _resolve_cancel_confirmation_button(self, action: str, run_id: str) -> None:
         if not self._cancel_confirm_pending or (self.view.run_id or "") != run_id:
-            self._send("这个选项已经过期了，看我最新的消息哈")
+            self._send(_MSG_EXPIRED)
             return
         if action == _BTN_CONFIRM_CANCEL:
             self._do_cancel()
@@ -562,7 +569,7 @@ class SessionConsumer:
             if reply.action == "intent":
                 self._mint_collecting_run(draft_intent=text)  # 记草稿，等照片
             elif reply.action == "start":
-                self._send("还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\"")
+                self._send(_MSG_NEED_INTENT)
             elif reply.action == "cancel":
                 self._send("现在没有在处理的批次")
             else:
@@ -582,7 +589,7 @@ class SessionConsumer:
                 self._submit_compose(self._merge_intent(self.run.intent_raw, text))
         elif reply.action == "start":
             if not self.run.intent_raw:
-                self._send("还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\"")
+                self._send(_MSG_NEED_INTENT)
             elif self.view.photo_count() == 0:
                 self._send(f"还没收到照片哦，发几张我就按\"{self.run.intent_raw}\"开始～")
             else:

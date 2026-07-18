@@ -81,17 +81,18 @@ def test_build_runtime_wires_queues_stages_and_real_functions(tmp_path, monkeypa
     assert worker.classify_jobs is not worker.drive_jobs
     # worker 与 consumer 用不同 client 实例（布防 vs 只读）
     assert worker.client is not consumer.readonly_client
-    # 真函数接上（含三个新分类器），各包一层 partial 绑定 meta_provider（AG-13）
+    # 真函数接上（含三个新分类器），classify_fns 注册表 + 各包一层 partial
+    # 绑定 meta_provider（AG-13/AG-20）
     assert worker.compose_plan_fn.func is compose_plan
-    assert worker.classify_gate_reply_fn.func is classify_gate_reply
-    assert worker.refine_plan_confirmation_fn.func is refine_plan_confirmation
-    assert worker.classify_collecting_message_fn.func is classify_collecting_message
-    assert worker.classify_style_gate_reply_fn.func is classify_style_gate_reply
-    assert worker.classify_running_message_fn.func is classify_running_message
-    assert worker.classify_cancel_confirmation_fn.func is classify_cancel_confirmation
+    assert worker.classify_fns["gate_reply"].func is classify_gate_reply
+    assert worker.classify_fns["refine_plan"].func is refine_plan_confirmation
+    assert worker.classify_fns["collecting"].func is classify_collecting_message
+    assert worker.classify_fns["style_gate"].func is classify_style_gate_reply
+    assert worker.classify_fns["running"].func is classify_running_message
+    assert worker.classify_fns["cancel_confirm"].func is classify_cancel_confirmation
     # 默认 provider = local
     assert worker.compose_plan_fn.keywords == {"meta_provider": "local"}
-    assert worker.classify_collecting_message_fn.keywords == {"meta_provider": "local"}
+    assert worker.classify_fns["collecting"].keywords == {"meta_provider": "local"}
     # Deliver 的 chat_id 与目录
     assert worker.driver.stages["Deliver"].chat_id == "42"
     assert (tmp_path / "incoming").is_dir()
@@ -104,8 +105,8 @@ def test_build_runtime_meta_provider_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("PZT_AGENT_META_PROVIDER", "claude")
     _, worker = build_runtime(state_dir=tmp_path, transport=ScriptedTransport(), chat_id="42")
     assert worker.compose_plan_fn.keywords == {"meta_provider": "claude"}
-    assert worker.classify_gate_reply_fn.keywords == {"meta_provider": "claude"}
-    assert worker.classify_style_describe_fn.keywords == {"meta_provider": "claude"}
+    assert worker.classify_fns["gate_reply"].keywords == {"meta_provider": "claude"}
+    assert worker.classify_fns["style_describe"].keywords == {"meta_provider": "claude"}
 
 
 def test_build_runtime_rejects_bad_meta_provider(tmp_path, monkeypatch):
@@ -140,8 +141,8 @@ def test_two_thread_end_to_end_smoke(tmp_path):
     worker.driver.stages["Style"].http_post = _fake_style_http_post()
     worker.client = fake_client
     worker.compose_plan_fn = lambda intent, profile, last: bare_compose_plan()
-    worker.classify_collecting_message_fn = lambda text, n: CollectingReply(action="intent")
-    worker.classify_style_describe_fn = lambda text: StyleDescribeReply(action="describe")
+    worker.classify_fns["collecting"] = lambda text, n: CollectingReply(action="intent")
+    worker.classify_fns["style_describe"] = lambda text: StyleDescribeReply(action="describe")
 
     stop_event = threading.Event()
     classify_thread = threading.Thread(target=worker.run_classify, args=(stop_event, 0.05), daemon=True)

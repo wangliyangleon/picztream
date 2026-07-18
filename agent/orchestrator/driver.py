@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from .stage import Stage, StageContext
 from .types import (
     GateState,
@@ -20,12 +18,9 @@ class Driver:
     Driver 不做任何"决定"，零 LLM。
     """
 
-    def __init__(self, stages: dict[str, Stage], store, transport: Any = None) -> None:
-        # transport 子增量 C 不使用——真正的 Transport 协议要到子增量 F
-        # 才落地，这里先按 docs/M4_Eng_Design.md 第四节锁定的构造签名占位。
+    def __init__(self, stages: dict[str, Stage], store) -> None:
         self.stages = stages
         self.store = store
-        self.transport = transport
 
     def advance(self, run: RunState) -> RunState:
         if run.status in (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED):

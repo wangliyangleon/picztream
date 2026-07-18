@@ -56,10 +56,7 @@ class SessionWorker:
     def __init__(self, classify_jobs: "queue.Queue", drive_jobs: "queue.Queue",
                  events: "queue.Queue", driver: Any, store: Any,
                  client: Any, transport: Any, chat_id: str, preview_root: Path,
-                 compose_plan_fn: Callable, classify_collecting_message_fn: Callable,
-                 classify_gate_reply_fn: Callable, refine_plan_confirmation_fn: Callable,
-                 classify_style_gate_reply_fn: Callable, classify_running_message_fn: Callable,
-                 classify_cancel_confirmation_fn: Callable, classify_style_describe_fn: Callable,
+                 compose_plan_fn: Callable, classify_fns: "dict[str, Callable]",
                  killable_stages: Tuple[str, ...] = KILLABLE_STAGES) -> None:
         self.classify_jobs = classify_jobs
         self.drive_jobs = drive_jobs
@@ -71,13 +68,8 @@ class SessionWorker:
         self.chat_id = chat_id
         self.preview_root = Path(preview_root)
         self.compose_plan_fn = compose_plan_fn
-        self.classify_collecting_message_fn = classify_collecting_message_fn
-        self.classify_gate_reply_fn = classify_gate_reply_fn
-        self.refine_plan_confirmation_fn = refine_plan_confirmation_fn
-        self.classify_style_gate_reply_fn = classify_style_gate_reply_fn
-        self.classify_running_message_fn = classify_running_message_fn
-        self.classify_cancel_confirmation_fn = classify_cancel_confirmation_fn
-        self.classify_style_describe_fn = classify_style_describe_fn
+        # kind -> 分类函数 注册表（AG-20）。参数装配各 kind 不同，见 _execute_classify。
+        self.classify_fns = classify_fns
         self.killable_stages = set(killable_stages)
 
     # -- 线程壳（两条 lane 各起一条线程） --
@@ -145,28 +137,24 @@ class SessionWorker:
             raise ValueError(f"unknown job type: {type(job).__name__}")
 
     def _execute_classify(self, job: ClassifyJob) -> None:
+        fn = self.classify_fns.get(job.kind)
+        if fn is None:
+            raise ValueError(f"unknown classify kind: {job.kind!r}")
         try:
+            # fn 从注册表查（AG-20）；参数装配各 kind 不同，仍显式分派。
             if job.kind == "collecting":
-                result = self.classify_collecting_message_fn(job.text, job.context["photo_count"])
+                result = fn(job.text, job.context["photo_count"])
             elif job.kind == "gate_reply":
                 # classify_gate_reply 的 swap_out 解析需要 run 的 Curate
                 # 输出和 plan——load 一份只读副本传进去（读不受所有权协
                 # 议限制，RunStore.save 是原子替换，读到的永远是完整文件）。
                 run = self.store.load(job.context["run_id"])
-                result = self.classify_gate_reply_fn(job.text, run)
+                result = fn(job.text, run)
             elif job.kind == "refine_plan":
-                result = self.refine_plan_confirmation_fn(
-                    job.context["intent_raw"], job.context["current_params"], job.text)
-            elif job.kind == "style_describe":
-                result = self.classify_style_describe_fn(job.text)
-            elif job.kind == "style_gate":
-                result = self.classify_style_gate_reply_fn(job.text)
-            elif job.kind == "running":
-                result = self.classify_running_message_fn(job.text)
-            elif job.kind == "cancel_confirm":
-                result = self.classify_cancel_confirmation_fn(job.text)
+                result = fn(job.context["intent_raw"], job.context["current_params"], job.text)
             else:
-                raise ValueError(f"unknown classify kind: {job.kind!r}")
+                # style_describe / style_gate / running / cancel_confirm：单 text。
+                result = fn(job.text)
         except AdjustmentError:
             self.events.put(ClassifyFailed(job.generation, job.kind, retryable=False))
         except LlmRequestError:

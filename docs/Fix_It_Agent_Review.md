@@ -268,7 +268,7 @@
 
 ---
 
-**AG-20 小额清理打包**
+**AG-20 小额清理打包** ✅ 已修复
 类别: 纯清理 | 来源视角: 工程
 
 1. `orchestrator/driver.py:23` 的 `transport` 参数:M4 占位,如今 Deliver 直接持有 transport,该参数无人传递,删。
@@ -277,6 +277,8 @@
 4. `_cancel_confirm_pending` 挂起期间收到照片不清确认态(用户发新照片显然不想取消了),`_handle_photo` 顺手置 False,与文本 other 分支的"安全撤销"语义对齐。
 
 难度 S | 复杂度 低 | 优先级 P3
+
+修复记录(2026-07-18): 四项全做。① `Driver.__init__` 删 `transport` 参数(+ 未用 `Any` import); ② worker 7 个具名分类函数改 `classify_fns: dict[kind, fn]` 注册表, `_execute_classify` 从表取 fn(参数装配各 kind 不同仍显式分派), build_runtime/make_worker/wiring 测试同步; ③ consumer 抽 `_MSG_EXPIRED`/`_MSG_NEED_INTENT` 模块常量(各去重两处); ④ `_handle_photo` 开头置 `_cancel_confirm_pending=False`。加一条测试, 全量 311 条绿。
 
 ---
 
