@@ -152,7 +152,8 @@ def test_drive_start_runs_to_style_gate(tmp_path):
 
     events = env.drain_events()
     started = [e.stage for e in events if isinstance(e, StageStarted)]
-    assert started == ["Ingest", "Evaluate", "Dedup", "Curate", "Style"]
+    # Style 停在闸门、这一轮并不运行，不发 StageStarted（AG-05）。
+    assert started == ["Ingest", "Evaluate", "Dedup", "Curate"]
     gate = events[-1]
     assert isinstance(gate, GateReached)
     assert gate.stage == "Style"
@@ -160,18 +161,27 @@ def test_drive_start_runs_to_style_gate(tmp_path):
     assert env.store.load(run.run_id).status == RunStatus.AWAITING_GATE
 
 
+def _started_stages(events):
+    return [e.stage for e in events if isinstance(e, StageStarted)]
+
+
 def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     env = make_worker(tmp_path)
     run = env.make_running_run()
     env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
     env.step()
-    env.drain_events()
+    events = env.drain_events()
+    # 跑到 Style 闸门停下：只发真运行过的 stage，不发被闸门挡住的 Style（AG-05）。
+    started = _started_stages(events)
+    assert started == ["Ingest", "Evaluate", "Dedup", "Curate"]
 
     # Style 闸门收到描述 -> rerun_style -> 停在 StyleApplyAll 预览闸门
     env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
                            args={"style_description": "复古暖色调"}))
     env.step()
     events = env.drain_events()
+    # rerun_style 真正跑 Style，发 StageStarted(Style)；StyleApplyAll 停闸门不发。
+    assert _started_stages(events) == ["Style"]
     gate = events[-1]
     assert isinstance(gate, GateReached)
     assert gate.stage == "StyleApplyAll"
@@ -184,6 +194,8 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
     env.step()
     events = env.drain_events()
+    # 放行后才跑 StyleApplyAll，发 StageStarted(StyleApplyAll)；Deliver 停闸门不发。
+    assert _started_stages(events) == ["StyleApplyAll"]
     gate = events[-1]
     assert isinstance(gate, GateReached)
     assert gate.stage == "Deliver"
@@ -196,11 +208,38 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
     env.step()
     events = env.drain_events()
+    # "正在交付..."(StageStarted(Deliver)) 出现在批准之后、RunFinished 之前（AG-05）。
+    assert _started_stages(events) == ["Deliver"]
+    assert isinstance(events[0], StageStarted) and events[0].stage == "Deliver"
     finished = events[-1]
     assert isinstance(finished, RunFinished)
     assert finished.status == "done"
     assert len(env.transport.sent_files) == 2
     assert env.store.load(run.run_id).status == RunStatus.DONE
+
+
+def test_gated_deliver_stage_started_fires_after_gate_not_before(tmp_path):
+    # AG-05 聚焦：走到 Deliver 闸门时不应发 StageStarted(Deliver)，放行后才发。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+    env.step()
+    env.drain_events()
+    env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
+                           args={"style_description": "复古暖色调"}))
+    env.step()
+    env.drain_events()
+    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
+    env.step()
+    reached_deliver_gate = env.drain_events()
+    assert "Deliver" not in _started_stages(reached_deliver_gate)  # 停在闸门，没"正在交付..."
+    assert isinstance(reached_deliver_gate[-1], GateReached)
+    assert reached_deliver_gate[-1].stage == "Deliver"
+
+    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
+    env.step()
+    after_approve = env.drain_events()
+    assert "Deliver" in _started_stages(after_approve)  # 批准后才发
 
 
 def test_pre_set_cancel_stops_before_any_stage(tmp_path):

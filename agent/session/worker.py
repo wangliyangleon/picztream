@@ -188,10 +188,19 @@ class SessionWorker:
                 run.status = RunStatus.RUNNING
                 self.store.save(run)
         elif job.action == "resolve_gate":
+            # 闸门放行 = 现在才真正运行被闸门挡住的这个 stage（driver 内部经
+            # _run_stage），_drive_to_stop 的循环只覆盖闸门之后的下游，所以
+            # 这个 stage 的 StageStarted 要在这里补发（"正在交付..."出现在批准
+            # 之后，AG-05）。
+            if run.gate_state is not None:
+                self.events.put(StageStarted(job.generation, run.run_id,
+                                             run.gate_state.stage_name))
             self.driver.resolve_gate(run, "proceed")
         elif job.action == "adjustment":
             self.driver.apply_adjustment(run, job.args["delta"])
         elif job.action == "rerun_style":
+            # rerun_style 跳过闸门直接跑 Style，同样在 driver 内部运行，补发。
+            self.events.put(StageStarted(job.generation, run.run_id, "Style"))
             self.driver.rerun_stage(run, "Style", {"style_description": job.args["style_description"]})
         elif job.action != "resume":
             raise ValueError(f"unknown drive action: {job.action!r}")
@@ -203,13 +212,17 @@ class SessionWorker:
             if job.cancel_event.is_set():
                 self.driver.cancel(run)
                 return
-            next_stage = self.driver.peek_next_stage(run)
-            if next_stage is not None:
-                print(f"[worker] run={run.run_id} 运行 stage={next_stage}", flush=True)
-                # 每个 stage 都发事件（view 要 current_stage）；哪些渲染
-                # 成"正在..."文案是 consumer 按消息表判断的事。
-                self.events.put(StageStarted(job.generation, run.run_id, next_stage))
-            armed = next_stage in self.killable_stages
+            next_spec = self.driver.peek_next_spec(run)
+            # 只为"这一轮真的会运行"的 stage 发 StageStarted。带闸门且闸门未
+            # 开的 stage，advance() 只会停在闸门不运行它（判据同 driver.advance），
+            # 此时发"正在交付..."会紧贴闸门提问自相矛盾（AG-05）——闸门放行后的
+            # 实际运行由 _execute_drive 在 resolve_gate/rerun_style 前补发。
+            stops_at_gate = (next_spec is not None
+                             and next_spec.gate != "off" and run.gate_state is None)
+            if next_spec is not None and not stops_at_gate:
+                print(f"[worker] run={run.run_id} 运行 stage={next_spec.name}", flush=True)
+                self.events.put(StageStarted(job.generation, run.run_id, next_spec.name))
+            armed = (next_spec.name if next_spec else None) in self.killable_stages
             if armed:
                 self.client.cancel_event = job.cancel_event
             try:

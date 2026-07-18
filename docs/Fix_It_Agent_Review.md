@@ -62,7 +62,7 @@
 
 ---
 
-**AG-05 带闸门 stage 的 StageStarted 误发:"正在交付..."紧跟着交付确认闸门**
+**AG-05 带闸门 stage 的 StageStarted 误发:"正在交付..."紧跟着交付确认闸门** ✅ 已修复
 类别: Bug | 来源视角: 用户 + 工程
 
 现象: `session/worker.py:209` 在 `advance()` 之前按 `peek_next_stage()` 发 StageStarted,但 advance 对带闸门的 stage 会停在闸门而不运行它。Deliver 的闸门是每批必挂的(consumer 注入 `gate="required"`),于是**每一批**用户都会看到"正在交付..."紧跟"选好了 N 张,满意点满意"的自相矛盾序列(test_worker.py::test_full_gate_walk 的事件序列可复现);而用户批准后 `resolve_gate` 直接运行 stage,真正交付时反而没有任何进度提示。Style 也同样被误发,只是恰好不在文案表里、只污染 `view.current_stage`。
@@ -70,6 +70,8 @@
 修法: worker 在发 StageStarted 前判断"这一步会真的运行还是会停闸门"(`peek` 返回 spec,`spec.gate != "off" and run.gate_state is None` 时不发);`resolve_gate`/`rerun_style` 路径在实际运行前补发对应 StageStarted,让"正在交付..."出现在批准之后。
 
 难度 S | 复杂度 低 | 优先级 P1
+
+修复记录(2026-07-18): driver 新增无副作用 `peek_next_spec`(`peek_next_stage` 改为其薄壳);worker `_drive_to_stop` 仅为"这一轮真会运行"的 stage 发 StageStarted(停闸门判据同 `driver.advance`),`_execute_drive` 在 `resolve_gate`/`rerun_style` 调 driver 前补发被闸门挡住的那个 stage 的 StageStarted。更新 gate-walk 测试断言 StageStarted 时序、修正 `test_drive_start_runs_to_style_gate`(不再误发 Style)、加聚焦测试,全量 256 条绿。
 
 ---
 

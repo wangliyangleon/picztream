@@ -50,11 +50,15 @@ class Driver:
         self.store.save(run)
         return run
 
+    def peek_next_spec(self, run: RunState) -> StageSpec | None:
+        """无副作用地查询接下来会被 advance() 选中的 stage 的 spec，供 worker
+        在运行前判断"这一步会真运行还是会停在闸门"（要读 spec.gate）。复用
+        _next_pending，不重复实现一遍。"""
+        return self._next_pending(run)
+
     def peek_next_stage(self, run: RunState) -> str | None:
-        """无副作用地查询接下来会被 advance() 选中运行的 stage 名字，供
-        worker 在运行前发进度消息用。复用 _next_pending 现有的"下一个
-        PENDING 且依赖已满足"判断，不重复实现一遍。"""
-        spec = self._next_pending(run)
+        """peek_next_spec 的薄壳，只取名字。"""
+        spec = self.peek_next_spec(run)
         return spec.name if spec else None
 
     def resolve_gate(self, run: RunState, decision: str) -> RunState:
