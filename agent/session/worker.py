@@ -113,7 +113,9 @@ class SessionWorker:
             # 发 JobCrashed 让 consumer 回一句话过去。
             print(f"[worker] 崩了 {self._describe_job(job)}：{e!r}", flush=True)
             traceback.print_exc()
-            self.events.put(JobCrashed(generation=job.generation, error=repr(e)))
+            # DriveJob 走 drive lane；ClassifyJob/ComposeJob 同在 classify lane。
+            lane = "drive" if isinstance(job, DriveJob) else "classify"
+            self.events.put(JobCrashed(generation=job.generation, lane=lane, error=repr(e)))
         else:
             print(f"[worker] 完成 {self._describe_job(job)}", flush=True)
         return True

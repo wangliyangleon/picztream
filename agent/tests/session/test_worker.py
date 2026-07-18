@@ -263,7 +263,24 @@ def test_unexpected_exception_emits_job_crashed(tmp_path):
     [event] = env.drain_events()
     assert isinstance(event, JobCrashed)
     assert event.generation == 7
+    assert event.lane == "classify"
     assert "boom" in event.error
+
+
+def test_drive_crash_emits_job_crashed_with_drive_lane(tmp_path):
+    from session.protocol import DriveJob
+
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    # 未知 action 触发 _execute_drive 的 ValueError -> 未预期异常兜底。
+    env.put_drive(DriveJob(generation=3, action="bogus", run_id=run.run_id))
+
+    env.step()
+
+    [event] = env.drain_events()
+    assert isinstance(event, JobCrashed)
+    assert event.generation == 3
+    assert event.lane == "drive"
 
 
 def test_export_previews_clears_stale_files_before_reexport(tmp_path):

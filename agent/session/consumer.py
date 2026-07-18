@@ -659,18 +659,22 @@ class SessionConsumer:
         self.view = SessionView(incoming_root=self.incoming_root)
 
     def _on_job_crashed(self, event: JobCrashed) -> None:
-        # run 停在最后一次落盘检查点；视图保持 RUNNING，下一条用户消息触
-        # 发 resume（见 _handle_inbound），不自动重试防崩溃循环。静默崩溃
-        # 是最糟的失败模式，必须回一句话过去（真机反馈：脚本没输出、用户
-        # 也不知道发生了什么）。
-        print(f"[consumer] worker job 崩了（已兜底）：{event.error}", flush=True)
-        was_driving = self.view.drive_active
-        self.inflight = None
-        self.active_drive_job = None
-        self.view.drive_active = False
-        if was_driving:
+        # 静默崩溃是最糟的失败模式（用户和终端都看不到），必须回一句话过去
+        # （真机反馈）。只清崩掉那条 lane 的状态：两条 lane 并发，动了没崩的
+        # 那条会连带副作用（drive 误触 resume 排双 job / classify 那条文本没
+        # 有任何回复）。lane 由 worker 从 job 类型判定，不再靠 view 猜。
+        print(f"[consumer] worker job 崩了（已兜底，lane={event.lane}）：{event.error}", flush=True)
+        if event.lane == "drive":
+            # drive lane 崩了：run 停在最后一次落盘检查点，视图退出 RUNNING，
+            # 下一条用户消息触发 resume（见 _handle_inbound），不自动重试防崩
+            # 溃循环。不碰 inflight——classify lane 若有在途分类与本次崩溃无关。
+            self.active_drive_job = None
+            self.view.drive_active = False
             self._send("处理过程中出了点问题，这批先停在这儿了，回句话我接着试")
         else:
+            # classify lane 崩了：只清在途分类。drive lane（若在跑）是好的，
+            # 动它的状态会误触 resume 与真 DriveJob 排两个（预览重发、闸门重问）。
+            self.inflight = None
             self._send("刚才那条没能处理，能再说一次吗？")
 
     # -- timers --

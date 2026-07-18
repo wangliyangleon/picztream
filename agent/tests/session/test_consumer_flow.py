@@ -461,7 +461,7 @@ def test_job_crash_marks_idle_and_next_message_resumes(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
 
-    env.put_event(JobCrashed(0, "RuntimeError('boom')"))
+    env.put_event(JobCrashed(0, "drive", "RuntimeError('boom')"))
     env.consumer.step()
     assert env.consumer.view.drive_active is False
     assert env.consumer.view.status == RunStatus.RUNNING  # run 停在检查点
@@ -474,6 +474,38 @@ def test_job_crash_marks_idle_and_next_message_resumes(tmp_path):
     drive_jobs = [j for j in jobs if isinstance(j, DriveJob)]
     assert [j.action for j in drive_jobs] == ["resume"]  # 下一条消息触发续跑
     assert drive_jobs[0].run_id == job.run_id
+
+
+def test_classify_crash_does_not_touch_active_drive(tmp_path):
+    # AG-03：drive 正常跑时，classify lane 崩溃只清在途分类，不碰 drive 状态，
+    # 否则会误触 resume 与真 DriveJob 排两个（预览重发、闸门重复提问）。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    assert env.consumer.view.drive_active is True
+    env.consumer.inflight = {"type": "running", "text": "到哪了"}  # classify lane 在途
+
+    env.put_event(JobCrashed(0, "classify", "RuntimeError('boom')"))
+    env.consumer.step()
+
+    assert env.consumer.inflight is None  # 只清了在途分类
+    assert env.consumer.view.drive_active is True  # drive 不受牵连
+    assert env.consumer.active_drive_job is job
+    assert "刚才那条没能处理，能再说一次吗？" in env.transport.texts()
+
+
+def test_drive_crash_does_not_touch_inflight_classify(tmp_path):
+    # AG-03 对称情形：drive 崩溃时保留 classify lane 的在途分类，否则那条文
+    # 本会没有任何回复。
+    env = make_consumer(tmp_path)
+    to_running(env)
+    env.consumer.inflight = {"type": "running", "text": "到哪了"}
+
+    env.put_event(JobCrashed(0, "drive", "RuntimeError('boom')"))
+    env.consumer.step()
+
+    assert env.consumer.inflight == {"type": "running", "text": "到哪了"}  # 保留
+    assert env.consumer.view.drive_active is False
+    assert env.consumer.active_drive_job is None
 
 
 def test_collecting_cancel_intent_prompts_confirmation(tmp_path):

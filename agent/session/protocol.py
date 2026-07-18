@@ -105,4 +105,5 @@ class RunFinished:
 @dataclass
 class JobCrashed:
     generation: int
+    lane: str  # "classify" | "drive"——只清崩掉那条 lane 的状态，另一条不受牵连
     error: str
