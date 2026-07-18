@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import logging
 import os
 import queue
 import threading
@@ -40,8 +41,11 @@ from stages.ingest import IngestStage
 from stages.style import StyleStage
 from stages.style_apply_all import StyleApplyAllStage
 from store.run_store import RunStore
+from log_setup import configure_logging
 from transport.telegram import TelegramTransport
 from transport.telegram_client import chat_id_from_env, token_from_env
+
+_log = logging.getLogger("pzt.agent.runner")
 
 
 def build_runtime(state_dir: Path, transport: Any, chat_id: str,
@@ -131,6 +135,7 @@ def main() -> None:
     args = parser.parse_args()
 
     state_dir = Path(args.state_dir) if args.state_dir else Path.home() / ".pzt-agent"
+    configure_logging(state_dir)  # 带时间戳、落盘 state_dir/agent.log + console（AG-21）
     token = token_from_env()
     chat_id = chat_id_from_env()
     transport = TelegramTransport(token=token, chat_id=chat_id,
@@ -155,8 +160,8 @@ def main() -> None:
     classify_thread.start()
     drive_thread.start()
     consumer.bootstrap()  # RUNNING 自动续跑/遗留 AWAITING_REVIEW 收尾在这里
-    print(f"Telegram runner 已启动，chat_id={chat_id}，state_dir={state_dir}，"
-          f"poll_interval={args.poll_interval}s")
+    _log.info(f"Telegram runner 已启动，chat_id={chat_id}，state_dir={state_dir}，"
+              f"poll_interval={args.poll_interval}s")
     try:
         while True:
             try:
@@ -164,10 +169,10 @@ def main() -> None:
             except Exception as e:
                 # 单轮出错不拖死常驻进程（对齐旧主循环语义）：状态该落盘
                 # 的都在各自边界落过了，这轮当作跳过。
-                print(f"[run_telegram] consumer step 出错，已跳过：{e!r}")
+                _log.warning(f"[run_telegram] consumer step 出错，已跳过：{e!r}")
             time.sleep(args.poll_interval)
     except KeyboardInterrupt:
-        print("收到中断，正在停止…")
+        _log.info("收到中断，正在停止…")
     finally:
         stop_event.set()
         # worker 若正卡在长 stage 里就不等它：daemon 线程随进程退出，run

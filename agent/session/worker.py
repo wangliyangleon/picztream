@@ -16,10 +16,10 @@ step() 单步驱动是测试口径，线程只是 run() 这层薄壳。
 """
 from __future__ import annotations
 
+import logging
 import queue
 import shutil
 import threading
-import traceback
 from pathlib import Path
 from typing import Any, Callable, Tuple
 
@@ -41,6 +41,8 @@ from session.protocol import (
     RunFinished,
     StageStarted,
 )
+
+_log = logging.getLogger("pzt.agent.worker")
 
 KILLABLE_STAGES = ("Evaluate", "Dedup")
 
@@ -98,19 +100,18 @@ class SessionWorker:
                 job = jobs.get_nowait()
         except queue.Empty:
             return False
-        print(f"[worker] 开始 {self._describe_job(job)}", flush=True)
+        _log.info(f"[worker] 开始 {self._describe_job(job)}")
         try:
             self._execute(job)
         except Exception as e:  # noqa: BLE001 兜底见 docstring
             # 静默崩溃是最糟的失败模式（用户和终端都看不到）：打全栈 +
             # 发 JobCrashed 让 consumer 回一句话过去。
-            print(f"[worker] 崩了 {self._describe_job(job)}：{e!r}", flush=True)
-            traceback.print_exc()
+            _log.exception(f"[worker] 崩了 {self._describe_job(job)}：{e!r}")
             # DriveJob 走 drive lane；ClassifyJob/ComposeJob 同在 classify lane。
             lane = "drive" if isinstance(job, DriveJob) else "classify"
             self.events.put(JobCrashed(generation=job.generation, lane=lane, error=repr(e)))
         else:
-            print(f"[worker] 完成 {self._describe_job(job)}", flush=True)
+            _log.info(f"[worker] 完成 {self._describe_job(job)}")
         return True
 
     @staticmethod
@@ -219,7 +220,7 @@ class SessionWorker:
             stops_at_gate = (next_spec is not None
                              and next_spec.gate != "off" and run.gate_state is None)
             if next_spec is not None and not stops_at_gate:
-                print(f"[worker] run={run.run_id} 运行 stage={next_spec.name}", flush=True)
+                _log.info(f"[worker] run={run.run_id} 运行 stage={next_spec.name}")
                 self.events.put(StageStarted(job.generation, run.run_id, next_spec.name))
             armed = (next_spec.name if next_spec else None) in self.killable_stages
             if armed:

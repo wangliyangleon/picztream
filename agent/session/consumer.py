@@ -14,6 +14,7 @@ LLM。
 """
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import shutil
@@ -46,6 +47,8 @@ from session.protocol import (
     StageStarted,
 )
 from session.view import STAGE_PROGRESS_MESSAGES, SessionView, view_from_run
+
+_log = logging.getLogger("pzt.agent.consumer")
 
 # 真机反馈"彻底去文本精确匹配"：不再有任何 _APPROVE/_REJECT/_CONFIRM 之
 # 类的关键词集，所有用户文本都交 LLM 分类（见各状态的 _submit_classify）。
@@ -153,7 +156,7 @@ class SessionConsumer:
                 self.store.clear_cancelling(run_id)
                 continue
             if r.status not in _terminal:
-                print(f"[consumer] 启动自愈：{run_id} 曾被取消未收尾，补 cancel 不复活", flush=True)
+                _log.info(f"[consumer] 启动自愈：{run_id} 曾被取消未收尾，补 cancel 不复活")
                 self.driver.cancel(r)
                 self._cleanup_run_files(run_id)
             self.store.clear_cancelling(run_id)
@@ -164,7 +167,7 @@ class SessionConsumer:
             # 的一个，其余直接 cancel 落盘。
             active.sort(key=lambda r: r.last_activity_at or 0, reverse=True)
             for r in active[1:]:
-                print(f"[consumer] 启动自愈：多活跃 run，取消较旧的 {r.run_id}", flush=True)
+                _log.info(f"[consumer] 启动自愈：多活跃 run，取消较旧的 {r.run_id}")
                 self.driver.cancel(r)
                 self._cleanup_run_files(r.run_id)
             active = active[:1]
@@ -190,10 +193,10 @@ class SessionConsumer:
             try:
                 self.readonly_client.call("delete", run_id, "--force")
             except Exception as e:  # noqa: BLE001 项目可能已不存在/删除失败，容忍
-                print(f"[consumer] 清扫：pzt delete {run_id} 跳过（{e!r}）", flush=True)
+                _log.warning(f"[consumer] 清扫：pzt delete {run_id} 跳过（{e!r}）")
             self._cleanup_run_files(run_id)
             self.store.delete_run(run_id)
-            print(f"[consumer] 清扫：终态超 {self.terminal_retention_seconds:.0f}s 的 run {run_id} 已清", flush=True)
+            _log.info(f"[consumer] 清扫：终态超 {self.terminal_retention_seconds:.0f}s 的 run {run_id} 已清")
 
     def step(self) -> None:
         for msg in self.transport.receive():
@@ -202,7 +205,7 @@ class SessionConsumer:
             try:
                 self._handle_inbound(msg)
             except Exception as e:  # noqa: BLE001
-                print(f"[consumer] 处理入站消息出错，已跳过该条：{e!r}", flush=True)
+                _log.warning(f"[consumer] 处理入站消息出错，已跳过该条：{e!r}")
         self._drain_events()
         self._maybe_dispatch_next_text()
         self._check_timers()
@@ -211,11 +214,11 @@ class SessionConsumer:
 
     def _handle_inbound(self, msg: Any) -> None:
         if msg.chat_id != self.chat_id:
-            print(f"[consumer] 忽略非白名单 chat_id={msg.chat_id}", flush=True)
+            _log.info(f"[consumer] 忽略非白名单 chat_id={msg.chat_id}")
             return
-        print(f"[consumer] 收到 kind={msg.kind} text={(msg.text or '')!r} "
-              f"file={msg.file_path!r} data={getattr(msg, 'data', None)!r} "
-              f"status={self.view.status}", flush=True)
+        _log.info(f"[consumer] 收到 kind={msg.kind} text={(msg.text or '')!r} "
+                  f"file={msg.file_path!r} data={getattr(msg, 'data', None)!r} "
+                  f"status={self.view.status}")
         if msg.kind == "callback":
             self._handle_callback(getattr(msg, "data", None))
             return
@@ -320,7 +323,7 @@ class SessionConsumer:
         的处理路径。取消的二次确认（confirm_cancel/keep）单独处理——它在
         drive 进行中也要能用（此时 run 归 worker，常规按钮的校验会拦掉）。"""
         action, _, run_id = (data or "").partition(":")
-        print(f"[consumer] 按钮点击 action={action!r} run_id={run_id!r}", flush=True)
+        _log.info(f"[consumer] 按钮点击 action={action!r} run_id={run_id!r}")
 
         if action in (_BTN_CONFIRM_CANCEL, _BTN_KEEP):
             self._resolve_cancel_confirmation_button(action, run_id)
@@ -491,13 +494,13 @@ class SessionConsumer:
             except queue.Empty:
                 return
             stale = "" if event.generation == self.generation else " [过期丢弃]"
-            print(f"[consumer] 事件 {type(event).__name__} gen={event.generation}{stale}", flush=True)
+            _log.info(f"[consumer] 事件 {type(event).__name__} gen={event.generation}{stale}")
             # per-item 隔离：事件已出队，处理中途炸了不连累同批其它事件（否则
             # GateReached 发文案失败会把后续事件一起吞掉，用户只能靠 idle 兜底，AG-11）。
             try:
                 self._apply_event(event)
             except Exception as e:  # noqa: BLE001
-                print(f"[consumer] 应用事件 {type(event).__name__} 出错，已跳过：{e!r}", flush=True)
+                _log.warning(f"[consumer] 应用事件 {type(event).__name__} 出错，已跳过：{e!r}")
 
     def _apply_event(self, event: Any) -> None:
         if (isinstance(event, RunFinished) and event.status == RunStatus.CANCELLED.value
@@ -860,7 +863,7 @@ class SessionConsumer:
         # （真机反馈）。只清崩掉那条 lane 的状态：两条 lane 并发，动了没崩的
         # 那条会连带副作用（drive 误触 resume 排双 job / classify 那条文本没
         # 有任何回复）。lane 由 worker 从 job 类型判定，不再靠 view 猜。
-        print(f"[consumer] worker job 崩了（已兜底，lane={event.lane}）：{event.error}", flush=True)
+        _log.warning(f"[consumer] worker job 崩了（已兜底，lane={event.lane}）：{event.error}")
         if event.lane == "drive":
             # drive lane 崩了：run 停在最后一次落盘检查点，视图退出 RUNNING，
             # 下一条用户消息触发 resume（见 _handle_inbound），不自动重试防崩
@@ -943,7 +946,7 @@ class SessionConsumer:
         try:
             result = self.readonly_client.call("images", project_id)
         except Exception as e:  # noqa: BLE001 轮询失败无害，绝不打断 consumer
-            print(f"[session] eval 进度轮询失败（容忍）：{e!r}")
+            _log.info(f"[session] eval 进度轮询失败（容忍）：{e!r}")
             return
         images = result.get("images", [])
         done = sum(1 for item in images if item.get("evaluated"))
@@ -990,27 +993,27 @@ class SessionConsumer:
             self.store.save(run)
 
     def _enqueue_classify(self, job: Any) -> None:
-        print(f"[consumer] 投递(classify lane) {type(job).__name__} gen={job.generation}", flush=True)
+        _log.info(f"[consumer] 投递(classify lane) {type(job).__name__} gen={job.generation}")
         self.classify_jobs.put(job)
 
     def _enqueue_drive_job(self, job: Any) -> None:
-        print(f"[consumer] 投递(drive lane) {type(job).__name__} gen={job.generation}", flush=True)
+        _log.info(f"[consumer] 投递(drive lane) {type(job).__name__} gen={job.generation}")
         self.drive_jobs.put(job)
 
     def _send(self, text: str) -> Optional[str]:
-        print(f"[consumer] 回复: {text!r}", flush=True)
+        _log.info(f"[consumer] 回复: {text!r}")
         # Telegram 抖动/超时是真机常见故障：退避重试一次后放弃，不外抛（否则
         # 会把整轮 step 拖挂、连累同批消息，AG-11）。不追求消息不丢的强保证。
         # 返回 message_id（progress 原地编辑用，AG-16.3），失败/不支持则 None。
         try:
             return self.transport.send_text(self.chat_id, text)
         except Exception as e:  # noqa: BLE001
-            print(f"[consumer] send_text 失败，退避重试一次：{e!r}", flush=True)
+            _log.warning(f"[consumer] send_text 失败，退避重试一次：{e!r}")
             time.sleep(self.send_retry_backoff_seconds)
             try:
                 return self.transport.send_text(self.chat_id, text)
             except Exception as e2:  # noqa: BLE001
-                print(f"[consumer] send_text 重试仍失败，放弃这条：{e2!r}", flush=True)
+                _log.warning(f"[consumer] send_text 重试仍失败，放弃这条：{e2!r}")
                 return None
 
     def _send_progress(self, text: str, slot: str) -> None:
@@ -1026,7 +1029,7 @@ class SessionConsumer:
                 setattr(self, slot, (prev[0], text))
                 return
             except Exception as e:  # noqa: BLE001 消息太老/被删等 -> 降级发新
-                print(f"[consumer] 进度消息编辑失败，改发新的：{e!r}", flush=True)
+                _log.warning(f"[consumer] 进度消息编辑失败，改发新的：{e!r}")
         mid = self._send(text)
         setattr(self, slot, (mid, text) if mid is not None else None)
 
@@ -1075,7 +1078,7 @@ class SessionConsumer:
             self._send(text)
             return
         options = [(label, f"{token}:{run_id}") for label, token in actions]
-        print(f"[consumer] 回复(带按钮): {text!r} buttons={[l for l, _ in actions]}", flush=True)
+        _log.info(f"[consumer] 回复(带按钮): {text!r} buttons={[l for l, _ in actions]}")
         send_buttons(self.chat_id, text, options)
 
     def _current_plan_params(self, run: RunState) -> dict:

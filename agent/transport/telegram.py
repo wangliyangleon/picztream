@@ -7,6 +7,7 @@ queue.Queue 传消息，谁都不用互相等对方的调度节奏。
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import threading
 import uuid
@@ -15,6 +16,8 @@ from typing import Any, Callable, List, Optional
 
 from .base import InboundMessage
 from .telegram_client import TelegramBotClient
+
+_log = logging.getLogger("pzt.agent.transport")
 
 # get_updates 失败的指数退避（AG-17）：0.1s 起、每次翻倍、封顶 30s，成功即复位。
 _POLL_BACKOFF_MIN = 0.1
@@ -68,7 +71,7 @@ class TelegramTransport:
                 updates = await self._bot_client.get_updates(offset=self._offset, timeout=self.poll_timeout)
             except Exception as e:  # noqa: BLE001
                 # 断网/Telegram 故障期指数退避，别 10 次/秒空转刷屏（AG-17）。
-                print(f"[TelegramTransport] get_updates 失败，{backoff:.1f}s 后重试：{e!r}")
+                _log.warning(f"[TelegramTransport] get_updates 失败，{backoff:.1f}s 后重试：{e!r}")
                 await asyncio.sleep(backoff)
                 backoff = _next_backoff(backoff)
                 continue
@@ -84,7 +87,7 @@ class TelegramTransport:
                     # 是"丢弃"，但轮询本身必须活下去。光在服务端终端打
                     # 印不够——真机验证时发现用户在 Telegram 那头完全不
                     # 知道有张照片"丢"了，必须回一句话过去。
-                    print(f"[TelegramTransport] 处理消息失败，已跳过：{e!r}")
+                    _log.warning(f"[TelegramTransport] 处理消息失败，已跳过：{e!r}")
                     try:
                         await self._bot_client.send_text(
                             self.chat_id, f"收一条消息失败了(可能文件太大)，这条就跳过了：{e}"
@@ -122,9 +125,9 @@ class TelegramTransport:
         else:
             # 诊断用：消息进来了但既没命中 photo 也没命中 text，先打印
             # 出来看它长什么样，不要悄无声息地把它吃掉。
-            print(f"[TelegramTransport] 收到不认识的消息形状，已跳过：photo={getattr(message, 'photo', 'N/A')!r} "
-                  f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
-                  f"document={getattr(message, 'document', 'N/A')!r}")
+            _log.info(f"[TelegramTransport] 收到不认识的消息形状，已跳过：photo={getattr(message, 'photo', 'N/A')!r} "
+                      f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
+                      f"document={getattr(message, 'document', 'N/A')!r}")
             # 视频/语音/贴纸等：用户侧也回一句，别让人以为没收到（AG-18）。
             # best-effort：发失败别触发外层 _poll_loop 的"收一条消息失败了"误导文案。
             try:
@@ -151,7 +154,7 @@ class TelegramTransport:
         try:
             await self._bot_client.answer_callback_query(callback.id)
         except Exception as e:  # noqa: BLE001 应答失败只是转圈没消掉，不该拖垮轮询
-            print(f"[TelegramTransport] answer_callback_query 失败：{e!r}")
+            _log.warning(f"[TelegramTransport] answer_callback_query 失败：{e!r}")
         if chat_id != self.chat_id:
             return
         self._inbound.put(InboundMessage(kind="callback", chat_id=self.chat_id,
@@ -174,7 +177,7 @@ class TelegramTransport:
                 self._bot_client.set_my_commands(commands), self._loop)
             future.result(timeout=30)
         except Exception as e:  # noqa: BLE001
-            print(f"[TelegramTransport] set_my_commands 失败（忽略）：{e!r}")
+            _log.warning(f"[TelegramTransport] set_my_commands 失败（忽略）：{e!r}")
 
     def send_text(self, chat_id: str, text: str) -> Optional[str]:
         future = asyncio.run_coroutine_threadsafe(self._bot_client.send_text(chat_id, text), self._loop)
