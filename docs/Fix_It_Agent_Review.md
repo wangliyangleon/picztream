@@ -135,7 +135,7 @@
 
 ---
 
-**AG-10 `ClassifyFailed.retryable` 无人消费:闸门/refine 处的基础设施故障被说成"没听懂这句话"**
+**AG-10 `ClassifyFailed.retryable` 无人消费:闸门/refine 处的基础设施故障被说成"没听懂这句话"** ✅ 已修复
 类别: Bug + 纯清理 | 来源视角: 工程
 
 现象: 真机反馈明确要求区分"AI 连不上"和"没看懂"(Eng Design 刻意偏离清单第 4 条),但只有 compose 路径做了(`_looks_like_infra_error`)。worker 忠实地把 `LlmRequestError → retryable=True` 编码进 `ClassifyFailed`,而 `consumer._on_classify_failed` 从头到尾没读过 `event.retryable`:Ollama 挂掉时,gate_reply/refine/style_gate 的用户会被反复告知"没听懂这句话,能再说清楚点吗",把基础设施故障误导成表达问题,正是当初要修的体验。
@@ -143,6 +143,8 @@
 修法: `_on_classify_failed` 对 `retryable=True` 统一先回"AI 服务好像连不上,稍后再试";`retryable=False` 才走各 kind 的"没听懂"分支。字段既然有了就用上,不用就删。
 
 难度 S | 复杂度 低 | 优先级 P2
+
+修复记录(2026-07-18): `_on_classify_failed` 在 collecting/cancel_confirm/running 三支(降级已自洽、非"没听懂"文案)之后、gate_reply/style/generic 这组"没听懂"分支之前插一道 retryable 闸: retryable=True 统一回"AI 服务好像连不上,稍后再试"。consumer 单文件 + 两条测试(gate_reply/style_describe infra), 全量 278 条绿。
 
 ---
 

@@ -548,6 +548,13 @@ class SessionConsumer:
         if event.kind == "running":
             self._send(self.view.describe())  # 分类失败就回进度
             return
+        # 下面几支默认回"没听懂"，但基础设施故障(Ollama 连不上等)不是表达问
+        # 题，别把服务故障误导成"没看懂"（真机反馈刻意区分，见 AG-10）。
+        # retryable=True 统一回可重试提示；上面 collecting/cancel_confirm/
+        # running 三支的降级不是"没听懂"文案、对 infra 已自洽，不动。
+        if event.retryable:
+            self._send("AI 服务好像连不上，稍后再试一下～")
+            return
         if event.kind in ("style_describe", "style_gate"):
             # 分类失败：退回"当作新风格描述"（历史默认），不卡住用户。
             if self.run is not None and self.run.status == RunStatus.AWAITING_GATE:

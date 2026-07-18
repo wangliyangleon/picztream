@@ -470,6 +470,24 @@ def test_gate_style_describe_classify_failure_falls_back_to_description(tmp_path
     assert next_job.args == {"style_description": "暖一点的"}
 
 
+def test_style_describe_infra_failure_says_service_down(tmp_path):
+    # AG-10：Ollama 挂掉(retryable)时回"AI 连不上", 不误当描述去 rerun_style。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {}))
+    env.consumer.step()
+
+    env.push_text("暖一点的")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyFailed(0, "style_describe", retryable=True))
+    env.consumer.step()
+
+    assert any("连不上" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []  # 没有 rerun_style
+
+
 def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
@@ -555,6 +573,27 @@ def test_gate_classify_not_understood_replies_guidance(tmp_path):
 
     assert ("没听懂这句话，能再说清楚点吗？满意就点\"满意\"，"
             "想调整直接说想怎么调") in env.transport.texts()
+
+
+def test_gate_reply_infra_failure_says_service_down(tmp_path):
+    # AG-10：闸门回复分类因 Ollama 连不上(retryable)失败 -> "AI 连不上"而非"没听懂"。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Deliver")
+    env.put_event(GateReached(0, job.run_id, "Deliver", {
+        "selected_count": 2, "applied_recipe": None,
+        "preview_failed_count": 0, "export_error": None}))
+    env.consumer.step()
+
+    env.push_text("留三张吧")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyFailed(0, "gate_reply", retryable=True))
+    env.consumer.step()
+
+    texts = env.transport.texts()
+    assert any("连不上" in t for t in texts)
+    assert not any("没听懂" in t for t in texts)
 
 
 def test_compose_failed_keeps_collecting_and_allows_retry(tmp_path):
