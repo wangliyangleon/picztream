@@ -44,6 +44,33 @@ def test_approve_button_at_planned_starts_drive(tmp_path):
     assert env.store.load(run.run_id).status == RunStatus.RUNNING
 
 
+def test_approve_button_ignored_while_classify_inflight(tmp_path):
+    # AG-07：打字调整在途(inflight 非空)时点"好的"不该用旧参数抢跑；落地后再点才生效。
+    env = make_consumer(tmp_path)
+    run = to_planned(env)
+
+    env.push_text("改成6张")  # refine classify 在途
+    env.consumer.step()
+    env.drain_jobs()  # 排掉 refine ClassifyJob
+
+    env.push_callback(f"approve:{run.run_id}")
+    env.consumer.step()
+
+    assert "上一条还在处理，稍等一下再点～" in env.transport.texts()
+    assert env.drain_jobs() == []  # 没有 start DriveJob
+    assert env.store.load(run.run_id).status == RunStatus.PLANNED
+
+    # 分类落地清 inflight 后再点 -> 正常开跑（只是延后，不是永久拦）。
+    env.put_event(ClassifyDone(env.consumer.generation, "refine_plan",
+                                PlanConfirmationReply(action="confirmed", count=6)))
+    env.consumer.step()
+    env.drain_jobs()
+    env.push_callback(f"approve:{run.run_id}")
+    env.consumer.step()
+    [job] = env.drain_jobs()
+    assert isinstance(job, DriveJob) and job.action == "start"
+
+
 def _prompt_cancel_at_planned(env):
     # PLANNED 态打字取消：走 refine 分类判 reject -> 二次确认。
     env.push_text("不想弄了")

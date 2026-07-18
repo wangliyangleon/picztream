@@ -305,6 +305,13 @@ class SessionConsumer:
         if self.view.drive_active or self.run is None or self.view.run_id != run_id:
             self._send("这个选项已经过期了，看我最新的消息哈")
             return
+        if self.inflight is not None:
+            # 文本分类在途时点按钮会用旧参数抢跑（比如"改成6张"还没解析完就点
+            # "好的"，refine 结果回来时 run 已易主、被静默丢弃）。让按钮也服从
+            # 文本那套 FIFO 串行：提示稍等，分类落地后再点（AG-07）。cancel 二
+            # 次确认按钮排在前面、不受此闸——它是 drive 中也要能用的逃生路径。
+            self._send("上一条还在处理，稍等一下再点～")
+            return
         self._touch_activity()
         if action == _BTN_APPROVE:
             if self.run.status == RunStatus.PLANNED:

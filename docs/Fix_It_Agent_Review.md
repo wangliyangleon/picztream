@@ -98,7 +98,7 @@
 
 ---
 
-**AG-07 inline 按钮绕过文本 FIFO 串行保护,旧参数可能抢跑**
+**AG-07 inline 按钮绕过文本 FIFO 串行保护,旧参数可能抢跑** ✅ 已修复
 类别: Bug | 来源视角: 工程
 
 现象: 文本串行规则专门防"改成30张"还没解析完、"好的"抢跑(consumer 顶部 docstring),但按钮回调是即时路径、不检查 `inflight`:用户打字"改成6张"(refine classify 在途)后立刻点方案消息上的"好的"按钮,`_handle_callback` → `_begin_running` 用旧参数开跑;refine 结果回来时 run 已易主,被 `_on_refine_reply` 的状态检查静默丢弃。闸门处"打字调整 + 点满意"同理。
@@ -106,6 +106,8 @@
 修法: `_handle_callback` 在 `inflight is not None` 时回"上一条还在处理,稍等一下再点"(或把回调排进 pending_texts 队尾语义)。
 
 难度 S | 复杂度 低 | 优先级 P2
+
+修复记录(2026-07-18): `_handle_callback` 在过期校验之后、approve/restyle 分支之前插一道 inflight 闸(inflight 非空回"上一条还在处理,稍等一下再点");cancel 二次确认按钮排在前面不受影响(drive 中也要能用的逃生路径)。consumer 单文件 + 一条测试(在途拦截 + 落地后再点生效), 全量 292 条绿。
 
 ---
 
