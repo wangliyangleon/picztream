@@ -148,7 +148,7 @@
 
 ---
 
-**AG-11 consumer 单轮异常会丢掉同批入站消息和已出队事件**
+**AG-11 consumer 单轮异常会丢掉同批入站消息和已出队事件** ✅ 已修复
 类别: 健壮性 | 来源视角: 工程
 
 现象: `run_telegram.py` 主循环把 `consumer.step()` 整体 try 住,但 `step()` 内部 `transport.receive()` 已把队列整批取成 list,处理第一条时若 `_send` 抛异常(Telegram 超时是真机常见故障,`future.result(timeout=30)`),剩余几条入站消息随异常整批丢失;`_drain_events` 同理,事件出队后处理中途异常即丢(比如 GateReached 已 load run、发闸门文案失败,用户永远等不到那句提问,只能靠 300s idle 提醒兜底)。
@@ -156,6 +156,8 @@
 修法: `_handle_inbound`/`_apply_event` 各自 per-item try/except(打印 + 跳过该条,不吞掉整批);`_send` 对 transport 异常做一次退避重试后放弃。不追求消息不丢的强保证(聊天场景不值得),只把故障半径从"整批"缩到"单条"。
 
 难度 M | 复杂度 中 | 优先级 P2
+
+修复记录(2026-07-18): `step()` 包 `_handle_inbound` per-item try/except; `_drain_events` 包 `_apply_event` per-item try/except; `_send` transport 失败退避重试一次后放弃(新增构造参数 `send_retry_backoff_seconds`, 默认 1s, 测试注 0)。consumer 单文件 + 三条测试(入站/事件隔离、send 重试), 全量 281 条绿。
 
 ---
 

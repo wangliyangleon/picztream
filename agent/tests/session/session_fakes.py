@@ -342,6 +342,7 @@ def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
         idle_reminder_seconds=idle_reminder_seconds,
         progress_interval_seconds=progress_interval_seconds,
         eval_poll_interval_seconds=eval_poll_interval_seconds,
+        send_retry_backoff_seconds=0.0,  # 测试不真 sleep
     )
     return ConsumerEnv(tmp_path=tmp_path, consumer=consumer, classify_jobs=classify_jobs,
                        drive_jobs=drive_jobs, events=events,

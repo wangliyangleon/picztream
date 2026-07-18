@@ -81,7 +81,8 @@ class SessionConsumer:
                  now_fn: Callable[[], float] = time.time,
                  idle_reminder_seconds: float = 300.0,
                  progress_interval_seconds: float = 60.0,
-                 eval_poll_interval_seconds: float = 60.0) -> None:
+                 eval_poll_interval_seconds: float = 60.0,
+                 send_retry_backoff_seconds: float = 1.0) -> None:
         self.store = store
         self.driver = driver  # 只用 cancel/approve 这类不碰 stages 的即时小操作
         self.transport = transport
@@ -96,6 +97,7 @@ class SessionConsumer:
         self.idle_reminder_seconds = idle_reminder_seconds
         self.progress_interval_seconds = progress_interval_seconds
         self.eval_poll_interval_seconds = eval_poll_interval_seconds
+        self.send_retry_backoff_seconds = send_retry_backoff_seconds
 
         self.generation = 0
         self.run: Optional[RunState] = None
@@ -128,7 +130,12 @@ class SessionConsumer:
 
     def step(self) -> None:
         for msg in self.transport.receive():
-            self._handle_inbound(msg)
+            # per-item 隔离：一条消息处理炸了不连累同批其它消息（receive() 已
+            # 把整批取成 list，不隔离的话故障半径是整批，AG-11）。
+            try:
+                self._handle_inbound(msg)
+            except Exception as e:  # noqa: BLE001
+                print(f"[consumer] 处理入站消息出错，已跳过该条：{e!r}", flush=True)
         self._drain_events()
         self._maybe_dispatch_next_text()
         self._check_timers()
@@ -369,7 +376,12 @@ class SessionConsumer:
                 return
             stale = "" if event.generation == self.generation else " [过期丢弃]"
             print(f"[consumer] 事件 {type(event).__name__} gen={event.generation}{stale}", flush=True)
-            self._apply_event(event)
+            # per-item 隔离：事件已出队，处理中途炸了不连累同批其它事件（否则
+            # GateReached 发文案失败会把后续事件一起吞掉，用户只能靠 idle 兜底，AG-11）。
+            try:
+                self._apply_event(event)
+            except Exception as e:  # noqa: BLE001
+                print(f"[consumer] 应用事件 {type(event).__name__} 出错，已跳过：{e!r}", flush=True)
 
     def _apply_event(self, event: Any) -> None:
         if (isinstance(event, RunFinished) and event.status == RunStatus.CANCELLED.value
@@ -866,7 +878,17 @@ class SessionConsumer:
 
     def _send(self, text: str) -> None:
         print(f"[consumer] 回复: {text!r}", flush=True)
-        self.transport.send_text(self.chat_id, text)
+        # Telegram 抖动/超时是真机常见故障：退避重试一次后放弃，不外抛（否则
+        # 会把整轮 step 拖挂、连累同批消息，AG-11）。不追求消息不丢的强保证。
+        try:
+            self.transport.send_text(self.chat_id, text)
+        except Exception as e:  # noqa: BLE001
+            print(f"[consumer] send_text 失败，退避重试一次：{e!r}", flush=True)
+            time.sleep(self.send_retry_backoff_seconds)
+            try:
+                self.transport.send_text(self.chat_id, text)
+            except Exception as e2:  # noqa: BLE001
+                print(f"[consumer] send_text 重试仍失败，放弃这条：{e2!r}", flush=True)
 
     def _send_help(self) -> None:
         self._send(

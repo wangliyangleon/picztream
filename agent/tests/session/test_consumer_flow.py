@@ -682,6 +682,52 @@ def test_drive_crash_does_not_touch_inflight_classify(tmp_path):
     assert env.consumer.active_drive_job is None
 
 
+def test_inbound_error_does_not_drop_rest_of_batch(tmp_path):
+    # AG-11：同批第一条消息处理炸了，不该连累后面的消息（故障半径=单条）。
+    env = make_consumer(tmp_path)
+
+    def boom(_msg):
+        raise RuntimeError("boom")
+    env.consumer._handle_photo = boom
+
+    env.push_photo("a.jpg", b"a")   # 会炸
+    env.push_text("选三张")          # 应仍被处理
+    env.consumer.step()
+
+    jobs = env.drain_jobs()
+    assert any(getattr(j, "kind", None) == "collecting" for j in jobs)  # 第二条活了
+
+
+def test_event_error_does_not_drop_rest_of_batch(tmp_path):
+    # AG-11：一个事件的 handler 炸了，不该连累同批后续事件。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    def boom(_event):
+        raise RuntimeError("boom")
+    env.consumer._on_run_finished = boom
+
+    env.put_event(RunFinished(0, job.run_id, "done", None))   # handler 会炸
+    env.put_event(JobCrashed(0, "classify", "x"))             # 应仍被处理
+    env.consumer.step()
+
+    assert "刚才那条没能处理，能再说一次吗？" in env.transport.texts()
+
+
+def test_send_retries_once_then_gives_up(tmp_path):
+    # AG-11：transport 发送失败退避重试一次后放弃，不外抛。
+    env = make_consumer(tmp_path)
+    calls = []
+
+    def flaky(chat_id, text):
+        calls.append(text)
+        raise RuntimeError("telegram timeout")
+    env.transport.send_text = flaky
+
+    env.consumer._send("hi")  # 不该抛
+    assert len(calls) == 2    # 一次 + 退避重试一次
+
+
 def test_collecting_cancel_intent_prompts_confirmation(tmp_path):
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")
