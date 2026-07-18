@@ -109,7 +109,7 @@
 
 ---
 
-**AG-08 零照片也能组方案开跑;第二句意图会整句覆盖草稿**
+**AG-08 零照片也能组方案开跑;第二句意图会整句覆盖草稿** ✅ 已修复
 类别: Bug + 交互打磨 | 来源视角: 用户
 
 现象: 草稿态(意图先到、照片未到)下用户再说一句意图,`_on_collecting_reply` 的 intent 分支(consumer.py:441)不查 `photo_count` 直接 `_submit_compose(text)`:① 0 张照片也能走到 PLANNED、被确认后 `pzt new` 对空目录失败,整个流程以"处理失败:Ingest:..."收场(idle 自动组方案路径反而有 `count > 0` 保护,两条路径不一致);② compose 只用最新一句文本,"选三张发朋友圈"的草稿被"标签叫ins吧"整句覆盖,count 退回默认 9,用户先前的约束静默丢失。
@@ -117,6 +117,8 @@
 修法: ① intent 分支在 `photo_count == 0` 时并入草稿(更新 `intent_raw`、回"记下了,等照片");② 已有草稿时把 `intent_raw + 新句子`拼接后再 compose(compose_plan 的 prompt 天然能消化多句意图)。
 
 难度 S | 复杂度 低 | 优先级 P2
+
+修复记录(2026-07-18): consumer 新增 `_merge_intent` helper; `_on_collecting_reply` 的 COLLECTING intent 分支按 `photo_count()==0` 分流(0 张并入草稿不 compose, 有照片则拼接草稿+新句再 compose); start 分支补 0 照片守卫(回"还没收到照片哦")。consumer 单文件 + 三条测试, 全量 274 条绿。
 
 ---
 

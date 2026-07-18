@@ -424,6 +424,12 @@ class SessionConsumer:
             self._on_cancel_confirm_reply(result, inflight["text"])
             return
 
+    @staticmethod
+    def _merge_intent(existing: Optional[str], new: str) -> str:
+        # 草稿意图 + 补充意图拼接（compose_plan 的 prompt 天然消化多句意图）。
+        existing = (existing or "").strip()
+        return f"{existing}；{new}" if existing else new
+
     def _on_collecting_reply(self, reply: Any, text: str) -> None:
         # collecting -> planned 的转变有三条路（真机反馈"意图先于照片会被丢"）：
         # ① 有照片后直接说完整意图 -> compose；② 有草稿方案（intent_raw）后
@@ -439,14 +445,25 @@ class SessionConsumer:
             else:
                 self._send_help()
             return
-        # 已有照片（COLLECTING）
+        # 已有 run（COLLECTING）——注意可能仍是 0 照片的草稿态（意图先到）
         if reply.action == "intent":
-            self._submit_compose(text)  # 完整意图，直接组方案
-        elif reply.action == "start":
-            if self.run.intent_raw:
-                self._submit_compose(self.run.intent_raw)  # 用草稿方案开跑
+            if self.view.photo_count() == 0:
+                # 还没照片：并入草稿，不用 0 张去组方案（pzt new 空目录会失败，
+                # 且新意图不该整句覆盖旧草稿的约束）（AG-08）。
+                self.run.intent_raw = self._merge_intent(self.run.intent_raw, text)
+                self.store.save(self.run)
+                self._send(f"好的，记下了。把照片发给我，发完说一声（或直接说\"开始\"）"
+                           f"我就按\"{self.run.intent_raw}\"来～")
             else:
+                # 有照片：已有草稿则拼上新句子再组方案，否则这句本身即完整意图。
+                self._submit_compose(self._merge_intent(self.run.intent_raw, text))
+        elif reply.action == "start":
+            if not self.run.intent_raw:
                 self._send("还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\"")
+            elif self.view.photo_count() == 0:
+                self._send(f"还没收到照片哦，发几张我就按\"{self.run.intent_raw}\"开始～")
+            else:
+                self._submit_compose(self.run.intent_raw)  # 用草稿方案开跑
         elif reply.action == "query":
             self._send(self.view.describe())
         elif reply.action == "cancel":

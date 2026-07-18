@@ -723,6 +723,59 @@ def test_intent_before_photos_is_kept_as_draft(tmp_path):
     assert env.drain_jobs() == []  # 还没照片，不 compose
 
 
+def test_second_intent_while_draft_no_photos_merges_into_draft(tmp_path):
+    # AG-08：草稿态（0 照片）再来一句意图 -> 并入草稿、不组空方案、不整句覆盖。
+    env = make_consumer(tmp_path)
+    env.push_text("选三张发朋友圈")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+    env.drain_jobs()
+
+    env.push_text("标签叫ins吧")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+
+    [run] = env.store.list_active()
+    assert run.intent_raw == "选三张发朋友圈；标签叫ins吧"
+    assert any("记下了" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []  # 还没照片，不 compose
+
+
+def test_intent_with_photos_and_draft_merges_before_compose(tmp_path):
+    # AG-08：有草稿 + 有照片时再补一句意图 -> 拼接后再 compose，旧约束不丢。
+    env = make_consumer(tmp_path)
+    env.push_text("选三张发朋友圈")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+    env.push_photo("a.jpg", b"a")
+    env.consumer.step()
+    env.drain_jobs()
+
+    env.push_text("标签叫ins吧")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+
+    [compose_job] = env.drain_jobs()
+    assert isinstance(compose_job, ComposeJob)
+    assert compose_job.intent_text == "选三张发朋友圈；标签叫ins吧"
+
+
+def test_start_with_draft_but_no_photos_asks_for_photos(tmp_path):
+    # AG-08：草稿态（0 照片）说"开始" -> 提示等照片，不用 0 张组方案。
+    env = make_consumer(tmp_path)
+    env.push_text("选三张发朋友圈")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="intent"))
+    env.drain_jobs()
+
+    env.push_text("开始吧")
+    env.consumer.step()
+    deliver_classify(env, "collecting", CollectingReply(action="start"))
+
+    assert any("还没收到照片" in t for t in env.transport.texts())
+    assert env.drain_jobs() == []
+
+
 def test_draft_then_photos_then_start_composes_from_draft(tmp_path):
     env = make_consumer(tmp_path)
     env.push_text("选三张发朋友圈")
