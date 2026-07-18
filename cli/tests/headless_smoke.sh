@@ -315,6 +315,18 @@ mkdir -p "$EMPTY"
 assert_nonzero_exit_with_error "new --json: empty folder fails with JSON error" \
   "$PZT" new smoke3 "$EMPTY" --json
 
+# --- pzt delete --force --json (AG-14: agent 清扫 pzt 项目用的 headless 删除) ---
+out="$("$PZT" delete smoke2 --force --json)"
+assert_json_has "$out" "j['deleted'] == 'smoke2'" "delete --force --json: reports the deleted project"
+assert_nonzero_exit_with_error "delete --force --json: project is actually gone (images now errors)" \
+  "$PZT" images smoke2 --json
+
+assert_nonzero_exit_with_error "delete --json: unknown project fails with JSON error" \
+  "$PZT" delete does-not-exist --force --json
+
+assert_nonzero_exit_with_error "delete --json: missing --force refuses" \
+  "$PZT" delete smoke --json
+
 echo ""
 echo "== headless smoke: $pass_count passed, $fail_count failed =="
 if [ "$fail_count" -ne 0 ]; then

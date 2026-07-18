@@ -703,12 +703,42 @@ int cmd_archive(const std::vector<std::string>& args) {
 }
 
 int cmd_delete(const std::vector<std::string>& args) {
-  if (args.empty()) {
+  // 先分离出 flag：--json/--force 走 agent 用的 headless 路径，跳过交互式
+  // stdin 确认（AG-14：agent 清扫超龄终态 run 的 pzt 项目需要能 headless
+  // 删除；交互确认在子进程里会挂死）。positional[0] 是项目名（=run_id）。
+  bool json = false;
+  bool force = false;
+  std::vector<std::string> positional;
+  for (const auto& a : args) {
+    if (a == "--json") json = true;
+    else if (a == "--force" || a == "--yes") force = true;
+    else positional.push_back(a);
+  }
+
+  if (json) {
+    if (positional.empty()) {
+      return emit_json_error("usage", "usage: pzt delete <project> --force --json");
+    }
+    if (!force) {
+      return emit_json_error("usage", "headless delete requires --force");
+    }
+    auto jid = pzt::core::find_project_by_name(positional[0]);
+    if (!jid) {
+      return emit_json_error("project_not_found", "project not found: " + positional[0]);
+    }
+    if (!pzt::core::delete_project(*jid).ok()) {
+      return emit_json_error("delete_failed", "failed to delete: " + positional[0]);
+    }
+    emit_json({{"deleted", positional[0]}});
+    return 0;
+  }
+
+  if (positional.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_delete_missing_name().c_str());
     print_usage();
     return 1;
   }
-  const std::string& name = args[0];
+  const std::string& name = positional[0];
   auto id = pzt::core::find_project_by_name(name);
   if (!id) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found("pzt delete", name).c_str());

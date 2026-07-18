@@ -14,7 +14,9 @@ LLM。
 """
 from __future__ import annotations
 
+import os
 import queue
+import shutil
 import time
 from collections import deque
 from pathlib import Path
@@ -82,7 +84,11 @@ class SessionConsumer:
                  idle_reminder_seconds: float = 300.0,
                  progress_interval_seconds: float = 60.0,
                  eval_poll_interval_seconds: float = 60.0,
-                 send_retry_backoff_seconds: float = 1.0) -> None:
+                 send_retry_backoff_seconds: float = 1.0,
+                 preview_root: Optional[Path] = None,
+                 staging_dir: Optional[Path] = None,
+                 marker_dir: Optional[Path] = None,
+                 terminal_retention_seconds: float = 7 * 86400) -> None:
         self.store = store
         self.driver = driver  # 只用 cancel/approve 这类不碰 stages 的即时小操作
         self.transport = transport
@@ -98,6 +104,12 @@ class SessionConsumer:
         self.progress_interval_seconds = progress_interval_seconds
         self.eval_poll_interval_seconds = eval_poll_interval_seconds
         self.send_retry_backoff_seconds = send_retry_backoff_seconds
+        # AG-14：终态即删该 run 的大文件（incoming/preview/staging/marker），
+        # 保留 deliver-out 与 run JSON；启动低频清扫超 retention 的终态 run。
+        self.preview_root = Path(preview_root) if preview_root else None
+        self.staging_dir = Path(staging_dir) if staging_dir else None
+        self.marker_dir = Path(marker_dir) if marker_dir else None
+        self.terminal_retention_seconds = terminal_retention_seconds
 
         self.generation = 0
         self.run: Optional[RunState] = None
@@ -112,8 +124,10 @@ class SessionConsumer:
     # -- 生命周期 --
 
     def bootstrap(self) -> None:
-        """启动恢复（Eng Design 第七节第 7 条）+ 取消/崩溃竞态自愈（AG-12）。"""
+        """启动恢复（Eng Design 第七节第 7 条）+ 取消/崩溃竞态自愈（AG-12）
+        + 低频清扫超龄终态 run（AG-14）。"""
         _terminal = (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED)
+        self._sweep_terminal_runs()
         # 曾被取消但 worker 没来得及收尾就崩了：补 cancel、不复活。标记无论如
         # 何都清掉，避免陈旧堆积。
         for run_id in self.store.list_cancelling():
@@ -125,6 +139,7 @@ class SessionConsumer:
             if r.status not in _terminal:
                 print(f"[consumer] 启动自愈：{run_id} 曾被取消未收尾，补 cancel 不复活", flush=True)
                 self.driver.cancel(r)
+                self._cleanup_run_files(run_id)
             self.store.clear_cancelling(run_id)
         active = self.store.list_active()  # 上面 cancel 过的已终态、被排除
         if len(active) > 1:
@@ -135,6 +150,7 @@ class SessionConsumer:
             for r in active[1:]:
                 print(f"[consumer] 启动自愈：多活跃 run，取消较旧的 {r.run_id}", flush=True)
                 self.driver.cancel(r)
+                self._cleanup_run_files(r.run_id)
             active = active[:1]
         if not active:
             return
@@ -148,6 +164,20 @@ class SessionConsumer:
             self.driver.approve(run)
         else:
             self._adopt(run)
+
+    def _sweep_terminal_runs(self) -> None:
+        # 启动低频清扫：终态超过保留窗口的 run 连 JSON + pzt 项目 + 残留大文件
+        # 一起清（AG-14）。deliver-out 与近期 run JSON 保留。best-effort：单个
+        # run 清理失败不阻塞启动。
+        now = self.now_fn()
+        for run_id in self.store.terminal_runs_older_than(self.terminal_retention_seconds, now):
+            try:
+                self.readonly_client.call("delete", run_id, "--force")
+            except Exception as e:  # noqa: BLE001 项目可能已不存在/删除失败，容忍
+                print(f"[consumer] 清扫：pzt delete {run_id} 跳过（{e!r}）", flush=True)
+            self._cleanup_run_files(run_id)
+            self.store.delete_run(run_id)
+            print(f"[consumer] 清扫：终态超 {self.terminal_retention_seconds:.0f}s 的 run {run_id} 已清", flush=True)
 
     def step(self) -> None:
         for msg in self.transport.receive():
@@ -194,6 +224,7 @@ class SessionConsumer:
             # RUNNING 是 2.0 新可达状态：对齐 AwaitingGate 的排队行为。
             if msg.file_path:
                 queue_incoming_photo(self.incoming_root, msg.file_path)
+                self._discard_download(msg.file_path)
             self._send("先帮你收着，这批处理完就接着看这些新照片")
             return
         if self.run is None:
@@ -203,11 +234,13 @@ class SessionConsumer:
             # 逐张不回复：一批多张照片连发不该刷屏（旧行为）。
             if msg.file_path:
                 stage_incoming_photo(self.incoming_root, self.run.run_id, msg.file_path)
+                self._discard_download(msg.file_path)
             self.store.save(self.run)
             return
         if self.run.status == RunStatus.AWAITING_GATE:
             if msg.file_path:
                 queue_incoming_photo(self.incoming_root, msg.file_path)
+                self._discard_download(msg.file_path)
             self._send("先帮你收着，这批处理完就接着看这些新照片")
 
     def _has_active_batch(self) -> bool:
@@ -243,6 +276,7 @@ class SessionConsumer:
             return
         if self.run is not None:
             self.driver.cancel(self.run)  # Collecting 取消：已收照片随 run 废弃
+            self._cleanup_run_files(self.run.run_id)  # 终态即删大文件（AG-14）
             self._send("已取消")
             self._reset_session()
             return
@@ -250,6 +284,7 @@ class SessionConsumer:
             # worker job 崩后无主的 RUNNING run：直接标记取消，不再续跑。
             run = self.store.load(self.view.run_id)
             self.driver.cancel(run)
+            self._cleanup_run_files(run.run_id)  # 终态即删大文件（AG-14）
             self._send("已取消")
             self._reset_session()
             return
@@ -301,6 +336,29 @@ class SessionConsumer:
         else:  # _BTN_KEEP
             self._cancel_confirm_pending = False
             self._send("好，继续")
+
+    def _cleanup_run_files(self, run_id: str) -> None:
+        # 终态即删该 run 的大文件（原图/预览/暂存 + 交付幂等 marker），保留
+        # deliver-out（最终图）与 run JSON（AG-14）。best-effort，不因删不掉炸掉。
+        shutil.rmtree(self.incoming_root / run_id, ignore_errors=True)
+        if self.preview_root is not None:
+            shutil.rmtree(self.preview_root / run_id, ignore_errors=True)
+        if self.staging_dir is not None:
+            shutil.rmtree(self.staging_dir / run_id, ignore_errors=True)
+        if self.marker_dir is not None:
+            for m in self.marker_dir.glob(f"{run_id}-*.json"):
+                m.unlink(missing_ok=True)
+
+    @staticmethod
+    def _discard_download(path: Optional[str]) -> None:
+        # 照片入 incoming 后删掉 telegram-inbox 里的下载源，别让同一张长期落两
+        # 份（AG-14）。删不掉（并发/权限）不致命，忽略。
+        if not path:
+            return
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
     def _reset_session(self) -> None:
         self.generation += 1  # 之后到达的旧事件全部过期丢弃
@@ -414,6 +472,7 @@ class SessionConsumer:
             # 取消回执唯一例外地跨代接收：用户要的就是"真的停了"这句确认。
             self.cancelling_run_id = None
             self.store.clear_cancelling(event.run_id)  # 正常收尾即清标记（AG-12）
+            self._cleanup_run_files(event.run_id)      # 终态即删大文件（AG-14）
             self._send("已取消")
             return
         if event.generation != self.generation:
@@ -758,6 +817,7 @@ class SessionConsumer:
             # Deliver stage 自己已说"选好了 N 张"，这里补一句收尾，明确告诉
             # 用户这批结束了、可以开新的（真机反馈）。
             self._send("这批就处理完啦～想开新的一批，随时把照片发给我就行 📷")
+        self._cleanup_run_files(event.run_id)  # 终态即删大文件（AG-14）
         self.run = None
         self.view = SessionView(incoming_root=self.incoming_root)
 

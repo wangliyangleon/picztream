@@ -814,6 +814,39 @@ def test_gate_reject_via_llm_prompts_confirmation_not_immediate_cancel(tmp_path)
     assert env.store.load(job.run_id).status == RunStatus.AWAITING_GATE  # 二次确认前不取消
 
 
+def test_run_finished_done_cleans_run_files_keeps_deliver_out(tmp_path):
+    # AG-14：终态即删该 run 的 incoming/preview/staging，保留 deliver-out 与 JSON。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    (tmp_path / "incoming" / job.run_id).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / job.run_id / "a.jpg").write_bytes(b"x")
+    (tmp_path / "preview" / job.run_id).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "staging" / job.run_id).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "deliver-out").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "deliver-out" / "final.jpg").write_bytes(b"keep")
+
+    env.put_event(RunFinished(0, job.run_id, "done", None))
+    env.consumer.step()
+
+    assert not (tmp_path / "incoming" / job.run_id).exists()
+    assert not (tmp_path / "preview" / job.run_id).exists()
+    assert not (tmp_path / "staging" / job.run_id).exists()
+    assert (tmp_path / "deliver-out" / "final.jpg").exists()  # 最终图保留
+    assert (tmp_path / "runs" / f"{job.run_id}.json").exists()  # JSON 保留（近期）
+
+
+def test_photo_staging_discards_the_download_source(tmp_path):
+    # AG-14：照片入 incoming 后删掉 telegram-inbox 下载源，不落两份。
+    env = make_consumer(tmp_path)
+    src = env.push_photo("a.jpg", b"a")  # push_photo 返回下载源路径
+    assert src.exists()
+    env.consumer.step()
+
+    assert not src.exists()  # 下载源已删
+    [run] = env.store.list_active()
+    assert (env.consumer.incoming_root / run.run_id / "a.jpg").exists()  # incoming 里在
+
+
 def test_intent_before_photos_is_kept_as_draft(tmp_path):
     env = make_consumer(tmp_path)
     env.push_text("选三张发朋友圈")

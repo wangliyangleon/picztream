@@ -57,3 +57,24 @@ class RunStore:
 
     def clear_cancelling(self, run_id: str) -> None:
         self._cancelling_path(run_id).unlink(missing_ok=True)
+
+    # -- 保留/清扫（AG-14）--
+
+    def terminal_runs_older_than(self, cutoff_seconds: float, now: float) -> list[str]:
+        """终态且其 JSON 落盘时间早于 now-cutoff_seconds 的 run_id（低频清扫
+        用）。终态 run 到达终态后不再 save，mtime 即"终态多久了"。"""
+        out: list[str] = []
+        for p in self.root.glob("*.json"):
+            try:
+                run = self.load(p.stem)
+            except (FileNotFoundError, ValueError, KeyError):
+                continue
+            if run.status not in _TERMINAL_STATUSES:
+                continue
+            if p.stat().st_mtime < now - cutoff_seconds:
+                out.append(p.stem)
+        return out
+
+    def delete_run(self, run_id: str) -> None:
+        self._path(run_id).unlink(missing_ok=True)
+        self.clear_cancelling(run_id)

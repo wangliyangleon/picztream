@@ -133,6 +133,29 @@ def test_bootstrap_adopts_planned_run(tmp_path):
     assert job.action == "start"
 
 
+def test_bootstrap_sweeps_stale_terminal_runs(tmp_path):
+    # AG-14：启动清扫终态超保留窗口的 run —— pzt delete 项目 + 删 JSON/文件；
+    # 未超龄的终态 run 保留。
+    import os as _os
+    from session_fakes import FakeClock
+    clock = FakeClock()
+    _prefill_run(tmp_path, "tg-stale", RunStatus.DONE)
+    _prefill_run(tmp_path, "tg-fresh", RunStatus.DONE)
+    runs = tmp_path / "runs"
+    _os.utime(runs / "tg-stale.json", (clock() - 10 * 86400, clock() - 10 * 86400))
+    _os.utime(runs / "tg-fresh.json", (clock() - 1 * 86400, clock() - 1 * 86400))
+    (tmp_path / "incoming" / "tg-stale").mkdir(parents=True, exist_ok=True)
+    env = make_consumer(tmp_path, clock=clock, terminal_retention_seconds=7 * 86400)
+
+    env.consumer.bootstrap()
+
+    assert ("delete", "tg-stale", "--force") in env.client.calls  # 项目回收
+    assert not (runs / "tg-stale.json").exists()                  # JSON 清掉
+    assert not (tmp_path / "incoming" / "tg-stale").exists()      # 文件清掉
+    assert (runs / "tg-fresh.json").exists()                      # 未超龄保留
+    assert all(c[:2] != ("delete", "tg-fresh") for c in env.client.calls)
+
+
 def test_bootstrap_self_heals_multiple_active_runs(tmp_path):
     # AG-12：取消/崩溃竞态留下多个非终态 run，bootstrap 不再 assert 拒绝启动，
     # 保留 last_activity_at 最新的、其余 cancel 落盘。

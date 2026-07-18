@@ -37,6 +37,7 @@ _FIXED_RESPONSES = {
     "tag": {},
     "recipe": {"applied": True, "recipe_name": "Havana 1959"},
     "export-images": {"exported": 2, "skipped": [], "created_dir": True},
+    "delete": {"deleted": "run-1"},
     # consumer 的 Evaluate 进度轮询用（cli/commands/commands.cpp::cmd_images
     # 的输出形状，逐张带 evaluated 布尔）。
     "images": {"project": "run-1", "images": [
@@ -322,7 +323,8 @@ def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
                   client: Optional[FakeClient] = None,
                   idle_reminder_seconds: float = 300.0,
                   progress_interval_seconds: float = 60.0,
-                  eval_poll_interval_seconds: float = 60.0) -> ConsumerEnv:
+                  eval_poll_interval_seconds: float = 60.0,
+                  terminal_retention_seconds: float = 7 * 86400) -> ConsumerEnv:
     from session.consumer import SessionConsumer
 
     clock = clock or FakeClock()
@@ -343,6 +345,9 @@ def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
         progress_interval_seconds=progress_interval_seconds,
         eval_poll_interval_seconds=eval_poll_interval_seconds,
         send_retry_backoff_seconds=0.0,  # 测试不真 sleep
+        preview_root=tmp_path / "preview", staging_dir=tmp_path / "staging",
+        marker_dir=tmp_path / "delivered",
+        terminal_retention_seconds=terminal_retention_seconds,
     )
     return ConsumerEnv(tmp_path=tmp_path, consumer=consumer, classify_jobs=classify_jobs,
                        drive_jobs=drive_jobs, events=events,

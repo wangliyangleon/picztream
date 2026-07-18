@@ -70,6 +70,35 @@ def test_cancelling_marker_does_not_leak_into_list_active(tmp_path):
     assert {r.run_id for r in store.list_active()} == {"running"}  # .cancelling 不干扰 *.json
 
 
+def test_terminal_runs_older_than_only_picks_old_terminal(tmp_path):
+    # AG-14：只挑"终态 + JSON mtime 够老"的 run。
+    import os as _os
+    store = RunStore(tmp_path)
+    store.save(make_run("old-done", RunStatus.DONE))
+    store.save(make_run("fresh-done", RunStatus.DONE))
+    store.save(make_run("old-running", RunStatus.RUNNING))  # 非终态，不该选
+    now = 1_000_000.0
+    _os.utime(tmp_path / "old-done.json", (now - 10 * 86400, now - 10 * 86400))
+    _os.utime(tmp_path / "fresh-done.json", (now - 1 * 86400, now - 1 * 86400))
+    _os.utime(tmp_path / "old-running.json", (now - 10 * 86400, now - 10 * 86400))
+
+    stale = store.terminal_runs_older_than(7 * 86400, now)
+
+    assert stale == ["old-done"]
+
+
+def test_delete_run_removes_json_and_marker(tmp_path):
+    store = RunStore(tmp_path)
+    store.save(make_run("gone", RunStatus.DONE))
+    store.mark_cancelling("gone")
+
+    store.delete_run("gone")
+
+    assert not (tmp_path / "gone.json").exists()
+    assert store.is_cancelling("gone") is False
+    store.delete_run("gone")  # 幂等，不报错
+
+
 def test_save_overwrites_previous_state_for_same_run_id(tmp_path):
     store = RunStore(tmp_path)
     run = make_run("run-1", RunStatus.RUNNING)

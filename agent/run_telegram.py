@@ -98,6 +98,7 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
         idle_reminder_seconds=idle_reminder_seconds,
         progress_interval_seconds=progress_interval_seconds,
         eval_poll_interval_seconds=eval_poll_interval_seconds,
+        preview_root=preview_root, staging_dir=staging_dir, marker_dir=marker_dir,
     )
     return consumer, worker
 
