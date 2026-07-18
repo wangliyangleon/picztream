@@ -102,6 +102,23 @@ def test_local_happy_path_does_not_require_an_api_key(monkeypatch):
     assert captured["body"]["messages"][0]["content"].startswith("schema instruction")
 
 
+def test_local_model_defaults_and_env_override(monkeypatch):
+    # AG-13：本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，默认 gemma4:e2b。
+    captured = {}
+
+    def fake_http_post(url, headers, body):
+        captured["body"] = json.loads(body)
+        return 200, json.dumps({"message": {"content": "{}"}})
+
+    monkeypatch.delenv("PZT_AGENT_OLLAMA_MODEL", raising=False)
+    request_json("x", "s", "local", http_post=fake_http_post)
+    assert captured["body"]["model"] == "gemma4:e2b"
+
+    monkeypatch.setenv("PZT_AGENT_OLLAMA_MODEL", "qwen3:4b")
+    request_json("x", "s", "local", http_post=fake_http_post)
+    assert captured["body"]["model"] == "qwen3:4b"
+
+
 def test_local_malformed_response_shape_raises_parse_error():
     def fake_http_post(url, headers, body):
         return 200, json.dumps({"unexpected": "shape"})

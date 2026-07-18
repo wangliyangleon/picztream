@@ -176,7 +176,7 @@
 
 ---
 
-**AG-13 语言推理 provider 与 Ollama 模型名硬编码,入口无开关**
+**AG-13 语言推理 provider 与 Ollama 模型名硬编码,入口无开关** ✅ 已修复
 类别: 工程规范 + 交互打磨 | 来源视角: 架构
 
 现象: SPEC 3.3 说视觉/语言 provider 均可插拔,但 run_telegram 运行时里所有分类器/compose 调用都吃默认 `meta_provider="local"`(worker 调用处无一传参),`_OLLAMA_MODEL="gemma4:e2b"`/`_CLAUDE_MODEL` 也是 `compose/llm_client.py:16-24` 的模块常量。换模型或临时切云端(本地模型分类质量不够时的现实需求)要改代码。函数签名层可插拔、wiring 层写死,插拔是名义上的。
@@ -184,6 +184,8 @@
 修法: `PZT_AGENT_META_PROVIDER`/`PZT_AGENT_OLLAMA_MODEL` 环境变量(或 run_telegram 命令行 flag),`build_runtime` 读一次、经 functools.partial 注入各分类函数,worker 零改动。
 
 难度 S | 复杂度 低 | 优先级 P2
+
+修复记录(2026-07-18): `build_runtime` 读 `PZT_AGENT_META_PROVIDER`(默认 local, 非法值 fail-fast raise ValueError), 经 `functools.partial(fn, meta_provider=...)` 注入 7 个 classify + compose_plan, worker 位置调用零改动; `llm_client.request_json` local 分支 model 改读 `PZT_AGENT_OLLAMA_MODEL`(默认 gemma4:e2b)。Style 的 match provider 走 plan.params(另一条路径), 未纳入本项。llm_client + run_telegram 改动 + 三条测试, 全量 295 条绿。
 
 ---
 

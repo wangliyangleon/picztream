@@ -152,7 +152,8 @@ def request_json(user_prompt: str, schema_instruction: str, provider: str,
         url = f"{_OLLAMA_BASE_URL}/api/chat"
         headers = {"content-type": "application/json"}
         request_body = json.dumps({
-            "model": _OLLAMA_MODEL,
+            # 本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，不必改代码（AG-13）。
+            "model": os.environ.get("PZT_AGENT_OLLAMA_MODEL", _OLLAMA_MODEL),
             "format": "json",
             "stream": False,
             "messages": [{"role": "user", "content": instruction_text}],

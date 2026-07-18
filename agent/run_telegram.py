@@ -10,6 +10,8 @@ Conflict）。取代了早期的单线程同步主循环 + 旧 router.SessionRou
 from __future__ import annotations
 
 import argparse
+import functools
+import os
 import queue
 import threading
 import time
@@ -48,6 +50,16 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
                   eval_poll_interval_seconds: float = 60.0,
                   ) -> Tuple[SessionConsumer, SessionWorker]:
     state_dir = Path(state_dir)
+    # 语言推理 provider 一处读、一处注入（AG-13）：各 classify/compose 函数
+    # 签名层本就有 meta_provider 参数，但 worker 位置调用不传、全吃 local。
+    # 这里经 PZT_AGENT_META_PROVIDER 读一次、partial 绑好，worker 零改动。
+    meta_provider = os.environ.get("PZT_AGENT_META_PROVIDER", "local")
+    if meta_provider not in ("local", "gemini", "claude"):
+        raise ValueError(f"PZT_AGENT_META_PROVIDER 非法：{meta_provider!r}（可选 local/gemini/claude）")
+
+    def _bind(fn: Any) -> Any:
+        return functools.partial(fn, meta_provider=meta_provider)
+
     store = RunStore(state_dir / "runs")
     marker_dir = state_dir / "delivered"
     staging_dir = state_dir / "staging"
@@ -81,14 +93,14 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
         classify_jobs=classify_jobs, drive_jobs=drive_jobs, events=events,
         driver=driver, store=store, client=worker_client,
         transport=transport, chat_id=chat_id, preview_root=preview_root,
-        compose_plan_fn=compose_plan,
-        classify_collecting_message_fn=classify_collecting_message,
-        classify_gate_reply_fn=classify_gate_reply,
-        refine_plan_confirmation_fn=refine_plan_confirmation,
-        classify_style_gate_reply_fn=classify_style_gate_reply,
-        classify_running_message_fn=classify_running_message,
-        classify_cancel_confirmation_fn=classify_cancel_confirmation,
-        classify_style_describe_fn=classify_style_describe,
+        compose_plan_fn=_bind(compose_plan),
+        classify_collecting_message_fn=_bind(classify_collecting_message),
+        classify_gate_reply_fn=_bind(classify_gate_reply),
+        refine_plan_confirmation_fn=_bind(refine_plan_confirmation),
+        classify_style_gate_reply_fn=_bind(classify_style_gate_reply),
+        classify_running_message_fn=_bind(classify_running_message),
+        classify_cancel_confirmation_fn=_bind(classify_cancel_confirmation),
+        classify_style_describe_fn=_bind(classify_style_describe),
     )
     consumer = SessionConsumer(
         store=store, driver=driver, transport=transport, chat_id=chat_id,
