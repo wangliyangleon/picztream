@@ -21,3 +21,4 @@
 ## Fix-it Night 评审
 
 - `Fix_It_Night_2026-07_Completion_Report.md` - 2026-07 Fix-it Night 全面评审（基于 commit `8f5af14`）的完成报告：已完成的 22 条 F 编号逐项详情、执行日志、E2E 反馈、以及原始四视角评审分析。尚未完成的条目继续在 `docs/Fix_It_Night_Review.md` 里作为活跃 backlog 维护
+- `Fix_It_Agent_2026-07_Completion_Report.md` - 2026-07 agent 层三视角评审（基线 commit `14bee68`）的完成报告：AG- 编号 21 条逐项详情 + 修复记录 + 逐条 commit。已收口并真机验证（agent 测试 252 → 313 全绿，含 C++ headless `pzt delete`）；按设计保留不动的观察项/部署周项已在文内标注
