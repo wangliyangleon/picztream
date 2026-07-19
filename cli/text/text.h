@@ -41,4 +41,18 @@ std::string format_size(std::int64_t bytes);
 // 展开路径开头的 `~`/`~/...`(只处理这两种形式,不处理 `~user`)。
 std::string expand_home_path(const std::string& path);
 
+// 按 token 边界换行(只在 token 之间的空格上断,不切断单个 token),宽度按
+// display_width 计(CJK token 占 2 列)。跟 wrap_text 不同——那个按显示宽度
+// 硬换行、允许把一个词从中间切断。
+std::vector<std::string> wrap_tokens(const std::vector<std::string>& tokens, std::size_t max_width);
+
+// `/` 开头的控制台输入解析成命令名(不含前导 `/`) + 剩余参数,第一个空白
+// 是分界,命令名与参数之间允许多个空格。
+std::pair<std::string, std::string> split_console_command(const std::string& input);
+
+// 从串首取一个"范围 token":普通按第一个空白切;`#"..."` 带引号的标签名整
+// 体当一个 token(引号内空格不算分界),未闭合引号时退化成按空格切。返回值
+// 保留开头的 `#` 和引号,解引号交给调用方。
+std::pair<std::string, std::string> take_scope_token(const std::string& s);
+
 }  // namespace pzt::cli::text

@@ -156,4 +156,65 @@ std::string expand_home_path(const std::string& path) {
   return path == "~" ? std::string(home) : std::string(home) + path.substr(1);
 }
 
+// 跟同文件的 wrap_text 不同——那个按字符硬换行,这里的换行只能发生在 token
+// 之间的空格上,不能把一个 token(标签)从中间切断。宽度用 display_width 算,
+// CJK 标签名占两列。单个 token 本身就比 max_width 还宽这种极端情况,让它单独
+// 占一行、可能超出边框——比强行切断标签名更不容易让人误解内容,这次不特殊处理。
+std::vector<std::string> wrap_tokens(const std::vector<std::string>& tokens, std::size_t max_width) {
+  std::vector<std::string> lines;
+  std::string current;
+  std::size_t current_w = 0;
+  for (const auto& tok : tokens) {
+    std::size_t tok_w = display_width(tok);
+    if (!current.empty() && current_w + 1 + tok_w > max_width) {
+      lines.push_back(current);
+      current.clear();
+      current_w = 0;
+    }
+    if (!current.empty()) {
+      current += " ";
+      ++current_w;
+    }
+    current += tok;
+    current_w += tok_w;
+  }
+  if (!current.empty() || lines.empty()) lines.push_back(current);
+  return lines;
+}
+
+// `/` 开头的输入解析成命令名(不含前导 `/`) + 剩余参数——第一个空白就是命令名
+// 和参数的分界。命令名和参数之间允许多个空格。
+std::pair<std::string, std::string> split_console_command(const std::string& input) {
+  std::string body = input.substr(1);  // 去掉前导 '/'
+  auto space = body.find(' ');
+  if (space == std::string::npos) return {body, ""};
+  std::string rest = body.substr(space + 1);
+  std::size_t start = rest.find_first_not_of(' ');
+  return {body.substr(0, space), start == std::string::npos ? "" : rest.substr(start)};
+}
+
+// 从字符串最前面取一个"范围 token":普通情况下按第一个空白切;`#"..."` 这种带
+// 引号的标签名整体当一个 token,引号内的空格不算分界——输入语法照抄 tag_token
+// (browse.cpp 顶部,信息栏展示标签用的那个)的输出语法,用户不需要为"怎么打带
+// 空格的标签名"另外学一套写法。返回值保留开头的 `#` 和引号,解引号交给
+// resolve_console_scope(browse.cpp)。没有找到闭合引号时(用户漏打了后一个引号)
+// 放弃引号语义,退化成普通按空格切,交给 resolve_console_scope 报"范围写法不对",
+// 不是这个函数的职责。
+std::pair<std::string, std::string> take_scope_token(const std::string& s) {
+  std::size_t start = s.find_first_not_of(' ');
+  if (start == std::string::npos) return {"", ""};
+  if (s.compare(start, 2, "#\"") == 0) {
+    std::size_t close = s.find('"', start + 2);
+    if (close != std::string::npos) {
+      std::string token = s.substr(start, close - start + 1);
+      std::size_t rest_start = s.find_first_not_of(' ', close + 1);
+      return {token, rest_start == std::string::npos ? "" : s.substr(rest_start)};
+    }
+  }
+  std::size_t space = s.find(' ', start);
+  if (space == std::string::npos) return {s.substr(start), ""};
+  std::size_t rest_start = s.find_first_not_of(' ', space);
+  return {s.substr(start, space - start), rest_start == std::string::npos ? "" : s.substr(rest_start)};
+}
+
 }  // namespace pzt::cli::text
