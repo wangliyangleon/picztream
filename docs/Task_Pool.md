@@ -4,7 +4,7 @@
 >
 > 每条只标**预估 size**(S=半天内 / M=1-3 天 / L=3 天以上或需先出设计文档)和**依赖/触发前提**(有则列,决定"现在能不能直接开工")。想动一条之前先看它的依赖是否满足。
 >
-> 编号沿用 2026-07 Fix-it Night 评审(F-XX);每条的完整背景、file:line 证据、四视角分析在归档报告里:`docs/history/Fix_It_Night_Review.md`(未完成快照 + 拍板记录)与 `docs/history/Fix_It_Night_2026-07_Completion_Report.md`(原始评审分析)。**已拍板终结的条目(F-28 有序标签调序、F-41 pzt list 计数、F-36 残留计时子项)不在本池**,它们是"已知边界/不做"的决定,只在归档报告留档。
+> 编号多沿用 2026-07 Fix-it Night 评审(F-XX);非 Fix-it 来源的条目(如从某周开发目标顺延下来的)用描述性名字并在依赖列标注来源。每条的完整背景、file:line 证据、四视角分析在归档报告里:`docs/history/Fix_It_Night_Review.md`(未完成快照 + 拍板记录)与 `docs/history/Fix_It_Night_2026-07_Completion_Report.md`(原始评审分析)。**已拍板终结的条目(F-28 有序标签调序、F-41 pzt list 计数、F-36 残留计时子项)不在本池**,它们是"已知边界/不做"的决定,只在归档报告留档。
 >
 > 新起一条前:确认它没被后来的代码改动淘汰(证据可能漂移),按分层契约(`core`/`cli`/`agent`)判断归属,涉及行为语义变化的先出 PRD 再动(见 `CLAUDE.md`)。
 
@@ -25,6 +25,7 @@
 
 | 编号 | 一句话 | Size | 依赖/触发前提 |
 |---|---|---|---|
+| 几何变换 | 裁切 + 水平矫正,走 `set_image_recipe` 同一条路径应用并渲染(非另起一套机制);也是 agent `Style` Stage 的前置阻塞项之一 | L | **先出 Eng Design**。产品要求已在 `docs/W2026-07-15_PRD.md` 目标二第 3 项落定(验收标准都写好了),缺的是工程方案——裁切改图像尺寸、矫正需旋转重采样,牵涉渲染管线、预取缓存与 version schema。本周目标二拆两刀实现时未纳入、顺延至此。背景见 `docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md`(归档说明)与 `docs/SPEC.md` 未来/搁置一节。 |
 | F-44 | 对当前筛选视图批量打标签 | M | **先用出 `/filter` 手感 + 先出 PRD**。触发前提是能回答 5 个设计问题(入口与触发、作用域边界、确认与撤销、与 cap 交互、批量语义唯一性)——细节见归档报告 F-44 条。核心是"对当前视图批量作用"要能同时覆盖打标签/未来批量导出/清标签,避免两套选择模型。 |
 | F-13 | 有界解码(subsampled decode) | M | **先在真实 24MP+/60MP 素材上量 RSS 与 60MP key-to-render**,把收益写成数字再定 max_px 上限 | 预取缓存全分辨率 RGBA(24MP×7≈0.7GB;60MP 单张解码~180ms 超预算)、dedup 全量解码(~70ms/张)、AI 上传同源的统一杠杆。方案:`core/decode` 加 `decode_jpeg_file_bounded(path, max_px)`(`CGImageSourceCreateThumbnailAtIndex`)。当前 24MP 内体验尚达标,不算急。 |
 | F-37 | api.h 头部重量(json 头透传全 cli TU) | M | 触发:cli 编译时长成体感(header-cascade 影响 edit-build 循环) | 已实测基线(2026-07-19):api.h 头解析 ~0.66s/TU,8/13 cli TU 透传,clean cli 全量 8.6s——**未越阈值**。越阈值再动:worker pimpl 让 `ai.h`/`json.hpp` 停止透传,可从 8 个 TU 各砍 ~0.66s。 |
