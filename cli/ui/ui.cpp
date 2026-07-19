@@ -182,11 +182,38 @@ std::optional<std::string> read_text_line(const std::string& prompt, int banner_
   std::size_t cursor = 0;
   int pending_needed = 0;  // 还差几个续字节才能凑成当前码点
 
+  // F-42：超宽内容会用到第二行(见下面 redraw 的换行处理),而 banner_row+1
+  // 平时可能杵着其它提示("q:[退出]"/菜单),先清干净,跟
+  // read_text_line_with_placeholder 一样,不然长路径换行时会跟旧提示串行。
+  move_cursor(banner_row + 1, start_col + 1);
+  write_stdout(pad_to("", content_cols));
+
   auto redraw = [&] {
+    // F-42:内容(常驻 prompt + 已输入 buffer)超出第一行宽度时换到第二行,
+    // 跟 read_text_line_with_placeholder 的两行逻辑同构——区别只是这里的固定
+    // 前缀是常驻 prompt,而不是那边的一个前导空格。以前是单行 pad,长导出路
+    // 径输入时光标会越出右边框。
+    std::string content = prompt + buffer;
+    std::string line1 = truncate_text(content, static_cast<std::size_t>(content_cols));
+    std::string line2 =
+        truncate_text(content.substr(line1.size()), static_cast<std::size_t>(content_cols));
     move_cursor(banner_row, start_col + 1);
-    write_stdout(pad_to(prompt + buffer, content_cols));
-    std::string up_to_cursor = prompt + buffer.substr(0, cursor);
-    move_cursor(banner_row, start_col + 1 + static_cast<int>(display_width(up_to_cursor)));
+    write_stdout(pad_to(line1, content_cols));
+    move_cursor(banner_row + 1, start_col + 1);
+    write_stdout(pad_to(line2, content_cols));
+
+    // 光标跟着 cursor(buffer 内字节偏移)走,对应 content 里的字节位是
+    // prompt.size() + cursor;超出第一行时跟着换到第二行。
+    std::size_t cursor_byte_pos = prompt.size() + cursor;
+    if (cursor_byte_pos <= line1.size()) {
+      std::string up_to_cursor = content.substr(0, cursor_byte_pos);
+      move_cursor(banner_row, start_col + 1 + static_cast<int>(display_width(up_to_cursor)));
+    } else {
+      std::string rest = content.substr(line1.size());
+      std::size_t rest_cursor_pos = cursor_byte_pos - line1.size();
+      std::string up_to_cursor_line2 = rest.substr(0, std::min(rest_cursor_pos, line2.size()));
+      move_cursor(banner_row + 1, start_col + 1 + static_cast<int>(display_width(up_to_cursor_line2)));
+    }
   };
   write_stdout("\x1b[?25h");
   redraw();

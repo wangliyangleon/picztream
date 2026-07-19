@@ -16,6 +16,7 @@ bool is_wide_codepoint(char32_t cp) {
          (cp >= 0xF900 && cp <= 0xFAFF) ||    // CJK 兼容表意文字
          (cp >= 0xFF00 && cp <= 0xFF60) ||    // 全角字符
          (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+         (cp >= 0x1F300 && cp <= 0x1FAFF) ||  // F-35：emoji(符号与象形、补充符号等),终端按宽字符渲染
          (cp >= 0x20000 && cp <= 0x3FFFD);    // CJK 扩展区(增补平面)
 }
 

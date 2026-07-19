@@ -19,6 +19,12 @@ TEST_CASE("is_wide_codepoint separates CJK/fullwidth from ASCII/Latin") {
   CHECK_FALSE(is_wide_codepoint('a'));
   CHECK_FALSE(is_wide_codepoint(' '));
   CHECK_FALSE(is_wide_codepoint(0x00E9));  // é 拉丁扩展,窄
+  // F-35：emoji 按宽字符(占 2 列)算,文件名带 emoji 时边框不再错位。
+  CHECK(is_wide_codepoint(0x1F600));   // 😀 表情
+  CHECK(is_wide_codepoint(0x1F4F7));   // 📷 相机
+  CHECK(is_wide_codepoint(0x1F300));   // 区间下边界
+  CHECK(is_wide_codepoint(0x1FAFF));   // 区间上边界
+  CHECK_FALSE(is_wide_codepoint(0x1FB00));  // 紧邻区间外(遗留计算符号),仍算窄
 }
 
 TEST_CASE("decode_utf8_at returns codepoint and byte length") {
