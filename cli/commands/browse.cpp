@@ -685,6 +685,12 @@ int cmd_open(const std::vector<std::string>& args) {
     // 清除)会自动清空这个状态,见 `g` 键处理的说明。
     std::optional<ConsoleFilterCriterion> active_console_filter;
 
+    // F-20：上一帧渲染所用的终端尺寸(cell 行列 + 单 cell 像素)。终端 resize
+    // 后布局虽然每轮按最新尺寸重算,但没有整屏清除、也没有强制重画图片,旧
+    // 边框会留在原位成残影;用它跟当前尺寸比对,变化时整屏清除 + 强制重画。
+    // 初值 0 让首帧就当"尺寸已变"处理(首帧本就要全画,无害)。
+    int last_cols = 0, last_rows = 0, last_cell_px_w = 0, last_cell_px_h = 0;
+
     while (true) {
       auto key_time = std::chrono::steady_clock::now();
 
@@ -716,6 +722,18 @@ int cmd_open(const std::vector<std::string>& args) {
       int total_rows = term_size.valid ? term_size.rows : 24;
       int cell_px_w = term_size.valid ? std::max(1, term_size.pixel_width / term_size.cols) : 8;
       int cell_px_h = term_size.valid ? std::max(1, term_size.pixel_height / term_size.rows) : 16;
+
+      // F-20：终端尺寸相对上一帧变了吗?变了就整屏清除(擦掉上一尺寸残留的
+      // 边框/文字),并在下面强制重画图片(current_id 没变、navigated 为假,
+      // 光靠导航检测触发不了图片重传)。last_* 记录的是"当前帧渲染所用的尺
+      // 寸",也是输入循环里 poll 超时判断"要不要重画"的基准。
+      bool size_changed = (total_cols != last_cols || total_rows != last_rows ||
+                           cell_px_w != last_cell_px_w || cell_px_h != last_cell_px_h);
+      last_cols = total_cols;
+      last_rows = total_rows;
+      last_cell_px_w = cell_px_w;
+      last_cell_px_h = cell_px_h;
+      if (size_changed) write_stdout("\x1b[2J");
 
       // 界面默认只占终端宽度的 70%、居中显示,不铺满整个窗口——F-12 之后
       // 这个比例可以在 config.json 里用 ui_width_ratio 覆盖。
@@ -1048,7 +1066,7 @@ int cmd_open(const std::vector<std::string>& args) {
       // 帧的图 -> 取解码结果 -> 缩放 -> 传输"这一整套。`navigated` 在这
       // 一帧最前面(信息栏绘制之前)已经算过、`show_original` 也已经在
       // 那里重置过,这里直接复用,不重新算一遍。
-      if (navigated || style_toggled) {
+      if (navigated || style_toggled || size_changed) {
         // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
         // 关键一步,没有它,旧 placement 不会自动消失。失败(比如
         // WriteFailed)这里不特殊处理——下面马上要写新的 placement 覆盖
@@ -1142,18 +1160,19 @@ int cmd_open(const std::vector<std::string>& args) {
 
       // 不支持的键直接在这个内层循环里吃掉,继续读下一个字节——不 continue
       // 回外层 while,那样会导致整个画面(边框、图片、信息栏、banner)重新
-      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。--debug 模式下例
-      // 外:每一轮先 poll 一次,超时(没有任何按键)就直接 continue 回外层
-      // 重画,刷新 debug 面板;不开 --debug 时维持原来单纯阻塞 read 的写
-      // 法,不引入 poll 的额外开销。M3:有 AI 请求在跑时也要 poll,但超时
-      // 不能无条件当成重绘理由——那样会退化成 debug 模式那种"每 300ms 闪
-      // 一下"的行为,先查 consume_new_result 有没有真的拿到新结果,没有
-      // 就当没发生过,继续等,不触发外层重绘("poll 重绘只在真正需要时才
-      // 发生"这条要求)。debug_mode 保持原有的无条件重绘行为不变。
+      // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。始终带超时 poll:
+      // --debug 时超时无条件重画刷新 debug 面板;有 AI 请求在跑时超时要先查
+      // consume_new_result 有没有真的拿到新结果,没有就当没发生过继续等,不
+      // 触发外层重绘("poll 重绘只在真正需要时才发生")。F-20:纯浏览态(不
+      // 开 debug、无 AI)以前是纯阻塞 read,resize 没有按键就永远察觉不到;
+      // 现在也 poll,超时后只有终端尺寸相对上一帧变了才 break 去重画(整屏清
+      // 除 + 图片重传由帧顶 size_changed 处理),尺寸没变就继续等,不无谓刷新。
       bool timed_out = false;
       while (true) {
-        if (debug_mode || evaluation_worker.has_pending()) {
-          if (!stdin_ready(300)) {
+        bool poll_active = debug_mode || evaluation_worker.has_pending();
+        int poll_ms = poll_active ? 300 : 250;  // 纯浏览态 250ms 仅用于察觉 resize
+        if (!stdin_ready(poll_ms)) {
+          if (poll_active) {
             if (!debug_mode) {
               if (!evaluation_worker.consume_new_result(ai_last_seen_generation)) {
                 continue;
@@ -1171,6 +1190,18 @@ int cmd_open(const std::vector<std::string>& args) {
             timed_out = true;
             break;
           }
+          // 纯浏览态:只有终端尺寸变了才值得重画,否则继续阻塞式等待。
+          auto now = pzt::cli::term::get_terminal_size();
+          int now_cols = now.valid ? now.cols : 80;
+          int now_rows = now.valid ? now.rows : 24;
+          int now_pw = now.valid ? std::max(1, now.pixel_width / now.cols) : 8;
+          int now_ph = now.valid ? std::max(1, now.pixel_height / now.rows) : 16;
+          if (now_cols != last_cols || now_rows != last_rows || now_pw != last_cell_px_w ||
+              now_ph != last_cell_px_h) {
+            timed_out = true;  // 借 timed_out 语义:没有按键、只是重画
+            break;
+          }
+          continue;
         }
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n <= 0) {
