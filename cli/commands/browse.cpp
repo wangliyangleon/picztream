@@ -1086,7 +1086,10 @@ int cmd_open(const std::vector<std::string>& args) {
 
         auto decoded = prefetch.get(current_id);
         if (decoded.ok()) {
-          const auto& img = decoded.value();
+          // F-14：decoded.value() 是 shared_ptr(指向缓存里那份不可变像素),
+          // decoded 在这个块作用域内一直存活、持有引用,解引用得到的 img 引
+          // 用在整段渲染期间有效。
+          const auto& img = *decoded.value();
           // 让图片在面板里居中、四周留一点空隙,而不是贴着左边框/上边
           // 框——fit_within 只保证"不超出"这个框,不保证"居中",长宽比
           // 跟面板不完全匹配时(几乎总是这样)不作处理的话,多出来的空白

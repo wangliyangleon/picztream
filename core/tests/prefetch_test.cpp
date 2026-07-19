@@ -61,15 +61,15 @@ TEST_CASE("PrefetchCache decodes the window around current and get() returns mat
 
   auto c = cache.get(images[2].id);
   REQUIRE(c.ok());
-  CHECK(c.value().width == 30);
+  CHECK(c.value()->width == 30);
 
   auto b = cache.get(images[1].id);
   REQUIRE(b.ok());
-  CHECK(b.value().width == 20);
+  CHECK(b.value()->width == 20);
 
   auto d = cache.get(images[3].id);
   REQUIRE(d.ok());
-  CHECK(d.value().width == 40);
+  CHECK(d.value()->width == 40);
 }
 
 TEST_CASE("PrefetchCache passes the preview cache path for kind=raw images, not the raw file path") {

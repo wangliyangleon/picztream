@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -60,14 +61,17 @@ class PrefetchCache {
   // (不能把解码算进按键触发的同步延迟预算)。在窗口内但后台还没解码完时阻
   // 塞等待(典型场景:刚导航到窗口边缘、预取还没跟上)，这个等待耗时就是
   // "按键到画面"链路里预取没命中时的真实延迟，会记进延迟日志。
-  Result<decode::DecodedImage, FetchError> get(ImageId id);
+  // F-14：返回 shared_ptr(指向缓存里那份不可变像素)而不是按值拷贝整张图——
+  // 24MP 一张就是 96MB，原来在持 mu_ 期间整块拷贝、拷贝时长内 worker 全阻
+  // 塞。调用方只读使用,共享同一份即可。
+  Result<std::shared_ptr<const decode::DecodedImage>, FetchError> get(ImageId id);
 
  private:
   enum class State { Pending, Ready, Failed };
 
   struct Entry {
     State state = State::Pending;
-    decode::DecodedImage image;
+    std::shared_ptr<const decode::DecodedImage> image;  // F-14：共享不可变像素,避免持锁整块拷贝
   };
 
   void worker_loop(std::stop_token stop);

@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <unordered_set>
 #include <utility>
+
+#include "core/media/media.h"
 
 namespace pzt::core::browse {
 
@@ -33,14 +36,16 @@ void log_get(ImageId id, const char* outcome, double wait_ms) {
 // current 优先，然后按距离由近到远交替向前/向后展开，直到覆盖 2*window+1
 // 张或者(列表更短时)整个 images——跟 next_image/prev_image 的循环折返语义
 // 一致。用 seen 去重，覆盖 images 很短、window 很大导致环绕重复的情形。
-std::vector<ImageId> window_priority_order(const std::vector<ImageRef>& images, std::size_t idx,
-                                            std::size_t window) {
+// F-15：返回窗口内 ImageRef 的指针(而不是只返回 id),让 set_current 只为窗口
+// 内这 2*window+1 张解析路径,不必再为全项目每张图拼一次绝对路径。
+std::vector<const ImageRef*> window_priority_order(const std::vector<ImageRef>& images,
+                                                   std::size_t idx, std::size_t window) {
   std::size_t n = images.size();
-  std::vector<ImageId> order;
+  std::vector<const ImageRef*> order;
   std::unordered_set<ImageId> seen;
   auto try_add = [&](std::size_t index) {
-    ImageId id = images[index % n].id;
-    if (seen.insert(id).second) order.push_back(id);
+    const ImageRef& ref = images[index % n];
+    if (seen.insert(ref.id).second) order.push_back(&ref);
   };
 
   try_add(idx);
@@ -78,8 +83,10 @@ void PrefetchCache::set_current(const std::vector<ImageRef>& images,
   }
 
   std::size_t idx = static_cast<std::size_t>(std::distance(images.begin(), it));
-  std::vector<ImageId> wanted = window_priority_order(images, idx, window_);
-  std::unordered_set<ImageId> wanted_set(wanted.begin(), wanted.end());
+  std::vector<const ImageRef*> wanted = window_priority_order(images, idx, window_);
+  std::unordered_set<ImageId> wanted_set;
+  wanted_set.reserve(wanted.size());
+  for (const ImageRef* ref : wanted) wanted_set.insert(ref->id);
 
   for (auto cache_it = cache_.begin(); cache_it != cache_.end();) {
     if (!wanted_set.count(cache_it->first)) {
@@ -90,26 +97,19 @@ void PrefetchCache::set_current(const std::vector<ImageRef>& images,
     }
   }
 
-  // M2：kind="raw" 且预览缓存已经生成时，直接把缓存文件的绝对路径交给
-  // decode_fn(本身就是一张真正的 JPEG，走 decode_preview_file 里 .jpg 分
-  // 支，解码速度跟普通 JPEG 没有差别)；缓存缺失(还没生成/生成失败)时才退
-  // 化成传原始 .dng/.raf 路径，让 decode_preview_file 走内嵌预览提取兜
-  // 底。kind="jpeg" 的图片行为完全不变。
-  std::unordered_map<ImageId, std::string> resolved_path_by_id;
-  for (const auto& ref : images) {
-    if (ref.kind == "raw" && ref.preview_cache_path) {
-      resolved_path_by_id[ref.id] = *ref.preview_cache_path;
-    } else {
-      resolved_path_by_id[ref.id] = root_path_ + "/" + ref.file_path;
-    }
-  }
-
+  // F-15：只为窗口内新加入的图片解析路径(以前对全项目每张图都拼一次绝对路
+  // 径,每个按键都跑,列表大时是纯浪费)。路径分发逻辑走 core/media 的单一来
+  // 源(F-16):kind="raw" 且预览缓存已生成时用缓存 JPEG 的绝对路径,否则退化
+  // 成原始 .dng/.raf 路径让 decode_preview_file 走内嵌预览提取兜底;
+  // kind="jpeg" 行为不变。
   pending_queue_.clear();
-  for (ImageId id : wanted) {
+  for (const ImageRef* ref : wanted) {
+    ImageId id = ref->id;
     auto cache_it = cache_.find(id);
     if (cache_it == cache_.end()) {
       cache_.emplace(id, Entry{State::Pending, {}});
-      paths_[id] = resolved_path_by_id.at(id);
+      paths_[id] =
+          media::resolve_preview_path(root_path_, ref->file_path, ref->kind, ref->preview_cache_path);
       pending_queue_.push_back(id);
     } else if (cache_it->second.state == State::Pending) {
       pending_queue_.push_back(id);
@@ -120,14 +120,15 @@ void PrefetchCache::set_current(const std::vector<ImageRef>& images,
   cv_.notify_all();
 }
 
-Result<decode::DecodedImage, FetchError> PrefetchCache::get(ImageId id) {
+Result<std::shared_ptr<const decode::DecodedImage>, FetchError> PrefetchCache::get(ImageId id) {
+  using Ret = Result<std::shared_ptr<const decode::DecodedImage>, FetchError>;
   auto t0 = clk::now();
   std::unique_lock<std::mutex> lock(mu_);
 
   auto initial = cache_.find(id);
   if (initial == cache_.end()) {
     log_get(id, "not_in_window", 0.0);
-    return Result<decode::DecodedImage, FetchError>::Err(FetchError::NotInWindow);
+    return Ret::Err(FetchError::NotInWindow);
   }
   bool was_pending = initial->second.state == State::Pending;
 
@@ -140,14 +141,16 @@ Result<decode::DecodedImage, FetchError> PrefetchCache::get(ImageId id) {
   auto cur = cache_.find(id);
   if (cur == cache_.end()) {
     log_get(id, "not_in_window", elapsed);
-    return Result<decode::DecodedImage, FetchError>::Err(FetchError::NotInWindow);
+    return Ret::Err(FetchError::NotInWindow);
   }
   if (cur->second.state == State::Failed) {
     log_get(id, "decode_failed", elapsed);
-    return Result<decode::DecodedImage, FetchError>::Err(FetchError::DecodeFailed);
+    return Ret::Err(FetchError::DecodeFailed);
   }
   log_get(id, was_pending ? "miss" : "hit", elapsed);
-  return Result<decode::DecodedImage, FetchError>::Ok(cur->second.image);
+  // F-14：拷贝 shared_ptr(引用计数 +1),不拷贝像素——持锁时间从"整块 96MB
+  // memcpy"降到一次指针拷贝。
+  return Ret::Ok(cur->second.image);
 }
 
 void PrefetchCache::worker_loop(std::stop_token stop) {
@@ -181,7 +184,8 @@ void PrefetchCache::worker_loop(std::stop_token stop) {
     if (entry_it == cache_.end()) continue;  // 解码期间被驱逐，丢弃结果
     if (decoded.ok()) {
       entry_it->second.state = State::Ready;
-      entry_it->second.image = std::move(decoded.value());
+      entry_it->second.image =
+          std::make_shared<const decode::DecodedImage>(std::move(decoded.value()));
     } else {
       entry_it->second.state = State::Failed;
     }
