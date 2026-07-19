@@ -18,6 +18,7 @@
 namespace pzt::core::project {
 
 using ProjectId = std::int64_t;
+using ImageId = std::int64_t;
 
 enum class CreateProjectError {
   NameAlreadyExists,
@@ -31,6 +32,7 @@ struct ProjectSummary {
   std::int64_t image_count;
   bool archived;
   bool support_raw;  // 见 docs/RAW_Support.md：默认关闭的 opt-in 标记，一旦打开不会自动关闭
+  std::optional<ImageId> last_image_id;  // F-24 会话续点：上次浏览到的那张图,无则 nullopt
 };
 
 // 每处理完一张需要生成 RAW 预览缓存的图片调用一次(done, total)。只有这次
@@ -76,7 +78,10 @@ Result<void, ProjectNotFoundError> archive_project(db::Database& db, ProjectId i
 // 不触碰磁盘上的原始文件。
 Result<void, ProjectNotFoundError> delete_project(db::Database& db, ProjectId id);
 
-using ImageId = std::int64_t;
+// F-24 会话续点：记住这个项目上次浏览到的那张图(cmd_open 退出时写),重开时
+// 若该 id 仍在图片列表里就从它起步。只是一条 UPDATE,不校验 image_id 是否
+// 存在——成员检查交给读取方(打开时用当前图片列表兜)。
+void set_last_image_id(db::Database& db, ProjectId id, ImageId image_id);
 
 struct ImageInfo {
   ImageId id;

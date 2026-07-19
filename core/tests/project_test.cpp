@@ -24,6 +24,7 @@ using pzt::core::project::list_projects;
 using pzt::core::project::open_project;
 using pzt::core::project::ProjectNotFoundError;
 using pzt::core::project::rescan_project;
+using pzt::core::project::set_last_image_id;
 
 namespace {
 
@@ -891,4 +892,30 @@ TEST_CASE("rescan_project with prune=false preserves the old add-only behavior")
   CHECK(rescanned.value().removed_count == 0);
   CHECK(rescanned.value().total_count == 3);
   CHECK(find_image_by_path(db, created.value(), "b.jpg").has_value());
+}
+
+// F-24 会话续点：last_image_id 默认 nullopt(迁移态/从没浏览过),set 之后
+// open_project 能读回；这一并覆盖了 last_image_id 迁移列的读写。
+TEST_CASE("set_last_image_id persists and round-trips via open_project") {
+  auto db = Database::open_at(fresh_db_path("last_image_id"));
+  auto photos = fresh_photo_dir("last_image_id");
+  touch(photos / "a.jpg");
+  touch(photos / "b.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+  auto pid = created.value();
+
+  // 从没设置过 -> nullopt
+  auto before = open_project(db, pid);
+  REQUIRE(before.ok());
+  CHECK_FALSE(before.value().last_image_id.has_value());
+
+  auto image_id = find_image_by_path(db, pid, "b.jpg");
+  REQUIRE(image_id.has_value());
+  set_last_image_id(db, pid, *image_id);
+
+  auto after = open_project(db, pid);
+  REQUIRE(after.ok());
+  REQUIRE(after.value().last_image_id.has_value());
+  CHECK(after.value().last_image_id.value() == *image_id);
 }

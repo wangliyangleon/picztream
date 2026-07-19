@@ -122,6 +122,9 @@ Result<ProjectSummary, ProjectNotFoundError> open_project(ProjectId id);
 
 Result<void, ProjectNotFoundError> archive_project(ProjectId id);
 
+// F-24 会话续点：记录这个项目上次浏览到的那张图,供 cmd_open 退出时写。
+void set_last_image_id(ProjectId project_id, ImageId image_id);
+
 // Cascades the project's images/tags/image_tags rows via the schema's
 // ON DELETE CASCADE. Never touches files on disk.
 Result<void, ProjectNotFoundError> delete_project(ProjectId id);

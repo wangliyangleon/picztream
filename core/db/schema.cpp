@@ -190,6 +190,10 @@ void initialize_schema(sqlite3* conn) {
   // 在 0（未开启），跟 M0/M1 时代"没有 RAW 概念"的项目语义一致。一旦被
   // 打开过就不会自动关闭，没有对应的取消开关。
   ensure_column(conn, "projects", "support_raw", "support_raw INTEGER NOT NULL DEFAULT 0");
+  // F-24 会话续点：记住每个项目上次浏览到的那张图,重开时回到那里。可空整
+  // 数,旧库迁移落 NULL(等同"无续点")。不加外键约束,靠打开时"该 id 是否
+  // 还在图片列表里"的成员检查兜住图被删/prune 掉的情况(见 cmd_open)。
+  ensure_column(conn, "projects", "last_image_id", "last_image_id INTEGER");
   // F-33（曾经在这里）：M3 增量一修订把"审美评分"用的四个旧列（1-100
   // 综合分+点评）换成了上面的 image_evaluations 表，当时加了
   // ensure_column_dropped 在每次开库时把旧列清掉。那批列上的数据只是

@@ -171,7 +171,8 @@ std::optional<ProjectId> find_id_by(sqlite3* db, const char* where_clause,
 
 std::optional<ProjectSummary> get_project_summary(sqlite3* db, ProjectId id) {
   Stmt stmt(db,
-            "SELECT p.id, p.name, p.root_path, p.archived_at, COUNT(i.id), p.support_raw "
+            "SELECT p.id, p.name, p.root_path, p.archived_at, COUNT(i.id), p.support_raw, "
+            "p.last_image_id "
             "FROM projects p LEFT JOIN images i ON i.project_id = p.id "
             "WHERE p.id = ? "
             "GROUP BY p.id;");
@@ -185,6 +186,9 @@ std::optional<ProjectSummary> get_project_summary(sqlite3* db, ProjectId id) {
   s.archived = sqlite3_column_type(stmt.get(), 3) != SQLITE_NULL;
   s.image_count = sqlite3_column_int64(stmt.get(), 4);
   s.support_raw = sqlite3_column_int64(stmt.get(), 5) != 0;
+  if (sqlite3_column_type(stmt.get(), 6) != SQLITE_NULL) {
+    s.last_image_id = sqlite3_column_int64(stmt.get(), 6);
+  }
   return s;
 }
 
@@ -361,6 +365,16 @@ Result<ProjectSummary, ProjectNotFoundError> open_project(db::Database& db, Proj
     return Result<ProjectSummary, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
   }
   return Result<ProjectSummary, ProjectNotFoundError>::Ok(std::move(*summary));
+}
+
+void set_last_image_id(db::Database& db, ProjectId id, ImageId image_id) {
+  sqlite3* conn = db.handle();
+  Stmt stmt(conn, "UPDATE projects SET last_image_id = ? WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, image_id);
+  sqlite3_bind_int64(stmt.get(), 2, id);
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("set_last_image_id failed: ") + sqlite3_errmsg(conn));
+  }
 }
 
 Result<void, ProjectNotFoundError> archive_project(db::Database& db, ProjectId id) {

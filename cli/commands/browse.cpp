@@ -633,7 +633,17 @@ int cmd_open(const std::vector<std::string>& args) {
     // config.json 里覆盖(prefetch_window),不用改代码重新编译。
     pzt::core::PrefetchCache prefetch(project.root_path, settings.prefetch_window,
                                        pzt::core::decode_preview_file);
+    // F-24 会话续点：这个项目上次浏览到的那张图仍在列表里就从它起步,否则
+    // (从没浏览过、或那张图已被删/prune 掉)静默落在第一张。
     pzt::core::ImageId current_id = images.front().id;
+    if (project.last_image_id) {
+      for (const auto& ref : images) {
+        if (ref.id == *project.last_image_id) {
+          current_id = *project.last_image_id;
+          break;
+        }
+      }
+    }
     prefetch.set_current(images, current_id);
 
     // M3：选片辅助评估,`:` 键触发,见 handle_ai_prompt_flow。生命周期跟
@@ -1459,6 +1469,11 @@ int cmd_open(const std::vector<std::string>& args) {
       }
       prefetch.set_current(images, current_id);
     }
+
+    // F-24 会话续点：退出时把当前浏览到的那张写回,下次 open 从这里续上。只
+    // 在干净退出(q/EOF)时写一次,不在每次导航时写——守住零延迟、每键不额外
+    // IO;崩溃/被 kill 丢的只是本次位置,退回上次干净退出点,可接受。
+    pzt::core::set_last_image_id(*id, current_id);
 
     // 退出前显式删掉最后一帧的 placement——AltScreen 切回主屏幕缓冲区、
     // 甚至用户手动跑 `clear`,都清不掉 Kitty 协议画出来的图片,那是叠加在
