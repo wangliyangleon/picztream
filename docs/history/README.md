@@ -16,9 +16,10 @@
 ## 跨里程碑活文档（归档时的状态快照）
 
 - `Roadmap.md` - 项目路线图原稿；其背景、双层流水线、设计哲学、里程碑总览已吸收进 `docs/SPEC.md`
-- `Optimization_Backlog.md` - M1 收尾/M2 开始前的一次优化 review 快照，多数条目已完成，残留观察项在 `docs/Fix_It_Night_Review.md` 中被交叉引用
+- `Optimization_Backlog.md` - M1 收尾/M2 开始前的一次优化 review 快照，多数条目已完成，残留观察项在 `Fix_It_Night_Review.md`（本目录）中被交叉引用
 
 ## Fix-it Night 评审
 
-- `Fix_It_Night_2026-07_Completion_Report.md` - 2026-07 Fix-it Night 全面评审（基于 commit `8f5af14`）的完成报告：已完成的 22 条 F 编号逐项详情、执行日志、E2E 反馈、以及原始四视角评审分析。尚未完成的条目继续在 `docs/Fix_It_Night_Review.md` 里作为活跃 backlog 维护
+- `Fix_It_Night_2026-07_Completion_Report.md` - 2026-07 Fix-it Night 全面评审（基于 commit `8f5af14`）的完成报告：已完成的 22 条 F 编号逐项详情、执行日志、E2E 反馈、以及原始四视角评审分析
+- `Fix_It_Night_Review.md` - 上述评审"尚未完成条目"的活跃 backlog 快照（归档于 2026-07-19，短期必须/可修项已全部收口）：未完成清单、逐项分析、P2 收尾批次 + Wave 1 执行记录、以及 F-28/F-41/F-36残留 三条"记为已知边界/不做"的拍板。**中长期低优先级的剩余条目已提炼进活跃的 `docs/Task_Pool.md`**（编号沿用，回溯细节看这里）
 - `Fix_It_Agent_2026-07_Completion_Report.md` - 2026-07 agent 层三视角评审（基线 commit `14bee68`）的完成报告：AG- 编号 21 条逐项详情 + 修复记录 + 逐条 commit。已收口并真机验证（agent 测试 252 → 313 全绿，含 C++ headless `pzt delete`）；按设计保留不动的观察项/部署周项已在文内标注

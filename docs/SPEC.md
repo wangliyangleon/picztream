@@ -4,7 +4,7 @@
 
 **深度边界（写这份文档时的判据）**：凡是更适合出现在某一周 PRD/Eng Design 里的细节，在这里就太细了。具体的 schema 字段、参数取值范围、算法阈值、某个命令的完整 flag、某次选型的实测数据，都不进这份文档，它们属于对应的周文档或 `docs/history/` 里的里程碑 Eng Design。这里描述"有什么、为什么这么分、边界在哪"，不描述"具体怎么实现"。
 
-相关文档分工：已完成里程碑的设计留档在 `docs/history/`（见其 `README.md` 索引）；RAW 支持的当前基线与已知风险见 `docs/RAW_Support.md`（涉及 RAW 改动前必读）；活跃的修复清单见 `docs/Fix_It_Night_Review.md`。
+相关文档分工：已完成里程碑的设计留档在 `docs/history/`（见其 `README.md` 索引，含已收口的 2026-07 Fix-it Night 评审快照 `Fix_It_Night_Review.md`）；RAW 支持的当前基线与已知风险见 `docs/RAW_Support.md`（涉及 RAW 改动前必读）；中长期低优先级、闲时取用的活儿池见 `docs/Task_Pool.md`。
 
 ---
 

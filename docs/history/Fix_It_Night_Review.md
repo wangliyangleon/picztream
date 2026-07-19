@@ -1,5 +1,7 @@
 # PZT Fix-it Night 剩余项(2026-07 评审的未完成 backlog)
 
+> **已归档(2026-07-19)**:本轮 Fix-it Night 的短期必须/可修项已全部收口(见文末"已完成"节:P2 收尾批次 + Wave 1 + 三条拍板)。本文作为该轮评审的完整快照留档(未完成清单、逐项分析、执行记录、拍板决定)。**未完成的中长期低优先级条目已提炼进活跃的 `docs/Task_Pool.md`**(编号沿用本文,回溯细节看这里);拍板为已知边界/不做的条目(F-28、F-41、F-36 残留子项)已终结,只在本文留档、不进 Task Pool。
+>
 > 本文是 2026-07 Fix-it Night 全面评审(基于 commit `8f5af14`,编号 F-01 到 F-48)中**尚未完成**的条目。已完成的 22 条、完整执行日志、以及原始四视角评审分析已抽离归档到 `docs/history/Fix_It_Night_2026-07_Completion_Report.md`,需要追溯"某条 finding 当初怎么发现的"或"某条已完成项怎么落地的"时去那里查。
 >
 > **2026-07-16 复审**:结合本周(W2026-07-15:本地模型 Ollama / recipe 扩展 / agent Style)以来的代码改动重新过了一遍这些条目。相关文件 `cli/commands/browse.cpp`、`core/dedup/dedup.cpp`、`core/browse/prefetch.cpp`、`core/raw/raw.cpp`、`cli/text/*` 本周均未改动,绝大多数条目的证据(file:line)与结论保持有效;个别随代码漂移或被本周改动波及的引用已就地更新(F-22 行数、F-37 头文件、F-38 schema、F-40/F-44 依赖项)。本轮**只做 update 与清理,不新增问题**(新问题属于下一次 Fix-it Night 的范围)。
