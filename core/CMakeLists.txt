@@ -33,6 +33,7 @@ add_library(core STATIC
   browse/prefetch.cpp
   export/export.cpp
   decode/decode.cpp
+  media/media.cpp
   recipe/recipe.cpp
   color/color.cpp
   raw/raw.cpp

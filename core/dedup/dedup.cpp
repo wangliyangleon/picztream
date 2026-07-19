@@ -2,9 +2,7 @@
 
 #include <algorithm>
 #include <bit>
-#include <cctype>
 #include <cstdio>
-#include <filesystem>
 #include <numeric>
 #include <optional>
 #include <unordered_map>
@@ -12,50 +10,12 @@
 
 #include "core/ai/evaluation.h"
 #include "core/db/stmt.h"
-#include "core/raw/raw.h"
+#include "core/media/media.h"
 #include "core/tagging/tagging.h"
 
 namespace pzt::core::dedup {
 
 namespace {
-
-// M2：跟 core/api.cpp 里 has_raw_extension 判断的是同一件事(扩展名在
-// {.dng, .raf} 内，大小写不敏感)，但那份是 api.cpp 匿名命名空间里的实现
-// 细节，不对外暴露；这里不能反过来 #include "core/api.h"(api.h 的
-// find_and_tag_duplicates 签名要用到 dedup::DedupProgressFn，反向包含会
-// 循环)。三处加起来也就几行逻辑，不值得为此单独抽一个跨模块共享的小工
-// 具函数——跟 project.cpp/api.cpp 已经各自维护一份的先例一致。
-bool has_raw_extension(const std::string& path) {
-  std::string ext = std::filesystem::path(path).extension().string();
-  std::transform(ext.begin(), ext.end(), ext.begin(),
-                  [](unsigned char c) { return std::tolower(c); });
-  return ext == ".dng" || ext == ".raf";
-}
-
-// 跟 core/api.cpp 的 decode_preview_file 是同一套分发逻辑(.dng/.raf 走
-// LibRaw 内嵌预览提取，其它按 JPEG 解码)，作为 find_duplicates 默认的
-// PreviewDecodeFn。
-Result<decode::DecodedImage, decode::DecodeError> default_decode_preview(const std::string& path) {
-  if (!has_raw_extension(path)) {
-    return decode::decode_jpeg_file(path);
-  }
-  auto bytes = raw::extract_embedded_jpeg_bytes(path);
-  if (!bytes.ok()) {
-    auto err = bytes.error() == raw::RawError::FileNotFound ? decode::DecodeError::FileNotFound
-                                                              : decode::DecodeError::DecodeFailed;
-    return Result<decode::DecodedImage, decode::DecodeError>::Err(err);
-  }
-  return decode::decode_jpeg_bytes(bytes.value());
-}
-
-// 跟 core/ai/evaluation_worker.cpp 的 resolve_path 是同一个逻辑(kind=raw
-// 且缓存已生成时直接用缓存文件绝对路径，否则拼 root_path + file_path)，
-// 各自维护一份，不共享——见上面 has_raw_extension 的说明,同样的理由。
-std::string resolve_path(const std::string& root_path, const std::string& file_path,
-                          const std::string& kind, const std::optional<std::string>& preview_cache_path) {
-  if (kind == "raw" && preview_cache_path) return *preview_cache_path;
-  return root_path + "/" + file_path;
-}
 
 struct ImageMeta {
   project::ImageId id;
@@ -227,7 +187,7 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
                                              int time_window_seconds, int hash_threshold,
                                              DedupProgressFn on_progress) {
   return detail::find_duplicates_impl(db, root_path, image_ids, time_window_seconds, hash_threshold,
-                                       std::move(on_progress), default_decode_preview);
+                                       std::move(on_progress), media::decode_preview_file);
 }
 
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
@@ -302,8 +262,8 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
     std::vector<ImageHash> hashes(cluster.size());
     std::vector<bool> valid(cluster.size(), true);
     for (std::size_t i = 0; i < cluster.size(); ++i) {
-      std::string path = resolve_path(root_path, cluster[i].file_path, cluster[i].kind,
-                                       cluster[i].preview_cache_path);
+      std::string path = media::resolve_preview_path(root_path, cluster[i].file_path,
+                                                      cluster[i].kind, cluster[i].preview_cache_path);
       auto decoded = decode_fn(path);
       if (!decoded.ok()) {
         std::fprintf(stderr, "[pzt dedup] decode failed, skipping image_id=%lld path=%s\n",

@@ -1,29 +1,12 @@
 #include "core/api.h"
 
-#include <algorithm>
-#include <cctype>
-#include <filesystem>
 #include <utility>
 
 #include "core/db/database.h"
+#include "core/media/media.h"
 #include "core/raw/raw.h"
 
 namespace pzt::core {
-
-namespace {
-
-// M2：跟 core/project/project.cpp 里 is_raw 判断的是同一件事(扩展名在
-// {.dng, .raf} 内，大小写不敏感)，但不共享代码——project.cpp 那份是内部
-// 匿名命名空间里的实现细节，不对外暴露；这里独立判断一次同样是可以接受
-// 的，两处加起来也就两行逻辑，不值得为此单独抽一个跨模块共享的小工具函数。
-bool has_raw_extension(const std::string& path) {
-  std::string ext = std::filesystem::path(path).extension().string();
-  std::transform(ext.begin(), ext.end(), ext.begin(),
-                  [](unsigned char c) { return std::tolower(c); });
-  return ext == ".dng" || ext == ".raf";
-}
-
-}  // namespace
 
 Settings load_settings() { return settings::load(); }
 
@@ -224,16 +207,7 @@ Result<void, EncodeError> encode_jpeg_file(const DecodedImage& img, const std::s
 }
 
 Result<DecodedImage, DecodeError> decode_preview_file(const std::string& path) {
-  if (!has_raw_extension(path)) {
-    return decode::decode_jpeg_file(path);
-  }
-  auto bytes = raw::extract_embedded_jpeg_bytes(path);
-  if (!bytes.ok()) {
-    auto err = bytes.error() == raw::RawError::FileNotFound ? DecodeError::FileNotFound
-                                                              : DecodeError::DecodeFailed;
-    return Result<DecodedImage, DecodeError>::Err(err);
-  }
-  return decode::decode_jpeg_bytes(bytes.value());
+  return media::decode_preview_file(path);
 }
 
 std::vector<PresetSummary> list_presets() {

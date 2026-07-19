@@ -1,7 +1,6 @@
 #include "core/project/project.h"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -13,6 +12,7 @@
 
 #include "core/db/stmt.h"
 #include "core/decode/decode.h"
+#include "core/media/media.h"
 #include "core/raw/raw.h"
 
 namespace pzt::core::project {
@@ -42,18 +42,9 @@ bool is_jpeg(const fs::path& p) {
   return ext == ".jpg" || ext == ".jpeg";
 }
 
-// M2：目前只认徕卡 DNG / 富士 RAF（docs/M2_PRD.md 明确的范围），写成一个
-// 集合而不是分散的字符串比较，给"以后加 CR2/CR3/NEF/ARW"这个已知的未来
-// 考虑留好扩展点，不需要在多处改判断逻辑。
-constexpr std::array<const char*, 2> kRawExtensions = {".dng", ".raf"};
-
-bool is_raw(const fs::path& p) {
-  std::string ext = lower_ext(p);
-  for (const char* raw_ext : kRawExtensions) {
-    if (ext == raw_ext) return true;
-  }
-  return false;
-}
+// RAW 扩展名集合的唯一归属在 core/media（见 Fix-it F-16）；这里保留 fs::path
+// 签名给下面的扫描调用点用，判断本身转调，避免"加新 RAW 格式时多处漂移"。
+bool is_raw(const fs::path& p) { return media::is_raw_path(p.string()); }
 
 struct ScannedImage {
   std::string relative_path;

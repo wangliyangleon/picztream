@@ -8,6 +8,7 @@ add_executable(core_tests
   prefetch_test.cpp
   export_test.cpp
   decode_test.cpp
+  media_test.cpp
   recipe_test.cpp
   color_test.cpp
   ai_test.cpp

@@ -3,20 +3,11 @@
 #include <cstdio>
 #include <utility>
 
-#include "core/api.h"
 #include "core/db/stmt.h"
+#include "core/media/media.h"
 #include "core/tagging/tagging.h"
 
 namespace pzt::core::ai {
-
-namespace {
-
-std::string resolve_path(const std::string& root_path, const project::ImageInfo& info) {
-  if (info.kind == "raw" && info.preview_cache_path) return *info.preview_cache_path;
-  return root_path + "/" + info.file_path;
-}
-
-}  // namespace
 
 EvaluationWorker::EvaluationWorker(std::string db_path, EvaluationFn evaluation_fn)
     : db_path_(std::move(db_path)), evaluation_fn_(std::move(evaluation_fn)) {
@@ -110,8 +101,9 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
     return EvaluationError::ImageUnavailable;
   }
 
-  std::string path = resolve_path(project_summary.value().root_path, *info);
-  auto decoded = decode_preview_file(path);
+  std::string path = media::resolve_preview_path(project_summary.value().root_path, info->file_path,
+                                                 info->kind, info->preview_cache_path);
+  auto decoded = media::decode_preview_file(path);
   if (!decoded.ok()) {
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld decode failed path=%s\n",
                  static_cast<long long>(req.image_id), path.c_str());
