@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 
 #include "cli/text/text.h"
 
@@ -14,7 +15,24 @@ using namespace pzt::cli::text;
 
 namespace pzt::cli::ui {
 
-void write_stdout(const std::string& s) { write(STDOUT_FILENO, s.data(), s.size()); }
+// F-36：write(2) 可能短写(只写了一部分字节就返回,尤其管道/慢终端下),也
+// 可能被信号打断(EINTR)。以前一次 write 拿到什么算什么,剩余字节被静默丢
+// 弃——正常路径下 stdout 是终端、量也小,基本不触发,但一旦发生就是转义序
+// 列/图片数据被截断的花屏,且无从察觉。循环写到全部字节落地,EINTR 重试;
+// 其它错误没有可行的补救(马上就要退出或继续渲染),直接返回。
+void write_stdout(const std::string& s) {
+  const char* data = s.data();
+  std::size_t remaining = s.size();
+  while (remaining > 0) {
+    ssize_t written = write(STDOUT_FILENO, data, remaining);
+    if (written < 0) {
+      if (errno == EINTR) continue;
+      return;
+    }
+    data += written;
+    remaining -= static_cast<std::size_t>(written);
+  }
+}
 
 void move_cursor(int row, int col) {
   write_stdout("\x1b[" + std::to_string(row) + ";" + std::to_string(col) + "H");

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,7 +24,9 @@ using ImageHash = std::uint64_t;
 // 个 bit，8 行凑够 64 bit，不是随便选的数字。选 dHash 不选 pHash：dHash
 // 不需要离散余弦变换，实现和理解成本都更低，对近似重复(同一场景近乎相
 // 同的照片，不是"风格不同但语义相似"这种更弱的相似)这个场景够用。
-ImageHash compute_dhash(const decode::DecodedImage& image);
+// resize 失败(现路径不可达,纯防御)返回 nullopt,而不是伪造一个合法哈希
+// 0(会被误判成跟其它均匀图重复),让调用方跟解码失败同路径跳过。见 F-36。
+std::optional<ImageHash> compute_dhash(const decode::DecodedImage& image);
 
 // 汉明距离(两个哈希按位异或后数 1 的个数)，越小越相似，取值范围 0-64。
 int hamming_distance(ImageHash a, ImageHash b);

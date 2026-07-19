@@ -99,7 +99,7 @@ Result<decode::DecodedImage, RawError> decode(const std::string& path, bool half
     out.rgba[i * 4 + 0] = img->data[i * 3 + 0];
     out.rgba[i * 4 + 1] = img->data[i * 3 + 1];
     out.rgba[i * 4 + 2] = img->data[i * 3 + 2];
-    out.rgba[i * 4 + 3] = 0;
+    out.rgba[i * 4 + 3] = 255;  // F-34：不透明。LibRaw 输出 f=24(RGB),没有 alpha 通道,这里补的第 4 字节应是不透明而非全透明——现渲染路径不读 alpha,但未来 f=32 直连时全透明会让整图消失,防御性填 255。
   }
 
   LibRaw::dcraw_clear_mem(img);

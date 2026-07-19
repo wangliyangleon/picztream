@@ -174,10 +174,12 @@ std::string path_for(const Fixture& fx, char name) {
 }  // namespace
 
 TEST_CASE("compute_dhash reproduces the exact bit pattern used to construct the source image") {
-  CHECK(compute_dhash(make_dhash_source(0)) == 0);
-  CHECK(compute_dhash(make_dhash_source(~ImageHash{0})) == ~ImageHash{0});
+  // F-36：compute_dhash 现返回 optional(resize 失败时 nullopt);9x8 合成图必
+  // 然成功,解包断言精确 bit pattern。
+  REQUIRE(compute_dhash(make_dhash_source(0)).value() == 0);
+  REQUIRE(compute_dhash(make_dhash_source(~ImageHash{0})).value() == ~ImageHash{0});
   ImageHash mixed = 0x123456789ABCDEF0ULL;
-  CHECK(compute_dhash(make_dhash_source(mixed)) == mixed);
+  REQUIRE(compute_dhash(make_dhash_source(mixed)).value() == mixed);
 }
 
 TEST_CASE("hamming_distance counts differing bits") {

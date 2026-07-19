@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -475,7 +477,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     // 串,外层不会进入"按任意键继续"那个分支。
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(pzt::cli::i18n::msg_ai_processing_submitted(), content_cols));
-    usleep(800000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));  // F-36：usleep 已弃用,统一用 sleep_for
     return ConsoleCommandResult{};
   }
   return ConsoleCommandResult{pzt::cli::i18n::msg_ai_unknown_command(command)};
@@ -1302,7 +1304,7 @@ int cmd_open(const std::vector<std::string>& args) {
           // 主动停一小段时间,让这次加粗有机会被看见,再继续实际的打标
           // 签/摘标签动作。
           highlight_active_menu_key('x', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          usleep(150000);  // 150ms,肉眼可感知的"闪一下",但不会让人觉得卡顿
+          std::this_thread::sleep_for(std::chrono::milliseconds(150));  // 150ms,肉眼可感知的"闪一下",但不会让人觉得卡顿(F-36：usleep -> sleep_for)
 
           auto current_tags = pzt::core::tags_for_image(current_ref->id);
           bool already_tagged = std::any_of(
@@ -1487,8 +1489,13 @@ int cmd_open(const std::vector<std::string>& args) {
 
   if (latency_count > 0) {
     std::sort(latency_samples.begin(), latency_samples.end());
-    std::size_t p95_index = std::min(latency_samples.size() - 1,
-                                      static_cast<std::size_t>(latency_samples.size() * 0.95));
+    // F-36：最近秩法(nearest-rank)取 p95——ceil(0.95*n)-1,而不是原来直接
+    // 截断 0.95*n。样本很少时(一次浏览只切十来张)截断会把 p95 压到偏低、
+    // 甚至跟中位数区分不出;最近秩是百分位的标准定义,小样本下更有意义。夹
+    // 到 [0,n-1] 纯防御。
+    std::size_t n = latency_samples.size();
+    std::size_t rank = static_cast<std::size_t>(std::ceil(0.95 * static_cast<double>(n)));
+    std::size_t p95_index = std::min(n - 1, rank > 0 ? rank - 1 : 0);
     std::fprintf(stderr, "[pzt open] key-to-render summary: n=%zu avg=%.2fms p95=%.2fms max=%.2fms\n",
                  latency_count, latency_sum_ms / static_cast<double>(latency_count),
                  latency_samples[p95_index], latency_max_ms);

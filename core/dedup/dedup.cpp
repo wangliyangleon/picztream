@@ -163,9 +163,13 @@ project::ImageId pick_keep_id(db::Database& db, const std::vector<ImageMeta>& cl
 
 }  // namespace
 
-ImageHash compute_dhash(const decode::DecodedImage& image) {
+std::optional<ImageHash> compute_dhash(const decode::DecodedImage& image) {
   auto resized = decode::resize_rgba(image, 9, 8);
-  if (!resized.ok()) return 0;
+  // F-36：resize 失败以前返回哈希 0——一个完全合法的哈希值(全黑/全均匀图片
+  // 就是 0),会被当成"跟其它 0 哈希的图重复"错误分组。现路径不可达(9x8 目
+  // 标尺寸下 resize_rgba 只会直接返回原图拷贝,不会失败),纯防御:返回
+  // nullopt,让调用方跟解码失败同路径跳过这张,而不是伪造一个哈希。
+  if (!resized.ok()) return std::nullopt;
   const decode::DecodedImage& small = resized.value();
 
   auto luminance = [&](int x, int y) -> int {
@@ -280,7 +284,16 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
         valid[i] = false;
         continue;
       }
-      hashes[i] = compute_dhash(decoded.value());
+      // F-36：compute_dhash 现返回 optional,resize 失败(现路径不可达,纯防
+      // 御)跟解码失败同路径跳过,不再伪造哈希 0 参与分组。
+      auto hash = compute_dhash(decoded.value());
+      if (!hash) {
+        std::fprintf(stderr, "[pzt dedup] dhash failed, skipping image_id=%lld path=%s\n",
+                     static_cast<long long>(cluster[i].id), path.c_str());
+        valid[i] = false;
+        continue;
+      }
+      hashes[i] = *hash;
     }
 
     UnionFind uf(static_cast<int>(cluster.size()));
