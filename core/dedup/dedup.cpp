@@ -28,30 +28,39 @@ struct ImageMeta {
 std::vector<ImageMeta> load_metas(db::Database& db, const std::vector<project::ImageId>& image_ids) {
   if (image_ids.empty()) return {};
 
-  std::string placeholders;
-  for (std::size_t i = 0; i < image_ids.size(); ++i) {
-    if (i) placeholders += ",";
-    placeholders += "?";
-  }
-  std::string sql = "SELECT id, captured_at, file_path, kind, preview_cache_path FROM images "
-                     "WHERE id IN (" +
-                     placeholders + ") AND captured_at IS NOT NULL;";
-  db::Stmt stmt(db.handle(), sql.c_str());
-  for (std::size_t i = 0; i < image_ids.size(); ++i) {
-    sqlite3_bind_int64(stmt.get(), static_cast<int>(i) + 1, image_ids[i]);
-  }
-
+  // F-40：按 500 一批分块绑定，跟 tagging::images_with_tag / project::
+  // evaluated_image_ids 同一个惯例（500 是 SQLITE_MAX_VARIABLE_NUMBER 之下的
+  // 保守值）。3 万+ 张的项目全项目扫一次 dedup 时，单条 IN 把全部 id 绑进一
+  // 条语句会超绑定变量上限直接建语句失败，这里逐块查询、累积结果，最后统
+  // 一按 captured_at 排序。
+  constexpr std::size_t kChunkSize = 500;
   std::vector<ImageMeta> metas;
-  while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-    ImageMeta m;
-    m.id = sqlite3_column_int64(stmt.get(), 0);
-    m.captured_at = sqlite3_column_int64(stmt.get(), 1);
-    m.file_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
-    m.kind = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
-    if (sqlite3_column_type(stmt.get(), 4) != SQLITE_NULL) {
-      m.preview_cache_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 4));
+  for (std::size_t offset = 0; offset < image_ids.size(); offset += kChunkSize) {
+    std::size_t count = std::min(kChunkSize, image_ids.size() - offset);
+    std::string placeholders;
+    for (std::size_t i = 0; i < count; ++i) {
+      if (i) placeholders += ",";
+      placeholders += "?";
     }
-    metas.push_back(std::move(m));
+    std::string sql = "SELECT id, captured_at, file_path, kind, preview_cache_path FROM images "
+                       "WHERE id IN (" +
+                       placeholders + ") AND captured_at IS NOT NULL;";
+    db::Stmt stmt(db.handle(), sql.c_str());
+    for (std::size_t i = 0; i < count; ++i) {
+      sqlite3_bind_int64(stmt.get(), static_cast<int>(i) + 1, image_ids[offset + i]);
+    }
+
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+      ImageMeta m;
+      m.id = sqlite3_column_int64(stmt.get(), 0);
+      m.captured_at = sqlite3_column_int64(stmt.get(), 1);
+      m.file_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
+      m.kind = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
+      if (sqlite3_column_type(stmt.get(), 4) != SQLITE_NULL) {
+        m.preview_cache_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 4));
+      }
+      metas.push_back(std::move(m));
+    }
   }
   std::sort(metas.begin(), metas.end(),
             [](const ImageMeta& a, const ImageMeta& b) { return a.captured_at < b.captured_at; });
@@ -301,6 +310,12 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
       groups_by_root[uf.find(static_cast<int>(i))].push_back(i);
     }
 
+    // F-39：groups_by_root 是 unordered_map，遍历序不稳定，直接灌进 result
+    // 会让 DuplicateGroup 的顺序跨进程运行不确定，违反 Dedup PRD 的确定性
+    // NFR 字面（打标签集合本身一致，但输出顺序不定）。先把本簇的组收进局部
+    // vector，按组内最小 id（group_ids 已升序，即 front）排序后再 append。
+    // cluster 本身已按 captured_at 有序，整体输出即完全确定。
+    std::vector<DuplicateGroup> cluster_groups;
     for (auto& [root, members] : groups_by_root) {
       if (members.size() < 2) continue;
 
@@ -310,8 +325,13 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
       std::sort(group_ids.begin(), group_ids.end());
 
       project::ImageId keep_id = pick_keep_id(db, cluster, members);
-      result.push_back(DuplicateGroup{std::move(group_ids), keep_id});
+      cluster_groups.push_back(DuplicateGroup{std::move(group_ids), keep_id});
     }
+    std::sort(cluster_groups.begin(), cluster_groups.end(),
+              [](const DuplicateGroup& a, const DuplicateGroup& b) {
+                return a.image_ids.front() < b.image_ids.front();
+              });
+    for (auto& g : cluster_groups) result.push_back(std::move(g));
 
     ++done;
     if (on_progress) on_progress(done, total);

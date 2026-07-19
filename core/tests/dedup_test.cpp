@@ -247,6 +247,33 @@ TEST_CASE("union-find merges transitively: A-B and B-C close, A-C over threshold
   CHECK(groups[0].image_ids.size() == 3);
 }
 
+// F-39：同一候选簇里分出多个重复组时，输出顺序以前跟着 unordered_map 的
+// 遍历序走、跨进程运行不稳定，违反 Dedup PRD 的确定性 NFR 字面。现在每簇
+// 的组按组内最小 id 升序输出——这里在一个时间簇内造两组({a,b} 同哈希、
+// {c,d} 另一个哈希、两组间距离超阈值不合并)，直接验证返回的组按 front(即
+// 组内最小 id)升序，不依赖 images 表实际的 id 分配顺序。
+TEST_CASE("groups from one cluster come out ordered by their smallest image id (deterministic)") {
+  auto fx = make_fixture("group_order_deterministic", 4);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+  set_captured_at(fx.db, fx.images[2], 1004);
+  set_captured_at(fx.db, fx.images[3], 1006);  // 四张都在默认 10 秒窗口内，同一候选簇
+
+  ImageHash h1 = 0;
+  ImageHash h2 = ~ImageHash{0};  // 跟 h1 距离 64，两组之间绝不合并
+  auto decoder = hash_map_decoder({{path_for(fx, 'a'), h1},
+                                    {path_for(fx, 'b'), h1},
+                                    {path_for(fx, 'c'), h2},
+                                    {path_for(fx, 'd'), h2}});
+
+  auto groups = detail::find_duplicates_impl(fx.db, fx.root_path, fx.images, 10, 5, nullptr, decoder);
+  REQUIRE(groups.size() == 2);
+  // 每组内部升序(已有保证)，且组间按组内最小 id 升序(F-39)。
+  CHECK(std::is_sorted(groups[0].image_ids.begin(), groups[0].image_ids.end()));
+  CHECK(std::is_sorted(groups[1].image_ids.begin(), groups[1].image_ids.end()));
+  CHECK(groups[0].image_ids.front() < groups[1].image_ids.front());
+}
+
 TEST_CASE("keep_id picks the highest overall_score when every group member is evaluated") {
   auto fx = make_fixture("keep_by_score", 3);
   set_captured_at(fx.db, fx.images[0], 1000);
