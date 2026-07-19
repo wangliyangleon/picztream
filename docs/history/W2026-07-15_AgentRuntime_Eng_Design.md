@@ -1,5 +1,7 @@
 # 目标五 Eng Design：Agent 运行时 consumer/worker 双线程重构
 
+> **已归档(2026-07-19)**：目标五「agent 运行时双线程重构」已完成并真机验证——`run_telegram2.py` 转正为 `run_telegram.py`、旧单线程 `router/session_router.py` 及其测试已删（见第九节）。落地含多轮真机反馈的刻意偏离（全 LLM 分类零关键词短路、所有 yes/no 确认改 inline 按钮、worker 拆 classify/drive 双 lane 等），逐条记录在第八节；正文里的 `run_telegram2.py` 是并行开发期临时名。本周开发目标全貌见 `docs/W2026-07-15_PRD.md`。
+
 ## 一、背景与架构总览
 
 `docs/W2026-07-15_PRD.md` 目标五：`run_telegram.py` 单线程同步主循环把整条 drive（Evaluate 数分钟）和同步 LLM 分类调用（本地 Ollama 首响 10s+）都嵌在 `handle_message` 里，期间入站消息全部堵死。重构为双线程 + 消息传递：

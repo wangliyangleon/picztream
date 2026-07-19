@@ -1,5 +1,7 @@
 # 目标三 Eng Design：Agent 支持 Apply Recipe（LLM 选风格）
 
+> **已归档(2026-07-19)**：目标三「agent 选风格」已完成，最终形态是本文档第二节起描述的"用户一句话描述 + LLM 纯文本匹配预设 + 整批统一"两段式闸门流程（相对 PRD 原始"看图自动选"的翻转，见第一节设计演变）。**注意跨文档取代**：第七节「`session_router.py` 接入两段闸门」所述的路由层已被目标五的 `agent/session/consumer.py` 取代（单线程 router 已删），两段闸门的行为逐条保留、迁移记录见 `docs/history/W2026-07-15_AgentRuntime_Eng_Design.md` 第八节对齐清单。本周开发目标全貌见 `docs/W2026-07-15_PRD.md`。
+
 ## 一、背景与设计演变
 
 `docs/W2026-07-15_PRD.md` 目标三：`Curate` 选完图之后新增 `Style` 能力，用 LLM 从目标二产出的 9 个预设里选一个风格应用；范围是"LLM 自动选，不是用户点名"，闸门默认打开，复用现有"结构化配置增量 + 受影响 Stage 集合"的调整模型。
