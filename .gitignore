@@ -5,3 +5,4 @@ agent/.venv/
 agent/.pytest_cache/
 agent/**/__pycache__/
 agent/*.egg-info/
+.DS_Store

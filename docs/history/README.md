@@ -13,9 +13,13 @@
 - `M4_Agent_Workflow_Design.md` - agent 编排层架构设计（Stage/Plan/Driver/闸门/调整模型的原始设计）
 - `M4_Brainstorm.md` - M4 前期头脑风暴（agent 层、用例、本地模型策略的广义参考）
 
-## 周开发目标 Eng Design（W2026-07-15，随目标完成归档）
+## 周开发目标（W2026-07-15，已收口归档）
 
-本周 PRD（`docs/W2026-07-15_PRD.md`）仍在活跃（目标四部署未开工），但各目标的 Eng Design 已随实现完成归档到这里。以下四份的落地形态与文档一致，各自顶部有归档说明：
+本周五个目标已全部收口（2026-07-20），PRD 与各目标的 Eng Design 均已归档到这里：
+
+- `W2026-07-15_PRD.md` - 本周开发目标 PRD（五个目标：本地模型 / recipe 扩展 / agent Style / 部署分发 / agent 运行时重构）。每个目标小节顶部有状态行；目标二的几何变换顺延，见 `docs/Task_Pool.md`
+
+以下四份 Eng Design 的落地形态与文档一致，各自顶部有归档说明（目标四部署无独立 Eng Design，工程细节落在 formula/脚本/workflow 与 README）：
 
 - `W2026-07-15_LocalModel_Eng_Design.md` - 目标一，本地模型 `Provider::Local`/Ollama（默认 `gemma4:e2b` + JSON-Schema 约束解码，第十节含真机基准）
 - `W2026-07-15_RecipeExpansion_Eng_Design.md` - 目标二，Recipe 预设扩展（9 个 City+Year 预设 + `VersionParams` 四新旋钮 + 数值规范化；**几何变换未做、顺延**，见文档归档说明）
