@@ -16,9 +16,9 @@ class Pzt < Formula
   depends_on "pkg-config" => :build
   depends_on "libomp"
   depends_on "libraw"
+  depends_on :macos
   depends_on "nlohmann-json"
   depends_on "sqlite"
-  depends_on :macos
 
   def install
     # core/CMakeLists.txt 硬编码 /opt/homebrew/opt/libomp,只在 Apple Silicon 成立。
