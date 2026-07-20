@@ -13,8 +13,8 @@ class PztAgent < Formula
   sha256 "REPLACE_WITH_TARBALL_SHA256"
   head "https://github.com/wangliyangleon/picztream.git", branch: "main"
 
-  depends_on "pzt"            # 装 agent 顺带装 CLI,统一 brew 故事
   depends_on "python@3.14"
+  depends_on "pzt" # 装 agent 会顺带装 CLI,统一 brew 故事
 
   resource "anyio" do
     url "https://files.pythonhosted.org/packages/96/f0/5eb65b2bb0d09ac6776f2eb54adee6abe8228ea05b20a5ad0e4945de8aac/anyio-4.12.1.tar.gz"
@@ -46,9 +46,12 @@ class PztAgent < Formula
     sha256 "ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848"
   end
 
+  # 用 wheel 而非 sdist:python-telegram-bot 20.8 的 setup.py 在新 setuptools/py3.14
+  # 下 sdist 构建报 KeyError('__version__');它是纯 python 通用 wheel,Homebrew 原生
+  # 支持 py3-none-any.whl resource(见 Homebrew language/python.rb)。其余 8 个 sdist 正常。
   resource "python-telegram-bot" do
-    url "https://files.pythonhosted.org/packages/38/4c/90e0cee1ad7525d4009ae300219c6ee553aedc38cce59c8deb5dffb1859d/python-telegram-bot-20.8.tar.gz"
-    sha256 "0e1e4a6dbce3f4ba606990d66467a5a2d2018368fe44756fae07410a74e960dc"
+    url "https://files.pythonhosted.org/packages/6f/8e/4e4ed06986557fce0c41c3dfc60c5495b1095cf8a552bdc4c56e96aefdac/python_telegram_bot-20.8-py3-none-any.whl"
+    sha256 "a98ddf2f237d6584b03a2f8b20553e1b5e02c8d3a1ea8e17fd06cc955af78c14"
   end
 
   resource "sniffio" do
@@ -56,7 +59,7 @@ class PztAgent < Formula
     sha256 "f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc"
   end
 
-  resource "typing_extensions" do
+  resource "typing-extensions" do
     url "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz"
     sha256 "dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"
   end
