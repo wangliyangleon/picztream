@@ -158,7 +158,7 @@
 
 <span class="c"># 本地 AI 模型(默认 provider=local)</span>
 <span class="p">$</span> brew install --cask ollama
-<span class="p">$</span> ollama pull gemma4:e2b
+<span class="p">$</span> ollama pull gemma4:e2b           <span class="c"># 默认模型,可换成别的 Ollama 模型(见「配置」)</span>
 
 <span class="c"># 配置(@BotFather 建 bot 拿 token,取自己的 chat_id)并启动</span>
 <span class="p">$</span> cp "$(brew --prefix)/share/pzt-agent/pzt-agent.env.example" ~/.pzt-agent.env
@@ -169,6 +169,52 @@
       详见 <a href="https://github.com/wangliyangleon/picztream/blob/main/agent/README.md" style="color:var(--accent2)">agent/README.md</a>。</p>
   </section>
 
+  <section id="config">
+    <h2>配置</h2>
+
+    <h3>pzt CLI — <code>~/.config/pzt/config.json</code></h3>
+    <p class="steps">一个 JSON 文件(不存在就全用默认;逐字段独立容错,某个字段写错只回退那一个)。例:</p>
+    <pre class="mono">{
+  <span class="c">// 换本地视觉模型 / 换 provider</span>
+  "ai_provider": "local",
+  "ollama_model": "qwen2.5vl:3b"
+}</pre>
+    <table>
+      <thead><tr><th>字段</th><th>默认</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>ai_provider</code></td><td class="mono">gemini</td><td>视觉评估 provider:<code>gemini</code> / <code>claude</code> / <code>local</code>(本地 Ollama)</td></tr>
+        <tr><td class="k"><code>ollama_model</code></td><td class="mono">gemma4:e2b</td><td><b>本地视觉模型名</b>(打分/去重用);换模型改这里</td></tr>
+        <tr><td class="k"><code>ollama_base_url</code></td><td class="mono">localhost:11434</td><td>本地 Ollama 服务地址</td></tr>
+        <tr><td class="k"><code>curate_time_window_seconds</code><br><code>curate_hash_threshold</code></td><td class="mono">20<br>10</td><td>选片分簇的时间窗(秒)与哈希阈值</td></tr>
+        <tr><td class="k"><code>dedup_time_window_seconds</code><br><code>dedup_hash_threshold</code></td><td class="mono">10<br>5</td><td>近似重复分簇的时间窗(秒)与哈希阈值</td></tr>
+        <tr><td class="k"><code>auto_ai_reject</code></td><td class="mono">false</td><td>评分任一项不达标就自动打「废片」标签</td></tr>
+        <tr><td class="k"><code>eval_reject</code> / <code>dedup_reject</code><br><code>export_reject</code> / <code>export_dup</code></td><td class="mono">false</td><td>批量操作的默认排除策略开关(改成 true 即「不排除」)</td></tr>
+        <tr><td class="k"><code>lang</code></td><td class="mono">跟随系统</td><td>界面语言:<code>zh</code> / <code>en</code></td></tr>
+        <tr><td class="k"><code>ui_width_ratio</code></td><td class="mono">0.7</td><td>图片显示宽度占终端的比例</td></tr>
+        <tr><td class="k"><code>prefetch_window</code></td><td class="mono">3</td><td>预取缓存窗口(当前图前后各 N 张)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>agent — 环境变量</h3>
+    <p class="steps">放进 <code>~/.pzt-agent.env</code>(从 <code>pzt-agent.env.example</code> 拷)。</p>
+    <table>
+      <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>TELEGRAM_BOT_TOKEN</code></td><td class="mono">必填</td><td>@BotFather 的 bot token</td></tr>
+        <tr><td class="k"><code>TELEGRAM_CHAT_ID</code></td><td class="mono">必填</td><td>只接受这个 chat 的消息(单用户自托管)</td></tr>
+        <tr><td class="k"><code>PZT_AGENT_META_PROVIDER</code></td><td class="mono">local</td><td>语言推理 provider:<code>local</code> / <code>gemini</code> / <code>claude</code></td></tr>
+        <tr><td class="k"><code>PZT_AGENT_OLLAMA_MODEL</code></td><td class="mono">gemma4:e2b</td><td><b>agent 语言推理的本地模型名</b>;换模型改这里</td></tr>
+        <tr><td class="k"><code>PZT_BIN</code></td><td class="mono">PATH 上的 pzt</td><td>指定 pzt 二进制;brew 装的一般不用设</td></tr>
+      </tbody>
+    </table>
+    <p class="steps">命令行参数(状态目录、各种播报/提醒间隔)用 <code>pzt-agent --help</code> 查,状态默认落在 <code>~/.pzt-agent</code>。</p>
+
+    <div class="callout" style="border-left-color: var(--accent2); margin-top: 20px;">
+      <b>两个本地模型是分开的:</b> CLI 的<b>视觉</b>模型(看图打分/去重,<code>config.json</code> 的 <code>ollama_model</code>)
+      与 agent 的<b>语言</b>模型(意图/风格匹配,<code>PZT_AGENT_OLLAMA_MODEL</code>)各自独立、都可换,默认都是 <code>gemma4:e2b</code>。
+    </div>
+  </section>
+
   <section id="upgrade">
     <h2>升级</h2>
     <pre class="mono"><span class="p">$</span> brew update && brew upgrade pzt pzt-agent</pre>
@@ -177,6 +223,7 @@
 
   <footer class="wrap">
     <div class="links">
+      <a href="#config">配置</a>
       <a href="https://github.com/wangliyangleon/picztream">GitHub 仓库</a>
       <a href="https://github.com/wangliyangleon/picztream/blob/main/README.md">README</a>
       <a href="https://github.com/wangliyangleon/picztream/blob/main/agent/README.md">Agent 文档</a>
