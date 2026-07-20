@@ -21,6 +21,12 @@ int main(int argc, char** argv) {
   std::string subcommand = argv[1];
   std::vector<std::string> args(argv + 2, argv + argc);
 
+  // 版本查询是无副作用的即时命令,不进下面的子命令 try 块。
+  if (subcommand == "--version" || subcommand == "version") {
+    print_version();
+    return 0;
+  }
+
   // core 用 Result<T,E> 表达预期的业务错误,异常只留给"不该发生"的场景
   // (数据库 busy、磁盘满、库损坏、扫描目录时的文件系统异常等)——但
   // "不该发生"不等于"不会发生"。这里兜底捕获,保证任何逃逸的异常都能

@@ -10,6 +10,10 @@ namespace pzt::cli::commands {
 
 void print_usage();
 
+// `pzt --version` / `pzt version`:打印 PZT_VERSION 到 stdout。版本号是语言
+// 无关的,不走 i18n。
+void print_version();
+
 int cmd_new(const std::vector<std::string>& args);
 int cmd_list(const std::vector<std::string>& args);
 int cmd_open(const std::vector<std::string>& args);

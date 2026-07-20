@@ -17,6 +17,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "pzt_version.h"  // 生成物:PZT_VERSION,见 cli/CMakeLists.txt
 #include "cli/i18n/i18n.h"
 #include "cli/term/cbreak_mode.h"
 #include "cli/text/text.h"
@@ -35,6 +36,10 @@ namespace pzt::cli::commands {
 
 void print_usage() {
   std::fprintf(stderr, "%s", pzt::cli::i18n::usage_main().c_str());
+}
+
+void print_version() {
+  std::printf("pzt %s\n", PZT_VERSION);
 }
 
 void print_tag_usage() {

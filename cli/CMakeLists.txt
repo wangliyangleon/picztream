@@ -38,7 +38,18 @@ add_executable(pzt
   commands/browse.cpp
 )
 
+# 版本号:从 cli/version.h.in 生成 pzt_version.h(PZT_VERSION)到 build 目录,
+# 只有 pzt 可执行文件需要它(commands.cpp 的 print_version)。生成物不进源码树。
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/version.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/pzt_version.h
+  @ONLY)
+target_include_directories(pzt PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
 target_link_libraries(pzt PRIVATE core cli_kitty cli_menu cli_ui cli_text cli_i18n)
+
+# 分发:brew formula 与 `cmake --install` 靠这条把 pzt 装到 <prefix>/bin。
+install(TARGETS pzt RUNTIME DESTINATION bin)
 
 add_subdirectory(tests)
 

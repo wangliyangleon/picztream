@@ -1,0 +1,6 @@
+#pragma once
+
+// 由 CMake 从 cli/version.h.in 生成到 build 目录(见 cli/CMakeLists.txt 的
+// configure_file),版本号唯一来源是顶层 CMakeLists.txt 的 project(VERSION)。
+// 发布流程:改 project(VERSION) + 打 tag + formula 跟随,不手改生成物。
+#define PZT_VERSION "@PROJECT_VERSION@"
