@@ -3,6 +3,20 @@
 > 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
 > 发布与生成流程见 `scripts/release.sh`。
 
+## v2026.7.20 - 2026-07-20
+
+
+### 🚀 部署与分发
+- Deploy Phase B: pzt-agent formula 修正(ptb 用 wheel 绕过 sdist 构建失败 + audit 风格)
+- Deploy: gitignore agent egg-info(pip install 产物)
+- Deploy Phase B(2/2): pzt-agent formula + README + 启动脚本 + release.sh 扩展
+- Deploy Phase B(1/2): agent 可 pip 安装 + default_pzt_bin PATH 兜底
+- Deploy: README 安装步骤补 brew trust(Homebrew 6 第三方 tap 信任门)
+- Deploy: pzt formula depends_on 按 brew audit 字母序排列
+- Deploy: 回填 pzt formula 到 v0.1.0 (sha256)
+
+### 🤖 Agent
+- Agent: 修交付上传超时崩溃(放大上传超时 + 有界重试)
 ## v0.1.0 - 2026-07-20
 
 
@@ -256,6 +270,7 @@
 - Initial commit: project docs (AGENTS.md, Roadmap, M0 PRD)
 
 ### 🚀 部署与分发
+- Deploy Phase A: CLI 分发脚手架(README + formula + CHANGELOG + release 脚本)
 - Deploy Phase 0: 版本真相源 + install 规则(pzt --version)
 
 ### 🤖 Agent
