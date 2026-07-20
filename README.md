@@ -21,11 +21,14 @@
 
 ```sh
 brew tap wangliyangleon/pzt
+brew trust wangliyangleon/pzt   # Homebrew 6+ 对第三方 tap 的一次性信任门
 brew install pzt
 pzt --version
 ```
 
-`brew` 会一并装好原生依赖(sqlite / libraw / libomp / nlohmann-json)。
+`brew` 会一并装好原生依赖(sqlite / libraw / libomp / nlohmann-json)。首次从第三方
+tap 装东西时,Homebrew 6 会要求先 `brew trust` 这个 tap(一次即可),否则报
+"untrusted tap"。
 
 ## 快速上手
 
