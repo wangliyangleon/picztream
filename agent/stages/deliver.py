@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
@@ -10,6 +12,14 @@ from typing import Any, Dict, List
 from orchestrator.stage import StageContext
 from orchestrator.types import StageOutput
 from pzt_client import PztClient, PztCommandError
+
+_log = logging.getLogger("pzt.agent.deliver")
+
+# 单张交付上传的有界重试：网络抖一下（典型 telegram.error.TimedOut）不该让
+# 一个 critical run 直接 FAILED。首试 + 2 次重试，退避 2s→4s；仍失败才让异
+# 常穿透（marker 逐张落盘，重试不会重发已成功的那些张）。
+_SEND_MAX_ATTEMPTS = 3
+_SEND_RETRY_BACKOFF = 2.0
 
 
 @dataclass
@@ -54,6 +64,20 @@ class DeliverStage:
         tmp_path.write_text(json.dumps({"sent": sent}))
         os.replace(tmp_path, marker_path)
 
+    def _send_file_with_retry(self, staged_path: str) -> None:
+        backoff = _SEND_RETRY_BACKOFF
+        for attempt in range(1, _SEND_MAX_ATTEMPTS + 1):
+            try:
+                self.transport.send_file(self.chat_id, staged_path)
+                return
+            except Exception as e:  # noqa: BLE001 传输层异常不细分，有界重试后穿透
+                if attempt >= _SEND_MAX_ATTEMPTS:
+                    raise
+                _log.warning(f"[deliver] 发送失败({attempt}/{_SEND_MAX_ATTEMPTS})，"
+                             f"{backoff:.0f}s 后重试 {staged_path}：{e!r}")
+                time.sleep(backoff)
+                backoff *= 2
+
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
         curate_output = ctx.outputs.get("Curate")
         # export-images 只负责"把选中的图导出成字节"，导出目的地是这个
@@ -84,7 +108,7 @@ class DeliverStage:
             if path in sent_set:
                 continue
             staged_path = str(run_staging_dir / Path(path).name)
-            self.transport.send_file(self.chat_id, staged_path)
+            self._send_file_with_retry(staged_path)
             # 逐张标记：每成功发完一张就立刻落盘，崩溃最多重发这一张
             # 还没标记完的，不会把已经发出去的其它张也重发一遍。
             sent.append(path)

@@ -1,9 +1,18 @@
 import subprocess
 
+import pytest
+
 from orchestrator.stage import StageContext
 from orchestrator.types import StageOutput
 from pzt_client import PztClient
 from stages.deliver import DeliverStage
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_backoff(monkeypatch):
+    # 交付重试的退避是真 time.sleep，测试里没必要真等——统一清零，
+    # 只保留"重试若干次"的行为语义，不拖慢套件。
+    monkeypatch.setattr("stages.deliver._SEND_RETRY_BACKOFF", 0.0)
 
 
 class FakeTransport:
@@ -241,3 +250,36 @@ def test_deliver_resumes_only_unsent_items_after_a_crash_mid_batch(tmp_path):
     assert resumed_transport.sent_files[0][1].endswith("b.jpg")
     assert resumed_transport.sent_files[1][1].endswith("c.jpg")
     assert output.ok is True
+
+
+def test_deliver_retries_transient_send_failure_then_succeeds(tmp_path):
+    # 真机复现：交付全分辨率图上传时网络抖一下（telegram.error.TimedOut）。
+    # 一次瞬时失败不该让 critical run 直接 FAILED——有界重试要能自愈。
+    def fake_runner(argv):
+        return subprocess.CompletedProcess(
+            argv, 0, stdout='{"exported": 1, "skipped": [], "created_dir": true}\n', stderr="")
+
+    class FlakyTransport(FakeTransport):
+        def __init__(self, fail_times):
+            super().__init__()
+            self.remaining_failures = fail_times
+
+        def send_file(self, chat_id, path):
+            if self.remaining_failures > 0:
+                self.remaining_failures -= 1
+                raise TimeoutError("simulated transient upload timeout")
+            super().send_file(chat_id, path)
+
+    client = PztClient(pzt_bin="/fake/pzt", runner=fake_runner)
+    transport = FlakyTransport(fail_times=2)  # 首试 + 1 次重试失败，第 3 次成功
+    marker_dir = tmp_path / "delivered"
+    stage = DeliverStage(client=client, transport=transport, marker_dir=marker_dir,
+                          staging_dir=tmp_path / "staging")
+    ctx = make_curate_output_ctx(["a.jpg"])
+
+    output = stage.run(ctx, {})
+
+    assert output.ok is True
+    assert len(transport.sent_files) == 1  # 重试后最终成功发出去一张
+    assert transport.remaining_failures == 0
+    assert len(list(marker_dir.glob("run-1-*.json"))) == 1  # marker 正常落盘

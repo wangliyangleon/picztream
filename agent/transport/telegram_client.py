@@ -15,6 +15,13 @@ import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 
+# 上传（send_document/send_photo）单独放大超时：交付的是全分辨率原图，真机
+# uplink 慢时 30s 的 write_timeout 经常在上传途中被 httpx 掐断
+# (telegram.error.TimedOut)，跟 Telegram 服务端是否响应无关。只按调用点
+# 覆写这两类请求的 write/read 超时，send_text 等小请求仍保持默认的紧超时。
+_UPLOAD_WRITE_TIMEOUT = 120
+_UPLOAD_READ_TIMEOUT = 60
+
 
 class TelegramConfigError(Exception):
     def __init__(self, code: str, message: str) -> None:
@@ -81,11 +88,13 @@ class TelegramBotClient:
 
     async def send_photo_bytes(self, chat_id: str, path: str, caption: Optional[str] = None) -> None:
         with open(path, "rb") as f:
-            await self._bot.send_photo(chat_id=chat_id, photo=f, caption=caption)
+            await self._bot.send_photo(chat_id=chat_id, photo=f, caption=caption,
+                                       write_timeout=_UPLOAD_WRITE_TIMEOUT, read_timeout=_UPLOAD_READ_TIMEOUT)
 
     async def send_document(self, chat_id: str, path: str) -> None:
         with open(path, "rb") as f:
-            await self._bot.send_document(chat_id=chat_id, document=f)
+            await self._bot.send_document(chat_id=chat_id, document=f,
+                                          write_timeout=_UPLOAD_WRITE_TIMEOUT, read_timeout=_UPLOAD_READ_TIMEOUT)
 
     async def download_photo(self, update: Any, dest_path: str) -> None:
         photo_sizes = update.message.photo

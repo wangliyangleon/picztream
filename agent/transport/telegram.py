@@ -23,6 +23,11 @@ _log = logging.getLogger("pzt.agent.transport")
 _POLL_BACKOFF_MIN = 0.1
 _POLL_BACKOFF_MAX = 30.0
 
+# 上传（send_photo/send_file）的外层同步等待上限：必须 > telegram_client 里
+# _UPLOAD_WRITE_TIMEOUT(120)，留足握手/服务端读取的余量，否则会先于底层上传
+# 超时把上传协程孤儿化。
+_UPLOAD_FUTURE_TIMEOUT = 150
+
 
 def _next_backoff(cur: float) -> float:
     return min(cur * 2, _POLL_BACKOFF_MAX)
@@ -200,8 +205,10 @@ class TelegramTransport:
     def send_photo(self, chat_id: str, path: str, caption: Optional[str] = None) -> None:
         future = asyncio.run_coroutine_threadsafe(
             self._bot_client.send_photo_bytes(chat_id, path, caption), self._loop)
-        future.result(timeout=30)
+        # 外层等待必须大于 telegram_client 里上传的 write/read 超时上限，否则
+        # future 会先于上传超时被掐断，把还在后台 loop 里跑的上传协程孤儿化。
+        future.result(timeout=_UPLOAD_FUTURE_TIMEOUT)
 
     def send_file(self, chat_id: str, path: str) -> None:
         future = asyncio.run_coroutine_threadsafe(self._bot_client.send_document(chat_id, path), self._loop)
-        future.result(timeout=30)
+        future.result(timeout=_UPLOAD_FUTURE_TIMEOUT)
