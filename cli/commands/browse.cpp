@@ -53,7 +53,7 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
 // F-10：AI 供应商固定写死 Gemini 只是因为开发时手头只有 Gemini 的
 // key，不是经过设计的选择(docs/M3_PRD.md"风险与待确认问题"一节的
 // TODO 原话)。优先级:PZT_AI_PROVIDER 环境变量(claude/gemini，大小写
-// 不敏感)> F-12 的 Settings.ai_provider(config.json)> 硬编码 Gemini
+// 不敏感)> F-12 的 Settings.ai_provider(config.json)> 硬编码 Local
 // (Settings 自己的默认值)。不缓存，每次调用现读——这不是热路径(只在
 // 用户真的提交一次 /ai_eval 相关命令时才会走到)，config.json 和
 // getenv 都是廉价操作，不值得为了省这几次调用专门传参或加个全局变量；

@@ -31,7 +31,7 @@ void write_file(const std::string& path, const std::string& content) {
 TEST_CASE("load returns all defaults when the config file doesn't exist") {
   auto path = fresh_config_path("missing");
   Settings s = load(path);
-  CHECK(s.ai_provider == Provider::Gemini);
+  CHECK(s.ai_provider == Provider::Local);
   CHECK(s.ollama_base_url == "http://localhost:11434");
   CHECK(s.ollama_model == "gemma4:e2b");
   CHECK(s.dedup_time_window_seconds == 10);
@@ -52,7 +52,7 @@ TEST_CASE("load returns all defaults when the file is not valid JSON at all") {
   auto path = fresh_config_path("malformed");
   write_file(path, "{ this is not json");
   Settings s = load(path);
-  CHECK(s.ai_provider == Provider::Gemini);
+  CHECK(s.ai_provider == Provider::Local);
   CHECK(s.dedup_time_window_seconds == 10);
 }
 
@@ -115,7 +115,7 @@ TEST_CASE("load falls back per-field on bad types or unrecognized values, others
   })json");
 
   Settings s = load(path);
-  CHECK(s.ai_provider == Provider::Gemini);          // 不认识的供应商名字，回退默认
+  CHECK(s.ai_provider == Provider::Local);           // 不认识的供应商名字，回退默认
   CHECK(s.dedup_time_window_seconds == 10);          // 字符串类型不对，回退默认
   CHECK(s.dedup_hash_threshold == 8);                // 这个字段本身合法，正常生效
   CHECK(s.curate_hash_threshold == 10);              // 字符串类型不对，回退默认
@@ -128,7 +128,7 @@ TEST_CASE("load leaves missing fields at their default, only applies fields pres
 
   Settings s = load(path);
   CHECK(s.ui_width_ratio == doctest::Approx(0.5));
-  CHECK(s.ai_provider == Provider::Gemini);
+  CHECK(s.ai_provider == Provider::Local);
   CHECK(s.dedup_time_window_seconds == 10);
   CHECK(!s.lang.has_value());
 }

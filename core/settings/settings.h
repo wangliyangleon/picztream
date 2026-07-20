@@ -15,7 +15,9 @@
 namespace pzt::core::settings {
 
 struct Settings {
-  ai::Provider ai_provider = ai::Provider::Gemini;
+  // 默认 Local(本地 Ollama)——本地优先、免云端配额;换云端在 config.json
+  // 里把 ai_provider 设成 gemini/claude(并配好对应 API key)。
+  ai::Provider ai_provider = ai::Provider::Local;
   // Provider::Local（Ollama）的连接信息——不是秘密，走 Settings 而不是
   // 环境变量，跟 curate_time_window_seconds 独立于 dedup_time_window_
   // seconds 同一个"可调行为参数放这里"的先例（见 docs/M4_Eng_Design.md
