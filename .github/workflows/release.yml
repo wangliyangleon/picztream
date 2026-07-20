@@ -1,0 +1,90 @@
+name: Release (一键发布)
+
+# 一键发布:手动在 Actions 页点 "Run workflow"。跑构建闸门(CLI 构建+测试、
+# agent 打包+回归),过了才真的打 tag、回填两个 formula、推 tap 仓。
+#
+# 一次性设置:
+#   1. Settings -> Actions -> General -> Workflow permissions 选 "Read and write"
+#      (让 GITHUB_TOKEN 能推 tag/commit 回本仓)。
+#   2. 建一个 secret TAP_PUSH_TOKEN:对 wangliyangleon/homebrew-pzt 有 contents:write
+#      的 fine-grained PAT(跨仓推 formula 用,GITHUB_TOKEN 只能碰当前仓)。
+#
+# 版本号:留空则用当天日期 CalVer YYYY.M.D(UTC,无前导零)。同一天已发过会撞 tag,
+# release.sh 会 abort —— 一天一个版本。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号 CalVer(留空=今天 UTC 日期,如 2026.7.20)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # GITHUB_TOKEN 推 tag/commit 回本仓
+
+jobs:
+  release:
+    runs-on: macos-15   # Apple Silicon runner(/opt/homebrew,与硬编码 libomp 路径一致)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0        # git-cliff 与 git describe 需要全历史 + tags
+
+      - name: 计算版本(CalVer,无前导零)
+        id: ver
+        run: |
+          V="${{ github.event.inputs.version }}"
+          if [ -z "$V" ]; then
+            V="$(date -u +%Y).$((10#$(date -u +%m))).$((10#$(date -u +%d)))"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "发布版本:$V"
+
+      - name: 距上个 tag 无新提交则中止
+        run: |
+          LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -n "$LAST_TAG" ] && [ -z "$(git log "$LAST_TAG"..HEAD --oneline)" ]; then
+            echo "自 $LAST_TAG 起没有新提交,无需发布。" >&2
+            exit 1
+          fi
+
+      - name: 装构建依赖
+        run: |
+          brew install ninja libomp libraw nlohmann-json git-cliff
+          brew install cmake pkg-config sqlite || true   # runner 多半已带,失败忽略
+
+      - name: 构建闸门 — CLI(Release 构建 + ctest)
+        run: |
+          cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_release
+          ctest --test-dir build_release --output-on-failure
+
+      - name: 构建闸门 — agent(打包 + 入口 + 回归)
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet --upgrade pip
+          /tmp/venv/bin/pip install --quiet ./agent pytest
+          /tmp/venv/bin/pzt-agent --help >/dev/null
+          ( cd agent && /tmp/venv/bin/python -m pytest -q )
+
+      - name: 发布 — 打 tag、回填 formula、推 main + tag
+        run: |
+          git config user.name "pzt-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          scripts/release.sh "${{ steps.ver.outputs.version }}"
+
+      - name: 同步 formula 到 tap 仓
+        env:
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/wangliyangleon/homebrew-pzt.git" /tmp/tap
+          cp packaging/homebrew/pzt.rb packaging/homebrew/pzt-agent.rb /tmp/tap/Formula/
+          cd /tmp/tap
+          git config user.name "pzt-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add Formula/
+          git commit -m "pzt/pzt-agent v${V}"
+          git push

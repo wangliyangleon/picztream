@@ -65,7 +65,15 @@ git push origin main
 git push origin "$TAG"
 
 echo "==> 拉 tarball 算 sha256: $TARBALL_URL"
-SHA="$(curl -fsSL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}')"
+# GitHub 刚打完 tag 后 archive 可能有几秒延迟(CI 里尤其),带重试。
+EMPTY_SHA="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+SHA=""
+for attempt in $(seq 1 6); do
+  if got="$(curl -fsSL "$TARBALL_URL" 2>/dev/null | shasum -a 256 | awk '{print $1}')"; then
+    if [[ -n "$got" && "$got" != "$EMPTY_SHA" ]]; then SHA="$got"; break; fi
+  fi
+  echo "    tarball 未就绪,重试 $attempt/6…" >&2; sleep 3
+done
 [[ -n "$SHA" ]] || { echo "算 sha256 失败" >&2; exit 1; }
 echo "    sha256=$SHA"
 
