@@ -25,6 +25,7 @@
 
 | 编号 | 一句话 | Size | 依赖/触发前提 |
 |---|---|---|---|
+| bottle 分发 + 安装统计 | CI 构建预编译 bottle 作为 GitHub Release asset —— 装得更快(不用每次源码构建)+ 拿到真实安装数(读 asset `download_count`) | M | **触发:有一定用户量、想要精确安装曲线,或嫌源码构建慢。** 现状:自托管第三方 tap 是 source-build,Homebrew 官方 analytics 不覆盖它,只能靠 tap 仓 Insights→Traffic 的 clone 流量粗估(14 天窗口、只知"tap 过"不知装了哪个)。做法:release workflow 里加按 macOS 版本 `brew bottle` 产出、传成 Release asset、formula 加 `bottle do` block。见 `docs/RELEASE.md`。 |
 | 几何变换 | 裁切 + 水平矫正,走 `set_image_recipe` 同一条路径应用并渲染(非另起一套机制);也是 agent `Style` Stage 的前置阻塞项之一 | L | **先出 Eng Design**。产品要求已在 `docs/W2026-07-15_PRD.md` 目标二第 3 项落定(验收标准都写好了),缺的是工程方案——裁切改图像尺寸、矫正需旋转重采样,牵涉渲染管线、预取缓存与 version schema。本周目标二拆两刀实现时未纳入、顺延至此。背景见 `docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md`(归档说明)与 `docs/SPEC.md` 未来/搁置一节。 |
 | F-44 | 对当前筛选视图批量打标签 | M | **先用出 `/filter` 手感 + 先出 PRD**。触发前提是能回答 5 个设计问题(入口与触发、作用域边界、确认与撤销、与 cap 交互、批量语义唯一性)——细节见归档报告 F-44 条。核心是"对当前视图批量作用"要能同时覆盖打标签/未来批量导出/清标签,避免两套选择模型。 |
 | F-13 | 有界解码(subsampled decode) | M | **先在真实 24MP+/60MP 素材上量 RSS 与 60MP key-to-render**,把收益写成数字再定 max_px 上限 | 预取缓存全分辨率 RGBA(24MP×7≈0.7GB;60MP 单张解码~180ms 超预算)、dedup 全量解码(~70ms/张)、AI 上传同源的统一杠杆。方案:`core/decode` 加 `decode_jpeg_file_bounded(path, max_px)`(`CGImageSourceCreateThumbnailAtIndex`)。当前 24MP 内体验尚达标,不算急。 |

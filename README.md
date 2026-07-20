@@ -92,6 +92,7 @@ ctest --test-dir build --output-on-failure
 
 - [`AGENTS.md`](AGENTS.md) 是给 **AI agent 的开发指令**,不是用户手册。
 - 设计文档(SPEC、各里程碑/周的 PRD 与 Eng Design)在 [`docs/`](docs/)。
+- 维护者发布流程(一次性 GitHub 设置 + 怎么发版)见 [`docs/RELEASE.md`](docs/RELEASE.md)。
 
 ## 许可
 
