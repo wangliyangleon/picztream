@@ -1,0 +1,45 @@
+# git-cliff 配置:从 commit message 自动生成 CHANGELOG.md。
+# 本项目不用 conventional commits,而是自有前缀(Docs/Agent/Fix-it/Deploy...),
+# 下面的 commit_parsers 把这些前缀映射到 changelog 分组。
+# 生成方式见 scripts/release.sh;CHANGELOG.md 是生成物,不要手改。
+
+[changelog]
+header = """
+# Changelog
+
+> 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
+> 发布与生成流程见 `scripts/release.sh`。
+
+"""
+body = """
+{% if version %}\
+## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## 未发布 (Unreleased)
+{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}\
+- {{ commit.message | split(pat="\n") | first | trim }}
+{% endfor %}\
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "newest"
+commit_parsers = [
+  { message = "^Deploy", group = "🚀 部署与分发" },
+  { message = "^Agent", group = "🤖 Agent" },
+  { message = "^Fix-it", group = "🔧 Fix-it" },
+  { message = "^Docs", group = "📝 文档" },
+  { message = "^Merge ", skip = true },
+  { message = ".*", group = "🔩 其它" },
+]
