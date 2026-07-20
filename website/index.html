@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PicZTream (pzt) - 终端全键盘照片筛选与色彩处理</title>
-<meta name="description" content="终端里的全键盘照片筛选与色彩处理工具。零延迟选片,高性能本地色彩流水线。macOS / Apple Silicon,Homebrew 安装。">
+<meta name="description" content="终端里的全键盘照片筛选与色彩处理工具。零延迟选片，高性能本地色彩流水线。macOS / Apple Silicon，Homebrew 安装。">
 <style>
   :root {
     --bg: #0d1117; --bg-soft: #161b22; --bd: #2a323d;
@@ -83,12 +83,12 @@
   <header>
     <div class="logo mono">PicZTream</div>
     <h1><span class="prompt mono">$</span> pzt</h1>
-    <p class="tagline">终端里的全键盘照片筛选与色彩处理工具。零延迟选片,高性能本地色彩流水线。</p>
+    <p class="tagline">终端里的全键盘照片筛选与色彩处理工具。零延迟选片，高性能本地色彩流水线。</p>
     <div class="badges">
       <span class="badge">macOS</span>
       <span class="badge">Apple Silicon</span>
       <span class="badge">Homebrew</span>
-      <span class="badge">C++20 · 零网络依赖(核心)</span>
+      <span class="badge">C++20 · 零网络依赖（核心）</span>
     </div>
     <div class="cta">
       <a class="btn primary" href="#install">安装</a>
@@ -97,8 +97,8 @@
   </header>
 
   <div class="callout">
-    <b>仅支持 macOS / Apple Silicon(M 系列芯片)。</b> 依赖 CoreGraphics/ImageIO 系统框架,
-    色彩流水线针对 arm64 调优;Intel Mac 与其它平台暂不支持。
+    <b>仅支持 macOS / Apple Silicon（M 系列芯片）。</b> 依赖 CoreGraphics/ImageIO 系统框架，
+    色彩流水线针对 arm64 调优；Intel Mac 与其它平台暂不支持。
   </div>
 
   <section id="features">
@@ -106,15 +106,15 @@
     <div class="features">
       <div class="feature">
         <h3>零延迟选片</h3>
-        <p><code>h</code>/<code>l</code> 翻页、<code>space</code> 打标签、<code>x</code> 标废片,配合预取缓存做到按键即出图(Ghostty + Kitty 图像协议)。</p>
+        <p><code>h</code>/<code>l</code> 翻页、<code>space</code> 打标签、<code>x</code> 标废片，配合预取缓存做到按键即出图（Ghostty + Kitty 图像协议）。</p>
       </div>
       <div class="feature">
         <h3>本地色彩流水线</h3>
-        <p>一组"城市+年份"recipe 预设,可在预设上自建 version 微调(对比度/饱和度/白平衡/颗粒…),实时预览。</p>
+        <p>一组「城市+年份」recipe 预设，可在预设上自建 version 微调（对比度/饱和度/白平衡/颗粒…），实时预览。</p>
       </div>
       <div class="feature">
-        <h3>AI 辅助(可选)</h3>
-        <p>看图打分、近似重复检测。本地 Ollama(免配额)或云端 Claude/Gemini,不占核心执行路径。</p>
+        <h3>AI 辅助（可选）</h3>
+        <p>看图打分、近似重复检测。本地 Ollama（免配额）或云端 Claude/Gemini，不占核心执行路径。</p>
       </div>
       <div class="feature">
         <h3>Telegram agent</h3>
@@ -129,10 +129,10 @@
 <span class="p">$</span> brew trust wangliyangleon/pzt   <span class="c"># Homebrew 6 第三方 tap 一次性信任门</span>
 <span class="p">$</span> brew install pzt
 <span class="p">$</span> pzt --version</pre>
-    <p class="steps"><code>brew</code> 会一并装好原生依赖(sqlite / libraw / libomp / nlohmann-json)。</p>
+    <p class="steps"><code>brew</code> 会一并装好原生依赖（sqlite / libraw / libomp / nlohmann-json）。</p>
 
     <h3>快速上手</h3>
-    <pre class="mono"><span class="p">$</span> pzt new trip ~/Photos/trip        <span class="c"># 建项目,指向照片目录</span>
+    <pre class="mono"><span class="p">$</span> pzt new trip ~/Photos/trip        <span class="c"># 建项目，指向照片目录</span>
 <span class="p">$</span> pzt open trip                     <span class="c"># 进入全键盘选片</span>
 <span class="p">$</span> pzt export trip 精选 ~/Photos/out  <span class="c"># 按标签导出</span></pre>
     <table>
@@ -140,32 +140,32 @@
       <tbody>
         <tr><td class="k"><code>h</code> / <code>l</code></td><td>上一张 / 下一张</td></tr>
         <tr><td class="k"><code>j</code> / <code>k</code></td><td>跳到下一张 / 上一张未打标签的图</td></tr>
-        <tr><td class="k"><code>space</code></td><td>给当前图打标签(分组)</td></tr>
+        <tr><td class="k"><code>space</code></td><td>给当前图打标签（分组）</td></tr>
         <tr><td class="k"><code>x</code></td><td>标记为废片</td></tr>
         <tr><td class="k"><code>e</code> / <code>g</code> / <code>r</code></td><td>导出当前图 / 筛选 / 风格</td></tr>
         <tr><td class="k"><code>q</code></td><td>退出</td></tr>
       </tbody>
     </table>
-    <p class="steps">数据存在本地 SQLite:<code>~/.config/pzt/pzt.db</code>,照片本身不搬动。</p>
+    <p class="steps">数据存在本地 SQLite：<code>~/.config/pzt/pzt.db</code>，照片本身不搬动。</p>
   </section>
 
   <section id="agent">
     <h2>安装 Telegram agent</h2>
-    <p class="steps">半自动选片-交付 bot,<b>单用户自托管</b>。装 <code>pzt-agent</code> 会顺带装 <code>pzt</code>。</p>
+    <p class="steps">半自动选片-交付 bot，<b>单用户自托管</b>。装 <code>pzt-agent</code> 会顺带装 <code>pzt</code>。</p>
     <pre class="mono"><span class="p">$</span> brew tap wangliyangleon/pzt
 <span class="p">$</span> brew trust wangliyangleon/pzt
 <span class="p">$</span> brew install pzt-agent           <span class="c"># 顺带装 pzt</span>
 
-<span class="c"># 本地 AI 模型(默认 provider=local)</span>
+<span class="c"># 本地 AI 模型（默认 provider=local）</span>
 <span class="p">$</span> brew install --cask ollama
-<span class="p">$</span> ollama pull gemma4:e2b           <span class="c"># 默认模型,可换成别的 Ollama 模型(见「配置」)</span>
+<span class="p">$</span> ollama pull gemma4:e2b           <span class="c"># 默认模型，可换成别的 Ollama 模型（见「配置」）</span>
 
-<span class="c"># 配置(@BotFather 建 bot 拿 token,取自己的 chat_id)并启动</span>
+<span class="c"># 配置（@BotFather 建 bot 拿 token，取自己的 chat_id）并启动</span>
 <span class="p">$</span> cp "$(brew --prefix)/share/pzt-agent/pzt-agent.env.example" ~/.pzt-agent.env
 <span class="p">$</span> $EDITOR ~/.pzt-agent.env           <span class="c"># 填 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID</span>
 <span class="p">$</span> set -a; source ~/.pzt-agent.env; set +a
-<span class="p">$</span> pzt-agent                          <span class="c"># 长驻: tmux new -s pzt 'pzt-agent'</span></pre>
-    <p class="steps">前置:一个 Telegram bot(token + 你的 chat_id)、一个 AI 模型(本地 Ollama 或云端 key)。
+<span class="p">$</span> pzt-agent                          <span class="c"># 长驻：tmux new -s pzt 'pzt-agent'</span></pre>
+    <p class="steps">前置：一个 Telegram bot（token + 你的 chat_id）、一个 AI 模型（本地 Ollama 或云端 key）。
       详见 <a href="https://github.com/wangliyangleon/picztream/blob/main/agent/README.md" style="color:var(--accent2)">agent/README.md</a>。</p>
   </section>
 
@@ -173,52 +173,52 @@
     <h2>配置</h2>
 
     <h3>pzt CLI — <code>~/.config/pzt/config.json</code></h3>
-    <p class="steps">一个 JSON 文件(不存在就全用默认;逐字段独立容错,某个字段写错只回退那一个)。例:</p>
+    <p class="steps">一个 JSON 文件（不存在就全用默认；逐字段独立容错，某个字段写错只回退那一个）。默认走本地 Ollama，换云端就把 <code>ai_provider</code> 设成 <code>gemini</code>/<code>claude</code>。例：</p>
     <pre class="mono">{
-  <span class="c">// 换本地视觉模型 / 换 provider</span>
-  "ai_provider": "local",
+  <span class="c">// 换云端 provider / 换本地视觉模型</span>
+  "ai_provider": "gemini",
   "ollama_model": "qwen2.5vl:3b"
 }</pre>
     <table>
       <thead><tr><th>字段</th><th>默认</th><th>说明</th></tr></thead>
       <tbody>
-        <tr><td class="k"><code>ai_provider</code></td><td class="mono">gemini</td><td>视觉评估 provider:<code>gemini</code> / <code>claude</code> / <code>local</code>(本地 Ollama)</td></tr>
-        <tr><td class="k"><code>ollama_model</code></td><td class="mono">gemma4:e2b</td><td><b>本地视觉模型名</b>(打分/去重用);换模型改这里</td></tr>
+        <tr><td class="k"><code>ai_provider</code></td><td class="mono">local</td><td>视觉评估 provider：<code>local</code>（本地 Ollama）/ <code>gemini</code> / <code>claude</code></td></tr>
+        <tr><td class="k"><code>ollama_model</code></td><td class="mono">gemma4:e2b</td><td><b>本地视觉模型名</b>（打分/去重用）；换模型改这里</td></tr>
         <tr><td class="k"><code>ollama_base_url</code></td><td class="mono">localhost:11434</td><td>本地 Ollama 服务地址</td></tr>
-        <tr><td class="k"><code>curate_time_window_seconds</code><br><code>curate_hash_threshold</code></td><td class="mono">20<br>10</td><td>选片分簇的时间窗(秒)与哈希阈值</td></tr>
-        <tr><td class="k"><code>dedup_time_window_seconds</code><br><code>dedup_hash_threshold</code></td><td class="mono">10<br>5</td><td>近似重复分簇的时间窗(秒)与哈希阈值</td></tr>
+        <tr><td class="k"><code>curate_time_window_seconds</code><br><code>curate_hash_threshold</code></td><td class="mono">20<br>10</td><td>选片分簇的时间窗（秒）与哈希阈值</td></tr>
+        <tr><td class="k"><code>dedup_time_window_seconds</code><br><code>dedup_hash_threshold</code></td><td class="mono">10<br>5</td><td>近似重复分簇的时间窗（秒）与哈希阈值</td></tr>
         <tr><td class="k"><code>auto_ai_reject</code></td><td class="mono">false</td><td>评分任一项不达标就自动打「废片」标签</td></tr>
-        <tr><td class="k"><code>eval_reject</code> / <code>dedup_reject</code><br><code>export_reject</code> / <code>export_dup</code></td><td class="mono">false</td><td>批量操作的默认排除策略开关(改成 true 即「不排除」)</td></tr>
-        <tr><td class="k"><code>lang</code></td><td class="mono">跟随系统</td><td>界面语言:<code>zh</code> / <code>en</code></td></tr>
+        <tr><td class="k"><code>eval_reject</code> / <code>dedup_reject</code><br><code>export_reject</code> / <code>export_dup</code></td><td class="mono">false</td><td>批量操作的默认排除策略开关（改成 true 即「不排除」）</td></tr>
+        <tr><td class="k"><code>lang</code></td><td class="mono">跟随系统</td><td>界面语言：<code>zh</code> / <code>en</code></td></tr>
         <tr><td class="k"><code>ui_width_ratio</code></td><td class="mono">0.7</td><td>图片显示宽度占终端的比例</td></tr>
-        <tr><td class="k"><code>prefetch_window</code></td><td class="mono">3</td><td>预取缓存窗口(当前图前后各 N 张)</td></tr>
+        <tr><td class="k"><code>prefetch_window</code></td><td class="mono">3</td><td>预取缓存窗口（当前图前后各 N 张）</td></tr>
       </tbody>
     </table>
 
     <h3>agent — 环境变量</h3>
-    <p class="steps">放进 <code>~/.pzt-agent.env</code>(从 <code>pzt-agent.env.example</code> 拷)。</p>
+    <p class="steps">放进 <code>~/.pzt-agent.env</code>（从 <code>pzt-agent.env.example</code> 拷）。</p>
     <table>
       <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
       <tbody>
         <tr><td class="k"><code>TELEGRAM_BOT_TOKEN</code></td><td class="mono">必填</td><td>@BotFather 的 bot token</td></tr>
-        <tr><td class="k"><code>TELEGRAM_CHAT_ID</code></td><td class="mono">必填</td><td>只接受这个 chat 的消息(单用户自托管)</td></tr>
-        <tr><td class="k"><code>PZT_AGENT_META_PROVIDER</code></td><td class="mono">local</td><td>语言推理 provider:<code>local</code> / <code>gemini</code> / <code>claude</code></td></tr>
-        <tr><td class="k"><code>PZT_AGENT_OLLAMA_MODEL</code></td><td class="mono">gemma4:e2b</td><td><b>agent 语言推理的本地模型名</b>;换模型改这里</td></tr>
-        <tr><td class="k"><code>PZT_BIN</code></td><td class="mono">PATH 上的 pzt</td><td>指定 pzt 二进制;brew 装的一般不用设</td></tr>
+        <tr><td class="k"><code>TELEGRAM_CHAT_ID</code></td><td class="mono">必填</td><td>只接受这个 chat 的消息（单用户自托管）</td></tr>
+        <tr><td class="k"><code>PZT_AGENT_META_PROVIDER</code></td><td class="mono">local</td><td>语言推理 provider：<code>local</code> / <code>gemini</code> / <code>claude</code></td></tr>
+        <tr><td class="k"><code>PZT_AGENT_OLLAMA_MODEL</code></td><td class="mono">gemma4:e2b</td><td><b>agent 语言推理的本地模型名</b>；换模型改这里</td></tr>
+        <tr><td class="k"><code>PZT_BIN</code></td><td class="mono">PATH 上的 pzt</td><td>指定 pzt 二进制；brew 装的一般不用设</td></tr>
       </tbody>
     </table>
-    <p class="steps">命令行参数(状态目录、各种播报/提醒间隔)用 <code>pzt-agent --help</code> 查,状态默认落在 <code>~/.pzt-agent</code>。</p>
+    <p class="steps">命令行参数（状态目录、各种播报/提醒间隔）用 <code>pzt-agent --help</code> 查，状态默认落在 <code>~/.pzt-agent</code>。</p>
 
     <div class="callout" style="border-left-color: var(--accent2); margin-top: 20px;">
-      <b>两个本地模型是分开的:</b> CLI 的<b>视觉</b>模型(看图打分/去重,<code>config.json</code> 的 <code>ollama_model</code>)
-      与 agent 的<b>语言</b>模型(意图/风格匹配,<code>PZT_AGENT_OLLAMA_MODEL</code>)各自独立、都可换,默认都是 <code>gemma4:e2b</code>。
+      <b>两个本地模型是分开的：</b>CLI 的<b>视觉</b>模型（看图打分/去重，<code>config.json</code> 的 <code>ollama_model</code>）
+      与 agent 的<b>语言</b>模型（意图/风格匹配，<code>PZT_AGENT_OLLAMA_MODEL</code>）各自独立、都可换，默认都是 <code>gemma4:e2b</code>。
     </div>
   </section>
 
   <section id="upgrade">
     <h2>升级</h2>
     <pre class="mono"><span class="p">$</span> brew update && brew upgrade pzt pzt-agent</pre>
-    <p class="steps">版本号采用日期(CalVer),每次发布整仓统一升版。</p>
+    <p class="steps">版本号采用日期（CalVer），每次发布整仓统一升版。</p>
   </section>
 
   <footer class="wrap">
