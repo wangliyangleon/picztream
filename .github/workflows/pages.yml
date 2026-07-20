@@ -1,0 +1,38 @@
+name: Deploy homepage to Pages
+
+# 把 website/ 目录发布到 GitHub Pages。因 /docs 已被设计文档占用,不用
+# "Pages from /docs",改走 Actions artifact 部署(无需构建、无需 gh-pages 分支)。
+# 一次性设置:仓库 Settings -> Pages -> Source 选 "GitHub Actions"。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时刻只跑一个部署,新推送取消进行中的旧部署。
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+      - id: deployment
+        uses: actions/deploy-pages@v4
