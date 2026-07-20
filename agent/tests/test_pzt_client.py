@@ -55,6 +55,24 @@ def test_default_pzt_bin_respects_env_override(monkeypatch):
     assert default_pzt_bin() == __import__("pathlib").Path("/custom/path/pzt")
 
 
+def test_default_pzt_bin_prefers_repo_build_over_path(monkeypatch):
+    # 仓库内构建物存在时优先用它(dev 用自己刚构建的,不用 PATH 上 brew 装的)。
+    from pathlib import Path
+    monkeypatch.delenv("PZT_BIN", raising=False)
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    monkeypatch.setattr("pzt_client.shutil.which", lambda name: "/opt/homebrew/bin/pzt")
+    assert default_pzt_bin().parts[-3:] == ("build_release", "cli", "pzt")
+
+
+def test_default_pzt_bin_falls_back_to_path_when_no_repo_build(monkeypatch):
+    # brew 装的 agent 没有仓库构建物:回落到 PATH 上的 pzt(pzt-agent depends_on pzt)。
+    from pathlib import Path
+    monkeypatch.delenv("PZT_BIN", raising=False)
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    monkeypatch.setattr("pzt_client.shutil.which", lambda name: "/opt/homebrew/bin/pzt")
+    assert default_pzt_bin() == Path("/opt/homebrew/bin/pzt")
+
+
 @pytest.mark.skipif(not default_pzt_bin().exists(), reason="build_release/cli/pzt not built")
 def test_real_binary_wiring_smoke():
     # 唯一一条碰真二进制的测试:用一个必定报错、不产生任何云端调用/不

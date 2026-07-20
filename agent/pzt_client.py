@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -32,12 +33,20 @@ class PztCancelledError(Exception):
 
 
 def default_pzt_bin() -> Path:
+    # 解析顺序:显式 PZT_BIN > 仓库内构建物 > PATH 上的 pzt > 仓库路径兜底。
+    # dev 在仓库里用自己刚构建的 build_release/cli/pzt;brew 装的 agent 没有
+    # 仓库,回落到 PATH 上 brew 装的 pzt(pzt-agent formula depends_on pzt)。
     env = os.environ.get("PZT_BIN")
     if env:
         return Path(env)
     # agent/pzt_client.py -> agent/ -> 仓库根 -> build_release/cli/pzt
-    repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "build_release" / "cli" / "pzt"
+    repo_local = Path(__file__).resolve().parent.parent / "build_release" / "cli" / "pzt"
+    if repo_local.exists():
+        return repo_local
+    found = shutil.which("pzt")
+    if found:
+        return Path(found)
+    return repo_local  # 都没有:回落到约定路径,让后续报错信息清晰
 
 
 PztRunner = Callable[[List[str]], subprocess.CompletedProcess]
