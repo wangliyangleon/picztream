@@ -7,8 +7,8 @@
 class Pzt < Formula
   desc "Terminal keyboard-driven photo culling and local color pipeline"
   homepage "https://github.com/wangliyangleon/picztream"
-  url "https://github.com/wangliyangleon/picztream/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "e8baa91bd4fa046f4982636761139a57b35d1d2b3d43f3218014c3bacb953680"
+  url "https://github.com/wangliyangleon/picztream/archive/refs/tags/v2026.7.20.tar.gz"
+  sha256 "c83c246b6de9e0b3f57125d19486bb023f586eb46db35d38d1a32909c064085b"
   head "https://github.com/wangliyangleon/picztream.git", branch: "main"
 
   depends_on "cmake" => :build
