@@ -272,8 +272,11 @@ std::optional<std::string> read_text_line_with_placeholder(const std::string& pl
   auto redraw = [&] {
     std::string display_content = " " + (buffer.empty() ? placeholder : buffer);
     std::string line1 = truncate_text(display_content, static_cast<std::size_t>(content_cols));
-    std::string line2 = truncate_text(display_content.substr(line1.size()),
-                                       static_cast<std::size_t>(content_cols));
+    std::string remainder = display_content.substr(line1.size());
+    // 折行到第二行时也留一个前导空格，跟第一行对齐，不顶最左边。
+    std::string line2 =
+        remainder.empty() ? std::string()
+                          : truncate_text(" " + remainder, static_cast<std::size_t>(content_cols));
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(line1, content_cols));
     move_cursor(banner_row + 1, start_col + 1);
@@ -295,7 +298,8 @@ std::optional<std::string> read_text_line_with_placeholder(const std::string& pl
       std::size_t rest_cursor_pos = cursor_byte_pos - cursor_line1.size();
       std::string cursor_line2 = truncate_text(rest, static_cast<std::size_t>(content_cols));
       std::string up_to_cursor_line2 = rest.substr(0, std::min(rest_cursor_pos, cursor_line2.size()));
-      move_cursor(banner_row + 1, start_col + 1 + static_cast<int>(display_width(up_to_cursor_line2)));
+      // 第二行显示时多了一个前导空格(见 redraw 的 line2)，光标列相应 +1。
+      move_cursor(banner_row + 1, start_col + 2 + static_cast<int>(display_width(up_to_cursor_line2)));
     }
   };
 

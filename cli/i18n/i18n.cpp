@@ -1644,16 +1644,6 @@ std::string recipe_menu_create_success(const std::string &preset_name) {
   }
 }
 
-std::string
-recipe_menu_options_line(const std::vector<pzt::core::PresetSummary> &presets) {
-  std::string line;
-  for (size_t i = 0; i < presets.size(); ++i) {
-    if (i > 0) line += "  ";
-    line += menu_item(std::to_string(i + 1), presets[i].name);
-  }
-  return " " + line;
-}
-
 std::string recipe_menu_actions_line(bool has_recipe) {
   if (g_lang == Lang::zh) {
     std::string line = " " + menu_item("r", "清除");

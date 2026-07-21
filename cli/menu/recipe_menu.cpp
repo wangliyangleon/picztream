@@ -2,8 +2,10 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "cli/text/text.h"
 #include "cli/ui/ui.h"
 #include "cli/i18n/i18n.h"
 
@@ -208,6 +210,49 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
 
 }  // namespace
 
+// 预设一多，单行装不下——把编号选项按"整个 N:[名字] 不拆行"的原则铺到两
+// 行(第一行装不下的整个单元挪到第二行)，操作图例(r/c/d/esc)右对齐贴在第二
+// 行末尾。返回 {line1, line2} 交给 prompt_and_read_key_2line 渲染。两行都带
+// 一个前导空格，跟其它 banner 的留白风格一致。
+std::pair<std::string, std::string> build_recipe_menu_lines(
+    const std::vector<pzt::core::PresetSummary>& presets, const std::string& legend,
+    int content_cols) {
+  const auto width = static_cast<std::size_t>(content_cols);
+  const std::string sep = "  ";
+
+  std::vector<std::string> items;
+  items.reserve(presets.size());
+  for (std::size_t i = 0; i < presets.size(); ++i) {
+    items.push_back(pzt::cli::i18n::menu_item(std::to_string(i + 1), presets[i].name));
+  }
+
+  // 第一行:尽量多的完整 item。加上去会超宽就停,整个单元留给第二行。
+  std::string line1 = " ";
+  std::size_t idx = 0;
+  for (; idx < items.size(); ++idx) {
+    std::string piece = (idx == 0 ? std::string() : sep) + items[idx];
+    if (pzt::cli::text::display_width(line1) + pzt::cli::text::display_width(piece) > width) break;
+    line1 += piece;
+  }
+
+  // 第二行:剩余 item + 右对齐的操作图例。给图例预留宽度,不跟 item 抢。
+  const std::size_t legend_w = pzt::cli::text::display_width(legend);
+  std::string line2_items = " ";
+  for (std::size_t j = idx; j < items.size(); ++j) {
+    std::string piece = (j == idx ? std::string() : sep) + items[j];
+    if (pzt::cli::text::display_width(line2_items) + pzt::cli::text::display_width(piece) + legend_w >
+        width) {
+      break;
+    }
+    line2_items += piece;
+  }
+  const std::size_t used = pzt::cli::text::display_width(line2_items) + legend_w;
+  const std::size_t gap = used < width ? width - used : 0;
+  std::string line2 = line2_items + std::string(gap, ' ') + legend;
+
+  return {line1, line2};
+}
+
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
                          int content_cols) {
   // `c` 新建 version 之后留在这个循环里,不管成功/失败/中途 Esc 取消都回
@@ -222,11 +267,12 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
     // 用户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变
     // (之前试过跟着状态变文案,反而更难读)。
     bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
-    // 预设一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
-    // 作,见 prompt_and_read_key_2line 的说明。
-    char c = prompt_and_read_key_2line(pzt::cli::i18n::recipe_menu_options_line(presets),
-                                        pzt::cli::i18n::recipe_menu_actions_line(has_recipe),
-                                        banner_row, start_col, content_cols);
+    // 预设一多单行拼不下:编号选项按整个单元铺满两行(不拆 id 和名字)，操作
+    // 图例右对齐贴第二行末尾,见 build_recipe_menu_lines。
+    auto [line1, line2] =
+        build_recipe_menu_lines(presets, pzt::cli::i18n::recipe_menu_actions_line(has_recipe),
+                                 content_cols);
+    char c = prompt_and_read_key_2line(line1, line2, banner_row, start_col, content_cols);
     if (c == 'r' || c == '0') {
       auto result = pzt::core::set_image_recipe(image_id, std::nullopt);
       if (!result.ok()) return {RKeyAction::Cancelled, pzt::cli::i18n::recipe_menu_clear_failed()};

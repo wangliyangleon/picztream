@@ -302,8 +302,9 @@ std::string recipe_menu_input_whites();
 std::string recipe_menu_input_name();
 std::string recipe_menu_create_failed();
 std::string recipe_menu_create_success(const std::string& preset_name);
-// r 顶层菜单拆成两行,跟 tag_menu_options_line/actions_line 同样的理由。
-std::string recipe_menu_options_line(const std::vector<pzt::core::PresetSummary>& presets);
+// r 顶层菜单的操作图例(r/c/d/v/esc)。编号选项的铺行由 cli/menu/recipe_menu
+// 的 build_recipe_menu_lines 负责(要按显示宽度铺满两行、图例右对齐)，i18n
+// 只提供图例这段本地化文案。
 std::string recipe_menu_actions_line(bool has_recipe);
 std::string recipe_menu_clear_failed();
 std::string recipe_menu_apply_failed();
