@@ -208,11 +208,11 @@ TEST_CASE("request_evaluation_impl's prompt omits guidance when empty, includes 
         std::string::npos);
 }
 
-TEST_CASE("request_evaluation_impl's prompt sets the empty-guidance assessment language") {
+TEST_CASE("request_evaluation_impl's prompt always sets the assessment language from the param") {
   EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
   auto img = make_image(4, 4);
 
-  auto capture = [&](Language language) -> std::string {
+  auto capture = [&](Language language, const std::string& guidance) -> std::string {
     std::string body;
     auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
                           const std::string& b) -> Result<HttpResponse, RequestError> {
@@ -220,13 +220,16 @@ TEST_CASE("request_evaluation_impl's prompt sets the empty-guidance assessment l
       return Result<HttpResponse, RequestError>::Ok(
           HttpResponse{200, wrap_claude_response(response_json("ok", false))});
     };
-    auto r = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post, language);
+    auto r = detail::request_evaluation_impl(img, guidance, Provider::Claude, fake_post, language);
     REQUIRE(r.ok());
     return body;
   };
 
-  CHECK(capture(Language::Chinese).find("write it in Chinese") != std::string::npos);
-  CHECK(capture(Language::English).find("write it in English") != std::string::npos);
+  CHECK(capture(Language::Chinese, "").find("assessment in Chinese") != std::string::npos);
+  CHECK(capture(Language::English, "").find("assessment in English") != std::string::npos);
+  // 语言不跟随 guidance——即便 guidance 是英文，Chinese 参数仍要求中文。
+  CHECK(capture(Language::Chinese, "focus on the crop").find("assessment in Chinese") !=
+        std::string::npos);
 }
 
 TEST_CASE("request_evaluation (public entry point) reports MissingApiKey without a real network call") {

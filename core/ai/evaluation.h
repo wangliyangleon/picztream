@@ -28,9 +28,8 @@ enum class EvaluationError { MissingApiKey, NetworkError, HttpError, ParseError,
                               ImageUnavailable, StorageFailed };
 
 // assessment 用哪种语言写——W2026-07-21：assessment 是直接展示给 pzt 用户
-// 看的文字，模型跟随 extra_guidance 的语言；guidance 为空时用这个默认语
-// 言(cli 按当前界面语言 g_lang 映射后传进来)。core 不认识 cli::i18n，只
-// 接一个中性的语言枚举。
+// 看的文字，始终用界面语言写(cli 按当前界面语言 g_lang 映射后传进来)，不
+// 跟随 extra_guidance 切换。core 不认识 cli::i18n，只接一个中性的语言枚举。
 enum class Language { Chinese, English };
 
 // 纯模型输出——不含 extra_guidance/provider，那两个不是模型返回的，是发
@@ -61,8 +60,8 @@ inline bool is_usable(const EvaluationInfo& info) { return !info.unusable; }
 // 构图/色彩/对焦/摄影审美，并判定 unusable)后面跟一段"Additional
 // guidance: {extra_guidance}"(为空时省略)，作为 user_prompt 传给
 // request_json；schema_instruction 描述 EvaluationResult 对应的 JSON 形
-// 状(assessment + unusable)。assessment 的输出语言:跟随 guidance，guidance
-// 为空时用 language 参数指定的语言(见 Language 枚举)。取 assessment(string)
+// 状(assessment + unusable)。assessment 的输出语言:始终用 language 参数指定
+// 的界面语言(见 Language 枚举)，不跟随 guidance。取 assessment(string)
 // 和 unusable(bool)，任一取不到或类型不对整体算失败(ParseError)。
 // RequestError 直接映射到同名的 EvaluationError。框架模板本身不展示给用户
 // (是给模型的系统指令)，固定英文。

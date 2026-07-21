@@ -6,10 +6,10 @@ namespace {
 
 // 发给 AI 的系统层框架指令——固定英文，不跟着 cli::i18n 走。W2026-07-21：
 // 从"曝光/构图/对焦三维技术打分"改成"一段客观文字 assessment(覆盖构图/色
-// 彩/对焦/摄影审美) + 一个 unusable 硬伤 flag"。assessment 的输出语言跟随
-// extra_guidance；guidance 为空时用 language 指定的语言(cli 按当前界面语
-// 言映射后传进来)——框架文案本身仍是英文，只是要求模型用目标语言写
-// assessment 的内容。
+// 彩/对焦/摄影审美) + 一个 unusable 硬伤 flag"。assessment 的输出语言**始
+// 终用 language 指定的语言**(cli 按当前界面语言映射后传进来)，不跟随
+// extra_guidance——不给模型加"按输入语言切换"的负担；extra_guidance 只当额
+// 外内容提示，不影响输出语言。框架文案本身仍是英文。
 std::string build_evaluation_prompt(const std::string& extra_guidance, Language language) {
   const char* lang_word = language == Language::Chinese ? "Chinese" : "English";
   std::string prompt =
@@ -17,8 +17,7 @@ std::string build_evaluation_prompt(const std::string& extra_guidance, Language 
       "composition, color, focus, and photographic aesthetics. Also decide 'unusable': "
       "true only if the photo has a fatal flaw that makes it unusable (e.g. the subject "
       "is badly out of focus, or it is severely over/under-exposed with no recoverable "
-      "detail); otherwise false. Write the assessment in the same language as the "
-      "additional guidance below; if no additional guidance is given, write it in ";
+      "detail); otherwise false. Write the assessment in ";
   prompt += lang_word;
   prompt += ".";
   if (!extra_guidance.empty()) {
