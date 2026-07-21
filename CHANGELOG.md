@@ -3,8 +3,27 @@
 > 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
 > 发布与生成流程见 `scripts/release.sh`。
 
+## v2026.7.21 - 2026-07-21
+
+
+### 📝 文档
+- Docs: 新增 docs/RELEASE.md(一次性 GitHub 设置 + 发版流程); bottle/安装统计进 Task_Pool
+- Docs: W2026-07-15 周目标全部收口, PRD 归档进 history, 标记部署完成
+
+### 🔩 其它
+- pzt: ai_provider 默认改 Local(本地 Ollama), 不再默认 Gemini
+
+### 🚀 部署与分发
+- Deploy Phase D: 一键 dispatch release 自动化(CalVer + 构建闸门)
+- Deploy: 主页文案标点全角化 + ai_provider 默认标 local
+- Deploy Phase C: 主页加配置一节(pzt CLI config.json + agent 环境变量)
+- Deploy Phase C: 静态主页 + GitHub Pages 部署 workflow
+- Deploy: 回填 pzt/pzt-agent formula 到 v2026.7.20 (sha256)
 ## v2026.7.20 - 2026-07-20
 
+
+### 🔩 其它
+- Release v2026.7.20
 
 ### 🚀 部署与分发
 - Deploy Phase B: pzt-agent formula 修正(ptb 用 wheel 绕过 sdist 构建失败 + audit 风格)
