@@ -168,6 +168,69 @@ TEST_CASE("request_json builds a request body containing the image, prompt and s
   CHECK(captured_body.find("\"data\"") != std::string::npos);
 }
 
+// W2026-07-21：多图重载(pairwise 比较发两张图)——三个 provider 的请求体里
+// 都要按顺序带上全部图片，图在前、text 在后。
+TEST_CASE("request_json (multi-image) sends every image to each provider") {
+  auto first = make_image(4, 4);
+  auto second = make_image(4, 4);
+  std::vector<DecodedImage> images{first, second};
+
+  SUBCASE("Claude puts both images before the text in content") {
+    EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+    std::string body;
+    auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                          const std::string& req_body) -> Result<HttpResponse, RequestError> {
+      body = req_body;
+      return Result<HttpResponse, RequestError>::Ok(
+          HttpResponse{200, R"({"content":[{"type":"text","text":"{\"ok\":true}"}]})"});
+    };
+    auto r = request_json(images, "p", "s", Provider::Claude, fake_post);
+    REQUIRE(r.ok());
+    auto content = nlohmann::json::parse(body)["messages"][0]["content"];
+    int image_count = 0;
+    for (const auto& part : content) {
+      if (part.value("type", std::string{}) == "image") ++image_count;
+    }
+    CHECK(image_count == 2);
+    CHECK(content.back()["type"] == "text");
+  }
+
+  SUBCASE("Gemini puts both images before the text in parts") {
+    EnvVarGuard key("GEMINI_API_KEY", "fake-key-for-test");
+    std::string body;
+    auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                          const std::string& req_body) -> Result<HttpResponse, RequestError> {
+      body = req_body;
+      return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+          200, R"({"candidates":[{"content":{"parts":[{"text":"{\"ok\":true}"}]}}]})"});
+    };
+    auto r = request_json(images, "p", "s", Provider::Gemini, fake_post);
+    REQUIRE(r.ok());
+    auto parts = nlohmann::json::parse(body)["contents"][0]["parts"];
+    int image_count = 0;
+    for (const auto& part : parts) {
+      if (part.contains("inline_data")) ++image_count;
+    }
+    CHECK(image_count == 2);
+    CHECK(parts.back().contains("text"));
+  }
+
+  SUBCASE("Local puts both images in the images array") {
+    std::string body;
+    auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                          const std::string& req_body) -> Result<HttpResponse, RequestError> {
+      body = req_body;
+      return Result<HttpResponse, RequestError>::Ok(
+          HttpResponse{200, R"({"message":{"role":"assistant","content":"{\"ok\":true}"}})"});
+    };
+    auto r = request_json(images, "p", "s", Provider::Local, fake_post);
+    REQUIRE(r.ok());
+    auto imgs = nlohmann::json::parse(body)["messages"][0]["images"];
+    REQUIRE(imgs.is_array());
+    CHECK(imgs.size() == 2);
+  }
+}
+
 // F-02：request_json 内部在编码上传之前会把图片降采样，纯色测试图片压
 // 缩后几乎不随分辨率变化，没法从 base64 载荷大小反推有没有真的缩小，
 // 直接测 detail::downscale_for_upload 的输出宽高更准确、更稳定。

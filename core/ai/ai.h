@@ -72,6 +72,17 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
                                                     const LocalModelConfig& local_config = LocalModelConfig{},
                                                     const std::optional<nlohmann::json>& local_json_schema = std::nullopt);
 
+// 多图重载——同一次请求里发多张图(pairwise 比较发两张)。图片按 vector 顺
+// 序排进三个 provider 的请求体(顺序即语义:compare 的 a 在前、b 在后)。上
+// 面的单图 request_json 是这个函数塞 1 元素 vector 的薄壳。
+Result<nlohmann::json, RequestError> request_json(const std::vector<decode::DecodedImage>& images,
+                                                    const std::string& user_prompt,
+                                                    const std::string& schema_instruction,
+                                                    Provider provider,
+                                                    HttpPostFn http_post = perform_curl_post,
+                                                    const LocalModelConfig& local_config = LocalModelConfig{},
+                                                    const std::optional<nlohmann::json>& local_json_schema = std::nullopt);
+
 // 仅供单元测试使用——request_json 内部在编码上传之前会调用这个函数把图
 // 片降采样到一个合理的上限(见 ai.cpp 里的说明:纯色测试图片压缩后几乎
 // 不随分辨率变化，没法从 base64 载荷大小反推有没有真的缩小，直接测这

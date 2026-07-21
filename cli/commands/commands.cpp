@@ -22,6 +22,7 @@
 #include "cli/term/cbreak_mode.h"
 #include "cli/text/text.h"
 #include "cli/ui/ui.h"
+#include "core/ai/compare.h"
 #include "core/ai/evaluation.h"
 #include "core/ai/style.h"
 #include "core/api.h"
@@ -496,6 +497,95 @@ int cmd_curate(const std::vector<std::string>& args) {
   emit_json({{"requested", result.requested},
              {"returned", result.returned},
              {"selected", std::move(selected_paths)}});
+  return 0;
+}
+
+// decode_image_for_ai 定义在下面(靠近 recipe_suggest)，cmd_compare 在它之
+// 前，前向声明一下。
+std::optional<pzt::core::DecodedImage> decode_image_for_ai(pzt::core::ImageId image_id);
+
+// W2026-07-21：CompareError 转成稳定的机读标识符，同 evaluation_error_str/
+// style_error_str 的理由(headless JSON 契约，不走 i18n 人读文案)。
+const char* compare_error_str(pzt::core::ai::CompareError error) {
+  switch (error) {
+    case pzt::core::ai::CompareError::MissingApiKey:
+      return "missing_api_key";
+    case pzt::core::ai::CompareError::NetworkError:
+      return "network_error";
+    case pzt::core::ai::CompareError::HttpError:
+      return "http_error";
+    case pzt::core::ai::CompareError::ParseError:
+      return "parse_error";
+    case pzt::core::ai::CompareError::InvalidWinner:
+      return "invalid_winner";
+  }
+  return "unknown";
+}
+
+// headless：pairwise 视觉比较——发两张图给 AI，返回哪张更好 + 一句理由。
+// 目标二 agent 侧的锦标赛会逐对调用这个命令；本身只负责一场比较，不做
+// bracket 编排。winner 回的是胜者的原始路径(winner=0→pathA、1→pathB)，
+// agent 侧直接拿到胜者路径，不用自己映射 a/b。见
+// docs/W2026-07-21_Eval_Eng_Design.md。
+int cmd_compare(const std::vector<std::string>& args) {
+  bool json = false;
+  std::string provider_str;
+  std::vector<std::string> positional;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--json") {
+      json = true;
+    } else if (args[i] == "--provider") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
+      provider_str = args[++i];
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  pzt::core::Provider provider;
+  if (provider_str == "gemini") {
+    provider = pzt::core::Provider::Gemini;
+  } else if (provider_str == "claude") {
+    provider = pzt::core::Provider::Claude;
+  } else if (provider_str == "local") {
+    provider = pzt::core::Provider::Local;
+  } else {
+    return emit_json_error("usage",
+                            "usage: pzt compare <project> <image_a> <image_b> --provider "
+                            "<gemini|claude|local> --json");
+  }
+  if (positional.size() != 3 || !json) {
+    return emit_json_error("usage",
+                            "usage: pzt compare <project> <image_a> <image_b> --provider "
+                            "<gemini|claude|local> --json");
+  }
+
+  auto project_id = resolve_project_json(positional[0]);
+  if (!project_id) return 1;
+
+  auto image_a_id = pzt::core::find_image_by_path(*project_id, positional[1]);
+  if (!image_a_id) return emit_json_error("image_not_found", "image not found: " + positional[1]);
+  auto image_b_id = pzt::core::find_image_by_path(*project_id, positional[2]);
+  if (!image_b_id) return emit_json_error("image_not_found", "image not found: " + positional[2]);
+
+  auto decoded_a = decode_image_for_ai(*image_a_id);
+  if (!decoded_a) {
+    return emit_json_error("image_unavailable", "failed to decode image: " + positional[1]);
+  }
+  auto decoded_b = decode_image_for_ai(*image_b_id);
+  if (!decoded_b) {
+    return emit_json_error("image_unavailable", "failed to decode image: " + positional[2]);
+  }
+
+  auto settings = pzt::core::load_settings();
+  pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
+
+  auto result = pzt::core::ai::request_comparison(*decoded_a, *decoded_b, provider, local_config);
+  if (!result.ok()) {
+    return emit_json_error(compare_error_str(result.error()), "comparison failed");
+  }
+
+  const std::string& winner_path = result.value().winner == 0 ? positional[1] : positional[2];
+  emit_json({{"winner", winner_path}, {"reasoning", result.value().reasoning}});
   return 0;
 }
 

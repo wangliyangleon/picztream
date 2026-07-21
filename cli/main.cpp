@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
     if (subcommand == "export-images") return cmd_export_images(args);
     if (subcommand == "eval") return cmd_eval(args);
     if (subcommand == "curate") return cmd_curate(args);
+    if (subcommand == "compare") return cmd_compare(args);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_internal_error(e.what()).c_str());
     return 1;

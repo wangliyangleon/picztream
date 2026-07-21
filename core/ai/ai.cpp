@@ -112,21 +112,19 @@ Result<nlohmann::json, RequestError> parse_inner_json(const std::string& text) {
   }
 }
 
-nlohmann::json build_claude_request(const std::string& image_base64,
+nlohmann::json build_claude_request(const std::vector<std::string>& image_base64s,
                                      const std::string& instruction_text) {
+  nlohmann::json content = nlohmann::json::array();
+  for (const auto& image_base64 : image_base64s) {
+    content.push_back({{"type", "image"},
+                        {"source",
+                         {{"type", "base64"}, {"media_type", "image/jpeg"}, {"data", image_base64}}}});
+  }
+  content.push_back({{"type", "text"}, {"text", instruction_text}});
   return {
       {"model", kClaudeModel},
       {"max_tokens", 1024},
-      {"messages",
-       nlohmann::json::array({{{"role", "user"},
-                                {"content", nlohmann::json::array({
-                                                {{"type", "image"},
-                                                 {"source",
-                                                  {{"type", "base64"},
-                                                   {"media_type", "image/jpeg"},
-                                                   {"data", image_base64}}}},
-                                                {{"type", "text"}, {"text", instruction_text}},
-                                            })}}})},
+      {"messages", nlohmann::json::array({{{"role", "user"}, {"content", std::move(content)}}})},
   };
 }
 
@@ -147,16 +145,15 @@ Result<nlohmann::json, RequestError> parse_claude_response(const std::string& bo
   return parse_inner_json(first["text"].get<std::string>());
 }
 
-nlohmann::json build_gemini_request(const std::string& image_base64,
+nlohmann::json build_gemini_request(const std::vector<std::string>& image_base64s,
                                      const std::string& instruction_text) {
+  nlohmann::json parts = nlohmann::json::array();
+  for (const auto& image_base64 : image_base64s) {
+    parts.push_back({{"inline_data", {{"mime_type", "image/jpeg"}, {"data", image_base64}}}});
+  }
+  parts.push_back({{"text", instruction_text}});
   return {
-      {"contents",
-       nlohmann::json::array(
-           {{{"parts", nlohmann::json::array({
-                           {{"inline_data",
-                             {{"mime_type", "image/jpeg"}, {"data", image_base64}}}},
-                           {{"text", instruction_text}},
-                       })}}})},
+      {"contents", nlohmann::json::array({{{"parts", std::move(parts)}}})},
   };
 }
 
@@ -183,7 +180,7 @@ Result<nlohmann::json, RequestError> parse_gemini_response(const std::string& bo
   return parse_inner_json(part["text"].get<std::string>());
 }
 
-nlohmann::json build_local_request(const std::string& image_base64,
+nlohmann::json build_local_request(const std::vector<std::string>& image_base64s,
                                     const std::string& instruction_text,
                                     const std::string& model,
                                     const std::optional<nlohmann::json>& json_schema) {
@@ -192,7 +189,7 @@ nlohmann::json build_local_request(const std::string& image_base64,
       {"format", json_schema.has_value() ? *json_schema : nlohmann::json("json")},
       {"stream", false},
       {"messages", nlohmann::json::array({
-          {{"role", "user"}, {"content", instruction_text}, {"images", nlohmann::json::array({image_base64})}}
+          {{"role", "user"}, {"content", instruction_text}, {"images", image_base64s}}
       })},
   };
   if (json_schema.has_value()) {
@@ -361,7 +358,7 @@ Result<HttpResponse, RequestError> perform_curl_post(
   return Result<HttpResponse, RequestError>::Ok(HttpResponse{status_code, std::move(response_body)});
 }
 
-Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& image,
+Result<nlohmann::json, RequestError> request_json(const std::vector<decode::DecodedImage>& images,
                                                     const std::string& user_prompt,
                                                     const std::string& schema_instruction,
                                                     Provider provider, HttpPostFn http_post,
@@ -374,13 +371,18 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
   }
 
   std::string instruction_text = build_instruction_text(user_prompt, schema_instruction);
-  // F-02：编码上传之前先降采样，见 detail::downscale_for_upload 的说明。
-  decode::DecodedImage upload_image = detail::downscale_for_upload(image);
-  // encode_jpeg_bytes 只在宽高非法时才会失败——upload_image 是已经解码
-  // 成功的预览图(降采样失败时退回原图，同样合法)，宽高非法是编程错误
-  // 而不是运行时该处理的结果，.value() 内部的 assert(ok()) 就是这个契
-  // 约，跟项目里 Result<> 的既有约定一致。
-  std::string image_base64 = base64_encode(decode::encode_jpeg_bytes(upload_image).value());
+  // F-02：编码上传之前先降采样，见 detail::downscale_for_upload 的说明。多
+  // 图(pairwise 比较)按顺序各编码一张——三个 provider 的请求体里图片都是
+  // 按数组顺序排列的，顺序即调用方传入的顺序(compare 的 a 在前、b 在后)。
+  // encode_jpeg_bytes 只在宽高非法时才会失败——upload_image 是已经解码成功
+  // 的预览图(降采样失败时退回原图，同样合法)，宽高非法是编程错误而不是运
+  // 行时该处理的结果，.value() 内部的 assert(ok()) 就是这个契约。
+  std::vector<std::string> image_base64s;
+  image_base64s.reserve(images.size());
+  for (const auto& image : images) {
+    decode::DecodedImage upload_image = detail::downscale_for_upload(image);
+    image_base64s.push_back(base64_encode(decode::encode_jpeg_bytes(upload_image).value()));
+  }
 
   std::string url;
   std::vector<std::pair<std::string, std::string>> headers;
@@ -393,15 +395,15 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
         {"anthropic-version", "2023-06-01"},
         {"content-type", "application/json"},
     };
-    request_body = build_claude_request(image_base64, instruction_text);
+    request_body = build_claude_request(image_base64s, instruction_text);
   } else if (provider == Provider::Gemini) {
     url = gemini_url(*api_key);
     headers = {{"content-type", "application/json"}};
-    request_body = build_gemini_request(image_base64, instruction_text);
+    request_body = build_gemini_request(image_base64s, instruction_text);
   } else {
     url = local_config.base_url + "/api/chat";
     headers = {{"content-type", "application/json"}};
-    request_body = build_local_request(image_base64, instruction_text, local_config.model, local_json_schema);
+    request_body = build_local_request(image_base64s, instruction_text, local_config.model, local_json_schema);
   }
 
   // 跟 core/browse/prefetch.cpp 往 stderr 打 hit/miss/wait_ms 同一个惯
@@ -437,6 +439,16 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
   if (provider == Provider::Claude) return parse_claude_response(response.body);
   if (provider == Provider::Gemini) return parse_gemini_response(response.body);
   return parse_local_response(response.body);
+}
+
+Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& image,
+                                                    const std::string& user_prompt,
+                                                    const std::string& schema_instruction,
+                                                    Provider provider, HttpPostFn http_post,
+                                                    const LocalModelConfig& local_config,
+                                                    const std::optional<nlohmann::json>& local_json_schema) {
+  return request_json(std::vector<decode::DecodedImage>{image}, user_prompt, schema_instruction,
+                      provider, std::move(http_post), local_config, local_json_schema);
 }
 
 }  // namespace pzt::core::ai

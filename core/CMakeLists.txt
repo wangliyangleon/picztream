@@ -41,6 +41,7 @@ add_library(core STATIC
   ai/evaluation.cpp
   ai/evaluation_worker.cpp
   ai/style.cpp
+  ai/compare.cpp
   dedup/dedup.cpp
   curate/curate.cpp
   settings/settings.cpp

@@ -31,5 +31,6 @@ int cmd_dedup(const std::vector<std::string>& args);
 int cmd_export_images(const std::vector<std::string>& args);
 int cmd_eval(const std::vector<std::string>& args);
 int cmd_curate(const std::vector<std::string>& args);
+int cmd_compare(const std::vector<std::string>& args);
 
 }  // namespace pzt::cli::commands
