@@ -927,19 +927,15 @@ std::string msg_ai_prompt_placeholder() {
 
 std::string evaluation_none_label() {
   if (g_lang == Lang::zh) {
-    return "选片评估: 尚未评估";
+    return "AI 点评: 尚未评估";
   } else {
-    return "Culling: not evaluated";
+    return "AI Comment: not evaluated";
   }
 }
 
-std::string evaluation_status_label(bool unusable) {
-  if (g_lang == Lang::zh) {
-    return unusable ? "选片评估: 有硬伤" : "选片评估: 可用";
-  } else {
-    return unusable ? "Culling: unusable" : "Culling: usable";
-  }
-}
+std::string evaluation_comment_label() { return g_lang == Lang::zh ? "AI 点评" : "AI Comment"; }
+
+std::string evaluation_unusable_label() { return g_lang == Lang::zh ? "不可用" : "Unusable"; }
 
 std::string msg_ai_processing_pending() {
   if (g_lang == Lang::zh) {

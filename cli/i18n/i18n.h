@@ -226,10 +226,13 @@ std::string msg_ai_tasks_status(std::size_t queued, bool processing);
 
 // 还没评估过/评估失败时统一显示的占位。
 std::string evaluation_none_label();
-// W2026-07-21：eval 改成"文字 assessment + unusable flag"后，头部一行只
-// 表可用性状态(unusable 为真=有硬伤)；assessment 文字本身由 core 直接给，
-// 不经 i18n(是模型输出，不是 UI 文案)。
-std::string evaluation_status_label(bool unusable);
+// W2026-07-21：AI 点评区块的标题行。刻意不叫"选片/Culling"——那会跟 agent
+// 的选片功能混淆。assessment 文字本身由 core 直接给，不经 i18n(是模型输
+// 出，不是 UI 文案)。
+std::string evaluation_comment_label();
+// 只有 unusable(有硬伤)时才显示的一行，在 assessment 之前加粗——可用时什
+// 么都不显示。
+std::string evaluation_unusable_label();
 
 // Tag Menu
 std::string tag_menu_cap_zero();

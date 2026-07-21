@@ -857,10 +857,11 @@ int cmd_open(const std::vector<std::string>& args) {
         // 前)——标签多、风格层级深的时候可能装不下,超出的部分直接不画,
         // 不做省略号提示或者滚动,这属于"具体分布下一步再优化"的范围,这
         // 一步先保证不会画穿到下半的菜单 block 里。
-        auto emit_line = [&](const std::string& text) {
+        auto emit_line = [&](const std::string& text, bool bold = false) {
           if (row < meta_bottom_row) {
             out += "\x1b[" + std::to_string(row) + ";" + std::to_string(info_col) + "H";
-            out += pad_to(text, info_cols);
+            std::string padded = pad_to(text, info_cols);
+            out += bold ? "\x1b[1m" + padded + "\x1b[0m" : padded;
           }
           ++row;
         };
@@ -966,16 +967,20 @@ int cmd_open(const std::vector<std::string>& args) {
           ++row;
         }
 
-        // W2026-07-21：`:` 触发的选片评估结果——一行可用性状态(unusable
-        // 为真=有硬伤)+ 一段模型给的文字 assessment。复用上面查过的 info。
-        // assessment 长度不可控——按显示宽度硬换行,跟标签/风格一样受
-        // meta_bottom_row 的越界裁剪保护,装不下的部分直接不画。
+        // W2026-07-21：`:` 触发的 AI 点评——标题行"AI 点评"+一段模型给的文
+        // 字 assessment。可用时不显示可用性(避免"选片/Culling"跟 agent 功能
+        // 混淆)，只有 unusable 时在 assessment 前加粗显示一行"不可用"。复用上
+        // 面查过的 info。assessment 长度不可控——按显示宽度硬换行,跟标签/风格
+        // 一样受 meta_bottom_row 的越界裁剪保护,装不下的部分直接不画。
         row++;  // 空一行
         if (!info || !info->evaluation) {
           emit_line(pzt::cli::i18n::evaluation_none_label());
         } else {
           const auto& eval = *info->evaluation;
-          emit_line(pzt::cli::i18n::evaluation_status_label(eval.unusable));
+          emit_line(pzt::cli::i18n::evaluation_comment_label());
+          if (eval.unusable) {
+            emit_line(pzt::cli::i18n::evaluation_unusable_label(), /*bold=*/true);
+          }
           for (const auto& line : wrap_text(eval.assessment, static_cast<std::size_t>(info_cols))) {
             emit_line(line);
           }
