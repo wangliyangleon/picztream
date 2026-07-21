@@ -32,6 +32,7 @@
 | F-37 | api.h 头部重量(json 头透传全 cli TU) | M | 触发:cli 编译时长成体感(header-cascade 影响 edit-build 循环) | 已实测基线(2026-07-19):api.h 头解析 ~0.66s/TU,8/13 cli TU 透传,clean cli 全量 8.6s——**未越阈值**。越阈值再动:worker pimpl 让 `ai.h`/`json.hpp` 停止透传,可从 8 个 TU 各砍 ~0.66s。 |
 | F-38 | 门面每帧多次开连接 | M | 建议随 M4 headless 层立项一起做(引 `core::Session` 持连接);否则触发=key-to-render 超 60ms | 已实测基线(2026-07-19):`open_default`(开连接+全量 schema init)~184µs,导航帧 ~5 次 O(1) 开连接 ≈0.9ms/帧、占 60ms 预算 1.5%——**可忽略**。不预做。 |
 | F-45 | Esc 消歧 20ms 阈值在高延迟终端误判方向键 | M | 依赖:远程/ssh 支持立项(当前锁定本地 Ghostty,不触发) | 若未来支持远程,改读 ESC 后跟随字节的状态机(不依赖时延),而不是靠 20ms 时间窗。 |
+| Apple Vision 聚类评估 | 评估 `VNGenerateImageFeaturePrintRequest` 语义聚类相对现有 dHash+时间窗口的优劣,决定要不要替换 dedup/curate 的分簇底层 | L | **先出 Eng Design(含新依赖评估)**。来源:`docs/W2026-07-21_PRD.md` 拍板——本周锦标赛改造复用现有 dHash,Apple Vision 语义聚类(更懂"同一场景"而非仅"近乎相同")单列于此。需新增 Vision.framework + ObjC++ 桥接;先在真实素材上比 featureprint 距离 vs dHash 汉明距离的分簇质量,把收益写成数字再决定是否切换。 |
 | F-46b | Kitty `t=s` 共享内存介质验证 | S | 无(可选优化,需真机验证收益) | M0 起挂账的可选传输优化,收益需在真机量过再决定是否切换。 |
 
 ## 留观察,暂不列为活儿
