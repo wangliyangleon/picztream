@@ -194,11 +194,16 @@ Result<ComparisonResult, CompareError> request_comparison_impl(
 - **`core/tests/compare_test.cpp`**（新，镜像 `style_test`）：winner "a"/"b" 解析成 0/1、非法 winner → `InvalidWinner`、prompt 含两张图指示、RequestError→CompareError 映射、MissingApiKey 不调 http_post。
 - **`core/tests/ai_test.cpp`（或对应）多图**：新增用例验证 `request_json(std::vector{img1,img2}, ...)` 对 Claude/Gemini/Local 三个 provider 各自把两张图正确编码进请求体（content/parts 两个 image 元素、Local images 数组两元素），复用 `HttpPostFn` 注入捕获 body 断言，不连网络。
 
-## 任务分解（TDD RED→GREEN，一个可提交单元一 commit）
+## 任务分解（TDD RED→GREEN，一个可提交单元一 commit；按"每 commit 可构建"排序）
 
-1. **eval 核心**：`evaluation.h`/`.cpp` 结构体 + prompt/schema + 解析 + 删 `overall_score`/`passes_gate` + 新增 `is_usable` + `EvaluationError` 删 `OutOfRange`；`schema.cpp` 整表重建；`evaluation_worker.cpp` 5 列 UPSERT + auto_reject 改 `unusable`；`project.cpp` 的 join 取列。配套 `evaluation_test`/`evaluation_worker_test` 重写。
-2. **下游收口**（紧跟 1，删 score 函数会当场断这些）：`dedup.cpp` 降级 + `dedup_test`；`curate.cpp` 降级 + `curate_test`；`browse.cpp` 信息栏 + `:401`；`i18n` 增删；`cmd_eval`/`cmd_images`/`PZT_FAKE_EVAL` 输出。
-3. **pairwise**（可与 1/2 并行，不碰分数）：`ai.{h,cpp}` 多图扩展 + 多图测试；`compare.{h,cpp}` + `compare_test`；`pzt compare` headless + `main.cpp` 注册。
+删 `overall_score`/`passes_gate` 之前必须先让 dedup/curate 不再调它们，否则中间提交编译不过——因此把下游解耦排在 eval 结构重构**之前**。三个单元里 1→2 有此顺序约束，3 独立可并行。
+
+1. **dedup/curate 脱离分数**（eval 老结构不动，`overall_score`/`passes_gate` 仍在、只是无人从 dedup/curate 调，全程可构建）：
+   - dedup：`pick_keep_id` 降级为留 `captured_at` 最新（删 `overall_score`/`evaluation` 依赖、签名去 `db`、删 `#include evaluation.h`、更新头注释）；`find_and_tag_duplicates` 聚类前排废片。
+   - curate：`resolve_candidates` 改纯标签排除（删 `passes_gate`/逐图 `get_image`、删 `#include evaluation.h`）；`RepInfo`/`make_rep_info`/`greedy_pick`/簇数<N 排序去质量分、改纯 `captured_at` 时间多样性。
+   - 测试：`dedup_test`（keep 用例重写为留最新 + 新增排废片用例）；`curate_test`（候选纯标签、排序时间多样性；移除只为 keep/候选服务的 `insert_evaluation` 依赖）。
+2. **eval 重构 + 删分数函数 + 展示收口**（原子：删函数与最后的展示消费者同一提交才可构建）：`evaluation.h`/`.cpp` 新结构体 + prompt/schema + 解析 + 删 `overall_score`/`passes_gate`/`kEvaluationGateThreshold` + 加 `is_usable` + `EvaluationError` 删 `OutOfRange`；`api.h` 别名换 `is_usable`；`schema.cpp` 整表幂等重建；`project.cpp` join 取新列；`evaluation_worker.cpp` 5 列 UPSERT + auto_reject 改 `unusable`；`browse.cpp` 信息栏 + `:401`；`i18n` 增删；`cmd_eval`/`cmd_images`/`PZT_FAKE_EVAL` 输出。配套 `evaluation_test`/`evaluation_worker_test` 重写。
+3. **pairwise**（独立，可与 1/2 并行，不碰分数）：`ai.{h,cpp}` 多图扩展 + 多图测试；`compare.{h,cpp}` + `compare_test`；`pzt compare` headless + `main.cpp` 注册。
 
 ## 验证
 
