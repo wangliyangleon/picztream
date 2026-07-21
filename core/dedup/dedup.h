@@ -61,15 +61,10 @@ using DedupProgressFn = std::function<void(int done, int total)>;
 //    志打到 stderr)，不让一张坏图拖垮整簇的比对。
 // 4. 并查集结果里，成员数 >= 2 的集合才算一个"重复组"输出；成员数
 //    1(没有跟任何其它图片凑到一起)的不输出。
-// 5. 组内选 keep_id：只有这一组内**所有**成员都跑过选片辅助评估
-//    (core::project::get_image(...).evaluation 对组里每一张都有值)时，
-//    才按 overall_score() 最高的选——"选质量最高的"这个判断本身依赖评
-//    估结果，只要这一组里有一张没评估过就不比较分数。这一组里有任意一
-//    张没评估过(不管是这一组全没评估还是部分没评估)，退化成按
-//    captured_at 最新的选；分数/captured_at 也相等的极端情况兜底选
-//    image_id 最小的，保证确定性。**这个规则按组独立判断**——同一次调
-//    用里，有的组因为全员评估过按分数选，有的组因为缺评估退化成按时间
-//    选，互不影响。
+// 5. 组内选 keep_id：留 captured_at 最新的那张(时间也相等的极端情况兜
+//    底选 image_id 最小的，保证确定性)。不再依赖选片评估分数——涉及质
+//    量比较的选择统一走锦标赛(见 docs/W2026-07-21_*)，dedup 只做"留最
+//    新"这个廉价的确定性基线。
 //
 // on_progress 在每处理完一个候选簇(不论是否成簇)时回调一次，done 是已
 // 处理的候选簇数、total 是候选簇总数。
@@ -88,8 +83,9 @@ struct DedupSummary {
 };
 
 // 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签：清空
-// image_ids 范围内的旧 duplicate 标记 -> find_duplicates 分组 -> 给每
-// 组除 keep_id 外的成员打标签。放在同一个 core/dedup 模块
+// image_ids 范围内的旧 duplicate 标记 -> 排除废片(带废片标签的图不参
+// 与聚类，否则最新的废片会成为 keep 把好邻居打成重复) -> find_duplicates
+// 分组 -> 给每组除 keep_id 外的成员打标签。放在同一个 core/dedup 模块
 // 里，不是违反"纯算法层"的说法——跟 core/export 的 export_tag(db::
 // Database&, ...) 同一个先例：模块以功能命名(dedup/export)，内部按需
 // 组合其它模块(tagging/project)完成一次完整的用户可见操作，"纯算法层"

@@ -6,9 +6,9 @@
 #include <numeric>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
-#include "core/ai/evaluation.h"
 #include "core/db/stmt.h"
 #include "core/media/media.h"
 #include "core/tagging/tagging.h"
@@ -101,61 +101,20 @@ class UnionFind {
   std::vector<int> parent_;
 };
 
-// members 是 cluster 内的下标集合(size >= 2)。全员评估过按 overall_score
-// 最高选，否则退化成按 captured_at 最新选；tie-break 统一选最小
-// image_id，保证确定性。
-project::ImageId pick_keep_id(db::Database& db, const std::vector<ImageMeta>& cluster,
+// members 是 cluster 内的下标集合(size >= 2)。keep 选 captured_at 最新的
+// 那张——涉及质量比较的选择统一走锦标赛(见 docs/W2026-07-21_*)，dedup 只
+// 做"留最新"这个廉价的确定性基线，不再依赖选片评估分数。captured_at 也
+// 相等的极端情况兜底选最小 image_id，保证确定性。
+project::ImageId pick_keep_id(const std::vector<ImageMeta>& cluster,
                                const std::vector<std::size_t>& members) {
-  std::vector<std::optional<project::ImageInfo>> infos;
-  infos.reserve(members.size());
-  bool all_evaluated = true;
-  for (auto idx : members) {
-    auto info = project::get_image(db, cluster[idx].id);
-    if (!info || !info->evaluation) all_evaluated = false;
-    infos.push_back(std::move(info));
-  }
-
   project::ImageId keep_id = 0;
-  if (all_evaluated) {
-    // 三级择优：分数优先；分数打平时不再随意兜底成 image_id 最小，改成
-    // 按 captured_at 更新的那张——用户实测反馈过，几张构图几乎相同的照
-    // 片模型经常给出完全相同的三项分数，image_id 是插入顺序的产物，跟
-    // "哪张更值得留"毫无关系，拍摄时间好歹是个有意义的信号，同一次连
-    // 拍里更靠后按下快门的那张更可能是最终定格的那次。captured_at 也打
-    // 平的极端情况(理论上不该发生)最后才兜底选 image_id 最小的，保证
-    // 确定性。
-    std::optional<int> best_score;
-    std::optional<std::int64_t> best_time;
-    for (std::size_t k = 0; k < members.size(); ++k) {
-      int score = ai::overall_score(*infos[k]->evaluation);
-      std::int64_t captured_at = cluster[members[k]].captured_at;
-      project::ImageId id = cluster[members[k]].id;
-
-      bool better;
-      if (!best_score) {
-        better = true;
-      } else if (score != *best_score) {
-        better = score > *best_score;
-      } else if (captured_at != *best_time) {
-        better = captured_at > *best_time;
-      } else {
-        better = id < keep_id;
-      }
-      if (better) {
-        best_score = score;
-        best_time = captured_at;
-        keep_id = id;
-      }
-    }
-  } else {
-    std::optional<std::int64_t> best_time;
-    for (std::size_t k = 0; k < members.size(); ++k) {
-      std::int64_t captured_at = cluster[members[k]].captured_at;
-      project::ImageId id = cluster[members[k]].id;
-      if (!best_time || captured_at > *best_time || (captured_at == *best_time && id < keep_id)) {
-        best_time = captured_at;
-        keep_id = id;
-      }
+  std::optional<std::int64_t> best_time;
+  for (auto idx : members) {
+    std::int64_t captured_at = cluster[idx].captured_at;
+    project::ImageId id = cluster[idx].id;
+    if (!best_time || captured_at > *best_time || (captured_at == *best_time && id < keep_id)) {
+      best_time = captured_at;
+      keep_id = id;
     }
   }
   return keep_id;
@@ -211,11 +170,29 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     return Result<DedupSummary, project::ProjectNotFoundError>::Err(project_summary.error());
   }
 
+  // W2026-07-21：聚类前排除废片。keep 改成"留最新"后，一张废片若
+  // captured_at 最新会在簇内成为 keep、把它的好邻居打成重复；先摘掉带
+  // 废片标签的图，只在剩余子集 dedup_ids 上聚类。清旧重复标记仍作用于
+  // 完整的 image_ids(避免废片上残留旧的重复标签)，只有"聚类"这一步走
+  // 排废片后的子集。跟 core/curate 的废片排除同一套(find_tag_by_name +
+  // images_with_tag)。
+  std::unordered_set<project::ImageId> reject_set;
+  if (auto reject_tag = tagging::find_tag_by_name(db, project_id, tagging::kRejectTagName)) {
+    auto tagged = tagging::images_with_tag(db, image_ids, *reject_tag);
+    reject_set.insert(tagged.begin(), tagged.end());
+  }
+  std::vector<project::ImageId> dedup_ids;
+  dedup_ids.reserve(image_ids.size());
+  for (project::ImageId id : image_ids) {
+    if (!reject_set.count(id)) dedup_ids.push_back(id);
+  }
+
   // F-08：跟 find_duplicates 内部(经 find_duplicates_impl)会做的查询重
   // 复一遍——load_metas 只是一条按 id IN (...) 的索引查询，不是 N+1，
   // 多查一次换来"结果为什么比预期少"这个问题有观测手段，值得。
+  // skipped_no_capture_time 只统计参与聚类的子集(废片不算)。
   int skipped_no_capture_time =
-      static_cast<int>(image_ids.size()) - static_cast<int>(load_metas(db, image_ids).size());
+      static_cast<int>(dedup_ids.size()) - static_cast<int>(load_metas(db, dedup_ids).size());
 
   // 先摘光再重新打：只清 image_ids 这个范围内的旧标记，范围外的图片(比
   // 如全项目扫描之后又单独对某个标签跑了一次)不受影响，见
@@ -231,7 +208,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     (void)tagging::remove_tag(db, id, duplicate_tag_id);
   }
 
-  auto groups = find_duplicates(db, project_summary.value().root_path, image_ids, time_window_seconds,
+  auto groups = find_duplicates(db, project_summary.value().root_path, dedup_ids, time_window_seconds,
                                  hash_threshold, std::move(on_progress));
 
   int tagged_count = 0;
@@ -337,7 +314,7 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
       for (auto idx : members) group_ids.push_back(cluster[idx].id);
       std::sort(group_ids.begin(), group_ids.end());
 
-      project::ImageId keep_id = pick_keep_id(db, cluster, members);
+      project::ImageId keep_id = pick_keep_id(cluster, members);
       cluster_groups.push_back(DuplicateGroup{std::move(group_ids), keep_id});
     }
     std::sort(cluster_groups.begin(), cluster_groups.end(),

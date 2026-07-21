@@ -5,7 +5,6 @@
 #include <limits>
 #include <unordered_set>
 
-#include "core/ai/evaluation.h"
 #include "core/browse/browse.h"
 #include "core/dedup/dedup.h"
 
@@ -13,10 +12,11 @@ namespace pzt::core::curate {
 
 namespace {
 
-// 候选集：passes_gate 为真 且 非"废片" 且 非"重复"（复用 get_image 的
-// evaluation/passes_gate、tagging::images_with_tag）。未评估的图不进候
-// 选。标签本身不存在时(项目里从没跑过废片/重复标记)，那一类排除为空，
-// 不当错误处理。
+// 候选集：非"废片" 且 非"重复"（纯标签排除，不看 evaluation 记录）。
+// W2026-07-21：eval 不再整批跑(见 docs/W2026-07-21_*)，未评估的图也进候
+// 选，废片以外的次品交锦标赛淘汰；废片排除靠标签(来自手动 eval 的
+// auto-reject 或用户手动打标)。标签本身不存在时(项目里从没跑过废片/重
+// 复标记)，那一类排除为空，不当错误处理。
 std::vector<project::ImageId> resolve_candidates(db::Database& db, project::ProjectId project_id,
                                                    std::optional<tagging::TagId> candidate_scope) {
   std::vector<project::ImageId> ids;
@@ -41,9 +41,7 @@ std::vector<project::ImageId> resolve_candidates(db::Database& db, project::Proj
 
   std::vector<project::ImageId> candidates;
   for (auto id : ids) {
-    if (excluded.count(id)) continue;
-    auto info = project::get_image(db, id);
-    if (!info || !info->evaluation || !ai::passes_gate(*info->evaluation)) continue;
+    if (excluded.count(id)) continue;  // 只按标签排除：废片 ∪ 重复
     candidates.push_back(id);
   }
   return candidates;
@@ -75,61 +73,51 @@ std::vector<project::ImageId> build_cluster_reps(db::Database& db, const std::st
 
 struct RepInfo {
   project::ImageId id;
-  int score;
   std::optional<std::int64_t> captured_at;
 };
 
 RepInfo make_rep_info(db::Database& db, project::ImageId id) {
   auto info = project::get_image(db, id);
-  return RepInfo{id, ai::overall_score(*info->evaluation), info->captured_at};
+  return RepInfo{id, info->captured_at};
 }
 
-// 从 pool 里挑一个：分数最高；打平时选"跟已选集时间差最大"的(farthest-
-// point：对每个打平候选算它离已选集里每个有 captured_at 的成员的时间
-// 差，取最小值，选这个最小值最大的那个)；已选集为空、打平候选都没有
-// captured_at、或距离也打平，退化成跟 dedup::pick_keep_id 同一套兜底：
-// captured_at 更新优先，再 id 最小。
+// 从 pool 里挑一个：所有代表等价(去分数后无质量维度)，纯 captured_at 多
+// 样性。已选集非空时走 farthest-point——对每个候选算它离已选集里每个有
+// captured_at 的成员的时间差，取最小值，选这个最小值最大的那个(离已选
+// 集整体最远)，打平选 id 最小。已选集为空(seed)、候选都没有 captured_at、
+// 或距离也打平，退化成跟 dedup::pick_keep_id 同一套兜底：captured_at 更
+// 新优先(seed 取最新)，再 id 最小。
 RepInfo greedy_pick(std::vector<RepInfo>& pool, const std::vector<RepInfo>& selected) {
-  int best_score = pool[0].score;
-  for (auto& p : pool) best_score = std::max(best_score, p.score);
-
-  std::vector<std::size_t> tied;
-  for (std::size_t i = 0; i < pool.size(); ++i) {
-    if (pool[i].score == best_score) tied.push_back(i);
+  std::vector<std::int64_t> selected_times;
+  for (auto& s : selected) {
+    if (s.captured_at) selected_times.push_back(*s.captured_at);
   }
 
-  std::size_t chosen = tied[0];
-  if (tied.size() > 1) {
-    std::vector<std::int64_t> selected_times;
-    for (auto& s : selected) {
-      if (s.captured_at) selected_times.push_back(*s.captured_at);
+  std::size_t chosen = 0;
+  std::optional<std::int64_t> best_distance;
+  bool have_time_pick = false;
+  for (std::size_t idx = 0; idx < pool.size(); ++idx) {
+    if (!pool[idx].captured_at || selected_times.empty()) continue;
+    std::int64_t min_dist = std::numeric_limits<std::int64_t>::max();
+    for (auto t : selected_times) {
+      min_dist = std::min(min_dist, std::abs(*pool[idx].captured_at - t));
     }
-
-    std::optional<std::int64_t> best_distance;
-    bool have_time_pick = false;
-    for (auto idx : tied) {
-      if (!pool[idx].captured_at || selected_times.empty()) continue;
-      std::int64_t min_dist = std::numeric_limits<std::int64_t>::max();
-      for (auto t : selected_times) {
-        min_dist = std::min(min_dist, std::abs(*pool[idx].captured_at - t));
-      }
-      bool better = !best_distance || min_dist > *best_distance ||
-                    (min_dist == *best_distance && pool[idx].id < pool[chosen].id);
-      if (better) {
-        best_distance = min_dist;
-        chosen = idx;
-        have_time_pick = true;
-      }
+    bool better = !best_distance || min_dist > *best_distance ||
+                  (min_dist == *best_distance && pool[idx].id < pool[chosen].id);
+    if (better) {
+      best_distance = min_dist;
+      chosen = idx;
+      have_time_pick = true;
     }
+  }
 
-    if (!have_time_pick) {
-      chosen = tied[0];
-      for (auto idx : tied) {
-        auto idx_time = pool[idx].captured_at.value_or(std::numeric_limits<std::int64_t>::min());
-        auto chosen_time = pool[chosen].captured_at.value_or(std::numeric_limits<std::int64_t>::min());
-        bool better = idx_time != chosen_time ? idx_time > chosen_time : pool[idx].id < pool[chosen].id;
-        if (better) chosen = idx;
-      }
+  if (!have_time_pick) {
+    chosen = 0;
+    for (std::size_t idx = 0; idx < pool.size(); ++idx) {
+      auto idx_time = pool[idx].captured_at.value_or(std::numeric_limits<std::int64_t>::min());
+      auto chosen_time = pool[chosen].captured_at.value_or(std::numeric_limits<std::int64_t>::min());
+      bool better = idx_time != chosen_time ? idx_time > chosen_time : pool[idx].id < pool[chosen].id;
+      if (better) chosen = idx;
     }
   }
 
@@ -174,10 +162,9 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
     std::vector<RepInfo> reps;
     for (auto id : cluster_reps) reps.push_back(make_rep_info(db, id));
     std::sort(reps.begin(), reps.end(), [](const RepInfo& a, const RepInfo& b) {
-      if (a.score != b.score) return a.score > b.score;
       auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
       auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
-      if (at != bt) return at > bt;
+      if (at != bt) return at > bt;  // captured_at 降序
       return a.id < b.id;
     });
     for (auto& r : reps) {

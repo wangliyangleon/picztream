@@ -84,24 +84,6 @@ void set_captured_at(Database& db, ImageId id, std::int64_t value) {
   sqlite3_finalize(stmt);
 }
 
-// 跟 dedup_test.cpp 的 insert_evaluation 同一套直接 SQL 摆数据手法，只关
-// 心 overall_score()/passes_gate() 用到的三个分数。
-void insert_evaluation(Database& db, ImageId id, int exposure_score, int composition_score,
-                        int focus_score) {
-  sqlite3_stmt* stmt = nullptr;
-  sqlite3_prepare_v2(db.handle(),
-                      "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
-                      "composition_score, composition_note, focus_score, focus_note, comment, "
-                      "extra_guidance, provider) VALUES (?, ?, '', ?, '', ?, '', '', '', 'gemini');",
-                      -1, &stmt, nullptr);
-  sqlite3_bind_int64(stmt, 1, id);
-  sqlite3_bind_int(stmt, 2, exposure_score);
-  sqlite3_bind_int(stmt, 3, composition_score);
-  sqlite3_bind_int(stmt, 4, focus_score);
-  REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
-  sqlite3_finalize(stmt);
-}
-
 // 跟 dedup_test.cpp 的 write_solid_jpeg 同一个手法：两张字节完全相同的
 // 纯色 JPEG 解码后逐像素相同，dHash 距离必为 0，不需要精确控制压缩细节
 // 就能稳定制造"这是一组重复"的场景，供分簇相关用例覆盖真实解码路径。
@@ -115,34 +97,23 @@ bool write_solid_jpeg(const fs::path& path, int width, int height, unsigned char
 
 }  // namespace
 
-TEST_CASE("curate excludes images with no evaluation") {
-  auto fx = make_fixture("no_eval", 2);
+// W2026-07-21：curate 不再看 evaluation 记录，纯标签排除。原来"未评估就
+// 排除""未达标(gate)就排除"两条用例整合成这一条——未评估的图照样进候选。
+TEST_CASE("curate includes unevaluated images (no evaluation dependency)") {
+  auto fx = make_fixture("no_eval_included", 2);
   set_captured_at(fx.db, fx.images[0], 1000);
-  set_captured_at(fx.db, fx.images[1], 5000);  // 时间差够大，不会同簇
-  insert_evaluation(fx.db, fx.images[0], 8, 8, 8);
-  // fx.images[1] 没评估
+  set_captured_at(fx.db, fx.images[1], 5000);  // 时间差够大，各自成簇
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10);
-  CHECK(result.returned == 1);
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0]});
-}
-
-TEST_CASE("curate excludes images failing the evaluation gate") {
-  auto fx = make_fixture("failing_gate", 2);
-  set_captured_at(fx.db, fx.images[0], 1000);
-  set_captured_at(fx.db, fx.images[1], 5000);
-  insert_evaluation(fx.db, fx.images[0], 8, 8, 8);
-  insert_evaluation(fx.db, fx.images[1], 3, 8, 8);  // exposure 低于 gate
-
-  auto result = curate(fx.db, fx.project_id, std::nullopt, 5, 20, 10);
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0]});
+  CHECK(result.returned == 2);
+  // 簇数(2) < count(5)：每簇一代表，按 captured_at 降序。
+  CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
 }
 
 TEST_CASE("curate excludes reject-tagged and duplicate-tagged images") {
   auto fx = make_fixture("excluded_tags", 3);
   for (int i = 0; i < 3; ++i) {
     set_captured_at(fx.db, fx.images[i], 1000 + i * 10000);
-    insert_evaluation(fx.db, fx.images[i], 8, 8, 8);
   }
   auto reject_tag = ensure_reject_tag(fx.db, fx.project_id);
   REQUIRE(add_tag(fx.db, fx.images[1], reject_tag).ok());
@@ -156,7 +127,6 @@ TEST_CASE("curate excludes reject-tagged and duplicate-tagged images") {
 TEST_CASE("curate insufficient candidates returns all of them, not an error") {
   auto fx = make_fixture("insufficient", 1);
   set_captured_at(fx.db, fx.images[0], 1000);
-  insert_evaluation(fx.db, fx.images[0], 8, 8, 8);
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10);
   CHECK(result.requested == 5);
@@ -167,8 +137,8 @@ TEST_CASE("curate picks one representative per cluster when clusters >= N") {
   // 纯色图片内部梯度恒为 0，compute_dhash 对任意灰度值都会算出同一个哈
   // 希(0)——真正决定分不分进同一簇的是 cluster_by_time 这一步的时间窗，
   // 不是灰度值本身(跟 dedup_test.cpp 的 facade 测试用例是同一个道理)。
-  // a/b 时间挨得近(同一簇)，c/d 分别离 a/b、离彼此都超过 20 秒时间窗(各
-  // 自成一簇)。count=2，簇数=3 >= 2。
+  // a/b 时间挨得近(同一簇,keep=b 时间更新那张)，c/d 分别离 a/b、离彼此
+  // 都超过 20 秒时间窗(各自成一簇)。count=2，簇数=3 >= 2。
   auto fx = make_fixture("clusters_ge_n", 4);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
@@ -176,25 +146,21 @@ TEST_CASE("curate picks one representative per cluster when clusters >= N") {
   REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 120));
   REQUIRE(write_solid_jpeg(dir / "d.jpg", 16, 16, 120));
   set_captured_at(fx.db, fx.images[0], 1000);
-  set_captured_at(fx.db, fx.images[1], 1005);    // 跟 a 差 5 秒,同簇
+  set_captured_at(fx.db, fx.images[1], 1005);    // 跟 a 差 5 秒,同簇 -> keep=b
   set_captured_at(fx.db, fx.images[2], 100000);  // 跟 a/b、跟 d 都差超过 20 秒,独立簇
   set_captured_at(fx.db, fx.images[3], 200000);  // 跟其它三张都差超过 20 秒,独立簇
-  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);  // a：簇{a,b}代表(分数最高)
-  insert_evaluation(fx.db, fx.images[1], 6, 6, 6);  // b：同簇，分数较低
-  insert_evaluation(fx.db, fx.images[2], 8, 8, 8);  // c：独立簇
-  insert_evaluation(fx.db, fx.images[3], 7, 7, 7);  // d：独立簇
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
   REQUIRE(result.returned == 2);
-  // 按 score 降序：a(簇{a,b}代表,9分) > c(8分) > d(7分)，b 因为跟 a 同簇
-  // 被排除在代表之外，永远不会跟 a 同时入选——这是多样性保护的核心断言。
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[2]});
+  // W2026-07-21：去分数后是纯时间多样性。代表 = {b(簇{a,b}的 keep), c, d}，
+  // a 因为跟 b 同簇被排除在代表之外，不会入选——多样性保护的核心断言。
+  // farthest-point：seed 取最新 d(200000)，再选离 d 时间最远的 b(1005)。
+  CHECK(result.selected == std::vector<ImageId>{fx.images[3], fx.images[1]});
 }
 
-TEST_CASE("curate greedy tie-break spreads selection across captured_at when scores tie") {
+TEST_CASE("curate spreads selection across captured_at (time diversity)") {
   // 3 张纯色图，两两时间差都超过 20 秒时间窗，各自独立成簇(纯色图内部
-  // 梯度恒为 0，真正拆开它们的是时间窗，不是灰度值，见上一条用例)；b/c
-  // 同分，b 时间离已选(a)更远。
+  // 梯度恒为 0，真正拆开它们的是时间窗，不是灰度值，见上一条用例)。
   auto fx = make_fixture("tie_break_spread", 3);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
@@ -203,55 +169,46 @@ TEST_CASE("curate greedy tie-break spreads selection across captured_at when sco
   set_captured_at(fx.db, fx.images[0], 0);
   set_captured_at(fx.db, fx.images[1], 100000);  // 离 a 差 100000
   set_captured_at(fx.db, fx.images[2], 100);     // 离 a 差 100
-  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);  // 最高分，先选
-  insert_evaluation(fx.db, fx.images[1], 7, 7, 7);  // 同分
-  insert_evaluation(fx.db, fx.images[2], 7, 7, 7);  // 同分
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
-  // 第一个选 a(分数最高)；第二名额 b vs c 同分打平，按跟已选集(a, t=0)
-  // 的时间差选更远的 -> b(差 100000 > 100)。
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[1]});
+  // W2026-07-21：纯时间多样性。seed 取最新 b(100000)；第二名额 a vs c，
+  // 选离已选集(b)时间更远的 -> a(差 100000 > c 的 99900)。
+  CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
 }
 
 TEST_CASE("curate does not backfill from non-representative cluster members when clusters < N") {
-  // 一簇 3 张(a 代表分最高，b/c 是它的近重复)，全部落进同一个候选池，
-  // count=2 > 簇数=1：只返回代表 a，不从簇内非代表{b,c}里回填凑数——
-  // 回填会让结果里出现彼此近重复的图，违背多样性目的(真机验证发现的
-  // 问题，见 curate.cpp 里的说明)。returned(1) < requested(2)，不报错。
+  // 一簇 3 张近重复(a,b,c)，keep=c(captured_at 最新)，全部落进同一个候
+  // 选池，count=2 > 簇数=1：只返回代表 c，不从簇内非代表回填凑数——回填
+  // 会让结果里出现彼此近重复的图，违背多样性目的(见 curate.cpp 说明)。
+  // returned(1) < requested(2)，不报错。
   auto fx = make_fixture("no_backfill", 3);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
   REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
   REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 120));
-  for (int i = 0; i < 3; ++i) set_captured_at(fx.db, fx.images[i], 1000 + i);
-  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);  // a: 代表
-  insert_evaluation(fx.db, fx.images[1], 7, 7, 7);  // b
-  insert_evaluation(fx.db, fx.images[2], 6, 6, 6);  // c
+  for (int i = 0; i < 3; ++i) set_captured_at(fx.db, fx.images[i], 1000 + i);  // c 最新 -> keep
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
   CHECK(result.requested == 2);
   CHECK(result.returned == 1);
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0]});
+  CHECK(result.selected == std::vector<ImageId>{fx.images[2]});
 }
 
 TEST_CASE("curate returns one representative per cluster across multiple clusters when clusters < N") {
-  // 两簇：{a,b}(a 代表，分 9) 和 {c}(独立簇，分 7)，count=3 > 簇数=2。
-  // 只返回两个代表，不回填 b。
+  // 两簇：{a,b}(keep=b,时间更新那张) 和 {c}(独立簇)，count=3 > 簇数=2。
+  // 只返回两个代表，按 captured_at 降序 [c, b]，不回填 a。
   auto fx = make_fixture("multi_cluster_shortfall", 3);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
   REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
   REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 120));
   set_captured_at(fx.db, fx.images[0], 1000);
-  set_captured_at(fx.db, fx.images[1], 1005);    // 跟 a 同簇
+  set_captured_at(fx.db, fx.images[1], 1005);    // 跟 a 同簇 -> keep=b
   set_captured_at(fx.db, fx.images[2], 100000);  // 独立簇
-  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);
-  insert_evaluation(fx.db, fx.images[1], 5, 5, 5);
-  insert_evaluation(fx.db, fx.images[2], 7, 7, 7);
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);
   CHECK(result.returned == 2);
-  CHECK(result.selected == std::vector<ImageId>{fx.images[0], fx.images[2]});
+  CHECK(result.selected == std::vector<ImageId>{fx.images[2], fx.images[1]});
 }
 
 TEST_CASE("curate is deterministic across repeated calls with identical input") {
@@ -261,11 +218,6 @@ TEST_CASE("curate is deterministic across repeated calls with identical input") 
   set_captured_at(fx.db, fx.images[2], 9000);
   set_captured_at(fx.db, fx.images[3], 13000);
   set_captured_at(fx.db, fx.images[4], 17000);
-  insert_evaluation(fx.db, fx.images[0], 8, 8, 8);
-  insert_evaluation(fx.db, fx.images[1], 7, 7, 7);
-  insert_evaluation(fx.db, fx.images[2], 9, 9, 9);
-  insert_evaluation(fx.db, fx.images[3], 6, 6, 6);
-  insert_evaluation(fx.db, fx.images[4], 8, 8, 8);
 
   auto first = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);
   auto second = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);

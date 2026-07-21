@@ -100,26 +100,6 @@ void mark_raw_with_cache(Database& db, ImageId id, const std::string& cache_path
   sqlite3_finalize(stmt);
 }
 
-// 只关心 overall_score() 用到的三个分数，note/comment/extra_guidance/
-// provider 这些 NOT NULL 字段填占位值——跟
-// core/tests/project_test.cpp"get_image returns nullopt evaluation..."
-// 用的是同一套直接 SQL 摆数据手法。
-void insert_evaluation(Database& db, ImageId id, int exposure_score, int composition_score,
-                        int focus_score) {
-  sqlite3_stmt* stmt = nullptr;
-  sqlite3_prepare_v2(db.handle(),
-                      "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
-                      "composition_score, composition_note, focus_score, focus_note, comment, "
-                      "extra_guidance, provider) VALUES (?, ?, '', ?, '', ?, '', '', '', 'gemini');",
-                      -1, &stmt, nullptr);
-  sqlite3_bind_int64(stmt, 1, id);
-  sqlite3_bind_int(stmt, 2, exposure_score);
-  sqlite3_bind_int(stmt, 3, composition_score);
-  sqlite3_bind_int(stmt, 4, focus_score);
-  REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
-  sqlite3_finalize(stmt);
-}
-
 void set_luminance(DecodedImage& img, int x, int y, int value) {
   std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(img.width) +
                       static_cast<std::size_t>(x)) *
@@ -276,33 +256,15 @@ TEST_CASE("groups from one cluster come out ordered by their smallest image id (
   CHECK(groups[0].image_ids.front() < groups[1].image_ids.front());
 }
 
-TEST_CASE("keep_id picks the highest overall_score when every group member is evaluated") {
-  auto fx = make_fixture("keep_by_score", 3);
+// W2026-07-21：keep 统一"留最新"，不再依赖评估分数——这里只验证纯时间
+// 规则(评估记录已从 dedup 剥离)。全组都没评估，时间最新的 images[2] 被
+// 选中保留；分数场景整块删除。captured_at 打平兜底 id 最小的极端分支由
+// 上面的 grouping fallback 用例覆盖。
+TEST_CASE("keep_id keeps the most recently captured image regardless of evaluation") {
+  auto fx = make_fixture("keep_by_time", 3);
   set_captured_at(fx.db, fx.images[0], 1000);
-  set_captured_at(fx.db, fx.images[1], 1002);
-  set_captured_at(fx.db, fx.images[2], 1004);  // 时间上最新，但评分不是最高，不应该被选中
-
-  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);  // overall 9,最高
-  insert_evaluation(fx.db, fx.images[1], 3, 3, 3);
-  insert_evaluation(fx.db, fx.images[2], 6, 6, 6);
-
-  ImageHash h = 0x0F0F0F0F0F0F0F0FULL;
-  auto decoder = hash_map_decoder({{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}, {path_for(fx, 'c'), h}});
-
-  auto groups = detail::find_duplicates_impl(fx.db, fx.root_path, fx.images, 10, 5, nullptr, decoder);
-  REQUIRE(groups.size() == 1);
-  CHECK(groups[0].keep_id == fx.images[0]);
-}
-
-TEST_CASE("keep_id breaks a score tie by keeping the most recently captured image") {
-  auto fx = make_fixture("keep_by_score_tie", 3);
-  set_captured_at(fx.db, fx.images[0], 1000);
-  set_captured_at(fx.db, fx.images[1], 1004);  // 分数并列最高的两张里,时间更新的这张应该被选中
+  set_captured_at(fx.db, fx.images[1], 1004);  // 时间最新，应被保留
   set_captured_at(fx.db, fx.images[2], 1002);
-
-  insert_evaluation(fx.db, fx.images[0], 7, 7, 7);
-  insert_evaluation(fx.db, fx.images[1], 7, 7, 7);  // 跟 a 同分,但更新,应该保留这张
-  insert_evaluation(fx.db, fx.images[2], 3, 3, 3);
 
   ImageHash h = 0x5A5A5A5A5A5A5A5AULL;
   auto decoder = hash_map_decoder({{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}, {path_for(fx, 'c'), h}});
@@ -310,24 +272,6 @@ TEST_CASE("keep_id breaks a score tie by keeping the most recently captured imag
   auto groups = detail::find_duplicates_impl(fx.db, fx.root_path, fx.images, 10, 5, nullptr, decoder);
   REQUIRE(groups.size() == 1);
   CHECK(groups[0].keep_id == fx.images[1]);
-}
-
-TEST_CASE("keep_id falls back to captured_at when even one group member is unevaluated") {
-  auto fx = make_fixture("keep_by_time_fallback", 3);
-  set_captured_at(fx.db, fx.images[0], 1000);  // 评分最高，但时间最老
-  set_captured_at(fx.db, fx.images[1], 1002);  // 完全没评估过
-  set_captured_at(fx.db, fx.images[2], 1004);  // 评分不是最高，但时间最新——组内有未评估成员时应该选它
-
-  insert_evaluation(fx.db, fx.images[0], 9, 9, 9);
-  // fx.images[1] 不插入评估记录
-  insert_evaluation(fx.db, fx.images[2], 3, 3, 3);
-
-  ImageHash h = 0xCCCCCCCCCCCCCCCCULL;
-  auto decoder = hash_map_decoder({{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}, {path_for(fx, 'c'), h}});
-
-  auto groups = detail::find_duplicates_impl(fx.db, fx.root_path, fx.images, 10, 5, nullptr, decoder);
-  REQUIRE(groups.size() == 1);
-  CHECK(groups[0].keep_id == fx.images[2]);
 }
 
 TEST_CASE("a decode failure excludes that image from grouping without affecting the rest") {
@@ -444,6 +388,29 @@ TEST_CASE("find_and_tag_duplicates tags non-keep members and reports a correct s
   auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
   CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));  // 保留的那张不该被打标签
   CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
+}
+
+// W2026-07-21：聚类前排除废片。keep 改成"留最新"后，一张废片若 captured_at
+// 最新会成为 keep 把它的好邻居打成重复。a(好图) 和 b(同字节近邻,更新) 本会
+// 成一组，但 b 被打了废片标签——b 应被排除在聚类之外，a 落单不成组、不被
+// 打成重复。
+TEST_CASE("find_and_tag_duplicates excludes reject-tagged images from clustering") {
+  auto fx = make_fixture("facade_exclude_reject", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));  // 字节相同,本会跟 a 成一组
+  set_captured_at(fx.db, fx.images[0], 1000);  // a: 好图
+  set_captured_at(fx.db, fx.images[1], 1002);  // b: 更新,但被标废片
+
+  auto reject_tag_id = ensure_reject_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[1], reject_tag_id).ok());
+
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(result.ok());
+  CHECK(result.value().group_count == 0);  // b 被排除,a 落单,不成组
+
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));  // 好图 a 不被打成重复
 }
 
 // F-18：以前不检查 add_tag 的返回值，tagged_count 无条件自增。如果用户
