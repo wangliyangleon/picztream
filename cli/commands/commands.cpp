@@ -263,8 +263,6 @@ const char* evaluation_error_str(pzt::core::EvaluationError error) {
       return "http_error";
     case pzt::core::EvaluationError::ParseError:
       return "parse_error";
-    case pzt::core::EvaluationError::OutOfRange:
-      return "out_of_range";
     case pzt::core::EvaluationError::ImageUnavailable:
       return "image_unavailable";
     case pzt::core::EvaluationError::StorageFailed:
@@ -365,12 +363,10 @@ int cmd_eval(const std::vector<std::string>& args) {
                   "passing scores instead\n");
     pzt::core::EvaluationWorker::EvaluationFn fake_fn =
         [](const pzt::core::decode::DecodedImage&, const std::string&, pzt::core::Provider,
-           const pzt::core::LocalModelConfig&) {
+           pzt::core::Language, const pzt::core::LocalModelConfig&) {
           pzt::core::ai::EvaluationResult result;
-          result.exposure = {8, "PZT_FAKE_EVAL"};
-          result.composition = {8, "PZT_FAKE_EVAL"};
-          result.focus = {8, "PZT_FAKE_EVAL"};
-          result.comment = "fake evaluation (PZT_FAKE_EVAL set, no real AI call made)";
+          result.assessment = "fake evaluation (PZT_FAKE_EVAL set, no real AI call made)";
+          result.unusable = false;
           return pzt::core::Result<pzt::core::ai::EvaluationResult, pzt::core::EvaluationError>::Ok(
               std::move(result));
         };
@@ -384,8 +380,12 @@ int cmd_eval(const std::vector<std::string>& args) {
   auto eval_settings = pzt::core::load_settings();
   pzt::core::LocalModelConfig local_config{eval_settings.ollama_base_url, eval_settings.ollama_model};
 
+  // extra_guidance 恒为 ""，assessment 语言用当前界面语言(PZT_LANG 映射)。
+  pzt::core::Language language = pzt::cli::i18n::g_lang == pzt::cli::i18n::Lang::en
+                                     ? pzt::core::Language::English
+                                     : pzt::core::Language::Chinese;
   pzt::core::EvaluationWorker& worker = *worker_storage;
-  for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject, local_config);
+  for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject, language, local_config);
 
   std::unordered_map<pzt::core::ImageId, pzt::core::EvaluationError> failure_by_id;
   while (true) {
@@ -406,9 +406,7 @@ int cmd_eval(const std::vector<std::string>& args) {
     const std::string& path = path_by_id[id];
     auto info = pzt::core::get_image(id);
     if (info && info->evaluation) {
-      evaluated_out.push_back({{"path", path},
-                                {"passes_gate", pzt::core::passes_gate(*info->evaluation)},
-                                {"overall_score", pzt::core::overall_score(*info->evaluation)}});
+      evaluated_out.push_back({{"path", path}, {"unusable", info->evaluation->unusable}});
     } else {
       auto it = failure_by_id.find(id);
       std::string error_code = it != failure_by_id.end() ? evaluation_error_str(it->second) : "unknown";
@@ -536,8 +534,7 @@ int cmd_images(const std::vector<std::string>& args) {
     if (evaluated) {
       auto info = pzt::core::get_image(r.id);
       if (info && info->evaluation) {
-        item["passes_gate"] = pzt::core::passes_gate(*info->evaluation);
-        item["overall_score"] = pzt::core::overall_score(*info->evaluation);
+        item["unusable"] = info->evaluation->unusable;
       }
     }
     nlohmann::json tag_names = nlohmann::json::array();

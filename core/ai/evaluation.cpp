@@ -1,21 +1,26 @@
 #include "core/ai/evaluation.h"
 
-#include <cmath>
-
 namespace pzt::core::ai {
 
 namespace {
 
-// 固定的评价维度指令——这是发给 AI 的系统层指令，不会展示给用户看，固定
-// 用英文，不跟着 cli::i18n 的 zh/en 走。用户的 extra_guidance 本身可以
-// 是任何语言，模型能处理，只是包住它的框架文案是英文。明确排除色彩/情
-// 绪表达这类风格判断——这是这次相对上一版"审美评分"最核心的立意变化，
-// 见 docs/M3_PRD.md"背景"一节。
-std::string build_evaluation_prompt(const std::string& extra_guidance) {
+// 发给 AI 的系统层框架指令——固定英文，不跟着 cli::i18n 走。W2026-07-21：
+// 从"曝光/构图/对焦三维技术打分"改成"一段客观文字 assessment(覆盖构图/色
+// 彩/对焦/摄影审美) + 一个 unusable 硬伤 flag"。assessment 的输出语言跟随
+// extra_guidance；guidance 为空时用 language 指定的语言(cli 按当前界面语
+// 言映射后传进来)——框架文案本身仍是英文，只是要求模型用目标语言写
+// assessment 的内容。
+std::string build_evaluation_prompt(const std::string& extra_guidance, Language language) {
+  const char* lang_word = language == Language::Chinese ? "Chinese" : "English";
   std::string prompt =
-      "Evaluate this photo's technical quality across three independent dimensions: "
-      "exposure, composition, and focus. Judge only technical correctness - do NOT "
-      "evaluate color grading, mood, or artistic style, those are out of scope.";
+      "Assess this photo for culling. Write one concise, objective 'assessment' covering "
+      "composition, color, focus, and photographic aesthetics. Also decide 'unusable': "
+      "true only if the photo has a fatal flaw that makes it unusable (e.g. the subject "
+      "is badly out of focus, or it is severely over/under-exposed with no recoverable "
+      "detail); otherwise false. Write the assessment in the same language as the "
+      "additional guidance below; if no additional guidance is given, write it in ";
+  prompt += lang_word;
+  prompt += ".";
   if (!extra_guidance.empty()) {
     prompt += "\n\nAdditional guidance: " + extra_guidance;
   }
@@ -24,63 +29,20 @@ std::string build_evaluation_prompt(const std::string& extra_guidance) {
 
 std::string build_evaluation_schema_instruction() {
   return "Return a JSON object with this exact shape: "
-         "{\"exposure\": {\"score\": <integer 0-10>, \"note\": <short reason>, "
-         "\"fix_percent\": <optional number, suggested overall brightness adjustment in "
-         "percent, omit this field entirely if no fix is needed>}, "
-         "\"composition\": {\"score\": <integer 0-10>, \"note\": <short reason>, "
-         "\"fix\": {\"rotate_degrees\": <number>, \"crop_left_percent\": <number>, "
-         "\"crop_right_percent\": <number>, \"crop_top_percent\": <number>, "
-         "\"crop_bottom_percent\": <number>} (optional object, omit entirely if no fix is "
-         "needed)}, "
-         "\"focus\": {\"score\": <integer 0-10>, \"note\": <short reason>}, "
-         "\"comment\": <one short sentence, no more than 50 characters, summarizing all three "
-         "dimensions together>}. "
-         "focus never has a fix field - out-of-focus shots cannot be corrected after the "
-         "fact.";
+         "{\"assessment\": <a concise objective description of the photo covering "
+         "composition, color, focus, and aesthetics>, "
+         "\"unusable\": <boolean, true only if the photo has a fatal flaw making it "
+         "unusable>}.";
 }
 
 nlohmann::json build_evaluation_json_schema() {
   static const char* kSchemaJson = R"json({
     "type": "object",
     "properties": {
-      "exposure": {
-        "type": "object",
-        "properties": {
-          "score": {"type": "integer"},
-          "note": {"type": "string"},
-          "fix_percent": {"type": "number"}
-        },
-        "required": ["score", "note"]
-      },
-      "composition": {
-        "type": "object",
-        "properties": {
-          "score": {"type": "integer"},
-          "note": {"type": "string"},
-          "fix": {
-            "type": "object",
-            "properties": {
-              "rotate_degrees": {"type": "number"},
-              "crop_left_percent": {"type": "number"},
-              "crop_right_percent": {"type": "number"},
-              "crop_top_percent": {"type": "number"},
-              "crop_bottom_percent": {"type": "number"}
-            }
-          }
-        },
-        "required": ["score", "note"]
-      },
-      "focus": {
-        "type": "object",
-        "properties": {
-          "score": {"type": "integer"},
-          "note": {"type": "string"}
-        },
-        "required": ["score", "note"]
-      },
-      "comment": {"type": "string"}
+      "assessment": {"type": "string"},
+      "unusable": {"type": "boolean"}
     },
-    "required": ["exposure", "composition", "focus", "comment"]
+    "required": ["assessment", "unusable"]
   })json";
   return nlohmann::json::parse(kSchemaJson);
 }
@@ -99,68 +61,7 @@ EvaluationError map_request_error(RequestError error) {
   return EvaluationError::ParseError;  // 不可达，安抚 -Wreturn-type
 }
 
-// score/note 是驱动达标判断/排序的核心字段，缺失或者类型不对直接判整体
-// 失败；fix 相关字段单独在下面的 parse_exposure_fix/parse_composition_fix
-// 里用更宽松的处理(见那两个函数的注释)，不在这里处理。
-Result<DimensionAssessment, EvaluationError> parse_dimension(const nlohmann::json& dimension) {
-  if (!dimension.contains("score") || !dimension["score"].is_number_integer() ||
-      !dimension.contains("note") || !dimension["note"].is_string()) {
-    return Result<DimensionAssessment, EvaluationError>::Err(EvaluationError::ParseError);
-  }
-  int score = dimension["score"].get<int>();
-  if (score < 0 || score > 10) {
-    return Result<DimensionAssessment, EvaluationError>::Err(EvaluationError::OutOfRange);
-  }
-  return Result<DimensionAssessment, EvaluationError>::Ok(
-      DimensionAssessment{score, dimension["note"].get<std::string>()});
-}
-
-// 修正建议是"仅供参考"的补充信息，不影响达标判断/排序这些核心逻辑(见
-// docs/M3_Eng_Design.md"风险与待确认问题"——这次没有把握模型给出的旋
-// 转角度/裁切百分比这类精确几何量有多可靠)。这里故意比 parse_dimension
-// 宽松：字段缺失是预期情况(模型判断不需要修正建议)，字段存在但类型不对
-// 也只是当作"没有给"处理，不会因为这一个次要字段拖累整条评估结果作废。
-std::optional<ExposureFix> parse_exposure_fix(const nlohmann::json& exposure) {
-  if (!exposure.contains("fix_percent") || !exposure["fix_percent"].is_number()) {
-    return std::nullopt;
-  }
-  return ExposureFix{exposure["fix_percent"].get<double>()};
-}
-
-std::optional<CompositionFix> parse_composition_fix(const nlohmann::json& composition) {
-  if (!composition.contains("fix") || !composition["fix"].is_object()) return std::nullopt;
-  const auto& fix = composition["fix"];
-
-  auto get_number = [&](const char* key) -> std::optional<double> {
-    if (!fix.contains(key) || !fix[key].is_number()) return std::nullopt;
-    return fix[key].get<double>();
-  };
-  auto rotate_degrees = get_number("rotate_degrees");
-  auto crop_left = get_number("crop_left_percent");
-  auto crop_right = get_number("crop_right_percent");
-  auto crop_top = get_number("crop_top_percent");
-  auto crop_bottom = get_number("crop_bottom_percent");
-  // 五个子字段同生共死——CompositionFix 是一个整体概念，缺任何一个都不
-  // 算一份完整的修正建议，整体当作"没有给"处理，不拼一个残缺的建议。
-  if (!rotate_degrees || !crop_left || !crop_right || !crop_top || !crop_bottom) {
-    return std::nullopt;
-  }
-  return CompositionFix{*rotate_degrees, *crop_left, *crop_right, *crop_top, *crop_bottom};
-}
-
 }  // namespace
-
-int overall_score(const EvaluationInfo& info) {
-  double average =
-      (info.exposure.score + info.composition.score + info.focus.score) / 3.0;
-  return static_cast<int>(std::lround(average));
-}
-
-bool passes_gate(const EvaluationInfo& info) {
-  return info.exposure.score >= kEvaluationGateThreshold &&
-         info.composition.score >= kEvaluationGateThreshold &&
-         info.focus.score >= kEvaluationGateThreshold;
-}
 
 namespace detail {
 
@@ -168,8 +69,9 @@ Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::
                                                                     const std::string& extra_guidance,
                                                                     Provider provider,
                                                                     HttpPostFn http_post,
+                                                                    Language language,
                                                                     const LocalModelConfig& local_config) {
-  std::string user_prompt = build_evaluation_prompt(extra_guidance);
+  std::string user_prompt = build_evaluation_prompt(extra_guidance, language);
   std::string schema_instruction = build_evaluation_schema_instruction();
 
   auto json_result = request_json(image, user_prompt, schema_instruction, provider, http_post, local_config,
@@ -179,26 +81,14 @@ Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::
   }
 
   const auto& j = json_result.value();
-  if (!j.contains("exposure") || !j["exposure"].is_object() || !j.contains("composition") ||
-      !j["composition"].is_object() || !j.contains("focus") || !j["focus"].is_object() ||
-      !j.contains("comment") || !j["comment"].is_string()) {
+  if (!j.contains("assessment") || !j["assessment"].is_string() || !j.contains("unusable") ||
+      !j["unusable"].is_boolean()) {
     return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::ParseError);
   }
 
-  auto exposure = parse_dimension(j["exposure"]);
-  if (!exposure.ok()) return Result<EvaluationResult, EvaluationError>::Err(exposure.error());
-  auto composition = parse_dimension(j["composition"]);
-  if (!composition.ok()) return Result<EvaluationResult, EvaluationError>::Err(composition.error());
-  auto focus = parse_dimension(j["focus"]);
-  if (!focus.ok()) return Result<EvaluationResult, EvaluationError>::Err(focus.error());
-
   EvaluationResult result;
-  result.exposure = exposure.value();
-  result.exposure_fix = parse_exposure_fix(j["exposure"]);
-  result.composition = composition.value();
-  result.composition_fix = parse_composition_fix(j["composition"]);
-  result.focus = focus.value();
-  result.comment = j["comment"].get<std::string>();
+  result.assessment = j["assessment"].get<std::string>();
+  result.unusable = j["unusable"].get<bool>();
 
   return Result<EvaluationResult, EvaluationError>::Ok(std::move(result));
 }
@@ -208,8 +98,10 @@ Result<EvaluationResult, EvaluationError> request_evaluation_impl(const decode::
 Result<EvaluationResult, EvaluationError> request_evaluation(const decode::DecodedImage& image,
                                                                const std::string& extra_guidance,
                                                                Provider provider,
+                                                               Language language,
                                                                const LocalModelConfig& local_config) {
-  return detail::request_evaluation_impl(image, extra_guidance, provider, perform_curl_post, local_config);
+  return detail::request_evaluation_impl(image, extra_guidance, provider, perform_curl_post, language,
+                                          local_config);
 }
 
 }  // namespace pzt::core::ai

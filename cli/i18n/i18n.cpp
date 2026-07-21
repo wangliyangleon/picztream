@@ -925,25 +925,6 @@ std::string msg_ai_prompt_placeholder() {
   }
 }
 
-namespace {
-
-// "+15%"/"-10%"这种带符号的百分比，%+ 格式说明符保证正数也带 "+" 号。
-std::string format_signed_percent(double value) {
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%+.0f%%", value);
-  return buf;
-}
-
-// "+2.5°"这种带符号的角度，保留一位小数——旋转角度这种量级下整数会丢掉
-// 有意义的精度。
-std::string format_signed_degrees(double value) {
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%+.1f\xC2\xB0", value);  // \xC2\xB0 是 ° 的 UTF-8 编码
-  return buf;
-}
-
-}  // namespace
-
 std::string evaluation_none_label() {
   if (g_lang == Lang::zh) {
     return "选片评估: 尚未评估";
@@ -952,47 +933,11 @@ std::string evaluation_none_label() {
   }
 }
 
-std::string evaluation_summary_label(int overall_score, bool passes_gate) {
-  std::string score_text = std::to_string(overall_score);
+std::string evaluation_status_label(bool unusable) {
   if (g_lang == Lang::zh) {
-    return "选片评估: " + score_text + "/10 · " + (passes_gate ? "达标" : "不达标");
+    return unusable ? "选片评估: 有硬伤" : "选片评估: 可用";
   } else {
-    return "Culling: " + score_text + "/10 · " + (passes_gate ? "PASS" : "FAIL");
-  }
-}
-
-std::string evaluation_exposure_line(int score, const std::string& note,
-                                      std::optional<double> fix_percent) {
-  std::string suffix = fix_percent ? (g_lang == Lang::zh
-                                           ? "（建议 " + format_signed_percent(*fix_percent) + "）"
-                                           : " (suggest " + format_signed_percent(*fix_percent) + ")")
-                                    : "";
-  if (g_lang == Lang::zh) {
-    return "曝光 " + std::to_string(score) + "/10: " + note + suffix;
-  } else {
-    return "Exposure " + std::to_string(score) + "/10: " + note + suffix;
-  }
-}
-
-std::string evaluation_composition_line(int score, const std::string& note,
-                                         std::optional<double> rotate_degrees) {
-  std::string suffix =
-      rotate_degrees ? (g_lang == Lang::zh
-                             ? "（建议旋转 " + format_signed_degrees(*rotate_degrees) + "）"
-                             : " (suggest rotate " + format_signed_degrees(*rotate_degrees) + ")")
-                      : "";
-  if (g_lang == Lang::zh) {
-    return "构图 " + std::to_string(score) + "/10: " + note + suffix;
-  } else {
-    return "Composition " + std::to_string(score) + "/10: " + note + suffix;
-  }
-}
-
-std::string evaluation_focus_line(int score, const std::string& note) {
-  if (g_lang == Lang::zh) {
-    return "对焦 " + std::to_string(score) + "/10: " + note;
-  } else {
-    return "Focus " + std::to_string(score) + "/10: " + note;
+    return unusable ? "Culling: unusable" : "Culling: usable";
   }
 }
 
@@ -1014,10 +959,10 @@ std::string msg_ai_processing_submitted() {
 
 // F-03：把 EvaluationError 翻译成一句人话，不逐条列出的都归到笼统的
 // "请求失败"——这几种原因(网络/HttpError/key)对用户来说都是"这次没请
-// 求成功，再试一次"，不需要精确到协议层细节；ParseError/OutOfRange 单
-// 独说明是"模型返回的内容不对"，跟"网络/权限"是不同性质的问题，值得
-// 区分；ImageUnavailable 单独说明是"这张图暂时评估不了"，不是网络问
-// 题，重试大概率还是不行(比如预览图解码失败)。
+// 求成功，再试一次"，不需要精确到协议层细节；ParseError 单独说明是"模
+// 型返回的内容不对"，跟"网络/权限"是不同性质的问题，值得区分；
+// ImageUnavailable 单独说明是"这张图暂时评估不了"，不是网络问题，重试
+// 大概率还是不行(比如预览图解码失败)。
 std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
   switch (error) {
     case pzt::core::EvaluationError::MissingApiKey:
@@ -1028,8 +973,6 @@ std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
       return g_lang == Lang::zh ? "服务端返回错误" : "server returned an error";
     case pzt::core::EvaluationError::ParseError:
       return g_lang == Lang::zh ? "模型返回内容无法解析" : "couldn't parse the model's response";
-    case pzt::core::EvaluationError::OutOfRange:
-      return g_lang == Lang::zh ? "模型返回的分数超出范围" : "model returned an out-of-range score";
     case pzt::core::EvaluationError::ImageUnavailable:
       return g_lang == Lang::zh ? "图片暂时无法评估" : "image is currently unavailable";
     case pzt::core::EvaluationError::StorageFailed:

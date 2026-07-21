@@ -109,24 +109,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_preset_name ON recipes(name) WHERE
 // 成功)要么整行不存在(没评估过/评估失败)，不是"整行都在、单个字段可
 // 空"的语义——所以除了两个修正建议各自四五个字段允许 NULL(模型判断不
 // 需要修正建议时不给)之外，其它列都是 NOT NULL。
+// W2026-07-21：eval 从三维技术打分改成"一段客观文字 assessment + 一个
+// unusable 硬伤 flag"，这张表整体重建成 5 列。image_id 当主键(一对一)，
+// ON DELETE CASCADE 跟 tags/image_tags 惯例一致。整行要么存在(评估完整成
+// 功)要么不存在，所以除主键外都 NOT NULL。旧的三维 schema 由
+// initialize_schema 里的一次性 DROP TABLE 迁移清掉(见那里)。
 constexpr const char* kCreateImageEvaluations = R"sql(
 CREATE TABLE IF NOT EXISTS image_evaluations (
-  image_id                              INTEGER PRIMARY KEY REFERENCES images(id) ON DELETE CASCADE,
-  exposure_score                        INTEGER NOT NULL,
-  exposure_note                         TEXT NOT NULL,
-  exposure_fix_percent                  REAL,
-  composition_score                     INTEGER NOT NULL,
-  composition_note                      TEXT NOT NULL,
-  composition_fix_rotate_degrees        REAL,
-  composition_fix_crop_left_percent     REAL,
-  composition_fix_crop_right_percent    REAL,
-  composition_fix_crop_top_percent      REAL,
-  composition_fix_crop_bottom_percent   REAL,
-  focus_score                           INTEGER NOT NULL,
-  focus_note                            TEXT NOT NULL,
-  comment                               TEXT NOT NULL,
-  extra_guidance                        TEXT NOT NULL,
-  provider                              TEXT NOT NULL
+  image_id        INTEGER PRIMARY KEY REFERENCES images(id) ON DELETE CASCADE,
+  assessment      TEXT NOT NULL,
+  unusable        INTEGER NOT NULL,
+  extra_guidance  TEXT NOT NULL,
+  provider        TEXT NOT NULL
 );
 )sql";
 
@@ -170,6 +164,13 @@ void initialize_schema(sqlite3* conn) {
   exec(conn, kCreateImageTagsTagIdIndex);
   exec(conn, kCreateRecipes);
   exec(conn, kCreateRecipesPresetNameIndex);
+  // W2026-07-21：eval schema 从三维打分整体重建成 assessment+unusable。旧
+  // 表检测到还带 exposure_score 列时整表 drop——库里都是迭代测试数据，无
+  // 真实用户数据要保留，直接作废重设不写迁移(PRD 已拍板)。幂等：重建后
+  // exposure_score 不存在，后续开库不再 drop。DROP 必须在 CREATE 之前。
+  if (column_exists(conn, "image_evaluations", "exposure_score")) {
+    exec(conn, "DROP TABLE image_evaluations;");
+  }
   exec(conn, kCreateImageEvaluations);
   ensure_column(conn, "images", "recipe_id",
                 "recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL");

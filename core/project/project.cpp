@@ -421,23 +421,13 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   // image_evaluations 是一对一、可能没有匹配行的表(没评估过/评估失败)，
-  // LEFT JOIN——13-22 这几列匹配不到行时全部是 NULL，用其中任意一个 NOT
-  // NULL 的列(这里用 exposure_score，13)判断"这张图有没有评估结果"就
-  //够，不用逐列判断。
+  // LEFT JOIN——8-11 这几列匹配不到行时全部是 NULL，用 assessment(8，
+  // NOT NULL)判断"这张图有没有评估结果"就够，不用逐列判断。
   Stmt stmt(db.handle(),
             "SELECT images.id, images.project_id, images.file_path, images.file_name, "
             "images.file_size, images.kind, images.preview_cache_path, images.captured_at, "
-            "image_evaluations.exposure_score, image_evaluations.exposure_note, "
-            "image_evaluations.exposure_fix_percent, image_evaluations.composition_score, "
-            "image_evaluations.composition_note, "
-            "image_evaluations.composition_fix_rotate_degrees, "
-            "image_evaluations.composition_fix_crop_left_percent, "
-            "image_evaluations.composition_fix_crop_right_percent, "
-            "image_evaluations.composition_fix_crop_top_percent, "
-            "image_evaluations.composition_fix_crop_bottom_percent, "
-            "image_evaluations.focus_score, image_evaluations.focus_note, "
-            "image_evaluations.comment, image_evaluations.extra_guidance, "
-            "image_evaluations.provider "
+            "image_evaluations.assessment, image_evaluations.unusable, "
+            "image_evaluations.extra_guidance, image_evaluations.provider "
             "FROM images LEFT JOIN image_evaluations ON images.id = image_evaluations.image_id "
             "WHERE images.id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, id);
@@ -458,24 +448,10 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   }
   if (sqlite3_column_type(stmt.get(), 8) != SQLITE_NULL) {
     ai::EvaluationInfo eval;
-    eval.exposure.score = sqlite3_column_int(stmt.get(), 8);
-    eval.exposure.note = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 9));
-    if (sqlite3_column_type(stmt.get(), 10) != SQLITE_NULL) {
-      eval.exposure_fix = ai::ExposureFix{sqlite3_column_double(stmt.get(), 10)};
-    }
-    eval.composition.score = sqlite3_column_int(stmt.get(), 11);
-    eval.composition.note = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 12));
-    if (sqlite3_column_type(stmt.get(), 13) != SQLITE_NULL) {
-      eval.composition_fix = ai::CompositionFix{
-          sqlite3_column_double(stmt.get(), 13), sqlite3_column_double(stmt.get(), 14),
-          sqlite3_column_double(stmt.get(), 15), sqlite3_column_double(stmt.get(), 16),
-          sqlite3_column_double(stmt.get(), 17)};
-    }
-    eval.focus.score = sqlite3_column_int(stmt.get(), 18);
-    eval.focus.note = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 19));
-    eval.comment = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 20));
-    eval.extra_guidance = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 21));
-    eval.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 22));
+    eval.assessment = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 8));
+    eval.unusable = sqlite3_column_int(stmt.get(), 9) != 0;
+    eval.extra_guidance = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 10));
+    eval.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 11));
     info.evaluation = std::move(eval);
   }
   return info;

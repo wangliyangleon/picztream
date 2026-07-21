@@ -226,17 +226,10 @@ std::string msg_ai_tasks_status(std::size_t queued, bool processing);
 
 // 还没评估过/评估失败时统一显示的占位。
 std::string evaluation_none_label();
-// 头部一行：综合分数(overall_score，三项平均四舍五入)+ 是否达标
-// (passes_gate，三项都 >= 6)——这两个值不是模型给的，是 core::ai 算出来
-// 的，见 core/ai/evaluation.h。
-std::string evaluation_summary_label(int overall_score, bool passes_gate);
-// 每个维度一行，note 是模型给的原因，fix 相关参数是可选的修正建议(可能
-// 是 nullopt——分数已经够高、模型判断不需要修正建议时)。
-std::string evaluation_exposure_line(int score, const std::string& note,
-                                      std::optional<double> fix_percent);
-std::string evaluation_composition_line(int score, const std::string& note,
-                                         std::optional<double> rotate_degrees);
-std::string evaluation_focus_line(int score, const std::string& note);
+// W2026-07-21：eval 改成"文字 assessment + unusable flag"后，头部一行只
+// 表可用性状态(unusable 为真=有硬伤)；assessment 文字本身由 core 直接给，
+// 不经 i18n(是模型输出，不是 UI 文案)。
+std::string evaluation_status_label(bool unusable);
 
 // Tag Menu
 std::string tag_menu_cap_zero();

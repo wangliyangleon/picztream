@@ -71,6 +71,13 @@ pzt::core::Provider resolve_ai_provider() {
   return pzt::core::load_settings().ai_provider;
 }
 
+// 当前界面语言映射成 core 的 assessment 语言(eval 的 guidance 为空时用
+// 它,见 core/ai/evaluation.h 的 Language)。cli 决定语言,core 不认识 i18n。
+pzt::core::Language resolve_assessment_language() {
+  return pzt::cli::i18n::g_lang == pzt::cli::i18n::Lang::en ? pzt::core::Language::English
+                                                            : pzt::core::Language::Chinese;
+}
+
 // Provider::Local 的连接信息——跟 resolve_ai_provider() 同一个"现读不
 // 缓存"惯例，用户中途改了 config.json 不需要重启 pzt open。
 pzt::core::LocalModelConfig resolve_local_model_config() {
@@ -324,7 +331,8 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
   for (auto id : resolved.image_ids) {
     if (evaluated.count(id)) continue;  // 已经评估过,跳过
     if (evaluation_worker.request(id, resolve_ai_provider(), extra_guidance, auto_reject,
-                                   resolve_local_model_config())) ++submitted;
+                                   resolve_assessment_language(), resolve_local_model_config()))
+      ++submitted;
   }
   return pzt::cli::i18n::msg_ai_eval_submitted(submitted);
 }
@@ -398,7 +406,7 @@ std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId proje
     if (!info) continue;
     bool match = criterion == ConsoleFilterCriterion::Unevaluated
                      ? !info->evaluation.has_value()
-                     : (info->evaluation.has_value() && !pzt::core::passes_gate(*info->evaluation));
+                     : (info->evaluation.has_value() && !pzt::core::is_usable(*info->evaluation));
     if (match) result.push_back(r);
   }
   return result;
@@ -466,6 +474,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     // 的开放问题,这次不做。
     bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest,
                                                pzt::core::load_settings().auto_ai_reject,
+                                               resolve_assessment_language(),
                                                resolve_local_model_config());
     if (!accepted) {
       return ConsoleCommandResult{pzt::cli::i18n::msg_ai_processing_pending()};  // 走 status_override,等按键确认
@@ -957,49 +966,17 @@ int cmd_open(const std::vector<std::string>& args) {
           ++row;
         }
 
-        // M3：`:` 键触发的选片辅助评估结果,复用上面已经查过的 info,不需
-        // 要再查一次库。综合分数(overall_score)和达标状态(passes_gate)
-        // 不是模型给的,是从三项分数算出来的(core::ai 那两个函数,见
-        // docs/M3_Eng_Design.md),这里直接调,不在 CLI 层重新算一遍。每
-        // 一行内容长度不可控(尤其是模型给的 note/comment)——按显示宽度
-        // 硬换行,跟标签/风格一样受 meta_bottom_row 的越界裁剪保护,装不
-        // 下的部分直接不画。
+        // W2026-07-21：`:` 触发的选片评估结果——一行可用性状态(unusable
+        // 为真=有硬伤)+ 一段模型给的文字 assessment。复用上面查过的 info。
+        // assessment 长度不可控——按显示宽度硬换行,跟标签/风格一样受
+        // meta_bottom_row 的越界裁剪保护,装不下的部分直接不画。
         row++;  // 空一行
         if (!info || !info->evaluation) {
           emit_line(pzt::cli::i18n::evaluation_none_label());
         } else {
           const auto& eval = *info->evaluation;
-          for (const auto& line : wrap_text(pzt::cli::i18n::evaluation_summary_label(
-                                                 pzt::core::overall_score(eval),
-                                                 pzt::core::passes_gate(eval)),
-                                             static_cast<std::size_t>(info_cols))) {
-            emit_line(line);
-          }
-          std::optional<double> exposure_fix =
-              eval.exposure_fix ? std::optional<double>(eval.exposure_fix->adjust_percent)
-                                 : std::nullopt;
-          std::optional<double> composition_fix =
-              eval.composition_fix ? std::optional<double>(eval.composition_fix->rotate_degrees)
-                                    : std::nullopt;
-          for (const auto& line :
-               wrap_text(pzt::cli::i18n::evaluation_exposure_line(eval.exposure.score,
-                                                                    eval.exposure.note, exposure_fix),
-                         static_cast<std::size_t>(info_cols))) {
-            emit_line(line);
-          }
-          for (const auto& line : wrap_text(pzt::cli::i18n::evaluation_composition_line(
-                                                 eval.composition.score, eval.composition.note,
-                                                 composition_fix),
-                                             static_cast<std::size_t>(info_cols))) {
-            emit_line(line);
-          }
-          for (const auto& line :
-               wrap_text(pzt::cli::i18n::evaluation_focus_line(eval.focus.score, eval.focus.note),
-                         static_cast<std::size_t>(info_cols))) {
-            emit_line(line);
-          }
-          row++;  // 空一行
-          for (const auto& line : wrap_text(eval.comment, static_cast<std::size_t>(info_cols))) {
+          emit_line(pzt::cli::i18n::evaluation_status_label(eval.unusable));
+          for (const auto& line : wrap_text(eval.assessment, static_cast<std::size_t>(info_cols))) {
             emit_line(line);
           }
         }

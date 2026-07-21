@@ -39,13 +39,12 @@ struct Settings {
   bool dedup_reject = false;
   bool export_reject = false;
   bool export_dup = false;
-  // 选片辅助评估三项得分任意一项低于 ai::kEvaluationGateThreshold 时，
-  // 自动给这张图打上"废片"标签——默认 false(不自动打)。开着的话，
-  // 后续默认排除废片的路径(eval_reject/dedup_reject/export_reject 均
-  // 为 false 时)会连带把这些图挡在外面，不需要用户在评估完之后手动
-  // 再筛一遍 fail 逐张处理。只在评估"通过->不通过"时打标签，反过来
-  // (重新评估后通过了)不会自动摘掉——摘除已有标签是更容易造成意外的
-  // 操作，这次不做。
+  // W2026-07-21：选片评估把这张图判为 unusable(有硬伤)时，自动打上
+  // "废片"标签——默认 false(不自动打)。开着的话，后续默认排除废片的路
+  // 径(eval_reject/dedup_reject/export_reject 均为 false 时)会连带把这
+  // 些图挡在外面，不需要用户评估完之后手动再筛一遍逐张处理。只在
+  // unusable 时打标签，反过来(重新评估后可用了)不会自动摘掉——摘除已
+  // 有标签是更容易造成意外的操作，这次不做。
   bool auto_ai_reject = false;
   // nullopt = 配置文件里没写这个字段，cli::i18n::init_lang() 据此继续
   // 往下走系统 LANG 环境变量那一级——不能给一个"zh"之类的默认值，那样

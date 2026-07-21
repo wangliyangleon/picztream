@@ -85,13 +85,13 @@ using EvaluationWorker = ai::EvaluationWorker;
 using EvaluationInfo = ai::EvaluationInfo;
 using Provider = ai::Provider;
 using LocalModelConfig = ai::LocalModelConfig;
+using Language = ai::Language;
 // F-03：EvaluationWorker::take_last_failure() 把失败原因带出来给 cli
 // 展示，cli 层需要能叫出这个类型的名字。
 using EvaluationError = ai::EvaluationError;
-// 综合分数/达标判断不入库，现算——CLI 展示时直接调这两个函数，不在 cli/
-// 层重新实现一遍算法，见 core/ai/evaluation.h 的说明。
-using ai::overall_score;
-using ai::passes_gate;
+// W2026-07-21：eval 不再产跨图分数，是否可用直接读 unusable flag——CLI
+// 展示/筛选统一调这个函数，见 core/ai/evaluation.h 的说明。
+using ai::is_usable;
 
 // F-12：静态全局设置(供应商/dedup 参数/批量默认排除策略/界面偏好)，见
 // core/settings/settings.h 的完整设计说明。cli 需要直接引用这个类型

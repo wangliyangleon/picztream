@@ -18,11 +18,12 @@ EvaluationWorker::~EvaluationWorker() = default;
 
 bool EvaluationWorker::request(project::ImageId image_id, Provider provider,
                                 const std::string& extra_guidance, bool auto_reject,
-                                const LocalModelConfig& local_config) {
+                                Language language, const LocalModelConfig& local_config) {
   std::unique_lock<std::mutex> lock(mu_);
   if (in_flight_.count(image_id)) return false;
   in_flight_.insert(image_id);
-  queue_.push_back(PendingRequest{image_id, provider, extra_guidance, auto_reject, local_config});
+  queue_.push_back(
+      PendingRequest{image_id, provider, extra_guidance, auto_reject, language, local_config});
   lock.unlock();
   cv_.notify_all();
   return true;
@@ -110,7 +111,8 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
     return EvaluationError::ImageUnavailable;
   }
 
-  auto result = evaluation_fn_(decoded.value(), req.extra_guidance, req.provider, req.local_config);
+  auto result =
+      evaluation_fn_(decoded.value(), req.extra_guidance, req.provider, req.language, req.local_config);
   if (!result.ok()) {
     // 失败(网络错误、解析失败等)不写库，也不清空这张图之前成功评估过的
     // 记录——旧结果仍然是有效信息，一次失败的重新评估不该把之前成功的
@@ -123,57 +125,19 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
 
   const auto& r = result.value();
   db::Stmt stmt(db.handle(),
-                "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
-                "exposure_fix_percent, composition_score, composition_note, "
-                "composition_fix_rotate_degrees, composition_fix_crop_left_percent, "
-                "composition_fix_crop_right_percent, composition_fix_crop_top_percent, "
-                "composition_fix_crop_bottom_percent, focus_score, focus_note, comment, "
-                "extra_guidance, provider) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO image_evaluations (image_id, assessment, unusable, extra_guidance, "
+                "provider) "
+                "VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT(image_id) DO UPDATE SET "
-                "exposure_score = excluded.exposure_score, "
-                "exposure_note = excluded.exposure_note, "
-                "exposure_fix_percent = excluded.exposure_fix_percent, "
-                "composition_score = excluded.composition_score, "
-                "composition_note = excluded.composition_note, "
-                "composition_fix_rotate_degrees = excluded.composition_fix_rotate_degrees, "
-                "composition_fix_crop_left_percent = excluded.composition_fix_crop_left_percent, "
-                "composition_fix_crop_right_percent = excluded.composition_fix_crop_right_percent, "
-                "composition_fix_crop_top_percent = excluded.composition_fix_crop_top_percent, "
-                "composition_fix_crop_bottom_percent = excluded.composition_fix_crop_bottom_percent, "
-                "focus_score = excluded.focus_score, "
-                "focus_note = excluded.focus_note, "
-                "comment = excluded.comment, "
+                "assessment = excluded.assessment, "
+                "unusable = excluded.unusable, "
                 "extra_guidance = excluded.extra_guidance, "
                 "provider = excluded.provider;");
   sqlite3_bind_int64(stmt.get(), 1, req.image_id);
-  sqlite3_bind_int(stmt.get(), 2, r.exposure.score);
-  sqlite3_bind_text(stmt.get(), 3, r.exposure.note.c_str(), -1, SQLITE_TRANSIENT);
-  if (r.exposure_fix) {
-    sqlite3_bind_double(stmt.get(), 4, r.exposure_fix->adjust_percent);
-  } else {
-    sqlite3_bind_null(stmt.get(), 4);
-  }
-  sqlite3_bind_int(stmt.get(), 5, r.composition.score);
-  sqlite3_bind_text(stmt.get(), 6, r.composition.note.c_str(), -1, SQLITE_TRANSIENT);
-  if (r.composition_fix) {
-    sqlite3_bind_double(stmt.get(), 7, r.composition_fix->rotate_degrees);
-    sqlite3_bind_double(stmt.get(), 8, r.composition_fix->crop_left_percent);
-    sqlite3_bind_double(stmt.get(), 9, r.composition_fix->crop_right_percent);
-    sqlite3_bind_double(stmt.get(), 10, r.composition_fix->crop_top_percent);
-    sqlite3_bind_double(stmt.get(), 11, r.composition_fix->crop_bottom_percent);
-  } else {
-    sqlite3_bind_null(stmt.get(), 7);
-    sqlite3_bind_null(stmt.get(), 8);
-    sqlite3_bind_null(stmt.get(), 9);
-    sqlite3_bind_null(stmt.get(), 10);
-    sqlite3_bind_null(stmt.get(), 11);
-  }
-  sqlite3_bind_int(stmt.get(), 12, r.focus.score);
-  sqlite3_bind_text(stmt.get(), 13, r.focus.note.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt.get(), 14, r.comment.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt.get(), 15, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt.get(), 16, to_string(req.provider), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt.get(), 2, r.assessment.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(stmt.get(), 3, r.unusable ? 1 : 0);
+  sqlite3_bind_text(stmt.get(), 4, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt.get(), 5, to_string(req.provider), -1, SQLITE_TRANSIENT);
   // F-17：以前不检查这一步——AI 已经给出结果，但落库失败(磁盘满、库损
   // 坏)时会静默发生，generation_ 照样 +1 触发一次什么都没变的空重绘，
   // 用户完全看不到发生了什么。这里不像 recipe.cpp 那些函数一样直接
@@ -186,25 +150,19 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
     return EvaluationError::StorageFailed;
   }
 
-  // auto_reject：结果已经落库之后再判断达标与否，走 passes_gate 复用同
-  // 一份判定，不在这里重算一遍三项阈值比较。只在不达标时打标签，不做
-  // 反向摘除(见 core/settings/settings.h 里的说明)——这里用已经打开的
-  // db 连接直接调 tagging:: 里的函数，不经过 core/api.h 门面(那边会各
-  // 自开一条新连接，没必要)。req.auto_reject 是调用方（提交请求时）传
-  // 进来的显式参数，process_request 本身不读 Settings。
-  if (req.auto_reject) {
-    EvaluationInfo eval_info{r.exposure,    r.exposure_fix,     r.composition,
-                              r.composition_fix, r.focus,       r.comment,
-                              req.extra_guidance, to_string(req.provider)};
-    if (!passes_gate(eval_info)) {
-      auto reject_tag_id = tagging::ensure_reject_tag(db, info->project_id);
-      (void)tagging::add_tag(db, req.image_id, reject_tag_id);
-    }
+  // auto_reject：结果落库之后，模型直接给的 unusable 为真时打废片标签
+  // (W2026-07-21：判据从原来的 passes_gate 三项阈值改成读 unusable flag)。
+  // 只在 unusable 时打标签，不做反向摘除(见 core/settings/settings.h 里的
+  // 说明)——这里用已经打开的 db 连接直接调 tagging:: 里的函数，不经过
+  // core/api.h 门面(那边会各自开一条新连接，没必要)。req.auto_reject 是调
+  // 用方（提交请求时）传进来的显式参数，process_request 本身不读 Settings。
+  if (req.auto_reject && r.unusable) {
+    auto reject_tag_id = tagging::ensure_reject_tag(db, info->project_id);
+    (void)tagging::add_tag(db, req.image_id, reject_tag_id);
   }
 
-  std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld exposure=%d composition=%d focus=%d\n",
-               static_cast<long long>(req.image_id), r.exposure.score, r.composition.score,
-               r.focus.score);
+  std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld unusable=%d\n",
+               static_cast<long long>(req.image_id), r.unusable ? 1 : 0);
   return std::nullopt;
 }
 

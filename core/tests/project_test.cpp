@@ -57,9 +57,8 @@ void touch(const fs::path& p, std::size_t bytes = 10) {
 void insert_evaluation_stub(Database& db, pzt::core::project::ImageId id) {
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db.handle(),
-                      "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
-                      "composition_score, composition_note, focus_score, focus_note, comment, "
-                      "extra_guidance, provider) VALUES (?, 5, '', 5, '', 5, '', '', '', 'gemini');",
+                      "INSERT INTO image_evaluations (image_id, assessment, unusable, "
+                      "extra_guidance, provider) VALUES (?, '', 0, '', 'gemini');",
                       -1, &stmt, nullptr);
   sqlite3_bind_int64(stmt, 1, id);
   if (sqlite3_step(stmt) != SQLITE_DONE) {
@@ -420,30 +419,14 @@ TEST_CASE("get_image returns nullopt evaluation by default, reads it back once s
 
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db.handle(),
-                      "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note, "
-                      "exposure_fix_percent, composition_score, composition_note, "
-                      "composition_fix_rotate_degrees, composition_fix_crop_left_percent, "
-                      "composition_fix_crop_right_percent, composition_fix_crop_top_percent, "
-                      "composition_fix_crop_bottom_percent, focus_score, focus_note, comment, "
-                      "extra_guidance, provider) "
-                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+                      "INSERT INTO image_evaluations (image_id, assessment, unusable, "
+                      "extra_guidance, provider) VALUES (?, ?, ?, ?, ?);",
                       -1, &stmt, nullptr);
   sqlite3_bind_int64(stmt, 1, *a_id);
-  sqlite3_bind_int(stmt, 2, 7);
-  sqlite3_bind_text(stmt, 3, "slightly underexposed", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_double(stmt, 4, 15.0);
-  sqlite3_bind_int(stmt, 5, 4);
-  sqlite3_bind_text(stmt, 6, "horizon is tilted", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_double(stmt, 7, 2.5);
-  sqlite3_bind_double(stmt, 8, 0.0);
-  sqlite3_bind_double(stmt, 9, 0.0);
-  sqlite3_bind_double(stmt, 10, 0.0);
-  sqlite3_bind_double(stmt, 11, 5.0);
-  sqlite3_bind_int(stmt, 12, 9);
-  sqlite3_bind_text(stmt, 13, "sharp", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 14, "overall solid, mainly the tilted horizon", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 15, "focus on the crop", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 16, "gemini", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, "balanced composition, warm color, sharp", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(stmt, 3, 1);
+  sqlite3_bind_text(stmt, 4, "focus on the crop", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 5, "gemini", -1, SQLITE_TRANSIENT);
   REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
   sqlite3_finalize(stmt);
 
@@ -451,18 +434,8 @@ TEST_CASE("get_image returns nullopt evaluation by default, reads it back once s
   REQUIRE(after.has_value());
   REQUIRE(after->evaluation.has_value());
   const auto& eval = *after->evaluation;
-  CHECK(eval.exposure.score == 7);
-  CHECK(eval.exposure.note == "slightly underexposed");
-  REQUIRE(eval.exposure_fix.has_value());
-  CHECK(eval.exposure_fix->adjust_percent == doctest::Approx(15.0));
-  CHECK(eval.composition.score == 4);
-  CHECK(eval.composition.note == "horizon is tilted");
-  REQUIRE(eval.composition_fix.has_value());
-  CHECK(eval.composition_fix->rotate_degrees == doctest::Approx(2.5));
-  CHECK(eval.composition_fix->crop_bottom_percent == doctest::Approx(5.0));
-  CHECK(eval.focus.score == 9);
-  CHECK(eval.focus.note == "sharp");
-  CHECK(eval.comment == "overall solid, mainly the tilted horizon");
+  CHECK(eval.assessment == "balanced composition, warm color, sharp");
+  CHECK(eval.unusable == true);
   CHECK(eval.extra_guidance == "focus on the crop");
   CHECK(eval.provider == "gemini");
 }
