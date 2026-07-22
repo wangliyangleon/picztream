@@ -27,6 +27,11 @@ export XDG_CONFIG_HOME="$WORKDIR/config"
 PHOTOS="$WORKDIR/photos"
 mkdir -p "$PHOTOS"
 
+# W2026-07-21 目标二：--ai 的 smoke 断言复用 core 测试同一个技巧——
+# Claude/Gemini 没设对应 API key 时确定性 MissingApiKey、不连真网络。显
+# 式清空，不依赖跑这个脚本的人的 shell 环境里有没有真 key。
+unset ANTHROPIC_API_KEY GEMINI_API_KEY || true
+
 pass_count=0
 fail_count=0
 
@@ -124,9 +129,27 @@ assert_json_has "$out" "j['skipped_no_capture_time'] == 3" \
   "dedup: images with no captured_at are all counted as skipped"
 assert_json_has "$out" "j['groups'] == 0 and j['tagged'] == 0" \
   "dedup: no groups formed when nothing has a capture time"
+assert_json_has "$out" "'ai_fallback_count' not in j" \
+  "dedup: without --ai the JSON output shape is unchanged (no ai_fallback_count key)"
 
 assert_nonzero_exit_with_error "dedup: unknown tag scope fails with JSON error" \
   "$PZT" dedup smoke --scope '#不存在的标签' --json
+
+# W2026-07-21 目标二：--ai/--provider 接线。fixture 三张图都没有
+# captured_at，压根进不了候选聚类，不会有任何簇尝试 AI 比较，
+# ai_fallback_count 恒为 0——这里验证的是"flag 接线不炸"，AI 锦标赛本身
+# 的算法已经在 core/tests/tournament_test.cpp 详尽覆盖。
+assert_nonzero_exit_with_error "dedup: --ai without --provider fails with JSON error" \
+  "$PZT" dedup smoke --scope '*' --ai --json
+
+assert_nonzero_exit_with_error "dedup: --ai with unknown provider fails with JSON error" \
+  "$PZT" dedup smoke --scope '*' --ai --provider bogus --json
+
+out="$("$PZT" dedup smoke --scope '*' --ai --provider claude --json)"
+assert_json_has "$out" "'ai_fallback_count' in j" \
+  "dedup: --ai adds ai_fallback_count to the JSON output"
+assert_json_has "$out" "j['ai_fallback_count'] == 0" \
+  "dedup: no cluster ever forms for these fixtures, so nothing falls back either"
 
 # --- pzt export-images ---
 # a.jpg/b.jpg/c.jpg 都是不可解码的假字节，但 kind="jpeg" 且没有 recipe
@@ -211,27 +234,23 @@ assert_json_has "$out" \
   "eval: --provider local fails at decode, not at some provider-specific code path"
 
 # --- pzt curate ---
-# a/b/c 手动写评估分数(全部通过 gate)和分散的 captured_at(避免互相聚
-# 簇)，验证候选过滤 + 每张各自成簇时按分数选 top N + 默认落"精选"标签
-# 的接线，不测多样性算法本身的细节(那部分已经在 core/tests/curate_test.cpp
-# 用可解码 JPEG 详尽覆盖)。
+# W2026-07-21：curate 从目标一起不再看评估状态，只按标签排除(废片/重
+# 复)。a/b/c 分散的 captured_at(避免互相聚簇)，c.jpg 打废片标签验证候
+# 选过滤 + 默认落"精选"标签的接线，不测多样性算法本身的细节(那部分已
+# 经在 core/tests/curate_test.cpp 用可解码 JPEG 详尽覆盖)。
 DBPATH="$XDG_CONFIG_HOME/pzt/pzt.db"
 sqlite3 "$DBPATH" "UPDATE images SET captured_at = 1000 WHERE file_path = 'a.jpg';"
 sqlite3 "$DBPATH" "UPDATE images SET captured_at = 100000 WHERE file_path = 'b.jpg';"
 sqlite3 "$DBPATH" "UPDATE images SET captured_at = 200000 WHERE file_path = 'c.jpg';"
-sqlite3 "$DBPATH" "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note,
-    composition_score, composition_note, focus_score, focus_note, comment, extra_guidance, provider)
-  SELECT id, 9, '', 9, '', 9, '', '', '', 'gemini' FROM images WHERE file_path = 'a.jpg';"
-sqlite3 "$DBPATH" "INSERT INTO image_evaluations (image_id, exposure_score, exposure_note,
-    composition_score, composition_note, focus_score, focus_note, comment, extra_guidance, provider)
-  SELECT id, 8, '', 8, '', 8, '', '', '', 'gemini' FROM images WHERE file_path = 'b.jpg';"
-# c.jpg 保持不评估——验证候选过滤排除未评估图
+"$PZT" tag apply smoke c.jpg 废片 --json >/dev/null  # 排除，验证候选过滤
 
 out="$("$PZT" curate smoke --count 2 --json)"
 assert_json_has "$out" "j['requested'] == 2 and j['returned'] == 2" \
-  "curate: selects up to count from evaluated, passing candidates"
+  "curate: selects up to count from non-excluded candidates"
 assert_json_has "$out" "sorted(j['selected']) == ['a.jpg', 'b.jpg']" \
-  "curate: excludes unevaluated c.jpg, picks a/b by score"
+  "curate: excludes reject-tagged c.jpg"
+assert_json_has "$out" "'ai_fallback_count' not in j" \
+  "curate: without --ai the JSON output shape is unchanged (no ai_fallback_count key)"
 
 out="$("$PZT" images smoke --json)"
 assert_json_has "$out" \
@@ -239,11 +258,13 @@ assert_json_has "$out" \
   "curate: applies the default apply-tag (精选) to selected images"
 
 out="$("$PZT" curate smoke --count 1 --apply-tag ins --json)"
-assert_json_has "$out" "j['returned'] == 1 and j['selected'] == ['a.jpg']" \
-  "curate: --apply-tag uses a custom tag name, still picks by score"
+# 唯一入选：farthest-point 的 seed 规则(已选集为空时)是 captured_at 更新
+# 优先——b(100000) 比 a(1000) 新，选 b。
+assert_json_has "$out" "j['returned'] == 1 and j['selected'] == ['b.jpg']" \
+  "curate: --apply-tag uses a custom tag name, still picks by diversity"
 
 out="$("$PZT" images smoke --json)"
-assert_json_has "$out" "any(i['path'] == 'a.jpg' and 'ins' in i['tags'] for i in j['images'])" \
+assert_json_has "$out" "any(i['path'] == 'b.jpg' and 'ins' in i['tags'] for i in j['images'])" \
   "curate: custom apply-tag actually gets applied"
 
 assert_nonzero_exit_with_error "curate: unknown scope tag fails with JSON error" \
@@ -251,6 +272,20 @@ assert_nonzero_exit_with_error "curate: unknown scope tag fails with JSON error"
 
 assert_nonzero_exit_with_error "curate: missing --count fails with JSON error" \
   "$PZT" curate smoke --json
+
+# W2026-07-21 目标二：--ai/--provider 接线，跟 dedup 段落同样的道理(假
+# 字节 fixture 解码失败,不会真的形成任何簇,ai_fallback_count 恒为 0)。
+assert_nonzero_exit_with_error "curate: --ai without --provider fails with JSON error" \
+  "$PZT" curate smoke --count 1 --ai --json
+
+assert_nonzero_exit_with_error "curate: --ai with unknown provider fails with JSON error" \
+  "$PZT" curate smoke --count 1 --ai --provider bogus --json
+
+out="$("$PZT" curate smoke --count 1 --ai --provider claude --json)"
+assert_json_has "$out" "'ai_fallback_count' in j" \
+  "curate: --ai adds ai_fallback_count to the JSON output"
+assert_json_has "$out" "j['ai_fallback_count'] == 0" \
+  "curate: no cluster ever forms for these fixtures, so nothing falls back either"
 
 # --- pzt tag clear ---
 # 承接上面 curate 段留下的状态：a.jpg 同时打了"精选"和"ins"。清掉

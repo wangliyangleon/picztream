@@ -143,9 +143,16 @@ ScopeResult resolve_scope(pzt::core::ProjectId project_id, const std::string& sc
 // dedup_hash_threshold(跟交互路径的 /dedup 同一份配置来源)——这个命
 // 令本身不接受内联参数覆盖阈值，想调参改 config.json，跟交互侧的既有
 // 约定一致(见 docs/Fix_It_Night_Review.md F-08)。
+//
+// W2026-07-21 目标二：新增可选 --ai --provider <gemini|claude|local>——
+// 不带 --ai 时调用路径、参数、JSON 输出逐字节不变(ai_fallback_count 这
+// 个 key 都不出现，不是"出现但恒为 0")；--provider 只在 --ai 出现时才
+// 校验/生效，解析规则跟 cmd_eval/cmd_compare 同一套三选一。
 int cmd_dedup(const std::vector<std::string>& args) {
   bool json = false;
+  bool ai_enabled = false;
   std::string scope;
+  std::string provider_str;
   std::vector<std::string> positional;
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] == "--json") {
@@ -153,12 +160,31 @@ int cmd_dedup(const std::vector<std::string>& args) {
     } else if (args[i] == "--scope") {
       if (i + 1 >= args.size()) return emit_json_error("usage", "--scope requires a value");
       scope = args[++i];
+    } else if (args[i] == "--ai") {
+      ai_enabled = true;
+    } else if (args[i] == "--provider") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
+      provider_str = args[++i];
     } else {
       positional.push_back(args[i]);
     }
   }
   if (positional.empty() || scope.empty() || !json) {
-    return emit_json_error("usage", "usage: pzt dedup <project> --scope <*|#tag> --json");
+    return emit_json_error(
+        "usage", "usage: pzt dedup <project> --scope <*|#tag> [--ai --provider <gemini|claude|local>] --json");
+  }
+
+  pzt::core::Provider provider = pzt::core::Provider::Local;
+  if (ai_enabled) {
+    if (provider_str == "gemini") {
+      provider = pzt::core::Provider::Gemini;
+    } else if (provider_str == "claude") {
+      provider = pzt::core::Provider::Claude;
+    } else if (provider_str == "local") {
+      provider = pzt::core::Provider::Local;
+    } else {
+      return emit_json_error("usage", "--ai requires --provider <gemini|claude|local>");
+    }
   }
 
   auto project_id = resolve_project_json(positional[0]);
@@ -170,16 +196,20 @@ int cmd_dedup(const std::vector<std::string>& args) {
   }
 
   auto settings = pzt::core::load_settings();
+  pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
   auto result = pzt::core::find_and_tag_duplicates(*project_id, resolved.ids,
                                                      settings.dedup_time_window_seconds,
-                                                     settings.dedup_hash_threshold);
+                                                     settings.dedup_hash_threshold, /*on_progress=*/nullptr,
+                                                     ai_enabled, provider, local_config);
   if (!result.ok()) {
     return emit_json_error("dedup_failed", "dedup failed");
   }
 
-  emit_json({{"groups", result.value().group_count},
-             {"tagged", result.value().tagged_count},
-             {"skipped_no_capture_time", result.value().skipped_no_capture_time}});
+  nlohmann::json out{{"groups", result.value().group_count},
+                      {"tagged", result.value().tagged_count},
+                      {"skipped_no_capture_time", result.value().skipped_no_capture_time}};
+  if (ai_enabled) out["ai_fallback_count"] = result.value().ai_fallback_count;
+  emit_json(out);
   return 0;
 }
 
@@ -428,12 +458,17 @@ int cmd_eval(const std::vector<std::string>& args) {
 // 通标签路径，不是系统标签，重复运行不清历史标记(见 docs/M4_Eng_Design.md
 // 第三节 Context 里的拍板：用户想用"朋友圈"/"ins"这类自定义名字，不该
 // 被强绑成固定系统标签)。
+//
+// W2026-07-21 目标二：新增可选 --ai --provider <gemini|claude|local>，跟
+// cmd_dedup 同一套解析规则；不带 --ai 时调用路径/输出逐字节不变。
 int cmd_curate(const std::vector<std::string>& args) {
   bool json = false;
   int count = 0;
   bool count_set = false;
+  bool ai_enabled = false;
   std::string scope_tag_name;
   std::string apply_tag_name = "精选";
+  std::string provider_str;
   std::vector<std::string> positional;
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] == "--json") {
@@ -452,13 +487,32 @@ int cmd_curate(const std::vector<std::string>& args) {
     } else if (args[i] == "--apply-tag") {
       if (i + 1 >= args.size()) return emit_json_error("usage", "--apply-tag requires a value");
       apply_tag_name = args[++i];
+    } else if (args[i] == "--ai") {
+      ai_enabled = true;
+    } else if (args[i] == "--provider") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
+      provider_str = args[++i];
     } else {
       positional.push_back(args[i]);
     }
   }
   if (positional.empty() || !count_set || count <= 0 || !json) {
-    return emit_json_error(
-        "usage", "usage: pzt curate <project> --count N [--tag <name>] [--apply-tag <name>] --json");
+    return emit_json_error("usage",
+                            "usage: pzt curate <project> --count N [--tag <name>] [--apply-tag <name>] "
+                            "[--ai --provider <gemini|claude|local>] --json");
+  }
+
+  pzt::core::Provider ai_provider = pzt::core::Provider::Local;
+  if (ai_enabled) {
+    if (provider_str == "gemini") {
+      ai_provider = pzt::core::Provider::Gemini;
+    } else if (provider_str == "claude") {
+      ai_provider = pzt::core::Provider::Claude;
+    } else if (provider_str == "local") {
+      ai_provider = pzt::core::Provider::Local;
+    } else {
+      return emit_json_error("usage", "--ai requires --provider <gemini|claude|local>");
+    }
   }
 
   auto project_id = resolve_project_json(positional[0]);
@@ -472,9 +526,11 @@ int cmd_curate(const std::vector<std::string>& args) {
   }
 
   auto settings = pzt::core::load_settings();
+  pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
   auto result = pzt::core::curate_images(*project_id, candidate_scope, count,
                                           settings.curate_time_window_seconds,
-                                          settings.curate_hash_threshold);
+                                          settings.curate_hash_threshold, ai_enabled, ai_provider,
+                                          local_config);
 
   if (!result.selected.empty()) {
     auto apply_tag_id = resolve_or_create_tag(*project_id, apply_tag_name);
@@ -494,9 +550,11 @@ int cmd_curate(const std::vector<std::string>& args) {
   nlohmann::json selected_paths = nlohmann::json::array();
   for (auto id : result.selected) selected_paths.push_back(curate_path_by_id[id]);
 
-  emit_json({{"requested", result.requested},
-             {"returned", result.returned},
-             {"selected", std::move(selected_paths)}});
+  nlohmann::json out{{"requested", result.requested},
+                      {"returned", result.returned},
+                      {"selected", std::move(selected_paths)}};
+  if (ai_enabled) out["ai_fallback_count"] = result.ai_fallback_count;
+  emit_json(out);
   return 0;
 }
 
