@@ -121,16 +121,19 @@ TagId ensure_reject_tag(ProjectId project_id) {
 
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds,
-    int hash_threshold, dedup::DedupProgressFn on_progress) {
+    int hash_threshold, dedup::DedupProgressFn on_progress, bool ai_enabled, Provider provider,
+    const LocalModelConfig& local_config) {
   db::Database db = db::Database::open_default();
   return dedup::find_and_tag_duplicates(db, project_id, image_ids, time_window_seconds, hash_threshold,
-                                         std::move(on_progress));
+                                         std::move(on_progress), ai_enabled, provider, local_config);
 }
 
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
-                            int time_window_seconds, int hash_threshold) {
+                            int time_window_seconds, int hash_threshold, bool ai_enabled,
+                            Provider ai_provider, const LocalModelConfig& local_config) {
   db::Database db = db::Database::open_default();
-  return curate::curate(db, project_id, candidate_scope, count, time_window_seconds, hash_threshold);
+  return curate::curate(db, project_id, candidate_scope, count, time_window_seconds, hash_threshold,
+                         ai_enabled, ai_provider, local_config);
 }
 
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,

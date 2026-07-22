@@ -6,12 +6,12 @@
 #include <numeric>
 #include <optional>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 #include "core/db/stmt.h"
 #include "core/media/media.h"
 #include "core/tagging/tagging.h"
+#include "core/tournament/tournament.h"
 
 namespace pzt::core::dedup {
 
@@ -172,68 +172,28 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
 
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
-    int time_window_seconds, int hash_threshold, DedupProgressFn on_progress) {
-  auto project_summary = project::open_project(db, project_id);
-  if (!project_summary.ok()) {
-    return Result<DedupSummary, project::ProjectNotFoundError>::Err(project_summary.error());
+    int time_window_seconds, int hash_threshold, DedupProgressFn on_progress, bool ai_enabled,
+    ai::Provider provider, const ai::LocalModelConfig& local_config) {
+  // W2026-07-21 目标二：排废片、清旧重复标记、分组、给每组除 winner 外的
+  // 成员打标签，整个委托给 tournament::cluster_and_choose
+  // (exclude_tag_names={"废片"}、apply_dup_tag=true)。ai_enabled=false 时
+  // 每组 winner 就是 find_duplicates 算好的 keep_id，跟这个函数改造前逐
+  // 字节一致；ai_enabled=true 时才走锦标赛。
+  auto result = tournament::cluster_and_choose(
+      db, project_id, image_ids, time_window_seconds, hash_threshold, {tagging::kRejectTagName},
+      /*apply_dup_tag=*/true, ai_enabled, provider, local_config, std::move(on_progress));
+  if (!result.ok()) {
+    return Result<DedupSummary, project::ProjectNotFoundError>::Err(result.error());
   }
 
-  // W2026-07-21：聚类前排除废片。keep 改成"留最新"后，一张废片若
-  // captured_at 最新会在簇内成为 keep、把它的好邻居打成重复；先摘掉带
-  // 废片标签的图，只在剩余子集 dedup_ids 上聚类。清旧重复标记仍作用于
-  // 完整的 image_ids(避免废片上残留旧的重复标签)，只有"聚类"这一步走
-  // 排废片后的子集。跟 core/curate 的废片排除同一套(find_tag_by_name +
-  // images_with_tag)。
-  std::unordered_set<project::ImageId> reject_set;
-  if (auto reject_tag = tagging::find_tag_by_name(db, project_id, tagging::kRejectTagName)) {
-    auto tagged = tagging::images_with_tag(db, image_ids, *reject_tag);
-    reject_set.insert(tagged.begin(), tagged.end());
+  const auto& summary = result.value();
+  int group_count = 0;
+  for (const auto& c : summary.clusters) {
+    if (c.members.size() >= 2) ++group_count;
   }
-  std::vector<project::ImageId> dedup_ids;
-  dedup_ids.reserve(image_ids.size());
-  for (project::ImageId id : image_ids) {
-    if (!reject_set.count(id)) dedup_ids.push_back(id);
-  }
-
-  // F-08：跟 find_duplicates 内部(经 find_duplicates_impl)会做的查询重
-  // 复一遍——load_metas 只是一条按 id IN (...) 的索引查询，不是 N+1，
-  // 多查一次换来"结果为什么比预期少"这个问题有观测手段，值得。
-  // skipped_no_capture_time 只统计参与聚类的子集(废片不算)。
-  int skipped_no_capture_time =
-      static_cast<int>(dedup_ids.size()) - static_cast<int>(load_metas(db, dedup_ids).size());
-
-  // 先摘光再重新打：只清 image_ids 这个范围内的旧标记，范围外的图片(比
-  // 如全项目扫描之后又单独对某个标签跑了一次)不受影响，见
-  // docs/M3_Dedup_PRD.md"重新运行"一节。remove_tag 是幂等的，图片本来
-  // 没打过标签也不算错，不需要先查一遍"这张图有没有这个标签"。
-  tagging::TagId duplicate_tag_id = tagging::ensure_duplicate_tag(db, project_id);
-  for (project::ImageId id : image_ids) {
-    // F-19：remove_tag 幂等，图片本来没这个标签也算成功(见上面的说
-    // 明)；唯一的失败原因(TagNotFound/ImageNotFound)在这里结构上不会
-    // 发生——tag_id 刚被 ensure_duplicate_tag 确认存在，id 来自调用方
-    // 已经解析好的图片列表。显式 (void) 丢弃，而不是让 [[nodiscard]]
-    // 警告一直挂在这里没人处理。
-    (void)tagging::remove_tag(db, id, duplicate_tag_id);
-  }
-
-  auto groups = find_duplicates(db, project_summary.value().root_path, dedup_ids, time_window_seconds,
-                                 hash_threshold, std::move(on_progress));
-
-  int tagged_count = 0;
-  for (const auto& group : groups) {
-    for (project::ImageId id : group.image_ids) {
-      if (id == group.keep_id) continue;
-      // F-18：以前不检查 add_tag 的返回值，tagged_count 无条件自增。如
-      // 果用户在这个功能之前就手动建过一个带 cap 的同名"重复"标签
-      // (ensure_duplicate_tag 会直接复用它，不区分是不是系统创建的，
-      // 见该函数的说明)，超出 cap 的图实际没打上标签，汇总却照样报"打
-      // 了 N 张"——只在真的打上时才计数。
-      if (tagging::add_tag(db, id, duplicate_tag_id).ok()) ++tagged_count;
-    }
-  }
-
   return Result<DedupSummary, project::ProjectNotFoundError>::Ok(
-      DedupSummary{static_cast<int>(groups.size()), tagged_count, skipped_no_capture_time});
+      DedupSummary{group_count, summary.tagged_count, summary.skipped_no_capture_time,
+                   summary.ai_fallback_count});
 }
 
 namespace detail {

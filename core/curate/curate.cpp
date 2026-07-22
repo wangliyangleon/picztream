@@ -2,23 +2,23 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <limits>
-#include <unordered_set>
+#include <random>
 
 #include "core/browse/browse.h"
-#include "core/dedup/dedup.h"
+#include "core/tournament/tournament.h"
 
 namespace pzt::core::curate {
 
 namespace {
 
-// 候选集：非"废片" 且 非"重复"（纯标签排除，不看 evaluation 记录）。
-// W2026-07-21：eval 不再整批跑(见 docs/W2026-07-21_*)，未评估的图也进候
-// 选，废片以外的次品交锦标赛淘汰；废片排除靠标签(来自手动 eval 的
-// auto-reject 或用户手动打标)。标签本身不存在时(项目里从没跑过废片/重
-// 复标记)，那一类排除为空，不当错误处理。
-std::vector<project::ImageId> resolve_candidates(db::Database& db, project::ProjectId project_id,
-                                                   std::optional<tagging::TagId> candidate_scope) {
+// 范围解析:candidate_scope 有值走某个标签下的图，否则整个项目。标签排
+// 除(废片/重复)不在这里做了——W2026-07-21 目标二收进
+// tournament::cluster_and_choose 的 exclude_tag_names，dedup 和 curate
+// 现在共用同一份排除逻辑，不再各自维护一份。
+std::vector<project::ImageId> resolve_scope_ids(db::Database& db, project::ProjectId project_id,
+                                                 std::optional<tagging::TagId> candidate_scope) {
   std::vector<project::ImageId> ids;
   if (candidate_scope) {
     auto filtered = browse::filter_by_tag(db, *candidate_scope);
@@ -28,47 +28,7 @@ std::vector<project::ImageId> resolve_candidates(db::Database& db, project::Proj
   } else {
     for (const auto& ref : browse::list_images(db, project_id)) ids.push_back(ref.id);
   }
-
-  std::unordered_set<project::ImageId> excluded;
-  if (auto reject_tag = tagging::find_tag_by_name(db, project_id, tagging::kRejectTagName)) {
-    auto tagged = tagging::images_with_tag(db, ids, *reject_tag);
-    excluded.insert(tagged.begin(), tagged.end());
-  }
-  if (auto dup_tag = tagging::find_tag_by_name(db, project_id, tagging::kDuplicateTagName)) {
-    auto tagged = tagging::images_with_tag(db, ids, *dup_tag);
-    excluded.insert(tagged.begin(), tagged.end());
-  }
-
-  std::vector<project::ImageId> candidates;
-  for (auto id : ids) {
-    if (excluded.count(id)) continue;  // 只按标签排除：废片 ∪ 重复
-    candidates.push_back(id);
-  }
-  return candidates;
-}
-
-// 分簇：复用 dedup::find_duplicates 现场重新分簇(不是读历史分组，候选
-// 集已经排除了"重复"标签图，没有旧状态可读，见
-// docs/M4_Eng_Design.md 第三节)。候选里没有出现在任何 DuplicateGroup
-// 里的(包括所有没有 captured_at 的图，find_duplicates 内部会跳过它
-// 们)，各自单独成一簇。只需要每簇的代表 id——簇的非代表成员不会进入
-// 最终选择(见下面 curate() 里"簇数 < N 不回填同簇候选"的说明)，不用
-// 保留完整 membership。
-std::vector<project::ImageId> build_cluster_reps(db::Database& db, const std::string& root_path,
-                                                   const std::vector<project::ImageId>& candidates,
-                                                   int time_window_seconds, int hash_threshold) {
-  auto groups = dedup::find_duplicates(db, root_path, candidates, time_window_seconds, hash_threshold);
-
-  std::unordered_set<project::ImageId> grouped;
-  std::vector<project::ImageId> reps;
-  for (auto& g : groups) {
-    for (auto id : g.image_ids) grouped.insert(id);
-    reps.push_back(g.keep_id);
-  }
-  for (auto id : candidates) {
-    if (!grouped.count(id)) reps.push_back(id);
-  }
-  return reps;
+  return ids;
 }
 
 struct RepInfo {
@@ -130,50 +90,68 @@ RepInfo greedy_pick(std::vector<RepInfo>& pool, const std::vector<RepInfo>& sele
 
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
-                     int time_window_seconds, int hash_threshold) {
-  auto candidates = resolve_candidates(db, project_id, candidate_scope);
-  if (candidates.empty()) return CurateResult{{}, count, 0};
+                     int time_window_seconds, int hash_threshold, bool ai_enabled,
+                     ai::Provider ai_provider, const ai::LocalModelConfig& local_config) {
+  auto ids = resolve_scope_ids(db, project_id, candidate_scope);
 
-  // project_id 由调用方(pzt curate 命令)调用前已经用 resolve_project_json
-  // 验证过存在，这里不会失败——跟 core/api.cpp 其它门面对已验证 project_id
-  // 的处理一致，不再二次判空。
-  auto project_summary = project::open_project(db, project_id);
-  auto cluster_reps = build_cluster_reps(db, project_summary.value().root_path, candidates,
-                                          time_window_seconds, hash_threshold);
+  // 分簇 + 每簇选 winner 整个委托给 tournament::cluster_and_choose：排除
+  // 废片和重复标签(curate 独有，dedup 只排废片)、apply_dup_tag=false(簇
+  // 内落选不等于"重复"，语义不一样，见 curate.h 的说明)。ai_enabled=false
+  // 时每簇 winner 就是 find_duplicates 算好的 keep_id，等价于这个函数改
+  // 造前的 build_cluster_reps 输出——project_id 由调用方(pzt curate 命
+  // 令)调用前已经用 resolve_project_json 验证过存在，这里不会失败，跟
+  // core/api.cpp 其它门面对已验证 project_id 的处理一致，不再二次判空。
+  auto choose_result = tournament::cluster_and_choose(
+      db, project_id, ids, time_window_seconds, hash_threshold,
+      {tagging::kRejectTagName, tagging::kDuplicateTagName}, /*apply_dup_tag=*/false, ai_enabled,
+      ai_provider, local_config);
+  const auto& summary = choose_result.value();
 
-  std::vector<RepInfo> selected_info;
+  if (summary.clusters.empty()) return CurateResult{{}, count, 0, 0};
+
+  std::vector<project::ImageId> winners;
+  winners.reserve(summary.clusters.size());
+  for (const auto& c : summary.clusters) winners.push_back(c.winner);
+
   std::vector<project::ImageId> selected;
 
-  if (static_cast<int>(cluster_reps.size()) >= count) {
-    std::vector<RepInfo> pool;
-    for (auto id : cluster_reps) pool.push_back(make_rep_info(db, id));
-    for (int i = 0; i < count && !pool.empty(); ++i) {
-      auto picked = greedy_pick(pool, selected_info);
-      selected.push_back(picked.id);
-      selected_info.push_back(picked);
+  if (static_cast<int>(winners.size()) >= count) {
+    if (ai_enabled) {
+      // AI 开：从 winner 集合随机挑 count 个(PRD 已拍板接受不可复现，见
+      // curate.h 的说明)——没有质量分可比，"哪个 winner 更该被选中"本来
+      // 就没有确定性答案。
+      std::mt19937 rng(std::random_device{}());
+      std::sample(winners.begin(), winners.end(), std::back_inserter(selected), count, rng);
+    } else {
+      // AI 关：farthest-point 多样性，逻辑不变，只是输入源从旧
+      // build_cluster_reps 换成 winners(ai_enabled=false 时两者等价)。
+      std::vector<RepInfo> pool;
+      for (auto id : winners) pool.push_back(make_rep_info(db, id));
+      std::vector<RepInfo> selected_info;
+      for (int i = 0; i < count && !pool.empty(); ++i) {
+        auto picked = greedy_pick(pool, selected_info);
+        selected.push_back(picked.id);
+        selected_info.push_back(picked);
+      }
     }
   } else {
-    // 簇数 < N：只返回每簇一张代表，不回填同簇的非代表成员——同簇成员
-    // 本来就是 build_cluster_reps 判定过的"近似重复"，回填会让最终结
-    // 果里出现彼此近重复的图，违背 curate 存在的多样性目的(真机验证时
-    // 发现的问题：只有 1-2 张候选、互相近似的场景下，回填会把这批近重
-    // 复图凑数塞进 N 张里)。宁可 returned < requested，也不用近重复凑
-    // 数——不足的部分如实反映在 returned 里，不报错(算法设计第 5 条)。
+    // 簇数 < N：两种模式都返回全部 winner，不分 ai_enabled——没有"选"这
+    // 个动作，谈不上随机还是多样性，统一按 captured_at 降序、id 升序排
+    // 序(确定性)。不回填同簇的非 winner 成员，理由同旧版本：同簇成员是
+    // "近似重复"或"同一场景"，回填会让最终结果出现彼此近重复的图，违背
+    // curate 存在的多样性目的。
     std::vector<RepInfo> reps;
-    for (auto id : cluster_reps) reps.push_back(make_rep_info(db, id));
+    for (auto id : winners) reps.push_back(make_rep_info(db, id));
     std::sort(reps.begin(), reps.end(), [](const RepInfo& a, const RepInfo& b) {
       auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
       auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
       if (at != bt) return at > bt;  // captured_at 降序
       return a.id < b.id;
     });
-    for (auto& r : reps) {
-      selected.push_back(r.id);
-      selected_info.push_back(r);
-    }
+    for (auto& r : reps) selected.push_back(r.id);
   }
 
-  return CurateResult{selected, count, static_cast<int>(selected.size())};
+  return CurateResult{selected, count, static_cast<int>(selected.size()), summary.ai_fallback_count};
 }
 
 }  // namespace pzt::core::curate

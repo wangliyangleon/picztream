@@ -1,7 +1,10 @@
 #include <doctest.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 #include "core/curate/curate.h"
@@ -11,6 +14,7 @@
 #include "core/tagging/tagging.h"
 
 namespace fs = std::filesystem;
+using pzt::core::ai::Provider;
 using pzt::core::db::Database;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::encode_jpeg_file;
@@ -94,6 +98,31 @@ bool write_solid_jpeg(const fs::path& path, int width, int height, unsigned char
   img.rgba.assign(static_cast<std::size_t>(width) * height * 4, gray);
   return encode_jpeg_file(img, path.string()).ok();
 }
+
+// 跟 dedup_test.cpp/compare_test.cpp 的 EnvVarGuard 是同一个写法，各自
+// 文件独立一份是既有惯例。
+struct EnvVarGuard {
+  std::string name;
+  std::optional<std::string> previous;
+
+  EnvVarGuard(std::string n, const char* value) : name(std::move(n)) {
+    const char* existing = std::getenv(name.c_str());
+    if (existing) previous = existing;
+    if (value) {
+      setenv(name.c_str(), value, 1);
+    } else {
+      unsetenv(name.c_str());
+    }
+  }
+
+  ~EnvVarGuard() {
+    if (previous) {
+      setenv(name.c_str(), previous->c_str(), 1);
+    } else {
+      unsetenv(name.c_str());
+    }
+  }
+};
 
 }  // namespace
 
@@ -225,4 +254,61 @@ TEST_CASE("curate is deterministic across repeated calls with identical input") 
   CHECK(first.requested == second.requested);
   CHECK(first.returned == second.returned);
   CHECK(first.selected == second.selected);
+}
+
+// W2026-07-21 目标二：ai_enabled=true 时走真实的 tournament::
+// cluster_and_choose(不是注入假 compare_fn)。用 dedup_test.cpp 同一个技
+// 巧——Provider::Claude 没设 ANTHROPIC_API_KEY 时确定性地 MissingApiKey、
+// 不连真网络——让每个 size>=2 的簇退化成 keep_id，等价于 ai_enabled=false
+// 的结果，藉此验证 ai_enabled 真的传到底、簇数<count 时两种模式返回同一
+// 个确定性结果。
+TEST_CASE("curate with ai_enabled=true and clusters<count returns the same winners as ai_enabled=false "
+          "when the provider has no credentials (no real network call)") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
+  auto fx = make_fixture("ai_fallback_shortfall", 3);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 120));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1005);    // 跟 a 同簇，AI 失败退化选更新的 b
+  set_captured_at(fx.db, fx.images[2], 100000);  // 独立单例，不发起任何 AI 调用
+
+  auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10,
+                        /*ai_enabled=*/true, Provider::Claude);
+  CHECK(result.returned == 2);
+  CHECK(result.selected == std::vector<ImageId>{fx.images[2], fx.images[1]});  // 同非 AI 版本的结果
+  CHECK(result.ai_fallback_count == 1);  // 只有 {a,b} 这一簇尝试过 AI 并退化，单例 c 不算
+}
+
+// 簇数(4 个 winner:两个 size>=2 簇的 keep_id + 两个单例) >= count(3)，验
+// 证随机采样这一步：结果大小正确、是 winner 集合的子集、无重复——不断
+// 言具体挑中哪几个(随机，PRD 已拍板接受不可复现)。同样用 Claude 无 key
+// 的确定性退化，让 winner 集合本身可预测。
+TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-sized subset of winners") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
+  auto fx = make_fixture("ai_sample_subset", 6);
+  auto dir = fs::path(fx.root_path);
+  for (char name : {'a', 'b', 'c', 'd', 'e', 'f'}) {
+    REQUIRE(write_solid_jpeg(dir / (std::string(1, name) + ".jpg"), 16, 16, 120));
+  }
+  set_captured_at(fx.db, fx.images[0], 1000);      // a: 簇1 跟 b
+  set_captured_at(fx.db, fx.images[1], 1010);      // b: 簇1，更新 -> AI 失败时的 keep_id
+  set_captured_at(fx.db, fx.images[2], 100000);    // c: 簇2 跟 d
+  set_captured_at(fx.db, fx.images[3], 100010);    // d: 簇2，更新 -> AI 失败时的 keep_id
+  set_captured_at(fx.db, fx.images[4], 200000);    // e: 独立单例
+  set_captured_at(fx.db, fx.images[5], 300000);    // f: 独立单例
+
+  auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10,
+                        /*ai_enabled=*/true, Provider::Claude);
+  REQUIRE(result.returned == 3);
+  CHECK(result.ai_fallback_count == 2);  // {a,b}、{c,d} 两簇都尝试过 AI 并退化，e/f 单例不算
+
+  std::vector<ImageId> winner_pool{fx.images[1], fx.images[3], fx.images[4], fx.images[5]};
+  for (auto id : result.selected) {
+    CHECK(std::find(winner_pool.begin(), winner_pool.end(), id) != winner_pool.end());
+  }
+  std::vector<ImageId> sorted_selected = result.selected;
+  std::sort(sorted_selected.begin(), sorted_selected.end());
+  CHECK(std::adjacent_find(sorted_selected.begin(), sorted_selected.end()) == sorted_selected.end());
 }

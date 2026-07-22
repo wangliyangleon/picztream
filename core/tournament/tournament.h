@@ -57,11 +57,16 @@ struct ChooseSummary {
 // find_duplicates 算好的 keep_id(captured_at 最新，id 兜底)；
 // ai_enabled=true 时簇内单淘汰锦标赛决定 winner，某次比较失败时那一簇
 // 单独退化成 keep_id、不中断其它簇(ai_fallback_count 记录退化了几簇)。
+// on_progress：跟 dedup::find_duplicates 同款回调，每处理完一个候选簇
+// (不论是否成簇)回调一次——直接转给内部的 find_duplicates_impl，不是新
+// 概念。Commit 2 补上这个参数：find_and_tag_duplicates 今天的公开签名带
+// 这个回调，改調 cluster_and_choose 时不能悄悄把它吞掉。
 Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider = ai::Provider::Local,
-    const ai::LocalModelConfig& local_config = ai::LocalModelConfig{});
+    const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
+    dedup::DedupProgressFn on_progress = nullptr);
 
 // 仅供单元测试使用——decode_fn/compare_fn 都可注入，不需要真的解码 JPEG
 // 或真的连网络就能验证分簇后处理、锦标赛推进、AI 失败退化这些逻辑。跟
@@ -78,7 +83,8 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn);
+    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn,
+    dedup::DedupProgressFn on_progress = nullptr);
 
 }  // namespace detail
 

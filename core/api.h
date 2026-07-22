@@ -171,10 +171,13 @@ TagId ensure_reject_tag(ProjectId project_id);
 using DedupSummary = dedup::DedupSummary;
 // F-08：time_window_seconds/hash_threshold 默认 10/5(等价旧行为)，
 // handle_dedup_command 显式传 Settings.dedup_time_window_seconds/
-// dedup_hash_threshold。
+// dedup_hash_threshold。ai_enabled/provider/local_config(W2026-07-21 目
+// 标二新增)透传给 core::dedup::find_and_tag_duplicates，默认值保证现有
+// 调用点零改动。
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds = 10,
-    int hash_threshold = 5, dedup::DedupProgressFn on_progress = nullptr);
+    int hash_threshold = 5, dedup::DedupProgressFn on_progress = nullptr, bool ai_enabled = false,
+    Provider provider = Provider::Local, const LocalModelConfig& local_config = LocalModelConfig{});
 
 // M4：策展挑图，见 docs/M4_Eng_Design.md 第三节。跟上面的 dedup 门面同一
 // 个模式：开默认库转调 curate::curate。门面刻意不叫 curate——
@@ -184,8 +187,12 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
 // 命令)从 Settings.curate_time_window_seconds/curate_hash_threshold 显
 // 式传入。
 using CurateResult = curate::CurateResult;
+// ai_enabled/ai_provider/local_config(W2026-07-21 目标二新增)透传给
+// core::curate::curate，默认值保证现有调用点零改动。
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
-                            int time_window_seconds, int hash_threshold);
+                            int time_window_seconds, int hash_threshold, bool ai_enabled = false,
+                            Provider ai_provider = Provider::Local,
+                            const LocalModelConfig& local_config = LocalModelConfig{});
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见

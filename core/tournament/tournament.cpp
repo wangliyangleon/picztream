@@ -77,7 +77,7 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn) {
+    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, dedup::DedupProgressFn on_progress) {
   auto project_summary = project::open_project(db, project_id);
   if (!project_summary.ok()) {
     return Result<ChooseSummary, project::ProjectNotFoundError>::Err(project_summary.error());
@@ -108,7 +108,7 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
       static_cast<int>(dedup::images_with_capture_time(db, candidates).size());
 
   auto groups = dedup::detail::find_duplicates_impl(db, root_path, candidates, time_window_seconds,
-                                                      hash_threshold, /*on_progress=*/nullptr, decode_fn);
+                                                      hash_threshold, on_progress, decode_fn);
 
   std::unordered_set<project::ImageId> grouped_ids;
   for (const auto& g : groups) grouped_ids.insert(g.image_ids.begin(), g.image_ids.end());
@@ -167,10 +167,12 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
 Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
-    bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config) {
+    bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
+    dedup::DedupProgressFn on_progress) {
   return detail::cluster_and_choose_impl(db, project_id, image_ids, time_window_seconds, hash_threshold,
                                           exclude_tag_names, apply_dup_tag, ai_enabled, ai_provider,
-                                          local_config, media::decode_preview_file, ai::request_comparison);
+                                          local_config, media::decode_preview_file, ai::request_comparison,
+                                          std::move(on_progress));
 }
 
 }  // namespace pzt::core::tournament

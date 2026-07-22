@@ -90,6 +90,8 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
 
 - **`core/api.h` 门面**（`find_and_tag_duplicates`/`curate_images`）签名同步透传三个新参数，默认值保持向后兼容。
 
+**订正（实现 Commit 2 时发现）**：上面"`DedupSummary`/`CurateResult` 外部形状不变"是疏漏——决策三要在 `cmd_dedup`/`cmd_curate` 的 JSON 里加 `ai_fallback_count` 字段，而这两个命令只调 `find_and_tag_duplicates`/`curate()` 这两个门面，不直接摸 `cluster_and_choose` 的返回值，所以这个数字必须经 `DedupSummary`/`CurateResult` 带出来。实际改动：两个结构体各新增一个 `int ai_fallback_count` 字段（`ai_enabled=false` 时恒为 0）。另外 `find_and_tag_duplicates` 原有的 `on_progress` 回调也一并补进了 `cluster_and_choose`/`cluster_and_choose_impl`（追加在参数列表末尾、带默认值，不影响已有调用点），避免委托过去之后这个参数被静默吞掉。
+
 ## 决策三：headless 命令面
 
 `cmd_dedup`/`cmd_curate`（`commands.cpp`）各自新增两个可选 flag：`--ai`、`--provider <local|gemini|claude>`（`--provider` 只在 `--ai` 出现时有意义，复用 `cmd_compare`/`cmd_eval` 已有的 provider 解析代码）。**不出现 `--ai` 时两个命令的调用路径、参数、JSON 输出逐字节不变**——这是向后兼容的硬要求，回归测试要覆盖。

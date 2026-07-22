@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "core/ai/ai.h"
 #include "core/db/database.h"
 #include "core/decode/decode.h"
 #include "core/project/project.h"
@@ -88,29 +89,38 @@ struct DedupSummary {
   // 数(微信图/截图/编辑过的导出件常见)。以前这批图片被静默排除，用户
   // 分组结果不如预期时无从判断是这批图片拖累的还是参数问题。
   int skipped_no_capture_time;
+  // W2026-07-21 目标二：ai_enabled=true 时，因为某次 AI 比较失败而整簇
+  // 退化成"选 captured_at 最新"的簇数；ai_enabled=false 时恒为 0。见
+  // core::tournament::ChooseSummary 同名字段。
+  int ai_fallback_count;
 };
 
-// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签：清空
-// image_ids 范围内的旧 duplicate 标记 -> 排除废片(带废片标签的图不参
-// 与聚类，否则最新的废片会成为 keep 把好邻居打成重复) -> find_duplicates
-// 分组 -> 给每组除 keep_id 外的成员打标签。放在同一个 core/dedup 模块
-// 里，不是违反"纯算法层"的说法——跟 core/export 的 export_tag(db::
-// Database&, ...) 同一个先例：模块以功能命名(dedup/export)，内部按需
-// 组合其它模块(tagging/project)完成一次完整的用户可见操作，"纯算法层"
-// 说的是 find_duplicates 这一个函数，不是整个模块。project_id 只用来
-// 定位 duplicate 标签所在的项目(标签按项目隔离)和取 root_path，不代表
-// 扫描范围——扫描范围是 image_ids，由调用方自己解析好(整个项目还是某
-// 个标签的子集)再传进来。core/api.h 的同名门面函数只是开默认库、转调
-// 这个函数的一层薄封装，方便单元测试指向临时测试库。
+// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签。W2026-07-21
+// 目标二起，实际工作整个委托给 core::tournament::cluster_and_choose
+// （exclude_tag_names={"废片"}、apply_dup_tag=true）：排废片、清旧重复标
+// 记、分组、给每组除 winner 外的成员打标签都在那边完成；ai_enabled=false
+// 时 winner 就是 find_duplicates 算好的 keep_id，行为跟这个函数改造前逐
+// 字节一致。project_id 只用来定位 duplicate 标签所在的项目(标签按项目
+// 隔离)和取 root_path，不代表扫描范围——扫描范围是 image_ids，由调用方
+// 自己解析好(整个项目还是某个标签的子集)再传进来。core/api.h 的同名门
+// 面函数只是开默认库、转调这个函数的一层薄封装，方便单元测试指向临时测
+// 试库。
 //
 // F-08：time_window_seconds/hash_threshold 默认值维持 10/5(等价旧行
 // 为)，真正的调参入口是 F-12 的 Settings.dedup_time_window_seconds/
 // dedup_hash_threshold——`/dedup` 控制台命令本身不接受内联参数覆盖，
 // 想调参改配置文件，调用方(cli/commands/browse.cpp 的
 // handle_dedup_command)负责读 Settings 显式传进来。
+//
+// ai_enabled/provider/local_config（W2026-07-21 目标二新增）：默认
+// ai_enabled=false，保证现有调用点(cmd_dedup、`/dedup` 控制台命令、全部
+// 现有测试)零改动。ai_enabled=true 时簇内改走单淘汰锦标赛选 winner，见
+// core::tournament::cluster_and_choose 的说明。
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
-    int time_window_seconds = 10, int hash_threshold = 5, DedupProgressFn on_progress = nullptr);
+    int time_window_seconds = 10, int hash_threshold = 5, DedupProgressFn on_progress = nullptr,
+    bool ai_enabled = false, ai::Provider provider = ai::Provider::Local,
+    const ai::LocalModelConfig& local_config = ai::LocalModelConfig{});
 
 // 仅供单元测试使用——decode_fn 可注入，不需要真的解码 JPEG 文件就能验证
 // 时间聚类、hamming 距离分组、keep_id 选择这些逻辑，规避真实 JPEG 有损

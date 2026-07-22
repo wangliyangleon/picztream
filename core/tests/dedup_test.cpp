@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -15,6 +17,7 @@
 
 namespace fs = std::filesystem;
 using pzt::core::Result;
+using pzt::core::ai::Provider;
 using pzt::core::db::Database;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
@@ -150,6 +153,31 @@ detail::PreviewDecodeFn hash_map_decoder(std::unordered_map<std::string, ImageHa
 std::string path_for(const Fixture& fx, char name) {
   return fx.root_path + "/" + std::string(1, name) + ".jpg";
 }
+
+// 跟 compare_test.cpp/evaluation_test.cpp 的 EnvVarGuard 是同一个写法——
+// 各自文件独立一份，见那边的说明。
+struct EnvVarGuard {
+  std::string name;
+  std::optional<std::string> previous;
+
+  EnvVarGuard(std::string n, const char* value) : name(std::move(n)) {
+    const char* existing = std::getenv(name.c_str());
+    if (existing) previous = existing;
+    if (value) {
+      setenv(name.c_str(), value, 1);
+    } else {
+      unsetenv(name.c_str());
+    }
+  }
+
+  ~EnvVarGuard() {
+    if (previous) {
+      setenv(name.c_str(), previous->c_str(), 1);
+    } else {
+      unsetenv(name.c_str());
+    }
+  }
+};
 
 }  // namespace
 
@@ -550,4 +578,34 @@ TEST_CASE("find_and_tag_duplicates returns ProjectNotFoundError for an unknown p
   auto result = find_and_tag_duplicates(fx.db, fx.project_id + 999999, fx.images);
   REQUIRE_FALSE(result.ok());
   CHECK(result.error() == ProjectNotFoundError::NotFound);
+}
+
+// W2026-07-21 目标二：ai_enabled=true 时走真实的 tournament::
+// cluster_and_choose(不是注入假 compare_fn)。用 evaluation_test.cpp/
+// compare_test.cpp 同一个技巧——Provider::Claude 在 ANTHROPIC_API_KEY 没
+// 设时，request_comparison 在真正发起网络请求之前就确定性地返回
+// MissingApiKey，不连真网络。这条用例验证的是"ai_enabled 真的传到底
+// 了"这条真实链路：每个簇因为 AI 失败退化成跟 ai_enabled=false 完全一样
+// 的 keep_id 选择，group_count/tagged_count 不变，只是多一个
+// ai_fallback_count 反映退化了几组。
+TEST_CASE("find_and_tag_duplicates with ai_enabled=true degrades to keep_id when the provider has no "
+          "credentials (no real network call)") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
+  auto fx = make_fixture("facade_ai_fallback", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));  // 字节相同,必然判为重复
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);  // 更新,是 keep_id 规则下的答案
+
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images, 10, 5, nullptr,
+                                         /*ai_enabled=*/true, Provider::Claude);
+  REQUIRE(result.ok());
+  CHECK(result.value().group_count == 1);
+  CHECK(result.value().tagged_count == 1);       // 跟 ai_enabled=false 时完全一致(退化成 keep_id)
+  CHECK(result.value().ai_fallback_count == 1);  // 唯一那组因为没 key 而退化
+
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));  // 保留最新的那张
+  CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
 }
