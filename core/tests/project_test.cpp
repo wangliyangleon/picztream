@@ -57,8 +57,9 @@ void touch(const fs::path& p, std::size_t bytes = 10) {
 void insert_evaluation_stub(Database& db, pzt::core::project::ImageId id) {
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db.handle(),
-                      "INSERT INTO image_evaluations (image_id, assessment, unusable, "
-                      "extra_guidance, provider) VALUES (?, '', 0, '', 'gemini');",
+                      "INSERT INTO image_evaluations (image_id, result_json, "
+                      "extra_guidance, provider) VALUES (?, '{\"assessment\":\"\",\"unusable\":false}', "
+                      "'', 'gemini');",
                       -1, &stmt, nullptr);
   sqlite3_bind_int64(stmt, 1, id);
   if (sqlite3_step(stmt) != SQLITE_DONE) {
@@ -419,14 +420,14 @@ TEST_CASE("get_image returns nullopt evaluation by default, reads it back once s
 
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db.handle(),
-                      "INSERT INTO image_evaluations (image_id, assessment, unusable, "
-                      "extra_guidance, provider) VALUES (?, ?, ?, ?, ?);",
+                      "INSERT INTO image_evaluations (image_id, result_json, "
+                      "extra_guidance, provider) VALUES (?, ?, ?, ?);",
                       -1, &stmt, nullptr);
   sqlite3_bind_int64(stmt, 1, *a_id);
-  sqlite3_bind_text(stmt, 2, "balanced composition, warm color, sharp", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int(stmt, 3, 1);
-  sqlite3_bind_text(stmt, 4, "focus on the crop", -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 5, "gemini", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, R"({"assessment":"balanced composition, warm color, sharp","unusable":true})",
+                     -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, "focus on the crop", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, "gemini", -1, SQLITE_TRANSIENT);
   REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
   sqlite3_finalize(stmt);
 

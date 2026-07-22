@@ -124,20 +124,21 @@ std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRe
   }
 
   const auto& r = result.value();
+  // result_json 存模型返回的原始形状(assessment/unusable)，不是拆开的列——
+  // 以后再问模型要新的值,只用扩展 EvaluationResult + 这里的 json 字面量,
+  // 不需要再来一次 core/db/schema.cpp 的破坏性表重建,见那边的注释。
+  std::string result_json = nlohmann::json{{"assessment", r.assessment}, {"unusable", r.unusable}}.dump();
   db::Stmt stmt(db.handle(),
-                "INSERT INTO image_evaluations (image_id, assessment, unusable, extra_guidance, "
-                "provider) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO image_evaluations (image_id, result_json, extra_guidance, provider) "
+                "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(image_id) DO UPDATE SET "
-                "assessment = excluded.assessment, "
-                "unusable = excluded.unusable, "
+                "result_json = excluded.result_json, "
                 "extra_guidance = excluded.extra_guidance, "
                 "provider = excluded.provider;");
   sqlite3_bind_int64(stmt.get(), 1, req.image_id);
-  sqlite3_bind_text(stmt.get(), 2, r.assessment.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int(stmt.get(), 3, r.unusable ? 1 : 0);
-  sqlite3_bind_text(stmt.get(), 4, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt.get(), 5, to_string(req.provider), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt.get(), 2, result_json.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt.get(), 3, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt.get(), 4, to_string(req.provider), -1, SQLITE_TRANSIENT);
   // F-17：以前不检查这一步——AI 已经给出结果，但落库失败(磁盘满、库损
   // 坏)时会静默发生，generation_ 照样 +1 触发一次什么都没变的空重绘，
   // 用户完全看不到发生了什么。这里不像 recipe.cpp 那些函数一样直接

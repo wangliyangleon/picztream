@@ -61,6 +61,7 @@ bool is_usable(const EvaluationInfo& info);   // return !info.unusable;
 ### `core/ai/evaluation.cpp`：prompt / schema / 解析
 
 - `build_evaluation_prompt(extra_guidance)`（`evaluation.cpp:14-23`）重写：要求模型产出一段简练客观的文字，从构图、色彩、对焦、摄影审美几个方面描述这张照片；外加判定 `unusable`——是否存在某方面硬伤（严重失焦、严重欠/过曝等）导致这张根本不可用。`extra_guidance` 非空时仍追加 `"\n\nAdditional guidance: ..."`。模板固定英文，不跟 i18n。
+  **修订（2026-07-22）：判据收紧。** 真机测试发现一张明显失焦、无意义构图的"膝盖照"被判 `usable`——旧措辞要求"badly"级失焦+"no recoverable detail"级曝光,门槛太高。改成:对焦判据从"灾难级模糊"降到"不足以当清晰可用的照片";新增"意外/无意义构图"(无可辨识主体,如误拍身体部位/口袋/地面)一条,覆盖技术上不算爆炸但根本不成立为一张照片的情况;并显式提示模型"不需要严重到灾难级才算 unusable,只要不值得留"。仍是 PRD 定义的"硬伤"技术/实用性判据范畴,不是转向宽泛审美评分。
 - `build_evaluation_schema_instruction`（`evaluation.cpp:25-40`）+ `build_evaluation_json_schema`（`evaluation.cpp:42-86`）重写成 `{ "assessment": string, "unusable": boolean }`，两字段都 `required`。native json_schema 供 Local 硬约束解码（走现有 `build_local_request` 的 `options.temperature=0` 路径，`ai.cpp:203`）。
 - `request_evaluation_impl`（`evaluation.cpp:167-206`）：删 `parse_dimension`/`parse_exposure_fix`/`parse_composition_fix`（`evaluation.cpp:105-149`）及越界检查。新解析：`assessment` 必须是 string、`unusable` 必须是 boolean，任一缺失/类型不对 → `ParseError`。`request_evaluation` 公开签名不变（`image, extra_guidance, provider, local_config`，`evaluation.h:100-103`），继续当 `EvaluationFn` 默认值。
 
@@ -91,9 +92,33 @@ if (column_exists(conn, "image_evaluations", "exposure_score")) {
 
 `get_image` 的 `LEFT JOIN image_evaluations`（`core/project/project.cpp` 内）取列改成新四列，`EvaluationInfo` 整行填好或整行 `nullopt`（这张表要么整行在要么整行不在的语义不变）。
 
+**修订（2026-07-22）：`assessment`/`unusable` 两列再合并成一列 `result_json`。**
+
+```sql
+CREATE TABLE IF NOT EXISTS image_evaluations (
+  image_id INTEGER PRIMARY KEY REFERENCES images(id) ON DELETE CASCADE,
+  result_json TEXT NOT NULL,       -- 模型原始返回:{"assessment":"...","unusable":true|false}
+  extra_guidance TEXT NOT NULL,
+  provider TEXT NOT NULL
+);
+```
+
+动机：`assessment`/`unusable` 都是"问 AI 要的值"，以后想再让模型多给一个类似的值（比如再加一个软性信号），不该每次都要一次破坏性表重建——把它们收进一个 JSON blob，未来加字段只需要扩展 `EvaluationResult`（`evaluation.h`）+ worker 落库那行 json 字面量 + `get_image` 解析那几行，schema 本身不用再动。`extra_guidance`/`provider` **不进 blob**，继续独立列——它们不是模型输出，是调用方自己知道的请求上下文（谁问的、怎么问的），跟"AI 返回了什么"是两类东西，混进同一个 blob 会模糊这个边界，且这两个字段目前看不到会跟着模型 schema 一起演化的理由。
+
+迁移条件相应加宽（`unusable`/`exposure_score` 任一旧列存在就整表 drop，表不存在时两次 `column_exists` 都是 false、不误触发）：
+
+```cpp
+if (column_exists(conn, "image_evaluations", "exposure_score") ||
+    column_exists(conn, "image_evaluations", "unusable")) {
+  exec(conn, "DROP TABLE image_evaluations");
+}
+```
+
+`get_image` 读回时用 `nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false)` 非抛出式解析；解析失败或缺字段/类型不对，按"没评估过"处理（`info.evaluation` 留空），不阻塞——这是缓存性质的 AI 结果，不是权威数据，跟"评估可重算、不是金标准"的既有口径一致。`EvaluationInfo`/`EvaluationResult` 两个 C++ 结构体本身不变，只有落库/读回这两处收口了序列化。
+
 ## worker 落库 + auto_reject（`core/ai/evaluation_worker.cpp`）
 
-- 成功落库的 UPSERT（`evaluation_worker.cpp:125-187`）从 16 列缩到 5 列：`image_id, assessment, unusable, extra_guidance, provider`；`unusable` bind 成 int 0/1，`provider` 仍走 `to_string(req.provider)`。`ON CONFLICT(image_id) DO UPDATE` 结构不变。
+- 成功落库的 UPSERT（`evaluation_worker.cpp:125-187`）从 16 列缩到 4 列：`image_id, result_json, extra_guidance, provider`；`result_json` 是 `nlohmann::json{{"assessment", r.assessment}, {"unusable", r.unusable}}.dump()`，`provider` 仍走 `to_string(req.provider)`。`ON CONFLICT(image_id) DO UPDATE` 结构不变（2026-07-22 修订：原计划是 5 列，`assessment`/`unusable` 分列，后收进 `result_json` 一列，见上）。
 - auto_reject（`evaluation_worker.cpp:195-203`）：判据从 `!passes_gate(eval_info)` 改成直接 `if (r.unusable)`——模型直接给可用性，不再构造 `EvaluationInfo` 去算 gate。命中后 `ensure_reject_tag(db, project_id)` + `add_tag`，用已开的 `db` 连接，只打不删，全不变。
 - `EvaluationFn` typedef（`evaluation_worker.h:27-28`，返回 `EvaluationResult`）、`request()` 签名（含 M4 加的 `auto_reject` bool，`evaluation_worker.h:49-50`）、队列/去重 `in_flight_`/`queue_status`/`take_last_failure` 骨架全不动。失败路径（`ImageUnavailable`/`StorageFailed`/不清旧行）不变。
 
@@ -188,7 +213,7 @@ Result<ComparisonResult, CompareError> request_comparison_impl(
 ## 测试
 
 - **`core/tests/evaluation_test.cpp`**：重写为新形状——`assessment`/`unusable` 正常解析、缺字段或类型错 → `ParseError`、`unusable=true/false` 都能读、guidance 拼接进 prompt、Local 路径传了 native json_schema。删 `OutOfRange`（`:172`）、三维 fix（`:102-155`）、`overall_score`/`passes_gate`（`:305-316`）相关用例。RequestError→EvaluationError 映射、MissingApiKey 不调 http_post 保留。
-- **`core/tests/evaluation_worker_test.cpp`**：`make_evaluation_result` 辅助改产 `{assessment, unusable}`；`:133` 落库用例验新 5 列（含 `assessment`/`unusable`/`extra_guidance`/`provider`）；auto_reject 三例（`:231/:249/:268`）改成 `unusable=true`+auto_reject → 打废片、`unusable=false`+auto_reject → 不打、auto_reject=false → 不打。StorageFailed（`:291`）、queue_status（`:380`）、in-flight 去重（`:120`）、last_failure（`:190/:211`）、LocalModelConfig 透传（`:473`）保留。
+- **`core/tests/evaluation_worker_test.cpp`**：`make_evaluation_result` 辅助改产 `{assessment, unusable}`；落库用例通过 `get_image()` 读回验证（不直接断言列数/列名，跟存储格式解耦——2026-07-22 起落库是 `result_json` 一列，见上）；auto_reject 三例（`:231/:249/:268`）改成 `unusable=true`+auto_reject → 打废片、`unusable=false`+auto_reject → 不打、auto_reject=false → 不打。StorageFailed（`:291`）、queue_status（`:380`）、in-flight 去重（`:120`）、last_failure（`:190/:211`）、LocalModelConfig 透传（`:473`）保留。
 - **`core/tests/dedup_test.cpp`**：依赖 `overall_score` 的 keep 用例（`:279` 全评估按分选、`:297` 分数打平按时间、`:315` 部分未评估退化）重写为"keep 恒为 captured_at 最新、id 兜底"；`insert_evaluation` 辅助（`:107`）可删（keep 不再看评估）。**新增用例**：带废片标签（`kRejectTagName`）的图被排除在聚类之外——构造"一张废片 + 它的好近邻"，验证废片不成为 keep、好图不被打成重复。聚类/hash/并查集/标签/summary 其余用例不变。
 - **`core/tests/curate_test.cpp`**：候选用例改成纯标签口径——未评估的图进候选、评估为 `unusable` 但未打废片标签的图也进候选（不再按 unusable 排除）、废片/重复标签排除保留（`:118/:130/:141` 相应重写；原 gate 排除用例 `:130` 删除或改成"打了废片标签才排除"）。排序用例（`:166` 每簇一代表、`:194` 打平时间铺开、`:237/:257`）改成纯 `captured_at` 多样性口径。`insert_evaluation`（`:89`）在 curate_test 里基本不再需要（curate 不看评估），候选测试改用标签建场景。
 - **`core/tests/compare_test.cpp`**（新，镜像 `style_test`）：winner "a"/"b" 解析成 0/1、非法 winner → `InvalidWinner`、prompt 含两张图指示、RequestError→CompareError 映射、MissingApiKey 不调 http_post。

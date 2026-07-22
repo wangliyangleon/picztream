@@ -421,13 +421,17 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   // image_evaluations 是一对一、可能没有匹配行的表(没评估过/评估失败)，
-  // LEFT JOIN——8-11 这几列匹配不到行时全部是 NULL，用 assessment(8，
-  // NOT NULL)判断"这张图有没有评估结果"就够，不用逐列判断。
+  // LEFT JOIN——8-10 这几列匹配不到行时全部是 NULL，用 result_json(8，
+  // NOT NULL)判断"这张图有没有评估结果"就够，不用逐列判断。result_json 是
+  // 模型返回的原始 {"assessment":..,"unusable":..}(W2026-07-21：从两列合
+  // 并成一列，见 core/db/schema.cpp 的注释)，这里解析失败(损坏数据/未来
+  // 格式不兼容)按"没评估过"处理，不阻塞，是缓存性质的 AI 结果、不是权威
+  // 数据。
   Stmt stmt(db.handle(),
             "SELECT images.id, images.project_id, images.file_path, images.file_name, "
             "images.file_size, images.kind, images.preview_cache_path, images.captured_at, "
-            "image_evaluations.assessment, image_evaluations.unusable, "
-            "image_evaluations.extra_guidance, image_evaluations.provider "
+            "image_evaluations.result_json, image_evaluations.extra_guidance, "
+            "image_evaluations.provider "
             "FROM images LEFT JOIN image_evaluations ON images.id = image_evaluations.image_id "
             "WHERE images.id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, id);
@@ -447,12 +451,18 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
     info.captured_at = sqlite3_column_int64(stmt.get(), 7);
   }
   if (sqlite3_column_type(stmt.get(), 8) != SQLITE_NULL) {
-    ai::EvaluationInfo eval;
-    eval.assessment = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 8));
-    eval.unusable = sqlite3_column_int(stmt.get(), 9) != 0;
-    eval.extra_guidance = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 10));
-    eval.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 11));
-    info.evaluation = std::move(eval);
+    const char* result_text = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 8));
+    auto result_json = nlohmann::json::parse(result_text, nullptr, /*allow_exceptions=*/false);
+    if (!result_json.is_discarded() && result_json.contains("assessment") &&
+        result_json["assessment"].is_string() && result_json.contains("unusable") &&
+        result_json["unusable"].is_boolean()) {
+      ai::EvaluationInfo eval;
+      eval.assessment = result_json["assessment"].get<std::string>();
+      eval.unusable = result_json["unusable"].get<bool>();
+      eval.extra_guidance = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 9));
+      eval.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 10));
+      info.evaluation = std::move(eval);
+    }
   }
   return info;
 }

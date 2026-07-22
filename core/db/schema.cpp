@@ -110,15 +110,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_preset_name ON recipes(name) WHERE
 // 空"的语义——所以除了两个修正建议各自四五个字段允许 NULL(模型判断不
 // 需要修正建议时不给)之外，其它列都是 NOT NULL。
 // W2026-07-21：eval 从三维技术打分改成"一段客观文字 assessment + 一个
-// unusable 硬伤 flag"，这张表整体重建成 5 列。image_id 当主键(一对一)，
-// ON DELETE CASCADE 跟 tags/image_tags 惯例一致。整行要么存在(评估完整成
-// 功)要么不存在，所以除主键外都 NOT NULL。旧的三维 schema 由
-// initialize_schema 里的一次性 DROP TABLE 迁移清掉(见那里)。
+// unusable 硬伤 flag"，这张表整体重建成 5 列，随后又把 assessment/
+// unusable 这两列合并成一列 result_json(存模型原始返回的
+// {"assessment":..,"unusable":..})——理由是这两列都是"问 AI 要的值"，以后
+// 想再加一个类似的值(比如再问一个维度)不该每次都要一次破坏性表重建；
+// extra_guidance/provider 不是模型输出、是调用方自己知道的上下文，仍然
+// 留作独立列。image_id 当主键(一对一)，ON DELETE CASCADE 跟
+// tags/image_tags 惯例一致。整行要么存在(评估完整成功)要么不存在，所以
+// 除主键外都 NOT NULL。旧 schema(三维打分列、或上一版的 assessment+
+// unusable 列)由 initialize_schema 里的一次性 DROP TABLE 迁移清掉(见那
+// 里)。
 constexpr const char* kCreateImageEvaluations = R"sql(
 CREATE TABLE IF NOT EXISTS image_evaluations (
   image_id        INTEGER PRIMARY KEY REFERENCES images(id) ON DELETE CASCADE,
-  assessment      TEXT NOT NULL,
-  unusable        INTEGER NOT NULL,
+  result_json     TEXT NOT NULL,
   extra_guidance  TEXT NOT NULL,
   provider        TEXT NOT NULL
 );
@@ -164,11 +169,15 @@ void initialize_schema(sqlite3* conn) {
   exec(conn, kCreateImageTagsTagIdIndex);
   exec(conn, kCreateRecipes);
   exec(conn, kCreateRecipesPresetNameIndex);
-  // W2026-07-21：eval schema 从三维打分整体重建成 assessment+unusable。旧
-  // 表检测到还带 exposure_score 列时整表 drop——库里都是迭代测试数据，无
-  // 真实用户数据要保留，直接作废重设不写迁移(PRD 已拍板)。幂等：重建后
-  // exposure_score 不存在，后续开库不再 drop。DROP 必须在 CREATE 之前。
-  if (column_exists(conn, "image_evaluations", "exposure_score")) {
+  // W2026-07-21：eval schema 先从三维打分重建成 assessment+unusable 两列，
+  // 随后又把这两列合并成一列 result_json——两次都是整表 drop 重建，库里都
+  // 是迭代测试数据，无真实用户数据要保留，直接作废重设不写迁移(PRD 已拍
+  // 板)。检测任一旧列存在(exposure_score=更早的三维版本，unusable=上一版
+  // 两列版本)就整表 drop；幂等：重建后两个旧列都不存在，后续开库不再
+  // drop。表本身不存在时(全新安装)两次 column_exists 都返回 false，不会
+  // 误触发 DROP。DROP 必须在 CREATE 之前。
+  if (column_exists(conn, "image_evaluations", "exposure_score") ||
+      column_exists(conn, "image_evaluations", "unusable")) {
     exec(conn, "DROP TABLE image_evaluations;");
   }
   exec(conn, kCreateImageEvaluations);
