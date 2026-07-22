@@ -213,7 +213,11 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
 // 预设一多，单行装不下——把编号选项按"整个 N:[名字] 不拆行"的原则铺到两
 // 行(第一行装不下的整个单元挪到第二行)，操作图例(r/c/d/esc)右对齐贴在第二
 // 行末尾。返回 {line1, line2} 交给 prompt_and_read_key_2line 渲染。两行都带
-// 一个前导空格，跟其它 banner 的留白风格一致。
+// 一个前导空格，跟其它 banner 的留白风格一致。presets 不含 Origin(见
+// presets_for_menu)，这里在编号预设之后补一个纯展示用的 "0:[Origin]"——
+// `r`+`0`/`r`+`r` 在 handle_r_key 里本来就是清除风格的快捷路径，只是之前
+// 被 1735c40 连同数字编号一起过滤掉、菜单上看不到这个入口了，这里只补显
+// 示，不改行为。
 std::pair<std::string, std::string> build_recipe_menu_lines(
     const std::vector<pzt::core::PresetSummary>& presets, const std::string& legend,
     int content_cols) {
@@ -221,10 +225,11 @@ std::pair<std::string, std::string> build_recipe_menu_lines(
   const std::string sep = "  ";
 
   std::vector<std::string> items;
-  items.reserve(presets.size());
+  items.reserve(presets.size() + 1);
   for (std::size_t i = 0; i < presets.size(); ++i) {
     items.push_back(pzt::cli::i18n::menu_item(std::to_string(i + 1), presets[i].name));
   }
+  items.push_back(pzt::cli::i18n::menu_item("0", "Origin"));
 
   // 第一行:尽量多的完整 item。加上去会超宽就停,整个单元留给第二行。
   std::string line1 = " ";
