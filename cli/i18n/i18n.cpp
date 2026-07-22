@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <ctime>
 
 namespace pzt::cli::i18n {
@@ -10,22 +9,10 @@ namespace pzt::cli::i18n {
 Lang g_lang = Lang::zh;
 
 void init_lang() {
-  const char *pzt_lang = std::getenv("PZT_LANG");
-  if (pzt_lang != nullptr) {
-    if (std::strcmp(pzt_lang, "en") == 0 || std::strcmp(pzt_lang, "EN") == 0) {
-      g_lang = Lang::en;
-      return;
-    }
-    if (std::strcmp(pzt_lang, "zh") == 0 || std::strcmp(pzt_lang, "ZH") == 0) {
-      g_lang = Lang::zh;
-      return;
-    }
-  }
-
-  // F-12：config.json 的 lang 字段——比系统 LANG 更明确的信号(用户特意为
-  // PZT 配置过),但仍然可以被上面的 PZT_LANG 环境变量临时覆盖。nullopt
-  // 表示配置文件里没写这个字段,继续往下走系统 LANG 检测,不当成"用户
-  // 配置成了某个值"。
+  // 2026-07-22：去掉 PZT_LANG 环境变量覆盖——config.json 的 lang 字段已经
+  // 是"用户特意为 PZT 配置过"的明确信号,不需要再叠一层临时环境变量覆
+  // 盖,两个来源共存只会让人困惑改了哪个才生效。nullopt 表示配置文件里
+  // 没写这个字段,继续往下走系统 LANG 检测,不当成"用户配置成了某个值"。
   auto configured_lang = pzt::core::load_settings().lang;
   if (configured_lang == "en") {
     g_lang = Lang::en;

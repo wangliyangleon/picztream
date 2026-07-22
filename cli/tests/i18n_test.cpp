@@ -20,7 +20,6 @@ TEST_CASE("i18n language initialization and switching") {
   setenv("XDG_CONFIG_HOME", "/nonexistent/pzt_i18n_test_isolation", 1);
 
   // Test fallback logic
-  unsetenv("PZT_LANG");
   unsetenv("LANG");
   init_lang();
   CHECK(g_lang == Lang::zh); // Default should be zh
@@ -34,16 +33,6 @@ TEST_CASE("i18n language initialization and switching") {
   init_lang();
   CHECK(g_lang == Lang::zh);
 
-  // Test PZT_LANG override
-  setenv("PZT_LANG", "en", 1);
-  init_lang();
-  CHECK(g_lang == Lang::en);
-
-  setenv("PZT_LANG", "zh", 1);
-  init_lang();
-  CHECK(g_lang == Lang::zh);
-  
-  unsetenv("PZT_LANG");
   unsetenv("LANG");
 
   if (had_old_xdg) {

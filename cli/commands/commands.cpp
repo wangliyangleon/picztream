@@ -381,7 +381,7 @@ int cmd_eval(const std::vector<std::string>& args) {
   auto eval_settings = pzt::core::load_settings();
   pzt::core::LocalModelConfig local_config{eval_settings.ollama_base_url, eval_settings.ollama_model};
 
-  // extra_guidance 恒为 ""，assessment 语言用当前界面语言(PZT_LANG 映射)。
+  // extra_guidance 恒为 ""，assessment 语言用当前界面语言(g_lang，见 init_lang)。
   pzt::core::Language language = pzt::cli::i18n::g_lang == pzt::cli::i18n::Lang::en
                                      ? pzt::core::Language::English
                                      : pzt::core::Language::Chinese;

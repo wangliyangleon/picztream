@@ -52,24 +52,14 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
 
 // F-10：AI 供应商固定写死 Gemini 只是因为开发时手头只有 Gemini 的
 // key，不是经过设计的选择(docs/M3_PRD.md"风险与待确认问题"一节的
-// TODO 原话)。优先级:PZT_AI_PROVIDER 环境变量(claude/gemini，大小写
-// 不敏感)> F-12 的 Settings.ai_provider(config.json)> 硬编码 Local
-// (Settings 自己的默认值)。不缓存，每次调用现读——这不是热路径(只在
-// 用户真的提交一次 /ai_eval 相关命令时才会走到)，config.json 和
-// getenv 都是廉价操作，不值得为了省这几次调用专门传参或加个全局变量；
-// 现读还有个好处:用户中途改了 config.json 不需要重启 pzt open。
-pzt::core::Provider resolve_ai_provider() {
-  const char* env = std::getenv("PZT_AI_PROVIDER");
-  if (env) {
-    std::string value(env);
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (value == "claude") return pzt::core::Provider::Claude;
-    if (value == "gemini") return pzt::core::Provider::Gemini;
-    if (value == "local") return pzt::core::Provider::Local;
-  }
-  return pzt::core::load_settings().ai_provider;
-}
+// TODO 原话)。2026-07-22：去掉 PZT_AI_PROVIDER 环境变量覆盖——跟 lang
+// 同样的理由(见 init_lang 的注释)，只留 F-12 的 Settings.ai_provider
+// (config.json)一个来源，config 没写就用 Settings 自己的默认值 Local，
+// 不必再猜"这次生效的是环境变量还是配置文件"。不缓存，每次调用现读——
+// 这不是热路径(只在用户真的提交一次 /ai_eval 相关命令时才会走到)，
+// config.json 是廉价操作，不值得为了省这几次调用专门传参或加个全局变
+// 量；现读还有个好处:用户中途改了 config.json 不需要重启 pzt open。
+pzt::core::Provider resolve_ai_provider() { return pzt::core::load_settings().ai_provider; }
 
 // 当前界面语言映射成 core 的 assessment 语言(eval 的 guidance 为空时用
 // 它,见 core/ai/evaluation.h 的 Language)。cli 决定语言,core 不认识 i18n。
@@ -469,8 +459,8 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
           handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance)};
     }
     // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——供
-    // 应商见 resolve_ai_provider()(F-10:读 PZT_AI_PROVIDER 环境变量，
-    // 默认 Gemini)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
+    // 应商见 resolve_ai_provider()(F-10:读 config.json 的 ai_provider，
+    // 默认 Local)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
     // 的开放问题,这次不做。
     bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest,
                                                pzt::core::load_settings().auto_ai_reject,
