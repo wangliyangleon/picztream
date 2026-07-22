@@ -18,6 +18,7 @@ add_executable(core_tests
   compare_test.cpp
   dedup_test.cpp
   curate_test.cpp
+  tournament_test.cpp
   settings_test.cpp
 )
 

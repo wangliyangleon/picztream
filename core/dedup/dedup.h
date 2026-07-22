@@ -73,6 +73,14 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
                                              int time_window_seconds = 10, int hash_threshold = 5,
                                              DedupProgressFn on_progress = nullptr);
 
+// 返回 image_ids 中 captured_at 非 NULL 的子集(顺序不保证)。core::
+// tournament::cluster_and_choose 用它算"这批候选里有多少张完全没法参与
+// 时间聚类"，不需要为了这一个数字重新走一遍完整的分簇开销。复用
+// find_duplicates_impl 内部 load_metas 同款的分块查询方式(500 一批，
+// SQLITE_MAX_VARIABLE_NUMBER 之下的保守值)。
+std::vector<project::ImageId> images_with_capture_time(db::Database& db,
+                                                         const std::vector<project::ImageId>& image_ids);
+
 struct DedupSummary {
   int group_count;
   int tagged_count;  // 被打上 duplicate 标签的图片总数(不含每组里被保留的那一张)

@@ -44,6 +44,7 @@ add_library(core STATIC
   ai/compare.cpp
   dedup/dedup.cpp
   curate/curate.cpp
+  tournament/tournament.cpp
   settings/settings.cpp
 )
 

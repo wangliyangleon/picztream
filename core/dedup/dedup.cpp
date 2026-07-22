@@ -154,6 +154,14 @@ std::optional<ImageHash> compute_dhash(const decode::DecodedImage& image) {
 
 int hamming_distance(ImageHash a, ImageHash b) { return std::popcount(a ^ b); }
 
+std::vector<project::ImageId> images_with_capture_time(db::Database& db,
+                                                         const std::vector<project::ImageId>& image_ids) {
+  std::vector<project::ImageId> result;
+  result.reserve(image_ids.size());
+  for (const auto& m : load_metas(db, image_ids)) result.push_back(m.id);
+  return result;
+}
+
 std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string& root_path,
                                              const std::vector<project::ImageId>& image_ids,
                                              int time_window_seconds, int hash_threshold,
