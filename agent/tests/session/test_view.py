@@ -116,7 +116,8 @@ def test_from_run_planned_deferred_curate_describe_mentions_dedup_first(tmp_path
 
     assert view.plan_summary["count"] is None
     text = view.describe()
-    assert "先帮你去重，去重完再问要不要接着筛" in text
+    assert "先帮你去重" in text
+    assert "去重完再问要不要接着筛" not in text
     assert "None" not in text
 
 

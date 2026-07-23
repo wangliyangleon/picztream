@@ -351,26 +351,39 @@ def classify_style_gate_reply(text: str, http_post: Optional[HttpPostFn] = None,
 
 
 _DEDUP_FOLLOWUP_SCHEMA_INSTRUCTION = (
-    "The user just finished deduplicating a batch of photos and is being asked whether "
-    "they want to further narrow down to a specific number, or keep everything that "
-    "survived deduplication. You are given how many photos remain after dedup and the "
-    "user's reply. Respond with a single JSON object in one of four shapes: "
-    '{"action": "narrow", "count": <integer>} if the user gives a target number of '
-    'photos to keep (for example "留5张", "5张就行", "选3张吧"); '
+    "The user just finished deduplicating a batch of photos. Depending on context, they "
+    "are either being asked whether to further narrow down to a specific number (or keep "
+    "everything), or being asked to confirm a specific count/tag you just proposed. You "
+    "are given how many photos remain after dedup and the user's reply. Respond with a "
+    "single JSON object in one of five shapes: "
+    '{"action": "narrow", "count": <integer>, "apply_tag": <string or null>} if the user '
+    'gives a target number of photos to keep (for example "留5张", "5张就行", "选3张吧"). '
+    'apply_tag should be derived from any destination/audience/album the user also '
+    'mentions, using that as the tag name itself (for example "选一张发朋友圈" -> count 1, '
+    'apply_tag "朋友圈"; "留5张，标签叫vip" -> count 5, apply_tag "vip"; "精修3张" -> count 3, '
+    'apply_tag "精修"); if the user names no destination/tag at all, apply_tag must be null; '
+    '{"action": "approve"} if the user is simply confirming/agreeing with something you '
+    'just proposed, with no new number or destination mentioned (for example "对", "好的", '
+    '"可以", "确认", "没问题", "是的"); '
     '{"action": "skip"} if the user does NOT want any further narrowing and wants to '
     'keep everything that survived dedup (for example "不用了", "够了", "都要", "不筛了", '
     '"就这些吧"); '
     '{"action": "query"} if the message is just a question about status, not a decision '
     '(for example "现在还剩几张？", "去重完了吗"); '
-    '{"action": "cancel"} if the user wants to abort/cancel the whole batch (for example '
-    '"算了", "不要了", "取消").'
+    '{"action": "cancel"} if the user wants to abort/cancel the WHOLE batch, not just skip '
+    'the narrowing step (for example "算了不要了", "取消这批", "别处理了", "不想要了"). A '
+    'bare "算了" with nothing else is ambiguous between skip and cancel -- prefer "skip" '
+    'unless the user clearly means to abandon the entire batch, not just this narrowing '
+    'step. The "action" value must always be exactly one of these five English words: '
+    "narrow, approve, skip, query, cancel."
 )
 
 
 @dataclass
 class DedupFollowupReply:
-    action: Literal["narrow", "skip", "query", "cancel"]
+    action: Literal["narrow", "approve", "skip", "query", "cancel"]
     count: Optional[int] = None
+    apply_tag: Optional[str] = None
 
 
 def classify_dedup_followup(text: str, remaining: int, http_post: Optional[HttpPostFn] = None,
@@ -384,8 +397,9 @@ def classify_dedup_followup(text: str, remaining: int, http_post: Optional[HttpP
     )
     action = decision.get("action")
     if action == "narrow":
-        return DedupFollowupReply(action="narrow", count=decision.get("count"))
-    if action in ("skip", "query", "cancel"):
+        return DedupFollowupReply(action="narrow", count=decision.get("count"),
+                                   apply_tag=decision.get("apply_tag"))
+    if action in ("approve", "skip", "query", "cancel"):
         return DedupFollowupReply(action=action)
     raise AdjustmentError("unknown_action", f"unrecognized dedup followup action {action!r}")
 

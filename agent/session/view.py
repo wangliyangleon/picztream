@@ -54,9 +54,10 @@ class SessionView:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:
             if self.plan_summary.get("count") is None:
-                # deferred 形状（W2026-07-21 目标三案例二）：Curate 数量待定。
+                # deferred 形状（W2026-07-21 目标三案例二）：Curate 数量待
+                # 定，这一步只说"去重"，不预告后面还要问什么（真机反馈）。
                 return (f"目前收到 {self.photo_count()} 张照片，方案是："
-                        f"先帮你去重，去重完再问要不要接着筛，"
+                        f"先帮你去重，"
                         f"标签叫\"{self.plan_summary['apply_tag']}\"")
             ai_desc = ("AI 帮你从相似照片里挑更好的" if self.plan_summary.get("ai_enabled")
                        else "按拍摄时间挑")

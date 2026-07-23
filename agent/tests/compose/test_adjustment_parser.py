@@ -266,6 +266,24 @@ def test_classify_dedup_followup_recognizes_narrow_with_count():
 
     assert reply.action == "narrow"
     assert reply.count == 5
+    assert reply.apply_tag is None  # 没提标签/目的地
+
+
+def test_classify_dedup_followup_recognizes_narrow_with_apply_tag():
+    reply = classify_dedup_followup(
+        "选一张发朋友圈", 8,
+        http_post=_fake_http_post({"action": "narrow", "count": 1, "apply_tag": "朋友圈"}))
+
+    assert reply.action == "narrow"
+    assert reply.count == 1
+    assert reply.apply_tag == "朋友圈"
+
+
+def test_classify_dedup_followup_recognizes_approve():
+    reply = classify_dedup_followup(
+        "对，好的", 8, http_post=_fake_http_post({"action": "approve"}))
+
+    assert reply.action == "approve"
 
 
 def test_classify_dedup_followup_recognizes_skip():

@@ -891,12 +891,13 @@ def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
     env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
     env.consumer.step()
 
-    assert any("去重后还剩 3 张，要不要再筛选一下留多少张？" in t for t in env.transport.texts())
+    assert any("留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪" in t for t in env.transport.texts())
     # ai_enabled 默认 False，追问闸门也带 AI 快捷按钮（目标三决策五）。
     assert env.transport.button_tokens() == ["skip_curate", "ai_narrow"]
 
 
-def test_gate_curate_followup_narrow_enqueues_rerun_curate_with_count(tmp_path):
+def test_gate_curate_followup_narrow_shows_confirmation_without_driving_yet(tmp_path):
+    # 真机反馈：打字给数量不能直接执行，先回显确认。
     env = make_consumer(tmp_path)
     job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
     worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
@@ -912,9 +913,71 @@ def test_gate_curate_followup_narrow_enqueues_rerun_curate_with_count(tmp_path):
     env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="narrow", count=2)))
     env.consumer.step()
 
+    assert "留 2 张，标签叫\"精选\"，对吗？" in env.transport.texts()[-1]
+    assert env.transport.button_tokens() == ["approve"]
+    assert env.drain_jobs() == []  # 还没真的投出 rerun_curate
+
+
+def test_gate_curate_followup_narrow_extracts_apply_tag_from_destination(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    env.push_text("选一张发朋友圈")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup",
+                               DedupFollowupReply(action="narrow", count=1, apply_tag="朋友圈")))
+    env.consumer.step()
+
+    assert "留 1 张，标签叫\"朋友圈\"，对吗？" in env.transport.texts()[-1]
+
+
+def test_gate_curate_followup_narrow_confirm_via_button_drives_rerun_curate(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+    env.push_text("留2张")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="narrow", count=2)))
+    env.consumer.step()
+
+    env.push_callback(f"approve:{job.run_id}")
+    env.consumer.step()
+
     [drive_job] = env.drain_jobs()
     assert drive_job.action == "rerun_curate"
-    assert drive_job.args == {"params": {"count": 2}}
+    assert drive_job.args == {"params": {"count": 2, "apply_tag": "精选"}}
+
+
+def test_gate_curate_followup_narrow_confirm_via_text_drives_rerun_curate(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+    env.push_text("留2张，标签叫vip")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup",
+                               DedupFollowupReply(action="narrow", count=2, apply_tag="vip")))
+    env.consumer.step()
+
+    env.push_text("对")
+    env.consumer.step()
+    [classify_job] = env.drain_jobs()
+    assert classify_job.kind == "dedup_followup"
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="approve")))
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()
+    assert drive_job.action == "rerun_curate"
+    assert drive_job.args == {"params": {"count": 2, "apply_tag": "vip"}}
 
 
 def test_gate_curate_followup_skip_via_text_enqueues_rerun_curate_with_none(tmp_path):
@@ -1011,12 +1074,13 @@ def test_gate_curate_followup_cancel_prompts_confirmation(tmp_path):
 
 def test_planned_deferred_curate_confirmation_text_mentions_dedup_first(tmp_path):
     # W2026-07-21 目标三：deferred 形状下 count 是 None，确认文案不能是
-    # "留 None 张"。
+    # "留 None 张"；真机反馈后这一步也不再预告"去重完还要问什么"。
     env = make_consumer(tmp_path)
     to_planned(env, plan_factory=bare_compose_plan_deferred_curate)
 
     text = env.transport.texts()[-1]
-    assert "先帮你去重，去重完再问要不要接着筛" in text
+    assert "先帮你去重" in text
+    assert "去重完再问要不要接着筛" not in text
     assert "None" not in text
 
 

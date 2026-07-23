@@ -140,6 +140,9 @@ class SessionConsumer:
         self._cancel_confirm_pending: bool = False
         # 进度消息原地编辑的 (message_id, last_text) 槽（AG-16.3）。
         self._collecting_progress: Optional[tuple] = None
+        # 去重追问打字给了数量后，等用户确认才真正执行——纯内存态、不落
+        # 盘，跟 _cancel_confirm_pending 同一个先例（真机反馈，见目标三）。
+        self._curate_narrow_pending: Optional[dict] = None
 
     # -- 生命周期 --
 
@@ -346,6 +349,12 @@ class SessionConsumer:
                 self._begin_running()
                 return
             if self.run.status == RunStatus.AWAITING_GATE:
+                if self._curate_narrow_pending is not None:
+                    # 去重后追问打字给了数量，这一下"好的"确认的是那次解析
+                    # 结果（真机反馈，目标三）。
+                    pending, self._curate_narrow_pending = self._curate_narrow_pending, None
+                    self._enqueue_drive("rerun_curate", self.run.run_id, {"params": pending})
+                    return
                 # StyleApplyAll 预览确认、Deliver 选图确认都是"批准即推进"。
                 # Style 问描述那步没有批准按钮，不会走到这里。
                 self._enqueue_drive("resolve_gate", self.run.run_id)
@@ -428,6 +437,7 @@ class SessionConsumer:
         self.active_drive_job = None
         self._cancel_confirm_pending = False
         self._collecting_progress = None  # 进度消息槽随会话重置（AG-16.3）
+        self._curate_narrow_pending = None
 
     # -- 文本串行处理 --
 
@@ -772,14 +782,34 @@ class SessionConsumer:
             self._send(self.view.describe())
             return
         if reply.action == "cancel":
+            self._curate_narrow_pending = None
             self._prompt_cancel_confirmation()  # LLM 判成取消也要二次确认
             return
-        # narrow 带 count，skip 传 None 走 Curate 的 passthrough 分支（目标三
-        # 决策三）。不手动发"正在筛选..."：rerun_curate 会先发
-        # StageStarted(Curate)，_on_stage_started 已经会自动发这句，手动再
-        # 发一遍是重复消息。
-        count = reply.count if reply.action == "narrow" else None
-        self._enqueue_drive("rerun_curate", self.run.run_id, {"params": {"count": count}})
+        if reply.action == "skip":
+            # 明确的一次性决定，不用二次确认（不筛选了/AI筛选按钮同理）。不
+            # 手动发"正在筛选..."：rerun_curate 会先发 StageStarted(Curate)，
+            # _on_stage_started 已经会自动发这句，手动再发一遍是重复消息。
+            self._curate_narrow_pending = None
+            self._enqueue_drive("rerun_curate", self.run.run_id, {"params": {"count": None}})
+            return
+        if reply.action == "approve":
+            if self._curate_narrow_pending is not None:
+                pending, self._curate_narrow_pending = self._curate_narrow_pending, None
+                self._enqueue_drive("rerun_curate", self.run.run_id, {"params": pending})
+            else:
+                self._send(self.view.describe())  # 没有待确认的东西，当查状态处理
+            return
+        # narrow：识别出数量(和可能的标签)后先回显确认，不直接执行——用户
+        # 打字给张数和目的这一步必须过一遍确认，不能一句话打完就直接跑
+        # （真机反馈）。query 不清 _curate_narrow_pending：用户可能只是顺
+        # 口问一句"还剩几张"，之后仍可能回来确认之前那次 narrow。
+        curate = next(s for s in self.run.plan.stages if s.name == "Curate")
+        apply_tag = reply.apply_tag or curate.params.get("apply_tag", "精选")
+        self._curate_narrow_pending = {"count": reply.count, "apply_tag": apply_tag}
+        self._send_buttons(
+            f"留 {reply.count} 张，标签叫\"{apply_tag}\"，对吗？\n满意就点\"好的\"，想改直接打字说",
+            _CONFIRM_BUTTONS,
+        )
 
     def _on_compose_done(self, event: ComposeDone) -> None:
         inflight, self.inflight = self.inflight, None
@@ -860,7 +890,8 @@ class SessionConsumer:
         buttons = _DEDUP_FOLLOWUP_BUTTONS if ai_enabled else _DEDUP_FOLLOWUP_BUTTONS + [
             ("AI筛选 🤖", _BTN_AI_NARROW)]
         self._send_buttons(
-            f"去重后还剩 {payload.get('remaining', 0)} 张，要不要再筛选一下留多少张？{hint}",
+            f"去重后还剩 {payload.get('remaining', 0)} 张，要不要再筛选一下？"
+            f"留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪，比如\"留3张发朋友圈\"。{hint}",
             buttons,
         )
 
@@ -1146,8 +1177,10 @@ class SessionConsumer:
         hint = "" if ai_enabled else "\n这一步也可以用 AI 帮你挑更准，更慢一点。"
         if curate.params["count"] is None:
             # deferred 形状（W2026-07-21 目标三案例二）：Curate 数量待定，
-            # 不能把 None 插进"留 None 张"这种文案里。
-            text = (f"理解你想：先帮你去重，去重完再问要不要接着筛，"
+            # 不能把 None 插进"留 None 张"这种文案里。这一步只确认"去重"这
+            # 件事，不预告去重完还要问什么（真机反馈：太啰嗦），追问闸门
+            # 自己会在 Dedup 跑完之后再问。
+            text = (f"理解你想：先帮你去重，"
                     f"标签叫\"{curate.params['apply_tag']}\"，对吗？{hint}"
                     "\n满意就点\"好的\"，想改直接打字说")
             ai_button = ("AI去重 🤖", _BTN_AI_DEDUP)
