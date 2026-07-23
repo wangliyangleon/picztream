@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """一次性批处理 runner：丢一个文件夹进去，固定 Plan 跑完
-Ingest -> Evaluate -> Dedup -> Curate -> Deliver，产出写到另一个文件
-夹。子增量 D 范围：不含 LLM/意图解析/对话式微调/闸门交互——全自动跑
-到底，见 docs/M4_Eng_Design.md 第七节子增量 D、本计划 Context。
+Ingest -> Dedup -> Curate -> Deliver，产出写到另一个文件夹。子增量 D
+范围：不含 LLM/意图解析/对话式微调/闸门交互——全自动跑到底，见
+docs/M4_Eng_Design.md 第七节子增量 D、本计划 Context。W2026-07-21：
+Evaluate stage 已删除，agent 不再整批跑评估，见
+docs/W2026-07-21_PRD.md 已拍板决策 4。
 """
 from __future__ import annotations
 
@@ -16,17 +18,14 @@ from pzt_client import PztClient
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
-from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from store.run_store import RunStore
 from transport.watchfolder import WatchFolderTransport
 
 
-def build_plan(in_folder: str, out_folder: str, count: int, provider: str, apply_tag: str,
-                auto_reject: bool) -> Plan:
+def build_plan(in_folder: str, out_folder: str, count: int, apply_tag: str) -> Plan:
     return Plan(stages=[
         StageSpec(name="Ingest", params={"folder": in_folder}),
-        StageSpec(name="Evaluate", params={"provider": provider, "auto_reject": auto_reject}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": count, "apply_tag": apply_tag}),
         StageSpec(name="Deliver", params={"out_folder": out_folder}),
@@ -45,9 +44,7 @@ def main() -> None:
     parser.add_argument("in_folder", nargs="?", help="待处理的照片文件夹")
     parser.add_argument("out_folder", nargs="?", help="产出 keeper 落地的文件夹")
     parser.add_argument("--count", type=int, default=9)
-    parser.add_argument("--provider", default="local", choices=["local", "gemini", "claude"])
     parser.add_argument("--apply-tag", default="精选")
-    parser.add_argument("--no-auto-reject", action="store_true")
     parser.add_argument("--run-id")
     parser.add_argument("--resume", metavar="RUN_ID", help="加载已存在的 run_id 续跑，不需要再传 in_folder/out_folder")
     parser.add_argument("--state-dir", help="agent 状态落盘目录，默认 ~/.pzt-agent")
@@ -68,7 +65,7 @@ def main() -> None:
             parser.error("in_folder/out_folder 必填（或改用 --resume RUN_ID）")
         run_id = args.run_id or f"watchfolder-{uuid.uuid4().hex[:8]}"
         plan = build_plan(in_folder=args.in_folder, out_folder=args.out_folder, count=args.count,
-                           provider=args.provider, apply_tag=args.apply_tag, auto_reject=not args.no_auto_reject)
+                           apply_tag=args.apply_tag)
         run = RunState(run_id=run_id, project_id=run_id, plan=plan,
                         stage_states={s.name: StageStatus.PENDING for s in plan.stages}, status=RunStatus.RUNNING)
         print(f"新建 run_id={run_id}，project={run_id}")
@@ -79,7 +76,6 @@ def main() -> None:
 
     stages = {
         "Ingest": IngestStage(client=client),
-        "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),

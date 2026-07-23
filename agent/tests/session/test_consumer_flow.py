@@ -87,7 +87,7 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     assert ingest.params["folder"] == str(tmp_path / "incoming" / run.run_id)
     assert deliver.params["out_folder"] == str(tmp_path / "deliver-out")
     assert deliver.gate == "required"
-    assert "理解你想：留 2 张，标签叫\"精选\"，自动剔除不合格和重复的照片，对吗？" in \
+    assert "理解你想：去重复后留 2 张，标签叫\"精选\"，对吗？" in \
         env.transport.texts()[-1]
 
 
@@ -143,18 +143,15 @@ def test_planned_refine_confirmed_updates_params_and_reconfirms(tmp_path):
     assert job.context["current_params"]["count"] == 2
 
     env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(
-        action="confirmed", provider="gemini", auto_reject=False, count=6, apply_tag="ins")))
+        action="confirmed", count=6, apply_tag="ins")))
     env.consumer.step()
 
     saved = env.store.load(run.run_id)
     assert saved.status == RunStatus.PLANNED  # 改完必须再确认，不自动开跑
     curate = next(s for s in saved.plan.stages if s.name == "Curate")
-    evaluate = next(s for s in saved.plan.stages if s.name == "Evaluate")
     assert curate.params["count"] == 6
     assert curate.params["apply_tag"] == "ins"
-    assert evaluate.params["auto_reject"] is False
-    assert "留 6 张" in env.transport.texts()[-1]
-    assert "只去重复、保留不合格的照片" in env.transport.texts()[-1]
+    assert "去重复后留 6 张" in env.transport.texts()[-1]
     assert env.drain_jobs() == []
 
 
@@ -286,9 +283,9 @@ def test_photo_during_drive_queues_to_pending(tmp_path):
 def test_text_during_drive_goes_to_running_classifier(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
-    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
+    env.put_event(StageStarted(0, job.run_id, "Dedup"))
     env.consumer.step()
-    assert "正在执行 AI 评估..." in env.transport.texts()
+    assert "正在执行去重..." in env.transport.texts()
 
     env.push_text("到哪了")
     env.consumer.step()
@@ -297,7 +294,7 @@ def test_text_during_drive_goes_to_running_classifier(tmp_path):
     env.put_event(ClassifyDone(0, "running", RunningReply(action="query")))
     env.consumer.step()
 
-    assert "正在执行 AI 评估" in env.transport.texts()[-1]  # query -> 回进度
+    assert "正在执行去重" in env.transport.texts()[-1]  # query -> 回进度
 
 
 def test_stage_started_renders_text_only_for_message_stages(tmp_path):
@@ -347,7 +344,7 @@ def test_stale_generation_events_are_dropped_after_cancel(tmp_path):
     env.consumer.step()
     before = len(env.transport.texts())
 
-    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
+    env.put_event(StageStarted(0, job.run_id, "Dedup"))
     env.consumer.step()
 
     assert len(env.transport.texts()) == before
@@ -659,10 +656,10 @@ def test_run_finished_failed_reports_detail_and_clears(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
 
-    env.put_event(RunFinished(0, job.run_id, "failed", "Evaluate：eval_failed: boom"))
+    env.put_event(RunFinished(0, job.run_id, "failed", "Dedup：dedup_failed: boom"))
     env.consumer.step()
 
-    assert "处理失败：Evaluate：eval_failed: boom" in env.transport.texts()
+    assert "处理失败：Dedup：dedup_failed: boom" in env.transport.texts()
     assert env.consumer.view.run_id is None
 
 

@@ -99,7 +99,6 @@ class SessionConsumer:
                  now_fn: Callable[[], float] = time.time,
                  idle_reminder_seconds: float = 300.0,
                  progress_interval_seconds: float = 60.0,
-                 eval_poll_interval_seconds: float = 60.0,
                  send_retry_backoff_seconds: float = 1.0,
                  preview_root: Optional[Path] = None,
                  staging_dir: Optional[Path] = None,
@@ -114,11 +113,10 @@ class SessionConsumer:
         self.classify_jobs = classify_jobs  # LLM lane：分类/编排
         self.drive_jobs = drive_jobs        # pzt lane：drive
         self.events = events
-        self.readonly_client = readonly_client  # 只读亚秒级查询(eval 进度轮询)的唯一例外
+        self.readonly_client = readonly_client  # 只读查询用的独立实例(如终态清扫时的 pzt delete)，不跟 worker 专属 client 共享
         self.now_fn = now_fn
         self.idle_reminder_seconds = idle_reminder_seconds
         self.progress_interval_seconds = progress_interval_seconds
-        self.eval_poll_interval_seconds = eval_poll_interval_seconds
         self.send_retry_backoff_seconds = send_retry_backoff_seconds
         # AG-14：终态即删该 run 的大文件（incoming/preview/staging/marker），
         # 保留 deliver-out 与 run JSON；启动低频清扫超 retention 的终态 run。
@@ -134,11 +132,9 @@ class SessionConsumer:
         self.inflight: Optional[dict] = None  # {"type": kind, "text": 原文本}
         self.active_drive_job: Optional[DriveJob] = None
         self.cancelling_run_id: Optional[str] = None
-        self._last_eval_poll_at: Optional[float] = None
         self._cancel_confirm_pending: bool = False
         # 进度消息原地编辑的 (message_id, last_text) 槽（AG-16.3）。
         self._collecting_progress: Optional[tuple] = None
-        self._eval_progress: Optional[tuple] = None
 
     # -- 生命周期 --
 
@@ -403,7 +399,6 @@ class SessionConsumer:
         self.active_drive_job = None
         self._cancel_confirm_pending = False
         self._collecting_progress = None  # 进度消息槽随会话重置（AG-16.3）
-        self._eval_progress = None
 
     # -- 文本串行处理 --
 
@@ -482,7 +477,6 @@ class SessionConsumer:
         self.view.status = RunStatus.RUNNING
         self.view.gate_stage = None
         self.view.stage_progress = None
-        self._last_eval_poll_at = None
         self._enqueue_drive_job(job)
 
     # -- 事件应用 --
@@ -717,10 +711,7 @@ class SessionConsumer:
             return
         # confirmed：更新参数、重新回显确认，不自动开跑（PLANNED 的存在
         # 意义就是"改完参数必须再看一眼"，旧拍板保持）。
-        evaluate = next(s for s in self.run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in self.run.plan.stages if s.name == "Curate")
-        evaluate.params["provider"] = reply.provider
-        evaluate.params["auto_reject"] = reply.auto_reject
         curate.params["count"] = reply.count
         curate.params["apply_tag"] = reply.apply_tag
         self.store.save(self.run)
@@ -773,10 +764,6 @@ class SessionConsumer:
     def _on_stage_started(self, event: StageStarted) -> None:
         self.view.current_stage = event.stage
         self.view.stage_progress = None
-        if event.stage == "Evaluate":
-            # 轮询基线设在 stage 开始时刻：第一次播报也等满一个间隔。
-            self._last_eval_poll_at = self.now_fn()
-            self._eval_progress = None  # 新一轮评估新进度消息（AG-16.3）
         message = STAGE_PROGRESS_MESSAGES.get(event.stage)
         if message:
             self._send(message)
@@ -883,7 +870,6 @@ class SessionConsumer:
         now = self.now_fn()
         self._check_idle_reminder(now)
         self._check_collecting_progress(now)
-        self._check_eval_poll(now)
 
     def _check_idle_reminder(self, now: float) -> None:
         run = self.run
@@ -928,30 +914,6 @@ class SessionConsumer:
         self._send_progress(f"已收到 {count} 张图片", "_collecting_progress")
         run.last_progress_notified_at = now
         self.store.save(run)
-
-    def _check_eval_poll(self, now: float) -> None:
-        """Evaluate 量化进度：轮询 `pzt images --json` 数 evaluated（零
-        core/cli 改动，见 Eng Design 第七节第 6 条）。失败静默容忍。"""
-        if not self.view.drive_active or self.view.current_stage != "Evaluate":
-            return
-        last = self._last_eval_poll_at
-        if last is None:
-            # 没见过 StageStarted(Evaluate)（重启续跑等），以现在为基线。
-            self._last_eval_poll_at = now
-            return
-        if now - last < self.eval_poll_interval_seconds:
-            return
-        self._last_eval_poll_at = now
-        project_id = self.view.project_id or self.view.run_id
-        try:
-            result = self.readonly_client.call("images", project_id)
-        except Exception as e:  # noqa: BLE001 轮询失败无害，绝不打断 consumer
-            _log.info(f"[session] eval 进度轮询失败（容忍）：{e!r}")
-            return
-        images = result.get("images", [])
-        done = sum(1 for item in images if item.get("evaluated"))
-        self.view.stage_progress = (done, len(images))
-        self._send_progress(f"评估进行中，已完成 {done}/{len(images)} 张", "_eval_progress")
 
     # -- helpers --
 
@@ -1082,27 +1044,17 @@ class SessionConsumer:
         send_buttons(self.chat_id, text, options)
 
     def _current_plan_params(self, run: RunState) -> dict:
-        evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
         return {
-            "provider": evaluate.params["provider"],
-            "auto_reject": evaluate.params["auto_reject"],
             "count": curate.params["count"],
             "apply_tag": curate.params["apply_tag"],
         }
 
     def _send_plan_confirmation(self, run: RunState) -> None:
-        # 不显示 provider（评估模型）：它由 Settings 决定，对用户是无用信息
-        # （真机反馈）。仍保留在 plan 参数里，refine 想改 provider 仍可改。
-        evaluate = next(s for s in run.plan.stages if s.name == "Evaluate")
         curate = next(s for s in run.plan.stages if s.name == "Curate")
-        # 去重（Dedup）总会做，跟 auto_reject 无关；auto_reject 只控制"要
-        # 不要连不合格的也一起剔"。所以两个分支都点明"重复照片会去掉"。
-        auto_reject_desc = ("自动剔除不合格和重复的照片" if evaluate.params["auto_reject"]
-                            else "只去重复、保留不合格的照片")
         self._send_buttons(
-            f"理解你想：留 {curate.params['count']} 张，标签叫\"{curate.params['apply_tag']}\"，"
-            f"{auto_reject_desc}，对吗？"
+            f"理解你想：去重复后留 {curate.params['count']} 张，"
+            f"标签叫\"{curate.params['apply_tag']}\"，对吗？"
             "\n满意就点\"好的\"，想改直接打字说",
             _CONFIRM_BUTTONS,
         )

@@ -15,16 +15,16 @@ def make_run(plan: Plan) -> RunState:
 
 def test_critical_stage_failure_fails_the_run_and_stops(tmp_path):
     ingest = FakeStage(name="Ingest", result=StageOutput(ok=False, error="disk full"), criticality="critical")
-    evaluate = FakeStage(name="Evaluate", inputs=["Ingest"])
-    plan = Plan(stages=[StageSpec(name="Ingest"), StageSpec(name="Evaluate")])
+    stage_b = FakeStage(name="StageB", inputs=["Ingest"])
+    plan = Plan(stages=[StageSpec(name="Ingest"), StageSpec(name="StageB")])
     run = make_run(plan)
-    driver = Driver(stages={"Ingest": ingest, "Evaluate": evaluate}, store=RunStore(tmp_path))
+    driver = Driver(stages={"Ingest": ingest, "StageB": stage_b}, store=RunStore(tmp_path))
 
     driver.advance(run)
 
     assert run.status == RunStatus.FAILED
     assert run.stage_states["Ingest"] == StageStatus.FAILED
-    assert len(evaluate.calls) == 0
+    assert len(stage_b.calls) == 0
 
 
 def test_optional_stage_failure_degrades_and_run_continues(tmp_path):
@@ -48,15 +48,15 @@ def test_optional_stage_failure_degrades_and_run_continues(tmp_path):
 
 
 def test_partial_item_failure_inside_a_stage_is_not_a_stage_failure(tmp_path):
-    evaluate = FakeStage(
-        name="Evaluate",
-        result=StageOutput(ok=True, data={"evaluated": 38}, skipped=["bad1.jpg", "bad2.jpg"]),
+    stage_b = FakeStage(
+        name="StageB",
+        result=StageOutput(ok=True, data={"processed": 38}, skipped=["bad1.jpg", "bad2.jpg"]),
     )
-    plan = Plan(stages=[StageSpec(name="Evaluate")])
+    plan = Plan(stages=[StageSpec(name="StageB")])
     run = make_run(plan)
-    driver = Driver(stages={"Evaluate": evaluate}, store=RunStore(tmp_path))
+    driver = Driver(stages={"StageB": stage_b}, store=RunStore(tmp_path))
 
     driver.advance(run)
 
-    assert run.stage_states["Evaluate"] == StageStatus.DONE
-    assert run.outputs["Evaluate"].skipped == ["bad1.jpg", "bad2.jpg"]
+    assert run.stage_states["StageB"] == StageStatus.DONE
+    assert run.outputs["StageB"].skipped == ["bad1.jpg", "bad2.jpg"]

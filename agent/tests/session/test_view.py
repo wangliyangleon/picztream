@@ -22,7 +22,6 @@ from session.view import SessionView, view_from_run
 def _planned_run() -> RunState:
     plan = Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Evaluate", params={"provider": "local", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 5, "apply_tag": "精选"}),
         StageSpec(name="Deliver", gate="required"),
@@ -64,9 +63,7 @@ def test_from_run_planned_fills_plan_summary_and_describe(tmp_path):
 
     view = view_from_run(run, incoming_root=incoming_root)
 
-    assert view.plan_summary == {
-        "provider": "local", "auto_reject": True, "count": 5, "apply_tag": "精选",
-    }
+    assert view.plan_summary == {"count": 5, "apply_tag": "精选"}
     assert view.describe() == (
         "目前收到 1 张照片，方案是：留 5 张，标签叫\"精选\""
     )
@@ -85,12 +82,12 @@ def test_from_run_awaiting_gate_restores_selected_count(tmp_path):
 
 def test_describe_running_with_progress_mentions_counts(tmp_path):
     view = SessionView(incoming_root=tmp_path / "incoming", run_id="tg-r1",
-                       status=RunStatus.RUNNING, current_stage="Evaluate",
+                       status=RunStatus.RUNNING, current_stage="Curate",
                        stage_progress=(34, 120))
 
     text = view.describe()
 
-    assert "正在执行 AI 评估" in text
+    assert "正在筛选" in text
     assert "34/120" in text
     assert "取消" not in text  # 不再提示取消（真机反馈）
 

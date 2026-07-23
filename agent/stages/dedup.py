@@ -12,7 +12,7 @@ from pzt_client import PztClient, PztCommandError
 class DedupStage:
     client: PztClient
     name: str = "Dedup"
-    inputs: List[str] = field(default_factory=lambda: ["Evaluate"])
+    inputs: List[str] = field(default_factory=lambda: ["Ingest"])
     cost_class: str = "local"
     criticality: str = "critical"
 

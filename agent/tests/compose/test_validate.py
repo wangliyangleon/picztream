@@ -7,7 +7,6 @@ from orchestrator.types import Plan, StageSpec
 def _valid_plan(**overrides):
     stages = {
         "Ingest": StageSpec(name="Ingest"),
-        "Evaluate": StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         "Dedup": StageSpec(name="Dedup"),
         "Curate": StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
         "Style": StageSpec(name="Style", params={"provider": "gemini"}, gate="required"),
@@ -39,7 +38,6 @@ def test_rejects_wrong_stage_names_or_order():
 def test_rejects_missing_stage():
     plan = Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
     ])
@@ -53,7 +51,6 @@ def test_rejects_missing_stage():
 def test_rejects_plan_missing_style_apply_all():
     plan = Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
         StageSpec(name="Style", params={"provider": "gemini"}),
@@ -67,16 +64,6 @@ def test_rejects_plan_missing_style_apply_all():
 
 
 @pytest.mark.parametrize("provider", ["openai", "", None, 123])
-def test_rejects_bad_evaluate_provider(provider):
-    plan = _valid_plan(Evaluate={"provider": provider})
-
-    with pytest.raises(ValidationError) as exc_info:
-        validate_plan(plan)
-
-    assert exc_info.value.code == "bad_evaluate_provider"
-
-
-@pytest.mark.parametrize("provider", ["openai", "", None, 123])
 def test_rejects_bad_style_provider(provider):
     plan = _valid_plan(Style={"provider": provider})
 
@@ -84,16 +71,6 @@ def test_rejects_bad_style_provider(provider):
         validate_plan(plan)
 
     assert exc_info.value.code == "bad_style_provider"
-
-
-@pytest.mark.parametrize("auto_reject", ["true", 1, None])
-def test_rejects_non_bool_auto_reject(auto_reject):
-    plan = _valid_plan(Evaluate={"auto_reject": auto_reject})
-
-    with pytest.raises(ValidationError) as exc_info:
-        validate_plan(plan)
-
-    assert exc_info.value.code == "bad_evaluate_auto_reject"
 
 
 @pytest.mark.parametrize("count", [0, -1, 51, "9", 9.5, True])

@@ -14,14 +14,14 @@ def _fake_gemini_http_post(decision_json):
 def test_compose_plan_builds_five_stage_plan_from_llm_decision(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     fake_http_post = _fake_gemini_http_post(
-        {"provider": "claude", "auto_reject": False, "count": 12, "apply_tag": "朋友圈"}
+        {"provider": "claude", "count": 12, "apply_tag": "朋友圈"}
     )
 
     plan = compose_plan("出去玩拍了40张，挑12张发朋友圈", None, None, http_post=fake_http_post,
                          meta_provider="gemini")
 
     assert [s.name for s in plan.stages] == [
-        "Ingest", "Evaluate", "Dedup", "Curate", "Style", "StyleApplyAll", "Deliver"]
+        "Ingest", "Dedup", "Curate", "Style", "StyleApplyAll", "Deliver"]
     # Style/StyleApplyAll 是两段式的对话闸门(先问描述、再确认单张预
     # 览)，其它 stage 保持全自动不打断。
     gates = {s.name: s.gate for s in plan.stages}
@@ -29,12 +29,11 @@ def test_compose_plan_builds_five_stage_plan_from_llm_decision(monkeypatch):
     assert gates["StyleApplyAll"] == "required"
     assert all(gate == "off" for name, gate in gates.items() if name not in ("Style", "StyleApplyAll"))
     assert plan.stages[0].params == {}
-    assert plan.stages[1].params == {"provider": "claude", "auto_reject": False}
-    assert plan.stages[2].params == {}
-    assert plan.stages[3].params == {"count": 12, "apply_tag": "朋友圈"}
-    assert plan.stages[4].params == {"provider": "claude"}
+    assert plan.stages[1].params == {}
+    assert plan.stages[2].params == {"count": 12, "apply_tag": "朋友圈"}
+    assert plan.stages[3].params == {"provider": "claude"}
+    assert plan.stages[4].params == {}
     assert plan.stages[5].params == {}
-    assert plan.stages[6].params == {}
 
 
 def test_compose_plan_applies_defaults_when_llm_omits_fields(monkeypatch):
@@ -43,12 +42,10 @@ def test_compose_plan_applies_defaults_when_llm_omits_fields(monkeypatch):
 
     plan = compose_plan("随便挑几张", None, None, http_post=fake_http_post, meta_provider="gemini")
 
-    evaluate = next(s for s in plan.stages if s.name == "Evaluate")
     curate = next(s for s in plan.stages if s.name == "Curate")
     style = next(s for s in plan.stages if s.name == "Style")
     # provider 的默认值(LLM 没提时的兜底)是 "local"，不是 meta_provider
     # (那是跑这次解析调用本身用的 provider，两者是独立的概念)。
-    assert evaluate.params == {"provider": "local", "auto_reject": True}
     assert style.params == {"provider": "local"}
     assert curate.params == {"count": 9, "apply_tag": "精选"}
 

@@ -21,7 +21,6 @@ from session.worker import SessionWorker
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
-from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from stages.style import StyleStage
 from stages.style_apply_all import StyleApplyAllStage
@@ -31,19 +30,12 @@ CHAT_ID = "42"
 
 _FIXED_RESPONSES = {
     "new": {"project": "run-1", "image_count": 2},
-    "eval": {"submitted": 2, "evaluated": [], "failed": []},
     "dedup": {"groups": 2, "tagged": 0, "skipped_no_capture_time": 0},
     "curate": {"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]},
     "tag": {},
     "recipe": {"applied": True, "recipe_name": "Havana 1959"},
     "export-images": {"exported": 2, "skipped": [], "created_dir": True},
     "delete": {"deleted": "run-1"},
-    # consumer 的 Evaluate 进度轮询用（cli/commands/commands.cpp::cmd_images
-    # 的输出形状，逐张带 evaluated 布尔）。
-    "images": {"project": "run-1", "images": [
-        {"path": "a.jpg", "evaluated": True, "tags": []},
-        {"path": "b.jpg", "evaluated": False, "tags": []},
-    ]},
 }
 
 
@@ -152,7 +144,6 @@ def bare_compose_plan() -> Plan:
     # folder / Deliver out_folder / Deliver 闸门）。
     return Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
         StageSpec(name="Style", params={"provider": "local"}, gate="required"),
@@ -218,7 +209,6 @@ def make_fixed_plan(incoming_dir: str, out_folder: str) -> Plan:
     # out_folder + required 闸门、Style/StyleApplyAll required 闸门。
     return Plan(stages=[
         StageSpec(name="Ingest", params={"folder": incoming_dir}),
-        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
         StageSpec(name="Style", params={"provider": "local"}, gate="required"),
@@ -332,7 +322,6 @@ def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
                   client: Optional[FakeClient] = None,
                   idle_reminder_seconds: float = 300.0,
                   progress_interval_seconds: float = 60.0,
-                  eval_poll_interval_seconds: float = 60.0,
                   terminal_retention_seconds: float = 7 * 86400) -> ConsumerEnv:
     from session.consumer import SessionConsumer
 
@@ -352,7 +341,6 @@ def make_consumer(tmp_path: Path, clock: Optional[FakeClock] = None,
         readonly_client=client, now_fn=clock,
         idle_reminder_seconds=idle_reminder_seconds,
         progress_interval_seconds=progress_interval_seconds,
-        eval_poll_interval_seconds=eval_poll_interval_seconds,
         send_retry_backoff_seconds=0.0,  # 测试不真 sleep
         preview_root=tmp_path / "preview", staging_dir=tmp_path / "staging",
         marker_dir=tmp_path / "delivered",
@@ -382,7 +370,6 @@ def make_worker(tmp_path: Path,
     events: "queue.Queue" = queue.Queue()
     stages = {
         "Ingest": IngestStage(client=client),
-        "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
         "Style": StyleStage(client=client, http_post=_fake_style_http_post()),

@@ -5,7 +5,6 @@ from run_intent import _fill_transport_params
 def test_fill_transport_params_sets_ingest_folder_and_deliver_out_folder():
     plan = Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
         StageSpec(name="Deliver"),

@@ -22,7 +22,6 @@ from run_watchfolder import build_transport
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
-from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from store.run_store import RunStore
 
@@ -87,7 +86,6 @@ def main() -> None:
 
     stages = {
         "Ingest": IngestStage(client=client),
-        "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),

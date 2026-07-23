@@ -159,8 +159,8 @@ _CONFIRMATION_SCHEMA_INSTRUCTION = (
     'phrased casually or indirectly (for example "好的，处理吧", "可以", "没问题"); '
     '{"action": "reject"} if the user wants to abandon this plan entirely (for example '
     '"算了", "不要了", "cancel"); '
-    '{"action": "confirmed", "provider": <string>, "auto_reject": <boolean>, '
-    '"count": <integer>, "apply_tag": <string>} if the reply asks to CHANGE any field. '
+    '{"action": "confirmed", "count": <integer>, "apply_tag": <string>} if the reply '
+    "asks to CHANGE any field. "
     "Requests to change the number of photos or the tag are ALWAYS 'confirmed', never "
     "'query'. Copy every field from the proposed plan and overwrite only what the user "
     'asked to change. Examples (proposed count=3): "选六张吧"/"改成6张"/"要6张" -> count 6; '
@@ -178,8 +178,6 @@ _CONFIRMATION_SCHEMA_INSTRUCTION = (
 @dataclass
 class PlanConfirmationReply:
     action: Literal["confirmed", "clarify", "query", "approve", "reject"]
-    provider: Optional[str] = None
-    auto_reject: Optional[bool] = None
     count: Optional[int] = None
     apply_tag: Optional[str] = None
     question: Optional[str] = None
@@ -216,8 +214,6 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
     if action == "confirmed":
         return PlanConfirmationReply(
             action="confirmed",
-            provider=decision.get("provider", current_params.get("provider")),
-            auto_reject=decision.get("auto_reject", current_params.get("auto_reject")),
             count=decision.get("count", current_params.get("count")),
             apply_tag=decision.get("apply_tag", current_params.get("apply_tag")),
         )

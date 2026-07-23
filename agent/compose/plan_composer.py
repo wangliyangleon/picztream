@@ -1,7 +1,9 @@
 """意图到 Plan 组装的那"一次性"LLM 步骤，见 docs/M4_Agent_Workflow_Design.md
-五"意图到 Plan 组装"。子增量 E 范围内 LLM 只决定 Evaluate/Curate 两个
-Stage 的参数：Ingest/Deliver 的文件夹路径由调用方(run_intent.py)在
-compose_plan 返回之后另行填入，模型不该、也没有信息去编文件路径。
+五"意图到 Plan 组装"。LLM 只决定 Curate/Style 用到的参数（W2026-07-21：
+Evaluate stage 已删除，agent 不再整批跑评估，见
+docs/W2026-07-21_PRD.md 已拍板决策 4）：Ingest/Deliver 的文件夹路径由调
+用方(run_intent.py)在 compose_plan 返回之后另行填入，模型不该、也没有
+信息去编文件路径。
 profile/last_config 是 docs/M4_Eng_Design.md 四已锁定的签名，子增量 E
 不实现 Profile/上次配置(见本模块对应的实现计划 Global Constraints)，
 接收但不用。
@@ -17,12 +19,10 @@ _SCHEMA_INSTRUCTION = (
     "You are translating a user's free-text photo-culling request into structured "
     "pipeline parameters. Respond with a single JSON object with exactly these fields: "
     '"provider" (string, one of "local", "gemini", or "claude", pick "local" unless the '
-    'user explicitly asks for a cloud provider by name), "auto_reject" (boolean, whether '
-    "photos that fail quality evaluation should be automatically discarded, default true "
-    'unless the user says to keep everything), "count" (integer, how many final photos '
-    'the user wants, a reasonable default is 9 if unspecified), "apply_tag" (string, the '
-    "tag name to apply to the selected photos. Derive it from the destination or audience "
-    "the user mentions, using that as the tag name itself: "
+    'user explicitly asks for a cloud provider by name), "count" (integer, how many final '
+    'photos the user wants, a reasonable default is 9 if unspecified), "apply_tag" '
+    "(string, the tag name to apply to the selected photos. Derive it from the "
+    "destination or audience the user mentions, using that as the tag name itself: "
     '"发朋友圈"/"发朋友圈的" -> "朋友圈", "发到ins"/"发instagram" -> "ins", '
     '"给我妈看" -> "家人", "选几张精修" -> "精修". Only fall back to the default "精选" when '
     "the user names no destination, audience, album, or tag at all)."
@@ -40,10 +40,6 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
     )
     return Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Evaluate", params={
-            "provider": decision.get("provider", "local"),
-            "auto_reject": decision.get("auto_reject", True),
-        }),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={
             "count": decision.get("count", 9),

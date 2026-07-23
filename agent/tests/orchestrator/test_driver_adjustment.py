@@ -8,8 +8,8 @@ from fakes import FakeStage
 def make_pipeline_run():
     stages = {
         "Ingest": FakeStage(name="Ingest"),
-        "Evaluate": FakeStage(name="Evaluate", inputs=["Ingest"]),
-        "Dedup": FakeStage(name="Dedup", inputs=["Evaluate"]),
+        "StageB": FakeStage(name="StageB", inputs=["Ingest"]),
+        "Dedup": FakeStage(name="Dedup", inputs=["StageB"]),
         "Curate": FakeStage(name="Curate", inputs=["Dedup"]),
         "Style": FakeStage(name="Style", inputs=["Curate"]),
         "Caption": FakeStage(name="Caption", inputs=["Curate"]),
@@ -35,7 +35,7 @@ def test_adjusting_curate_invalidates_curate_and_downstream_only(tmp_path):
     assert run.stage_states["Caption"] == StageStatus.PENDING
     assert run.stage_states["Deliver"] == StageStatus.PENDING
     assert run.stage_states["Ingest"] == StageStatus.DONE
-    assert run.stage_states["Evaluate"] == StageStatus.DONE
+    assert run.stage_states["StageB"] == StageStatus.DONE
     assert run.stage_states["Dedup"] == StageStatus.DONE
     curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
     assert curate_spec.params == {"count": 12}
@@ -49,7 +49,7 @@ def test_adjusting_caption_does_not_rerun_eval_dedup_curate_style(tmp_path):
 
     assert run.stage_states["Caption"] == StageStatus.PENDING
     assert run.stage_states["Deliver"] == StageStatus.PENDING
-    for untouched in ("Ingest", "Evaluate", "Dedup", "Curate", "Style"):
+    for untouched in ("Ingest", "StageB", "Dedup", "Curate", "Style"):
         assert run.stage_states[untouched] == StageStatus.DONE
 
 
@@ -64,7 +64,7 @@ def test_adjustment_then_advance_reruns_only_invalidated_stages(tmp_path):
         driver.advance(run)
 
     assert len(stages["Ingest"].calls) == 0
-    assert len(stages["Evaluate"].calls) == 0
+    assert len(stages["StageB"].calls) == 0
     assert len(stages["Dedup"].calls) == 0
     assert len(stages["Curate"].calls) == 1
     assert len(stages["Style"].calls) == 1

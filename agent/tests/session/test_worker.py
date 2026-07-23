@@ -153,7 +153,7 @@ def test_drive_start_runs_to_style_gate(tmp_path):
     events = env.drain_events()
     started = [e.stage for e in events if isinstance(e, StageStarted)]
     # Style 停在闸门、这一轮并不运行，不发 StageStarted（AG-05）。
-    assert started == ["Ingest", "Evaluate", "Dedup", "Curate"]
+    assert started == ["Ingest", "Dedup", "Curate"]
     gate = events[-1]
     assert isinstance(gate, GateReached)
     assert gate.stage == "Style"
@@ -173,7 +173,7 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     events = env.drain_events()
     # 跑到 Style 闸门停下：只发真运行过的 stage，不发被闸门挡住的 Style（AG-05）。
     started = _started_stages(events)
-    assert started == ["Ingest", "Evaluate", "Dedup", "Curate"]
+    assert started == ["Ingest", "Dedup", "Curate"]
 
     # Style 闸门收到描述 -> rerun_style -> 停在 StyleApplyAll 预览闸门
     env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
@@ -363,14 +363,13 @@ def test_client_is_armed_only_during_killable_stages(tmp_path):
     env.step()
 
     assert env.client.armed_during["new"] is False       # Ingest 不可杀
-    assert env.client.armed_during["eval"] is True       # Evaluate 可杀
     assert env.client.armed_during["dedup"] is True      # Dedup 可杀
     assert env.client.armed_during["curate"] is False    # Curate 不可杀
     assert env.client.cancel_event is None               # 结束后摘除
 
 
-def test_cancelled_error_mid_eval_finishes_run_as_cancelled(tmp_path):
-    env = make_worker(tmp_path, client=FakeClient(raise_cancelled_on=("eval",)))
+def test_cancelled_error_mid_dedup_finishes_run_as_cancelled(tmp_path):
+    env = make_worker(tmp_path, client=FakeClient(raise_cancelled_on=("dedup",)))
     run = env.make_running_run()
     env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
 

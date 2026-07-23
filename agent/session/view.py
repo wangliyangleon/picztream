@@ -22,7 +22,6 @@ from router.collecting import incoming_dir_for
 # 贴着闸门自己的提问会自相矛盾，闸门消息本身就是恰当的进度提示。
 STAGE_PROGRESS_MESSAGES = {
     "Ingest": "正在导入照片...",
-    "Evaluate": "正在执行 AI 评估...",
     "Dedup": "正在执行去重...",
     "Curate": "正在筛选...",
     "Deliver": "正在交付...",
@@ -38,7 +37,7 @@ class SessionView:
     current_stage: Optional[str] = None            # StageStarted 事件更新
     stage_progress: Optional[Tuple[int, int]] = None  # (done, total)
     gate_stage: Optional[str] = None               # GateReached 事件更新
-    plan_summary: Optional[dict] = None            # provider/auto_reject/count/apply_tag
+    plan_summary: Optional[dict] = None            # count/apply_tag
     selected_count: Optional[int] = None           # GateReached payload / 重建时从 outputs 抄
     drive_active: bool = False                     # DriveJob 入队 True，闸门/终态事件 False
 
@@ -54,7 +53,6 @@ class SessionView:
         if self.status == RunStatus.COLLECTING:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:
-            # 不显示 provider（评估模型对用户是无用信息，见真机反馈）。
             return (f"目前收到 {self.photo_count()} 张照片，方案是："
                     f"留 {self.plan_summary['count']} 张，"
                     f"标签叫\"{self.plan_summary['apply_tag']}\"")
@@ -74,12 +72,9 @@ def view_from_run(run: RunState, incoming_root: Path) -> SessionView:
     到（那是 drive 过程中的瞬时态，不落盘），留空等续跑事件重新填。"""
     view = SessionView(incoming_root=Path(incoming_root), run_id=run.run_id,
                        project_id=run.project_id, status=run.status)
-    evaluate = next((s for s in run.plan.stages if s.name == "Evaluate"), None)
     curate = next((s for s in run.plan.stages if s.name == "Curate"), None)
-    if evaluate is not None and curate is not None:
+    if curate is not None:
         view.plan_summary = {
-            "provider": evaluate.params.get("provider"),
-            "auto_reject": evaluate.params.get("auto_reject"),
             "count": curate.params.get("count"),
             "apply_tag": curate.params.get("apply_tag"),
         }

@@ -7,7 +7,6 @@ from run_watchfolder import build_plan, build_transport
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
-from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from store.run_store import RunStore
 
@@ -16,23 +15,18 @@ def test_build_plan_produces_five_stages_all_gates_off():
     # Style/StyleApplyAll 不进这个入口的 Plan：run_watchfolder.py 子增量
     # D 的设计契约是"不含对话式交互，全自动跑到底"，Style 现在天然需要
     # 一句话描述，跟这个契约直接冲突，范围上明确只给 run_telegram.py 用。
-    plan = build_plan(
-        in_folder="/tmp/in", out_folder="/tmp/out", count=9,
-        provider="gemini", apply_tag="精选", auto_reject=True,
-    )
+    plan = build_plan(in_folder="/tmp/in", out_folder="/tmp/out", count=9, apply_tag="精选")
 
-    assert [s.name for s in plan.stages] == ["Ingest", "Evaluate", "Dedup", "Curate", "Deliver"]
+    assert [s.name for s in plan.stages] == ["Ingest", "Dedup", "Curate", "Deliver"]
     assert all(s.gate == "off" for s in plan.stages)
     assert plan.stages[0].params == {"folder": "/tmp/in"}
-    assert plan.stages[3].params == {"count": 9, "apply_tag": "精选"}
-    assert plan.stages[4].params == {"out_folder": "/tmp/out"}
+    assert plan.stages[2].params == {"count": 9, "apply_tag": "精选"}
+    assert plan.stages[3].params == {"out_folder": "/tmp/out"}
 
 
 def test_build_transport_reconstructs_in_and_out_dir_from_persisted_plan(tmp_path):
-    plan = build_plan(
-        in_folder=str(tmp_path / "in"), out_folder=str(tmp_path / "out"), count=9,
-        provider="gemini", apply_tag="精选", auto_reject=True,
-    )
+    plan = build_plan(in_folder=str(tmp_path / "in"), out_folder=str(tmp_path / "out"),
+                       count=9, apply_tag="精选")
     run = RunState(run_id="run-1", project_id="run-1", plan=plan,
                     stage_states={s.name: StageStatus.PENDING for s in plan.stages}, status=RunStatus.RUNNING)
 
@@ -78,7 +72,6 @@ def _make_pipeline(tmp_path, client, transport):
     staging_dir = tmp_path / "staging"
     return {
         "Ingest": IngestStage(client=client),
-        "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
@@ -88,7 +81,6 @@ def _make_pipeline(tmp_path, client, transport):
 def test_full_pipeline_runs_to_awaiting_review_and_delivers_selected_files(tmp_path):
     client = _make_fake_client({
         "new": '{"project": "run-1", "image_count": 3}',
-        "eval": '{"submitted": 3, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 3, "tagged": 0, "skipped_no_capture_time": 0}',
         "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
         "tag": '{}',
@@ -97,7 +89,7 @@ def test_full_pipeline_runs_to_awaiting_review_and_delivers_selected_files(tmp_p
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
     stages = _make_pipeline(tmp_path, client, transport)
     plan = build_plan(in_folder=str(tmp_path / "in"), out_folder=str(tmp_path / "out"),
-                       count=2, provider="gemini", apply_tag="精选", auto_reject=True)
+                       count=2, apply_tag="精选")
     run = RunState(run_id="run-1", project_id="run-1", plan=plan,
                     stage_states={s.name: StageStatus.PENDING for s in plan.stages}, status=RunStatus.RUNNING)
     driver = Driver(stages=stages, store=RunStore(tmp_path / "runs"))
@@ -119,7 +111,6 @@ def test_crash_before_checkpoint_persists_does_not_resend_via_deliver_marker(tmp
     # 挡住了重发，这是 PRD"幂等交付"验收标准的直接体现。
     client = _make_fake_client({
         "new": '{"project": "run-1", "image_count": 1}',
-        "eval": '{"submitted": 1, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 1, "tagged": 0, "skipped_no_capture_time": 0}',
         "curate": '{"requested": 1, "returned": 1, "selected": ["a.jpg"]}',
         "tag": '{}',
@@ -128,7 +119,7 @@ def test_crash_before_checkpoint_persists_does_not_resend_via_deliver_marker(tmp
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
     stages = _make_pipeline(tmp_path, client, transport)
     plan = build_plan(in_folder=str(tmp_path / "in"), out_folder=str(tmp_path / "out"),
-                       count=1, provider="gemini", apply_tag="精选", auto_reject=True)
+                       count=1, apply_tag="精选")
     run = RunState(run_id="run-1", project_id="run-1", plan=plan,
                     stage_states={s.name: StageStatus.PENDING for s in plan.stages}, status=RunStatus.RUNNING)
     driver = Driver(stages=stages, store=RunStore(tmp_path / "runs"))
@@ -151,7 +142,6 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
         call_log.append(argv[1])
         responses = {
             "new": '{"project": "run-1", "image_count": 1}',
-            "eval": '{"submitted": 1, "evaluated": [], "failed": []}',
             "dedup": '{"groups": 1, "tagged": 0, "skipped_no_capture_time": 0}',
             "curate": '{"requested": 1, "returned": 1, "selected": ["a.jpg"]}',
             "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
@@ -162,17 +152,16 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
     transport = FakeTransport(in_dir=tmp_path / "in", out_dir=tmp_path / "out")
     stages = _make_pipeline(tmp_path, client, transport)
     plan = build_plan(in_folder=str(tmp_path / "in"), out_folder=str(tmp_path / "out"),
-                       count=1, provider="gemini", apply_tag="精选", auto_reject=True)
+                       count=1, apply_tag="精选")
     run = RunState(run_id="run-1", project_id="run-1", plan=plan,
                     stage_states={s.name: StageStatus.PENDING for s in plan.stages}, status=RunStatus.RUNNING)
     store = RunStore(tmp_path / "runs")
     driver_a = Driver(stages=stages, store=store)
 
     driver_a.advance(run)  # Ingest
-    driver_a.advance(run)  # Evaluate
     driver_a.advance(run)  # Dedup  -- 之后模拟进程崩溃
 
-    assert call_log == ["new", "eval", "dedup"]
+    assert call_log == ["new", "dedup"]
 
     # 模拟重启：全新 Driver/Stage(client 走全新 fake_runner 计数)，从磁
     # 盘重新加载 run_id="run-1"。
@@ -199,5 +188,5 @@ def test_crash_after_dedup_resumes_from_curate_without_rerunning_earlier_stages(
     if reloaded.status == RunStatus.AWAITING_REVIEW:
         driver_b.approve(reloaded)
 
-    assert call_log_after_restart == ["curate", "tag", "tag", "export-images"]  # 没有重跑 new/eval/dedup
+    assert call_log_after_restart == ["curate", "tag", "tag", "export-images"]  # 没有重跑 new/dedup
     assert reloaded.status == RunStatus.DONE

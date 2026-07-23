@@ -7,7 +7,6 @@ from pzt_client import PztClient
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
-from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from store.run_store import RunStore
 
@@ -37,7 +36,6 @@ def _make_pipeline(tmp_path, client, transport):
     staging_dir = tmp_path / "staging"
     return {
         "Ingest": IngestStage(client=client),
-        "Evaluate": EvaluateStage(client=client),
         "Dedup": DedupStage(client=client),
         "Curate": CurateStage(client=client),
         "Deliver": DeliverStage(client=client, transport=transport, marker_dir=marker_dir, staging_dir=staging_dir),
@@ -63,7 +61,6 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
     # 用。
     plan = validate_plan(Plan(stages=[
         StageSpec(name="Ingest", params={"folder": str(tmp_path / "in")}),
-        StageSpec(name="Evaluate", params={"provider": "gemini", "auto_reject": True}),
         StageSpec(name="Dedup"),
         StageSpec(name="Curate", params={"count": 1, "apply_tag": "精选"}),
         StageSpec(name="Style", params={"provider": "gemini"}, gate="required"),
@@ -78,7 +75,6 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
     curate_call_count = {"n": 0}
     fixed_responses = {
         "new": '{"project": "run-1", "image_count": 2}',
-        "eval": '{"submitted": 2, "evaluated": [], "failed": []}',
         "dedup": '{"groups": 2, "tagged": 0, "skipped_no_capture_time": 0}',
         "tag": '{}',
         "export-images": '{"exported": 1, "skipped": [], "created_dir": true}',
@@ -115,7 +111,6 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
 
     assert run.status == RunStatus.DONE
     assert call_log.count("new") == 1
-    assert call_log.count("eval") == 1
     assert call_log.count("dedup") == 1
     assert call_log.count("curate") == 2
     assert call_log.count("export-images") == 2

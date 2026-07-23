@@ -1,18 +1,17 @@
-"""SessionConsumer 的三个 timer（idle 提醒/收图播报沿用旧语义，Evaluate
-进度轮询是 2.0 新增）与启动恢复三分支（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第七节第 6、7 条）。时间全部走注入的 FakeClock。
+"""SessionConsumer 的两个 timer（idle 提醒/收图播报）与启动恢复三分支
+（docs/W2026-07-15_AgentRuntime_Eng_Design.md 第七节第 6、7 条）。时间
+全部走注入的 FakeClock。
 """
 from __future__ import annotations
 
 from orchestrator.types import RunState, RunStatus, StageStatus
-from session.protocol import DriveJob, StageStarted
+from session.protocol import DriveJob
 from store.run_store import RunStore
 
 from session_fakes import (
     FakeClock,
     make_consumer,
     make_fixed_plan,
-    to_running,
 )
 
 
@@ -46,25 +45,6 @@ def test_collecting_progress_broadcast_waits_full_interval(tmp_path):
     env.consumer.step()
 
     assert "已收到 2 张图片" in env.transport.texts()
-
-
-def test_eval_progress_poll_counts_evaluated_images(tmp_path):
-    env = make_consumer(tmp_path)
-    job = to_running(env)
-    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
-    env.consumer.step()
-    assert not any(args[0] == "images" for args in env.client.calls)
-
-    env.clock.advance(60)
-    env.consumer.step()
-
-    assert ("images", job.run_id) in env.client.calls  # 只读查询，project_id == run_id
-    assert env.consumer.view.stage_progress == (1, 2)  # fake images: 2 张中 1 张已评估
-    assert "评估进行中，已完成 1/2 张" in env.transport.texts()
-
-    env.clock.advance(30)
-    env.consumer.step()  # 没到下一个间隔，不再轮询
-    assert sum(1 for args in env.client.calls if args[0] == "images") == 1
 
 
 def test_collecting_progress_edits_in_place_on_later_ticks(tmp_path):
@@ -101,48 +81,6 @@ def test_progress_unchanged_text_is_not_resent_or_edited(tmp_path):
 
     assert sum(1 for t in env.transport.texts() if "已收到" in t) == sends
     assert len(env.transport.sent_edits) == edits
-
-
-def test_eval_progress_edits_in_place_on_later_ticks(tmp_path):
-    # AG-16.3：Evaluate 进度后续 tick 也原地编辑。造两次不同的 evaluated 计数。
-    env = make_consumer(tmp_path)
-    job = to_running(env)
-    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
-    env.consumer.step()
-
-    counts = iter([  # 第一次 1/2，第二次 2/2
-        {"images": [{"evaluated": True}, {"evaluated": False}]},
-        {"images": [{"evaluated": True}, {"evaluated": True}]},
-    ])
-    env.client.call = lambda *a: next(counts)
-
-    env.clock.advance(60)
-    env.consumer.step()  # 首播 1/2 -> 发新
-    assert "评估进行中，已完成 1/2 张" in env.transport.texts()
-
-    env.clock.advance(60)
-    env.consumer.step()  # 2/2 -> 编辑
-
-    assert any(t == "评估进行中，已完成 2/2 张" for _, t in env.transport.sent_edits)
-
-
-def test_eval_poll_failure_is_tolerated_silently(tmp_path):
-    env = make_consumer(tmp_path)
-
-    def exploding_call(*args):
-        raise RuntimeError("db locked")
-
-    env.client.call = exploding_call
-    job = to_running(env)
-    env.put_event(StageStarted(0, job.run_id, "Evaluate"))
-    env.consumer.step()
-    before = len(env.transport.texts())
-
-    env.clock.advance(60)
-    env.consumer.step()  # 不炸、不发进度
-
-    assert len(env.transport.texts()) == before
-    assert env.consumer.view.stage_progress is None
 
 
 def _prefill_run(tmp_path, run_id: str, status: RunStatus) -> RunState:

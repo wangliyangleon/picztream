@@ -36,7 +36,6 @@ from session.worker import SessionWorker
 from stages.curate import CurateStage
 from stages.dedup import DedupStage
 from stages.deliver import DeliverStage
-from stages.evaluate import EvaluateStage
 from stages.ingest import IngestStage
 from stages.style import StyleStage
 from stages.style_apply_all import StyleApplyAllStage
@@ -51,7 +50,6 @@ _log = logging.getLogger("pzt.agent.runner")
 def build_runtime(state_dir: Path, transport: Any, chat_id: str,
                   idle_reminder_seconds: float = 300.0,
                   progress_interval_seconds: float = 60.0,
-                  eval_poll_interval_seconds: float = 60.0,
                   ) -> Tuple[SessionConsumer, SessionWorker]:
     state_dir = Path(state_dir)
     # 语言推理 provider 一处读、一处注入（AG-13）：各 classify/compose 函数
@@ -80,7 +78,6 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
 
     stages = {
         "Ingest": IngestStage(client=worker_client),
-        "Evaluate": EvaluateStage(client=worker_client),
         "Dedup": DedupStage(client=worker_client),
         "Curate": CurateStage(client=worker_client),
         "Style": StyleStage(client=worker_client),
@@ -115,7 +112,6 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
         readonly_client=readonly_client,
         idle_reminder_seconds=idle_reminder_seconds,
         progress_interval_seconds=progress_interval_seconds,
-        eval_poll_interval_seconds=eval_poll_interval_seconds,
         preview_root=preview_root, staging_dir=staging_dir, marker_dir=marker_dir,
     )
     return consumer, worker
@@ -130,8 +126,6 @@ def main() -> None:
                          help="Collecting/Planned/AwaitingGate 静默多久后主动提醒一次，默认 300 秒")
     parser.add_argument("--progress-interval-seconds", type=float, default=60.0,
                          help="收图期间进度播报间隔秒数")
-    parser.add_argument("--eval-poll-interval-seconds", type=float, default=60.0,
-                         help="Evaluate 期间量化进度轮询/播报间隔秒数")
     args = parser.parse_args()
 
     state_dir = Path(args.state_dir) if args.state_dir else Path.home() / ".pzt-agent"
@@ -144,7 +138,6 @@ def main() -> None:
         state_dir=state_dir, transport=transport, chat_id=chat_id,
         idle_reminder_seconds=args.idle_reminder_seconds,
         progress_interval_seconds=args.progress_interval_seconds,
-        eval_poll_interval_seconds=args.eval_poll_interval_seconds,
     )
 
     stop_event = threading.Event()

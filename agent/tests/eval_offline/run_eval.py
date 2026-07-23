@@ -67,9 +67,7 @@ def main() -> None:
         except Exception as e:
             print(f"  LLM 调用失败：{e}")
             continue
-        evaluate = next(s for s in plan.stages if s.name == "Evaluate")
         curate = next(s for s in plan.stages if s.name == "Curate")
-        print(f"  Evaluate.params = {evaluate.params}")
         print(f"  Curate.params   = {curate.params}")
 
     print("\n=== parse_adjustment ===")

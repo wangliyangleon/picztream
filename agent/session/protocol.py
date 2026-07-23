@@ -40,7 +40,7 @@ class DriveJob:
     run_id: str
     args: dict = field(default_factory=dict)
     # 取消 = consumer set()；worker 在 stage 边界必查，并在可杀 stage
-    # （Evaluate/Dedup）期间把它挂到 PztClient 上做子进程级终止。
+    # （Dedup）期间把它挂到 PztClient 上做子进程级终止。
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -82,9 +82,9 @@ class StageStarted:
     stage: str
 
 
-# 注意没有 StageProgress 事件：Evaluate 的量化进度是 consumer 侧轮询
-# `pzt images --json` 得来的（worker 阻塞在 eval 子进程里报不了）；其余
-# stage 秒级不需要。视图的 stage_progress 字段由 consumer 自己填。
+# 注意没有 StageProgress 事件：目前所有 stage 都是单次阻塞子进程调用，
+# 没有细粒度进度可报；SessionView.stage_progress 字段留着给以后需要的
+# stage 用，现在恒为 None。
 
 
 @dataclass
