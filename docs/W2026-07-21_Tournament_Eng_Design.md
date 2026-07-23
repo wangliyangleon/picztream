@@ -151,3 +151,88 @@ JSON 输出：`cmd_dedup` 现有输出（`groups`/`tagged`/`skipped_no_capture_t
 - 同时构建 Debug（`build/`）与 Release（`build_release/`）。
 - 真机：`pzt dedup <proj> --scope '*'`（不带 `--ai`）行为、输出跟今天逐字节一致；`pzt dedup <proj> --scope '*' --ai --provider local` 能跑通，"重复"标签落在锦标赛输的一方；`pzt curate <proj> --count N`（不带 `--ai`）行为不变；`--ai` 模式下每簇锦标赛出 winner、最终随机挑 N 张；agent 一次 Run 端到端：AI 关全程零模型调用、AI 开正确触发 dedup/curate 两处的锦标赛。
 - 全局开关关时的 Run 不产生任何 AI 调用（PRD 验收标准原文）；开时 pairwise 调用次数符合"k 张簇 k-1 次比较"的量级（真机粗测一次即可，不需要精确基准）。
+
+# 目标三补充设计（2026-07-23）：dedup/选片流程可选化
+
+## 背景
+
+`docs/W2026-07-21_PRD.md` 目标三已拍板：Dedup/Curate 两步各自要不要跑由这次意图判断（三分支：没提去重→直接 Curate；提去重没数量→先 Dedup 再追问；提去重带数量→跳过独立 Dedup 直接 Curate(N)），外加"没提 AI 就提醒+给快捷按钮"。手动选片已移出范围，留给未来单独立项。上面"非目标"一节曾把"Dedup 做成可跳过的 stage"列为延后项，这一节就是把它做完。
+
+规划阶段通读了 orchestrator（`agent/orchestrator/types.py`/`driver.py`）、`agent/stages/curate.py`/`deliver.py`、`agent/compose/plan_composer.py`/`validate.py`、`agent/session/consumer.py`/`worker.py`，以及本文档决策一二涉及的 core `curate.cpp`，过程中发现两个原计划之外、必须处理的架构缺口（决策二、决策三），已经想清楚最小修法。
+
+## 决策一：compose_plan 的两个新字段与三分支落 Plan 形状
+
+`_SCHEMA_INSTRUCTION` 新增两个字段：
+
+- `dedup_requested`（boolean）：用户是否明确提到"去重"。
+- `count` 从"必填 int，默认 9"改成**可空**：用户明确给了目标张数才填数字，纯"去重"意图不该被默认值 9 污染。
+
+`compose_plan` 按下面规则决定 Plan 形状（代码里判断，不是 LLM 判断）：
+
+- `count is not None`（不管 `dedup_requested` 是什么）：**不生成 Dedup StageSpec**，直接 `Curate(count=count)`。对应 PRD 案例一（没提去重）和案例三（提去重+给了数量）——两者收敛成同一个 Plan 形状，因为 core `curate` 的粗聚类已经隐含去重效果（决策二引用的 `cluster_and_choose`，见本文档"已对齐的核心设计"第 1 条），单独跑一次 Dedup 是多余的。
+- `count is None and dedup_requested`：生成 `Dedup(...)` + `Curate(count=None, ..., gate="required")`——对应案例二，Curate 的决定推迟到 Dedup 跑完之后用一个新闸门问。
+- `count is None and not dedup_requested`：`count` 按现在的规则 fallback 成默认 9，走跟第一条一样的"不生成 Dedup"路径——等价今天的行为。
+
+`ai_enabled`/`provider` 仍然是全局一份，写进 Plan 里实际存在的每个 stage（Dedup 存在就写，Curate 恒写）。
+
+## 决策二（架构缺口，必须处理）：`CurateStage.inputs` 的依赖声明要跟着改
+
+`agent/stages/curate.py:15` 现在硬编码 `inputs=["Dedup"]`。`Driver._next_pending`（`agent/orchestrator/driver.py:141-156`）拿 `stage.inputs` 里每个名字去 `run.stage_states` 查，查不到就当"未解决的上游"，永远返回非空 `unmet`——一旦 Dedup 不在这次 Plan 里（决策一第一分支），会对 Curate 抛 `RuntimeError("Plan is not topologically ordered")`，Curate 永远跑不起来。
+
+`CurateStage.run()` 本身从不读 `ctx.outputs["Dedup"]`（它直接调 `pzt curate` 现查现选），`inputs=["Dedup"]` 纯粹是历史遗留的顺序声明，不是真实数据依赖。改成 `inputs=["Ingest"]`：Plan 里 Dedup 存在时，list 顺序（Ingest→Dedup→Curate）本身已经保证先后，`inputs` 不需要再重复声明；Dedup 不存在时，Curate 直接排在 Ingest 后面，检查通过。`_downstream_of`（级联重置用）目前没有任何"调整 Dedup 参数后要级联重置 Curate"的场景（Dedup 参数只在跑之前改，从没有"跑完之后回头改 Dedup 重跑"的调整路径），去掉这条声明不影响现有级联行为。
+
+## 决策三（架构缺口，必须处理）：Curate 的"passthrough 模式"——不跑聚类，原样交付 Dedup 幸存者
+
+案例二用户说"够了，不用再筛了"时，不能直接跳过 Curate stage 不跑：`DeliverStage.run()`（`agent/stages/deliver.py:82,90`）硬编码只读 `ctx.outputs.get("Curate")` 拿 `selected` 列表，Curate 缺席就是空列表，什么都不会交付。也不能简单地"照样调 `pzt curate --count M`"（M=去重后剩余张数）冒充"不筛选"：core `curate()`（`core/curate/curate.cpp:110-152`）的语义是"每个粗聚类簇最多出 1 个 winner，`count` 只是给簇数封顶"，不是"从候选里选 top count 个"——如果 M 个去重幸存者里还有几个被粗聚类分进同一簇，`--count M` 一样会把它们收窄成 1 个，等于变相又做了一次用户明确拒绝的"筛选"，语义不对。
+
+方案：`CurateStage.run()` 新增分支——`params["count"] is None` 时不调 `pzt curate`，改调 `pzt images <project> --json`，客户端过滤掉 `tags` 含"重复"或"废片"的图，拿到的 path 列表就是"直接交付"的最终 `selected`，然后走跟现有分支一样的 `tag clear` + `tag apply` 收尾。**这条路径纯粹是 agent 侧新增的 Python 分支，不需要改 core/CLI**（`pzt images --json` 已经把每张图的 `tags` 数组吐出来了，见 `cli/commands/commands.cpp:653-698`）。`ai_enabled`/`provider` 在这个分支下无意义（没有比较，不存在 AI 不 AI），直接忽略，不报错。
+
+## 决策四：Dedup 完成后的追问，复用现有闸门机制（不新增 Driver 能力）
+
+`Curate` 在决策一第二分支里带 `gate="required"`——这不是新的 Driver 概念，`compose_plan` 已经在给 `Style`/`StyleApplyAll` 这么干（决策四原文，`agent/compose/plan_composer.py:59-60`）。Driver 走到 Curate 前会照常停在 `AWAITING_GATE`（`driver.py:37-41`），`SessionWorker._report_stop` 照常发 `GateReached(stage="Curate", payload=...)`。
+
+具体要接的四处：
+
+1. **`worker.py::_prepare_gate_payload`**（`session/worker.py:259-291`，现在是 Style/StyleApplyAll/默认=Deliver 三分支）新增 `if stage == "Curate":` 分支：`remaining = ingest_output.data["image_count"] - dedup_output.data.get("tagged", 0)`，payload `{"remaining": remaining}`。
+2. **新分类器** `compose/adjustment_parser.py::classify_dedup_followup(text, remaining)`：新的 schema，输出 `{"action": "narrow"|"skip"|"query"|"cancel", "count": <int|null>}`——跟 `classify_gate_reply`（服务的是"调整已选中结果"的完全不同问题域）分开，不复用。
+3. **`consumer.py`**：
+   - `_process_text` 的 `AWAITING_GATE` 分派里加 `gate_stage == "Curate"` 一支，走新 classify kind `"dedup_followup"`（context 带 `remaining`，从 `self.view` 或 `self.run.outputs` 取）。
+   - `_on_gate_reached` 加 `elif event.stage == "Curate":` 渲染分支：`"去重后还剩 {remaining} 张，要不要再筛选一下留多少张？"`，按钮见决策五。
+   - 新增 `_on_dedup_followup_reply(reply)`：`action=="narrow"` → `apply_adjustment(Curate, {"count": reply.count})` 再 `resolve_gate`；`action=="skip"` → `apply_adjustment(Curate, {"count": None})` 再 `resolve_gate`（这一路会触发决策三的 passthrough 分支）；`query`→回 `self.view.describe()`；`cancel`→走 `_prompt_cancel_confirmation()`（跟其它闸门一致）。这两个"narrow/skip"分支复用现成的 `Driver.apply_adjustment` + `resolve_gate`（`driver.py:126-137`, `59-73`），**不新增 Driver 方法**。
+
+## 决策五：AI 可发现性——提醒文案 + 快捷按钮
+
+两个触发点，各自只在"这一步的 `ai_enabled` 为 False"时出现：
+
+- **PLANNED 确认**（`_send_plan_confirmation`）：决策一第一分支（Curate 直接确定）沿用目标二已有的按钮结构，在原 `_CONFIRM_BUTTONS`（`[("好的 ✅", approve)]`）基础上追加 `("AI筛选 🤖", ai_curate)`；决策一第二分支（Dedup 先跑、Curate 待定）确认文案换成"先帮你去重，去重完再问要不要接着筛"，按钮追加 `("AI去重 🤖", ai_dedup)`。
+- **决策四的追问闸门**：按钮在"不筛选了"之外追加 `("AI筛选 🤖", ai_narrow)`——点了视为"narrow，count=remaining，ai_enabled=True"（不问具体数字，AI 从"要不要更狠地筛"这个模糊意图里直接按 remaining 张的默认策略跑，跟"打字给数字"路径共存，不互斥）。
+- 新按钮 token 的点击处理并入 `_handle_callback`（`consumer.py:316-358`）：新增 `_BTN_AI_DEDUP`/`_BTN_AI_CURATE`/`_BTN_AI_NARROW` 三个 token，效果分别等价于"文字回复里带了 AI 意图"，直接调用对应状态的既有处理函数（`_on_refine_reply`/`_on_dedup_followup_reply` 的"confirmed/narrow"分支），不需要真的过一遍 LLM 分类。
+
+## 决策六：`validate.py` 适配两种 Plan 形状 + `count` 可空规则
+
+`_EXPECTED_STAGE_NAMES`（单一 list、`!=` 精确比较）改成两个合法形状的集合：`_WITH_DEDUP` / `_WITHOUT_DEDUP`，`names` 必须精确匹配其中一个，不做宽松的"contains"检查（保住这道护栏"挡 LLM 输出污染"的本意）。
+
+`count` 校验：`Curate.gate == "required"` 时允许 `count is None`；否则维持原有 `1 <= count <= 50` 的 int 校验。这条规则把"count 为空"和"Curate 被挂起等追问"绑定成同一个不变量，不是两个独立开关，避免出现"count 为空但 Curate 没挂闸门"这种验证漏过的非法状态。
+
+## 决策七：PLANNED 态 refine 提前给数量 = 提前回答追问
+
+决策一第二分支的 PLANNED 确认阶段，用户可能不等 Dedup 跑完就直接在确认时说"留5张"——`_on_refine_reply`（`consumer.py:697-725`）现在拿到 `reply.count` 就直接写 `curate.params["count"]`，但这个分支下 Curate 当前是 `gate="required"` 状态，不能只改 `count` 不改 `gate`（会变成"count 有值但仍然会在 Dedup 后被问一遍"的冗余追问）。
+
+处理：把"给 Curate 一个明确 count 并解除待定状态"抽成一个小 helper（`_resolve_curate_count(curate_spec, count, ai_enabled, provider)`，同时设 `params["count"]`、`gate="off"`），`_on_refine_reply` 的 confirmed 分支和决策四的 `_on_dedup_followup_reply` 的 narrow 分支都调它，不重复逻辑。（`gate="off"` 这时候只是防止之后误挂闸门；实际 Curate 会不会再被问，取决于 Dedup 是否已经跑完——已跑完就是 Driver 正常 `advance` 直接执行 Curate，不会二次经过 `AWAITING_GATE`。）
+
+## 非目标（本阶段不做）
+
+- 手动选片（用户直接报编号）——PRD 已明确移出，留给未来单独立项。
+- Apple Vision 聚类、锦标赛以外的比较拓扑——同目标二。
+
+## 任务分解（建议的 Commit 顺序）
+
+1. **Commit 6**：决策一 + 决策二 + 决策六（`plan_composer.py` 两分支 + `curate.py` inputs 修正 + `validate.py` 两形状/可空 count）——先把"Plan 形状可以正确变化"这个地基打完，配套测试覆盖三种分支产出的 Plan 结构、以及"Dedup 缺席时 Curate 能正常推进"的 Driver 回归测试。
+2. **Commit 7**：决策三（`CurateStage` passthrough 分支）——独立可测（给定一批带"重复"标签的 fixture，验证 passthrough 输出排除它们），不依赖 Commit 8 的会话层改动。
+3. **Commit 8**：决策四 + 决策七（`worker.py` payload、新分类器、`consumer.py` 新增追问闸门渲染/处理、`_resolve_curate_count` helper）——这是最重的一块，需要新的 `session_fakes.py` fixture 覆盖"Dedup 完成后停在 Curate 闸门"这个新状态。
+4. **Commit 9**：决策五（两处 AI 提醒文案 + 三个新按钮 token）——纯文案/按钮层，放最后因为依赖 Commit 8 已经把两个新确认点的骨架搭好。
+
+## 验证（目标三部分）
+
+- 每个 Commit 后 `agent/.venv/bin/python -m pytest -q` 全绿，新增分支要有专门用例（尤其 Commit 6 的"Dedup 缺席时 Driver 不报 RuntimeError"、Commit 7 的"passthrough 排除已打标签图"、Commit 8 的"narrow/skip 两条追问回复都正确落到 Curate params 并解闸门"）。
+- Commit 6-9 全部落地后，用跟目标二相同的手法做一次真机/半真机手工验收（`run_intent.py` 不支持闸门交互，这次的追问闸门必须过 Telegram 或新写一个支持 `AWAITING_GATE` 的临时验证脚本，具体验收方式留到实现完成后再定，这里先不假设）。
