@@ -11,6 +11,7 @@ import threading
 from compose.adjustment_parser import (
     AdjustmentError,
     CollectingReply,
+    DedupFollowupReply,
     GateReply,
     PlanConfirmationReply,
 )
@@ -115,6 +116,26 @@ def test_classify_refine_plan_passes_context(tmp_path):
     [event] = env.drain_events()
     assert isinstance(event, ClassifyDone)
     assert seen["args"] == ("筛一下", {"count": 2}, "改成6张")
+
+
+def test_classify_dedup_followup_passes_remaining(tmp_path):
+    # 回归钉子：_execute_classify 漏了 "dedup_followup" 分支，落进单 text 的
+    # 兜底分支，真机上直接 TypeError 崩掉（W2026-07-21 目标三真机验证发现）。
+    seen = {}
+
+    def fake_dedup_followup(text, remaining):
+        seen["args"] = (text, remaining)
+        return DedupFollowupReply(action="narrow", count=1)
+
+    env = make_worker(tmp_path, classify_dedup_followup_fn=fake_dedup_followup)
+    env.put_classify(ClassifyJob(generation=1, kind="dedup_followup", text="留一张吧",
+                              context={"remaining": 3}))
+
+    env.step()
+
+    [event] = env.drain_events()
+    assert isinstance(event, ClassifyDone)
+    assert seen["args"] == ("留一张吧", 3)
 
 
 def test_compose_success_emits_validated_plan(tmp_path):

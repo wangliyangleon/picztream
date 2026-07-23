@@ -153,6 +153,8 @@ class SessionWorker:
                 result = fn(job.text, run)
             elif job.kind == "refine_plan":
                 result = fn(job.context["intent_raw"], job.context["current_params"], job.text)
+            elif job.kind == "dedup_followup":
+                result = fn(job.text, job.context["remaining"])
             else:
                 # style_describe / style_gate / running / cancel_confirm：单 text。
                 result = fn(job.text)
