@@ -34,6 +34,7 @@
 | F-38 | 门面每帧多次开连接 | M | 建议随 M4 headless 层立项一起做(引 `core::Session` 持连接);否则触发=key-to-render 超 60ms | 已实测基线(2026-07-19):`open_default`(开连接+全量 schema init)~184µs,导航帧 ~5 次 O(1) 开连接 ≈0.9ms/帧、占 60ms 预算 1.5%——**可忽略**。不预做。 |
 | F-45 | Esc 消歧 20ms 阈值在高延迟终端误判方向键 | M | 依赖:远程/ssh 支持立项(当前锁定本地 Ghostty,不触发) | 若未来支持远程,改读 ESC 后跟随字节的状态机(不依赖时延),而不是靠 20ms 时间窗。 |
 | Apple Vision 聚类评估 | 评估 `VNGenerateImageFeaturePrintRequest` 语义聚类相对现有 dHash+时间窗口的优劣,决定要不要替换 dedup/curate 的分簇底层 | L | **先出 Eng Design(含新依赖评估)**。来源:`docs/W2026-07-21_PRD.md` 拍板——本周锦标赛改造复用现有 dHash,Apple Vision 语义聚类(更懂"同一场景"而非仅"近乎相同")单列于此。需新增 Vision.framework + ObjC++ 桥接;先在真实素材上比 featureprint 距离 vs dHash 汉明距离的分簇质量,把收益写成数字再决定是否切换。 |
+| 锦标赛双输判定 | pairwise 比较(`core::ai::request_comparison`)允许返回"双输"(两张都有硬伤/不可用),不再强制二选一;锦标赛簇选 winner 时如果判成双输,两张都不进 keep 候选,簇的 winner 可以为空 | L | **先出 Eng Design**。来源:目标三真机验证期间(2026-07-23)提出,打算给 agent 选图场景用。现有 `ComparisonResult.winner` 是 `int`(0/1,"必须二选一,禁止平局",见 `core/ai/compare.h:17-28`),`tournament::ClusterChoice.winner` 是必填 `project::ImageId`(`core/tournament/tournament.h:31`)——两处都要放松成"可能没有 winner"。下游 dedup(这一簇是不是全打"重复"?)、curate(这一簇直接不贡献候选?)、agent 选图各自怎么处理"这一簇没人入选"需要先想清楚,且要跟目标一已有的 eval `unusable` 硬伤判据对齐,不能让 pairwise 判定和 eval 判定用两套不一致的"硬伤"定义。 |
 | F-46b | Kitty `t=s` 共享内存介质验证 | S | 无(可选优化,需真机验证收益) | M0 起挂账的可选传输优化,收益需在真机量过再决定是否切换。 |
 
 ## 留观察,暂不列为活儿
