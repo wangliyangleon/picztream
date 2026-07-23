@@ -26,10 +26,14 @@ _SCHEMA_INSTRUCTION = (
     'false), "dedup_requested" (boolean, whether the user explicitly asked to remove '
     'duplicate/near-duplicate photos, e.g. "去重"/"去除重复的"/"删掉重复的照片", default '
     'false), "count" (integer or null, how many final photos the user wants -- only put '
-    'a number here if the user actually named a target count; if the user only asked to '
-    'dedup without naming a count, this MUST be null (do not default it to 9 -- a null '
-    'here is what defers the "how many" decision until after dedup runs); if the user '
-    "named neither a count nor dedup, null is also fine (a default applies downstream)), "
+    'a number here if the user actually named a target count, no matter which verb they '
+    'used to describe narrowing down: "选5张"/"留5张"/"挑5张"/"筛5张"/"筛选5张"/"筛出5张" '
+    'all mean count=5, even when combined with a dedup request in the same sentence (e.g. '
+    '"去重筛两张"/"去重然后筛选两张"/"去重留两张" all mean dedup_requested=true AND count=2 '
+    "-- do not let the dedup mention make you drop the number); if the user only asked to "
+    'dedup without naming any count at all, count MUST be null (do not default it to 9 -- '
+    'a null here is what defers the "how many" decision until after dedup runs); if the '
+    "user named neither a count nor dedup, null is also fine (a default applies downstream)), "
     '"apply_tag" (string, the tag name to apply to the '
     "selected photos. Derive it from the destination or audience the user mentions, "
     "using that as the tag name itself: "

@@ -90,7 +90,7 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     assert ingest.params["folder"] == str(tmp_path / "incoming" / run.run_id)
     assert deliver.params["out_folder"] == str(tmp_path / "deliver-out")
     assert deliver.gate == "required"
-    assert "理解你想：去重复后留 2 张（按拍摄时间挑），标签叫\"精选\"，对吗？" in \
+    assert "理解你想：去重复后留 2 张（按拍摄时间挑），选中的加个标签\"精选\"，可以吗？" in \
         env.transport.texts()[-1]
 
 
@@ -913,7 +913,7 @@ def test_gate_curate_followup_narrow_shows_confirmation_without_driving_yet(tmp_
     env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="narrow", count=2)))
     env.consumer.step()
 
-    assert "留 2 张，标签叫\"精选\"，对吗？" in env.transport.texts()[-1]
+    assert "留 2 张，选中的加个标签\"精选\"，可以吗？" in env.transport.texts()[-1]
     assert env.transport.button_tokens() == ["approve"]
     assert env.drain_jobs() == []  # 还没真的投出 rerun_curate
 
@@ -932,7 +932,7 @@ def test_gate_curate_followup_narrow_extracts_apply_tag_from_destination(tmp_pat
                                DedupFollowupReply(action="narrow", count=1, apply_tag="朋友圈")))
     env.consumer.step()
 
-    assert "留 1 张，标签叫\"朋友圈\"，对吗？" in env.transport.texts()[-1]
+    assert "留 1 张，选中的加个标签\"朋友圈\"，可以吗？" in env.transport.texts()[-1]
 
 
 def test_gate_curate_followup_narrow_confirm_via_button_drives_rerun_curate(tmp_path):

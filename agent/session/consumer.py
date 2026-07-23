@@ -807,7 +807,7 @@ class SessionConsumer:
         apply_tag = reply.apply_tag or curate.params.get("apply_tag", "精选")
         self._curate_narrow_pending = {"count": reply.count, "apply_tag": apply_tag}
         self._send_buttons(
-            f"留 {reply.count} 张，标签叫\"{apply_tag}\"，对吗？\n满意就点\"好的\"，想改直接打字说",
+            f"留 {reply.count} 张，选中的加个标签\"{apply_tag}\"，可以吗？\n满意就点\"好的\"，想改直接打字说",
             _CONFIRM_BUTTONS,
         )
 
@@ -1181,13 +1181,13 @@ class SessionConsumer:
             # 件事，不预告去重完还要问什么（真机反馈：太啰嗦），追问闸门
             # 自己会在 Dedup 跑完之后再问。
             text = (f"理解你想：先帮你去重，"
-                    f"标签叫\"{curate.params['apply_tag']}\"，对吗？{hint}"
+                    f"留下的加个标签\"{curate.params['apply_tag']}\"，可以吗？{hint}"
                     "\n满意就点\"好的\"，想改直接打字说")
             ai_button = ("AI去重 🤖", _BTN_AI_DEDUP)
         else:
             ai_desc = ("AI 帮你从相似照片里挑更好的" if ai_enabled else "按拍摄时间挑")
             text = (f"理解你想：去重复后留 {curate.params['count']} 张（{ai_desc}），"
-                    f"标签叫\"{curate.params['apply_tag']}\"，对吗？{hint}"
+                    f"选中的加个标签\"{curate.params['apply_tag']}\"，可以吗？{hint}"
                     "\n满意就点\"好的\"，想改直接打字说")
             ai_button = ("AI筛选 🤖", _BTN_AI_CURATE)
         buttons = _CONFIRM_BUTTONS if ai_enabled else _CONFIRM_BUTTONS + [ai_button]
