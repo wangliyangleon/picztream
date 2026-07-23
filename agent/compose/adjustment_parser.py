@@ -234,11 +234,14 @@ _COLLECTING_SCHEMA_INSTRUCTION = (
     "The user is sending photos to a photo-culling bot and giving instructions. You are "
     "given how many photos have been received so far and the user's message. Respond "
     "with a single JSON object in one of five shapes: "
-    '{"action": "intent"} if the message describes HOW to process/cull/select the photos '
-    '(for example "帮我选几张发朋友圈", "筛一下", "挑5张精修", "把糊的去掉"); '
-    '{"action": "start"} if the message just says to begin now WITHOUT describing how - '
-    'a plain go-ahead, typically after they have already said what they want or finished '
-    'sending photos (for example "开始吧", "好了", "就这些", "可以了", "发完了", "弄吧"); '
+    '{"action": "intent"} if the message describes HOW to process/cull/select the photos, '
+    'including messages that only ask to remove near-duplicate photos without naming a '
+    'final count (for example "帮我选几张发朋友圈", "筛一下", "挑5张精修", "把糊的去掉", '
+    '"帮我去个重复的照片"); '
+    '{"action": "start"} if the message just says to begin now WITHOUT describing what to '
+    'select or remove - a plain go-ahead, typically after they have already said what they '
+    'want or finished sending photos (for example "开始吧", "好了", "就这些", "可以了", '
+    '"发完了", "弄吧"); '
     '{"action": "query"} if the message is just a question about the current status '
     '(for example "收到几张了？", "how many photos so far?"), not an instruction; '
     '{"action": "cancel"} if the message expresses wanting to abort/stop/cancel this '
@@ -246,7 +249,10 @@ _COLLECTING_SCHEMA_INSTRUCTION = (
     '{"action": "other"} if the message is NOT related to photo culling at all - a '
     "greeting, small talk, an unrelated question, or gibberish (for example \"你好\", "
     '"今天天气不错", "你是谁", "asdfgh"). Do NOT guess an "intent" for messages that '
-    "are not clearly photo-processing instructions; use \"other\" instead."
+    "are not clearly photo-processing instructions; use \"other\" instead. The \"action\" "
+    "value must always be exactly one of these five English words: intent, start, query, "
+    "cancel, other -- never a Chinese word or phrase, even though the user's message and "
+    "the examples above are in Chinese."
 )
 
 
