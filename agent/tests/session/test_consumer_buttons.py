@@ -19,12 +19,13 @@ def _reach_style_apply_all_gate(env, run_id):
     env.consumer.step()
 
 
-def test_plan_confirmation_attaches_approve_button_only(tmp_path):
+def test_plan_confirmation_attaches_approve_and_ai_buttons(tmp_path):
     env = make_consumer(tmp_path)
     to_planned(env)
 
-    # 取消不再是按钮（危险操作），只留正向的"好的"
-    assert env.transport.button_tokens() == ["approve"]
+    # 取消不再是按钮（危险操作）；ai_enabled 默认 False，所以"好的"之外还
+    # 带一个 AI 快捷按钮（W2026-07-21 目标三决策五）。
+    assert env.transport.button_tokens() == ["approve", "ai_curate"]
     chat, text, options = env.transport.sent_buttons[-1]
     run_id = env.consumer.view.run_id
     assert options[0] == ("好的 ✅", f"approve:{run_id}")

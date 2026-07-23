@@ -287,11 +287,13 @@ class SessionWorker:
             return {"chosen_recipe": chosen, "preview_sent": failed == 0, "export_error": None}
         if stage == "Curate":
             # 去重后追问："还剩几张，要不要再筛"（W2026-07-21 目标三决策四）。
+            # ai_enabled 一起带上：consumer 靠它判断要不要提醒"可以用 AI"（决策五）。
             ingest_output = run.outputs.get("Ingest")
             dedup_output = run.outputs.get("Dedup")
             total = ingest_output.data.get("image_count", 0) if ingest_output else 0
             tagged = dedup_output.data.get("tagged", 0) if dedup_output else 0
-            return {"remaining": total - tagged}
+            curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
+            return {"remaining": total - tagged, "ai_enabled": curate_spec.params.get("ai_enabled", False)}
         # 默认闸门（当前只有 Deliver）：Curate 选片预览
         curate_output = run.outputs.get("Curate")
         selected = curate_output.data.get("selected", []) if curate_output else []

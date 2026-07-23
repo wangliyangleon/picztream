@@ -400,7 +400,25 @@ def test_prepare_gate_payload_curate_computes_remaining(tmp_path):
 
     payload = env.worker._prepare_gate_payload(run, "Curate")
 
-    assert payload == {"remaining": 6}
+    assert payload == {"remaining": 6, "ai_enabled": False}
+
+
+def test_prepare_gate_payload_curate_surfaces_ai_enabled(tmp_path):
+    env = make_worker(tmp_path)
+    plan = Plan(stages=[StageSpec(name="Ingest"),
+                        StageSpec(name="Curate", gate="required", params={"ai_enabled": True})])
+    run = RunState(
+        run_id="r1", project_id="r1", plan=plan,
+        stage_states={"Ingest": StageStatus.DONE, "Curate": StageStatus.PENDING},
+        outputs={
+            "Ingest": StageOutput(ok=True, data={"image_count": 10}),
+            "Dedup": StageOutput(ok=True, data={"groups": 3, "tagged": 4, "skipped_no_capture_time": 0}),
+        },
+    )
+
+    payload = env.worker._prepare_gate_payload(run, "Curate")
+
+    assert payload == {"remaining": 6, "ai_enabled": True}
 
 
 def _mark_ingest_dedup_done(run, image_count=2, tagged=0):

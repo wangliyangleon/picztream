@@ -892,7 +892,8 @@ def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
     env.consumer.step()
 
     assert any("去重后还剩 3 张，要不要再筛选一下留多少张？" in t for t in env.transport.texts())
-    assert env.transport.button_tokens() == ["skip_curate"]
+    # ai_enabled 默认 False，追问闸门也带 AI 快捷按钮（目标三决策五）。
+    assert env.transport.button_tokens() == ["skip_curate", "ai_narrow"]
 
 
 def test_gate_curate_followup_narrow_enqueues_rerun_curate_with_count(tmp_path):
@@ -949,6 +950,33 @@ def test_gate_curate_followup_skip_via_button_bypasses_classify(tmp_path):
     assert drive_job.args == {"params": {"count": None}}
 
 
+def test_gate_curate_followup_renders_ai_hint_and_button_when_ai_disabled(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3, "ai_enabled": False}))
+    env.consumer.step()
+
+    assert any("可以用 AI 帮你选" in t for t in env.transport.texts())
+    assert "ai_narrow" in env.transport.button_tokens()
+
+
+def test_gate_curate_followup_ai_narrow_button_uses_remaining_as_count(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3, "ai_enabled": False}))
+    env.consumer.step()
+
+    env.push_callback(f"ai_narrow:{job.run_id}")
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()  # 按钮不经分类器
+    assert drive_job.action == "rerun_curate"
+    assert drive_job.args == {"params": {"count": 3, "ai_enabled": True, "provider": "local"}}
+
+
 def test_gate_curate_followup_query_replies_describe(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
@@ -990,6 +1018,74 @@ def test_planned_deferred_curate_confirmation_text_mentions_dedup_first(tmp_path
     text = env.transport.texts()[-1]
     assert "先帮你去重，去重完再问要不要接着筛" in text
     assert "None" not in text
+
+
+def test_planned_confirmation_ai_hint_and_button_when_count_given_and_ai_disabled(tmp_path):
+    # 目标三决策五：count 已定分支，ai_enabled 默认 False 时提醒 + 给按钮。
+    env = make_consumer(tmp_path)
+    to_planned(env)  # bare_compose_plan，ai_enabled 默认 False
+
+    text = env.transport.texts()[-1]
+    assert "这一步也可以用 AI 帮你挑更准" in text
+    assert env.transport.button_tokens() == ["approve", "ai_curate"]
+
+
+def test_planned_confirmation_ai_hint_and_button_when_deferred_and_ai_disabled(tmp_path):
+    env = make_consumer(tmp_path)
+    to_planned(env, plan_factory=bare_compose_plan_deferred_curate)
+
+    text = env.transport.texts()[-1]
+    assert "这一步也可以用 AI 帮你挑更准" in text
+    assert env.transport.button_tokens() == ["approve", "ai_dedup"]
+
+
+def test_planned_confirmation_no_ai_hint_or_button_once_ai_already_enabled(tmp_path):
+    # 已经开了 AI 就别再硬提醒（回归：不能变成"点了也白点"或"开了还念叨"）。
+    env = make_consumer(tmp_path)
+    run = to_planned(env)
+    env.push_text("用AI帮我选")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(
+        action="confirmed", count=2, apply_tag="精选", ai_enabled=True, provider="local")))
+    env.consumer.step()
+
+    text = env.transport.texts()[-1]
+    assert "也可以用 AI" not in text
+    assert env.transport.button_tokens() == ["approve"]
+    assert run.run_id == env.consumer.run.run_id  # 还是同一个 run，没被重置
+
+
+def test_click_ai_curate_button_enables_ai_and_reconfirms(tmp_path):
+    env = make_consumer(tmp_path)
+    run = to_planned(env)  # count 已定形状
+
+    env.push_callback(f"ai_curate:{run.run_id}")
+    env.consumer.step()
+
+    saved = env.store.load(run.run_id)
+    curate = next(s for s in saved.plan.stages if s.name == "Curate")
+    assert curate.params["ai_enabled"] is True
+    text = env.transport.texts()[-1]
+    assert "AI 帮你从相似照片里挑更好的" in text
+    assert "也可以用 AI" not in text  # 已经开了，不再提醒
+    assert env.transport.button_tokens() == ["approve"]
+
+
+def test_click_ai_dedup_button_enables_ai_on_both_dedup_and_curate(tmp_path):
+    env = make_consumer(tmp_path)
+    run = to_planned(env, plan_factory=bare_compose_plan_deferred_curate)
+
+    env.push_callback(f"ai_dedup:{run.run_id}")
+    env.consumer.step()
+
+    saved = env.store.load(run.run_id)
+    dedup = next(s for s in saved.plan.stages if s.name == "Dedup")
+    curate = next(s for s in saved.plan.stages if s.name == "Curate")
+    assert dedup.params["ai_enabled"] is True  # 全局开关，Dedup 还没跑也要跟着改
+    assert curate.params["ai_enabled"] is True
+    assert curate.params["count"] is None  # 按钮只改 ai_enabled，不动 count
+    assert env.transport.button_tokens() == ["approve"]
 
 
 def test_planned_refine_deferred_curate_giving_count_clears_pending_gate(tmp_path):
