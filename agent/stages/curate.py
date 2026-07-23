@@ -12,7 +12,11 @@ from pzt_client import PztClient, PztCommandError
 class CurateStage:
     client: PztClient
     name: str = "Curate"
-    inputs: List[str] = field(default_factory=lambda: ["Dedup"])
+    # "Ingest" 而非 "Dedup"：run() 从不读 ctx.outputs["Dedup"]，这里只是顺
+    # 序声明，Dedup 存在时 Plan 的 list 顺序已经保证先后。W2026-07-21 目标
+    # 三起 Dedup 可能不在 Plan 里，声明成 "Dedup" 会让 Driver 的拓扑检查把
+    # 它当成永远解不开的依赖。
+    inputs: List[str] = field(default_factory=lambda: ["Ingest"])
     cost_class: str = "local"
     criticality: str = "critical"
 

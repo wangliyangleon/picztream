@@ -23,8 +23,14 @@ _SCHEMA_INSTRUCTION = (
     "to use AI visual comparison to pick the best photo among similar/duplicate ones "
     "instead of just picking by capture time or diversity -- true only if the user "
     'explicitly asks for AI-assisted picking, e.g. "AI帮我选"/"挑最好的"/"用AI选", default '
-    'false), "count" (integer, how many final photos the user wants, a reasonable '
-    'default is 9 if unspecified), "apply_tag" (string, the tag name to apply to the '
+    'false), "dedup_requested" (boolean, whether the user explicitly asked to remove '
+    'duplicate/near-duplicate photos, e.g. "去重"/"去除重复的"/"删掉重复的照片", default '
+    'false), "count" (integer or null, how many final photos the user wants -- only put '
+    'a number here if the user actually named a target count; if the user only asked to '
+    'dedup without naming a count, this MUST be null (do not default it to 9 -- a null '
+    'here is what defers the "how many" decision until after dedup runs); if the user '
+    "named neither a count nor dedup, null is also fine (a default applies downstream)), "
+    '"apply_tag" (string, the tag name to apply to the '
     "selected photos. Derive it from the destination or audience the user mentions, "
     "using that as the tag name itself: "
     '"发朋友圈"/"发朋友圈的" -> "朋友圈", "发到ins"/"发instagram" -> "ins", '
@@ -42,21 +48,39 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
         provider=meta_provider,
         http_post=http_post,
     )
-    return Plan(stages=[
-        StageSpec(name="Ingest"),
-        StageSpec(name="Dedup", params={
-            "ai_enabled": decision.get("ai_enabled", False),
-            "provider": decision.get("provider", "local"),
-        }),
-        StageSpec(name="Curate", params={
-            "count": decision.get("count", 9),
-            "apply_tag": decision.get("apply_tag", "精选"),
-            "ai_enabled": decision.get("ai_enabled", False),
-            "provider": decision.get("provider", "local"),
-        }),
-        StageSpec(name="Style", params={
-            "provider": decision.get("provider", "local"),
-        }, gate="required"),
+    count = decision.get("count")
+    dedup_requested = decision.get("dedup_requested", False)
+    ai_enabled = decision.get("ai_enabled", False)
+    provider = decision.get("provider", "local")
+    apply_tag = decision.get("apply_tag", "精选")
+
+    stages = [StageSpec(name="Ingest")]
+    if count is None and dedup_requested:
+        # W2026-07-21 目标三案例二：只说去重没给数量，Curate 的决定推迟到
+        # Dedup 跑完之后用一个闸门问（agent/session 侧接线见 Commit 8）。
+        stages.append(StageSpec(name="Dedup", params={
+            "ai_enabled": ai_enabled,
+            "provider": provider,
+        }))
+        stages.append(StageSpec(name="Curate", params={
+            "count": None,
+            "apply_tag": apply_tag,
+            "ai_enabled": ai_enabled,
+            "provider": provider,
+        }, gate="required"))
+    else:
+        # count 给了（案例三）或什么都没给（案例一/默认 9）：core curate 的
+        # 粗聚类已经隐含去重效果，单独跑一次 Dedup 是多余的（见
+        # docs/W2026-07-21_Tournament_Eng_Design.md 目标三补充设计决策一）。
+        stages.append(StageSpec(name="Curate", params={
+            "count": count if count is not None else 9,
+            "apply_tag": apply_tag,
+            "ai_enabled": ai_enabled,
+            "provider": provider,
+        }))
+    stages += [
+        StageSpec(name="Style", params={"provider": provider}, gate="required"),
         StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver"),
-    ])
+    ]
+    return Plan(stages=stages)

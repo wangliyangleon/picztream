@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from orchestrator.types import Plan
 
-_EXPECTED_STAGE_NAMES = ["Ingest", "Dedup", "Curate", "Style", "StyleApplyAll", "Deliver"]
+# W2026-07-21 目标三：Dedup 是否存在由这次意图决定，两种形状都合法，不做
+# 宽松的"contains"检查——这道护栏的本意是挡 LLM 输出污染，形状必须精确匹配。
+_STAGE_NAMES_WITH_DEDUP = ["Ingest", "Dedup", "Curate", "Style", "StyleApplyAll", "Deliver"]
+_STAGE_NAMES_WITHOUT_DEDUP = ["Ingest", "Curate", "Style", "StyleApplyAll", "Deliver"]
 _VALID_PROVIDERS = ("local", "gemini", "claude")
 # 1 到 50：下限 1 是"至少选一张"这个最基本的合法性，交给 curate 自己
 # 处理"候选不够"这种更细的场景；上限 50 对齐 PRD 示例(一天出去玩拍
@@ -26,32 +29,45 @@ class ValidationError(Exception):
 
 def validate_plan(plan: Plan) -> Plan:
     names = [s.name for s in plan.stages]
-    if names != _EXPECTED_STAGE_NAMES:
+    if names not in (_STAGE_NAMES_WITH_DEDUP, _STAGE_NAMES_WITHOUT_DEDUP):
         raise ValidationError(
-            "bad_stage_names", f"expected stages {_EXPECTED_STAGE_NAMES}, got {names}"
+            "bad_stage_names",
+            f"expected stages {_STAGE_NAMES_WITH_DEDUP} or {_STAGE_NAMES_WITHOUT_DEDUP}, got {names}",
         )
 
     by_name = {s.name: s for s in plan.stages}
 
     for stage_name in ("Dedup", "Curate"):
-        ai_enabled = by_name[stage_name].params.get("ai_enabled")
+        spec = by_name.get(stage_name)
+        if spec is None:
+            continue  # Dedup 这次没在 Plan 里，没什么好校验的
+        ai_enabled = spec.params.get("ai_enabled")
         if not isinstance(ai_enabled, bool):
             raise ValidationError(
                 f"bad_{stage_name.lower()}_ai_enabled",
                 f"{stage_name}.params['ai_enabled'] must be a bool, got {ai_enabled!r}",
             )
-        provider = by_name[stage_name].params.get("provider")
+        provider = spec.params.get("provider")
         if provider not in _VALID_PROVIDERS:
             raise ValidationError(
                 f"bad_{stage_name.lower()}_provider",
                 f"{stage_name}.params['provider'] must be one of {_VALID_PROVIDERS}, got {provider!r}",
             )
 
-    count = by_name["Curate"].params.get("count")
+    curate_spec = by_name["Curate"]
+    count = curate_spec.params.get("count")
+    if curate_spec.gate == "required":
+        # count 为空 <=> Curate 被挂起等 Dedup 后的追问，这是同一个不变量
+        # 的两面，不是两个独立开关（W2026-07-21 目标三决策六）。
+        if count is not None:
+            raise ValidationError(
+                "bad_curate_count",
+                f"Curate.params['count'] must be null when Curate.gate == 'required', got {count!r}",
+            )
     # bool 是 int 的子类(isinstance(True, int) 为真)，模型如果回
     # true/false 混进 count 字段要单独拦住，不能被 isinstance(count, int)
     # 放过。
-    if not isinstance(count, int) or isinstance(count, bool) or not (_MIN_COUNT <= count <= _MAX_COUNT):
+    elif not isinstance(count, int) or isinstance(count, bool) or not (_MIN_COUNT <= count <= _MAX_COUNT):
         raise ValidationError(
             "bad_curate_count",
             f"Curate.params['count'] must be an int in [{_MIN_COUNT}, {_MAX_COUNT}], got {count!r}",

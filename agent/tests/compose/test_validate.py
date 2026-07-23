@@ -19,6 +19,22 @@ def _valid_plan(**overrides):
     return Plan(stages=list(stages.values()))
 
 
+def _valid_plan_without_dedup(**overrides):
+    plan = _valid_plan(**overrides)
+    plan.stages = [s for s in plan.stages if s.name != "Dedup"]
+    return plan
+
+
+def _valid_plan_deferred_curate(count=None):
+    # W2026-07-21 目标三案例二：Dedup 存在、Curate 待定（count=None,
+    # gate="required"）。count 参数只用于构造"本该是 None 却给了数字"的
+    # 非法样例（见 test_rejects_count_present_when_curate_gate_required）。
+    plan = _valid_plan(Curate={"count": count})
+    curate = next(s for s in plan.stages if s.name == "Curate")
+    curate.gate = "required"
+    return plan
+
+
 def test_valid_plan_passes_through_unchanged():
     plan = _valid_plan()
 
@@ -64,6 +80,27 @@ def test_rejects_plan_missing_style_apply_all():
     assert exc_info.value.code == "bad_stage_names"
 
 
+def test_valid_plan_without_dedup_passes():
+    plan = _valid_plan_without_dedup()
+
+    assert validate_plan(plan) is plan
+
+
+def test_valid_plan_with_deferred_curate_passes():
+    plan = _valid_plan_deferred_curate()
+
+    assert validate_plan(plan) is plan
+
+
+def test_rejects_count_present_when_curate_gate_required():
+    plan = _valid_plan_deferred_curate(count=9)
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_plan(plan)
+
+    assert exc_info.value.code == "bad_curate_count"
+
+
 @pytest.mark.parametrize("provider", ["openai", "", None, 123])
 def test_rejects_bad_style_provider(provider):
     plan = _valid_plan(Style={"provider": provider})
@@ -96,8 +133,11 @@ def test_rejects_bad_dedup_or_curate_provider(stage_name, provider):
     assert exc_info.value.code == f"bad_{stage_name.lower()}_provider"
 
 
-@pytest.mark.parametrize("count", [0, -1, 51, "9", 9.5, True])
+@pytest.mark.parametrize("count", [0, -1, 51, "9", 9.5, True, None])
 def test_rejects_bad_curate_count(count):
+    # None 只在 Curate.gate == "required" 时合法（见
+    # test_valid_plan_with_deferred_curate_passes）；这里 gate 是默认的
+    # "off"，None 也该被拒。
     plan = _valid_plan(Curate={"count": count})
 
     with pytest.raises(ValidationError) as exc_info:
