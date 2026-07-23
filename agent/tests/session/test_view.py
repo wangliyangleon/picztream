@@ -33,6 +33,22 @@ def _planned_run(ai_enabled: bool = False) -> RunState:
     )
 
 
+def _planned_run_deferred_curate() -> RunState:
+    # W2026-07-21 目标三案例二：Curate 待定（count=None, gate="required"）。
+    plan = Plan(stages=[
+        StageSpec(name="Ingest"),
+        StageSpec(name="Dedup"),
+        StageSpec(name="Curate", params={"count": None, "apply_tag": "精选", "ai_enabled": False},
+                  gate="required"),
+        StageSpec(name="Deliver", gate="required"),
+    ])
+    return RunState(
+        run_id="tg-abc", project_id="tg-abc", plan=plan,
+        stage_states={s.name: StageStatus.PENDING for s in plan.stages},
+        status=RunStatus.PLANNED,
+    )
+
+
 def test_from_run_on_collecting_placeholder(tmp_path):
     run = new_collecting_run("tg-c1")
     view = view_from_run(run, incoming_root=tmp_path / "incoming")
@@ -89,6 +105,29 @@ def test_from_run_awaiting_gate_restores_selected_count(tmp_path):
 
     assert view.selected_count == 2
     assert view.describe() == "已经选好了 2 张，等你回复"
+
+
+def test_from_run_planned_deferred_curate_describe_mentions_dedup_first(tmp_path):
+    incoming_root = tmp_path / "incoming"
+    run = _planned_run_deferred_curate()
+    (incoming_dir_for(incoming_root, run.run_id) / "a.jpg").write_bytes(b"a")
+
+    view = view_from_run(run, incoming_root=incoming_root)
+
+    assert view.plan_summary["count"] is None
+    text = view.describe()
+    assert "先帮你去重，去重完再问要不要接着筛" in text
+    assert "None" not in text
+
+
+def test_describe_awaiting_gate_curate_says_dedup_done_not_selected_count(tmp_path):
+    run = _planned_run_deferred_curate()
+    run.status = RunStatus.AWAITING_GATE
+
+    view = view_from_run(run, incoming_root=tmp_path / "incoming")
+    view.gate_stage = "Curate"
+
+    assert view.describe() == "去重完了，等你说要不要再筛选一下"
 
 
 def test_describe_running_with_progress_mentions_counts(tmp_path):

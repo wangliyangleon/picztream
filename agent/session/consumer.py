@@ -72,10 +72,12 @@ _BTN_APPROVE = "approve"
 _BTN_RESTYLE = "restyle"
 _BTN_CONFIRM_CANCEL = "confirm_cancel"
 _BTN_KEEP = "keep"
+_BTN_SKIP_CURATE = "skip_curate"
 _CONFIRM_BUTTONS = [("好的 ✅", _BTN_APPROVE)]
 _DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _CANCEL_CONFIRM_BUTTONS = [("确认取消 ⚠️", _BTN_CONFIRM_CANCEL), ("不取消", _BTN_KEEP)]
+_DEDUP_FOLLOWUP_BUTTONS = [("不筛选了", _BTN_SKIP_CURATE)]
 
 # Telegram /命令快路径（AG-16.2）：确定性、零 LLM、零延迟，随时可用，与按钮
 # 互补（按钮只挂在闸门消息上）。这一份是单一来源——/help 文案和 bot 菜单注
@@ -345,6 +347,12 @@ class SessionConsumer:
                 # Style 问描述那步没有批准按钮，不会走到这里。
                 self._enqueue_drive("resolve_gate", self.run.run_id)
                 return
+        if action == _BTN_SKIP_CURATE and self.run.status == RunStatus.AWAITING_GATE:
+            # 去重后追问的"不筛选了"快捷按钮，等价于跳过分类器直接走底层
+            # action（跟 _BTN_APPROVE/_BTN_RESTYLE 同一个粒度，不构造假的
+            # DedupFollowupReply 走 _on_dedup_followup_reply）。
+            self._enqueue_drive("rerun_curate", self.run.run_id, {"params": {"count": None}})
+            return
         if action == _BTN_RESTYLE and self.run.status == RunStatus.AWAITING_GATE:
             # 重选：不带新内容，提示用户打字说想怎么改，下一条文字走既有路径
             # （StyleApplyAll -> rerun_style 换风格；Deliver -> gate_reply 调整）。
@@ -446,6 +454,11 @@ class SessionConsumer:
                 # 预览确认：交 style_gate 分类器判 approve/redescribe/cancel/query。
                 self._submit_classify("style_gate", text, {"run_id": self.run.run_id})
                 return
+            if gate_stage == "Curate":
+                # 去重后追问：交 dedup_followup 分类器判 narrow/skip/query/cancel。
+                self._submit_classify("dedup_followup", text,
+                                      {"remaining": self._dedup_remaining(self.run)})
+                return
             self._submit_classify("gate_reply", text, {"run_id": self.run.run_id})
             return
         self._send(self.view.describe())
@@ -543,6 +556,9 @@ class SessionConsumer:
             return
         if event.kind == "style_gate":
             self._on_style_gate_reply(result, inflight["text"])
+            return
+        if event.kind == "dedup_followup":
+            self._on_dedup_followup_reply(result)
             return
         if event.kind == "running":
             self._on_running_reply(result)
@@ -711,15 +727,25 @@ class SessionConsumer:
             return
         # confirmed：更新参数、重新回显确认，不自动开跑（PLANNED 的存在
         # 意义就是"改完参数必须再看一眼"，旧拍板保持）。ai_enabled/provider
-        # 是全局开关，Dedup/Curate 两份拷贝一起改，不是共享引用。
-        dedup = next(s for s in self.run.plan.stages if s.name == "Dedup")
+        # 是全局开关，Dedup/Curate 两份拷贝一起改，不是共享引用；Dedup 这次
+        # 可能压根不在 Plan 里（W2026-07-21 目标三"没提去重"分支），必须带
+        # 默认值，否则 StopIteration 会被 _drain_events 的兜底吞掉、这条回
+        # 复静默无效。
+        dedup = next((s for s in self.run.plan.stages if s.name == "Dedup"), None)
         curate = next(s for s in self.run.plan.stages if s.name == "Curate")
         curate.params["count"] = reply.count
         curate.params["apply_tag"] = reply.apply_tag
         curate.params["ai_enabled"] = reply.ai_enabled
         curate.params["provider"] = reply.provider
-        dedup.params["ai_enabled"] = reply.ai_enabled
-        dedup.params["provider"] = reply.provider
+        if reply.count is not None:
+            # PLANNED 阶段就提前给了数量 = 提前回答了 Dedup 后才会问的追问，
+            # 解除 Curate 的待定状态（目标三决策七）。这里直接改 Plan 对象、
+            # Driver 还没开始跑，不会碰到决策 A 提到的"运行中重新触发闸门"
+            # 那个坑（那是 apply_adjustment 才会踩的）。
+            curate.gate = "off"
+        if dedup is not None:
+            dedup.params["ai_enabled"] = reply.ai_enabled
+            dedup.params["provider"] = reply.provider
         self.store.save(self.run)
         self.view.plan_summary = self._current_plan_params(self.run)
         self._send_plan_confirmation(self.run)
@@ -737,6 +763,22 @@ class SessionConsumer:
             self._send(self.view.describe())
             return
         self._enqueue_drive("adjustment", self.run.run_id, {"delta": reply.delta})
+
+    def _on_dedup_followup_reply(self, reply: Any) -> None:
+        if self.run is None or self.run.status != RunStatus.AWAITING_GATE:
+            return
+        if reply.action == "query":
+            self._send(self.view.describe())
+            return
+        if reply.action == "cancel":
+            self._prompt_cancel_confirmation()  # LLM 判成取消也要二次确认
+            return
+        # narrow 带 count，skip 传 None 走 Curate 的 passthrough 分支（目标三
+        # 决策三）。不手动发"正在筛选..."：rerun_curate 会先发
+        # StageStarted(Curate)，_on_stage_started 已经会自动发这句，手动再
+        # 发一遍是重复消息。
+        count = reply.count if reply.action == "narrow" else None
+        self._enqueue_drive("rerun_curate", self.run.run_id, {"params": {"count": count}})
 
     def _on_compose_done(self, event: ComposeDone) -> None:
         inflight, self.inflight = self.inflight, None
@@ -804,10 +846,18 @@ class SessionConsumer:
                 return
             self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
             return
-        if event.stage == "StyleApplyAll":
+        if event.stage == "Curate":
+            self._render_dedup_followup_gate(payload)
+        elif event.stage == "StyleApplyAll":
             self._render_style_apply_all_gate(payload)
         else:
             self._render_deliver_gate(payload)
+
+    def _render_dedup_followup_gate(self, payload: dict) -> None:
+        self._send_buttons(
+            f"去重后还剩 {payload.get('remaining', 0)} 张，要不要再筛选一下留多少张？",
+            _DEDUP_FOLLOWUP_BUTTONS,
+        )
 
     def _render_style_apply_all_gate(self, payload: dict) -> None:
         chosen = payload.get("chosen_recipe")
@@ -1060,14 +1110,27 @@ class SessionConsumer:
 
     def _send_plan_confirmation(self, run: RunState) -> None:
         curate = next(s for s in run.plan.stages if s.name == "Curate")
-        ai_desc = ("AI 帮你从相似照片里挑更好的" if curate.params.get("ai_enabled")
-                   else "按拍摄时间挑")
-        self._send_buttons(
-            f"理解你想：去重复后留 {curate.params['count']} 张（{ai_desc}），"
-            f"标签叫\"{curate.params['apply_tag']}\"，对吗？"
-            "\n满意就点\"好的\"，想改直接打字说",
-            _CONFIRM_BUTTONS,
-        )
+        if curate.params["count"] is None:
+            # deferred 形状（W2026-07-21 目标三案例二）：Curate 数量待定，
+            # 不能把 None 插进"留 None 张"这种文案里。AI 提醒/按钮留
+            # Commit 9（决策五），这次先给不提 AI 的版本。
+            text = (f"理解你想：先帮你去重，去重完再问要不要接着筛，"
+                    f"标签叫\"{curate.params['apply_tag']}\"，对吗？"
+                    "\n满意就点\"好的\"，想改直接打字说")
+        else:
+            ai_desc = ("AI 帮你从相似照片里挑更好的" if curate.params.get("ai_enabled")
+                       else "按拍摄时间挑")
+            text = (f"理解你想：去重复后留 {curate.params['count']} 张（{ai_desc}），"
+                    f"标签叫\"{curate.params['apply_tag']}\"，对吗？"
+                    "\n满意就点\"好的\"，想改直接打字说")
+        self._send_buttons(text, _CONFIRM_BUTTONS)
+
+    def _dedup_remaining(self, run: RunState) -> int:
+        ingest_output = run.outputs.get("Ingest")
+        dedup_output = run.outputs.get("Dedup")
+        total = ingest_output.data.get("image_count", 0) if ingest_output else 0
+        tagged = dedup_output.data.get("tagged", 0) if dedup_output else 0
+        return total - tagged
 
 
 def _looks_like_infra_error(message: str) -> bool:

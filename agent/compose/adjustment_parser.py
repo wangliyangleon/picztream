@@ -344,6 +344,46 @@ def classify_style_gate_reply(text: str, http_post: Optional[HttpPostFn] = None,
     return StyleGateReply(action=action)
 
 
+_DEDUP_FOLLOWUP_SCHEMA_INSTRUCTION = (
+    "The user just finished deduplicating a batch of photos and is being asked whether "
+    "they want to further narrow down to a specific number, or keep everything that "
+    "survived deduplication. You are given how many photos remain after dedup and the "
+    "user's reply. Respond with a single JSON object in one of four shapes: "
+    '{"action": "narrow", "count": <integer>} if the user gives a target number of '
+    'photos to keep (for example "留5张", "5张就行", "选3张吧"); '
+    '{"action": "skip"} if the user does NOT want any further narrowing and wants to '
+    'keep everything that survived dedup (for example "不用了", "够了", "都要", "不筛了", '
+    '"就这些吧"); '
+    '{"action": "query"} if the message is just a question about status, not a decision '
+    '(for example "现在还剩几张？", "去重完了吗"); '
+    '{"action": "cancel"} if the user wants to abort/cancel the whole batch (for example '
+    '"算了", "不要了", "取消").'
+)
+
+
+@dataclass
+class DedupFollowupReply:
+    action: Literal["narrow", "skip", "query", "cancel"]
+    count: Optional[int] = None
+
+
+def classify_dedup_followup(text: str, remaining: int, http_post: Optional[HttpPostFn] = None,
+                             meta_provider: str = "local") -> DedupFollowupReply:
+    user_prompt = f"去重后还剩 {remaining} 张。用户回复：{text}"
+    decision = request_json(
+        user_prompt=user_prompt,
+        schema_instruction=_DEDUP_FOLLOWUP_SCHEMA_INSTRUCTION,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action == "narrow":
+        return DedupFollowupReply(action="narrow", count=decision.get("count"))
+    if action in ("skip", "query", "cancel"):
+        return DedupFollowupReply(action=action)
+    raise AdjustmentError("unknown_action", f"unrecognized dedup followup action {action!r}")
+
+
 _RUNNING_SCHEMA_INSTRUCTION = (
     "A photo-culling batch is currently being processed (evaluating/deduping/selecting). "
     "The user sent a message while it runs. Respond with a single JSON object in one of "

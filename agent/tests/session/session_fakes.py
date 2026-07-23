@@ -32,6 +32,9 @@ _FIXED_RESPONSES = {
     "new": {"project": "run-1", "image_count": 2},
     "dedup": {"groups": 2, "tagged": 0, "skipped_no_capture_time": 0},
     "curate": {"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]},
+    "images": {"project": "run-1", "images": [
+        {"path": "a.jpg", "tags": []}, {"path": "b.jpg", "tags": []},
+    ]},
     "tag": {},
     "recipe": {"applied": True, "recipe_name": "Havana 1959"},
     "export-images": {"exported": 2, "skipped": [], "created_dir": True},
@@ -153,7 +156,22 @@ def bare_compose_plan() -> Plan:
     ])
 
 
-def to_planned(env: "ConsumerEnv") -> RunState:
+def bare_compose_plan_deferred_curate() -> Plan:
+    # W2026-07-21 目标三案例二：只说去重没给数量，Curate 待定（count=None,
+    # gate="required"），跟 bare_compose_plan() 同形状只是 Curate 不同。
+    return Plan(stages=[
+        StageSpec(name="Ingest"),
+        StageSpec(name="Dedup", params={"ai_enabled": False, "provider": "local"}),
+        StageSpec(name="Curate", params={"count": None, "apply_tag": "精选",
+                                          "ai_enabled": False, "provider": "local"},
+                  gate="required"),
+        StageSpec(name="Style", params={"provider": "local"}, gate="required"),
+        StageSpec(name="StyleApplyAll", gate="required"),
+        StageSpec(name="Deliver"),
+    ])
+
+
+def to_planned(env: "ConsumerEnv", plan_factory: Callable[[], Plan] = bare_compose_plan) -> RunState:
     """photo -> 意图文本 -> classify 降级 -> compose 成功 -> PLANNED。"""
     from session.protocol import ClassifyFailed, ComposeDone
 
@@ -166,17 +184,17 @@ def to_planned(env: "ConsumerEnv") -> RunState:
     env.put_event(ClassifyFailed(gen, "collecting", retryable=True))
     env.consumer.step()
     env.drain_jobs()
-    env.put_event(ComposeDone(gen, bare_compose_plan()))
+    env.put_event(ComposeDone(gen, plan_factory()))
     env.consumer.step()
     return env.consumer.run
 
 
-def to_running(env: "ConsumerEnv"):
+def to_running(env: "ConsumerEnv", plan_factory: Callable[[], Plan] = bare_compose_plan):
     """to_planned -> "好的"(refine 分类判 approve) -> DriveJob(start)。返回 DriveJob。"""
     from compose.adjustment_parser import PlanConfirmationReply
     from session.protocol import ClassifyDone
 
-    to_planned(env)
+    to_planned(env, plan_factory)
     env.push_text("好的")
     env.consumer.step()
     env.drain_jobs()  # 排掉 refine_plan ClassifyJob
@@ -202,6 +220,25 @@ def worker_saves_gate(env: "ConsumerEnv", run_id: str, stage: str) -> None:
     run = env.store.load(run_id)
     run.status = RunStatus.AWAITING_GATE
     run.gate_state = GateState(stage_name=stage, setting="required")
+    env.store.save(run)
+
+
+def worker_saves_curate_followup_gate(env: "ConsumerEnv", run_id: str,
+                                       image_count: int, tagged: int) -> None:
+    """worker_saves_gate 的 Curate 追问版：额外把 Ingest/Dedup 跑完的
+    StageOutput 落盘（W2026-07-21 目标三），因为 _dedup_remaining/
+    _prepare_gate_payload 都要现读这两个 stage 的 outputs 算 remaining。"""
+    from orchestrator.types import StageOutput
+
+    run = env.store.load(run_id)
+    run.status = RunStatus.AWAITING_GATE
+    run.gate_state = GateState(stage_name="Curate", setting="required")
+    run.stage_states["Ingest"] = StageStatus.DONE
+    run.stage_states["Dedup"] = StageStatus.DONE
+    run.outputs["Ingest"] = StageOutput(ok=True, data={"image_count": image_count})
+    run.outputs["Dedup"] = StageOutput(ok=True, data={
+        "groups": 0, "tagged": tagged, "skipped_no_capture_time": 0,
+    })
     env.store.save(run)
 
 
@@ -360,6 +397,7 @@ def make_worker(tmp_path: Path,
                 classify_gate_reply_fn: Callable = _raising_classify,
                 refine_plan_confirmation_fn: Callable = _raising_classify,
                 classify_style_gate_reply_fn: Callable = _raising_classify,
+                classify_dedup_followup_fn: Callable = _raising_classify,
                 classify_running_message_fn: Callable = _raising_classify,
                 classify_cancel_confirmation_fn: Callable = _raising_classify,
                 classify_style_describe_fn: Callable = _raising_classify,
@@ -393,6 +431,7 @@ def make_worker(tmp_path: Path,
             "gate_reply": classify_gate_reply_fn,
             "refine_plan": refine_plan_confirmation_fn,
             "style_gate": classify_style_gate_reply_fn,
+            "dedup_followup": classify_dedup_followup_fn,
             "running": classify_running_message_fn,
             "cancel_confirm": classify_cancel_confirmation_fn,
             "style_describe": classify_style_describe_fn,

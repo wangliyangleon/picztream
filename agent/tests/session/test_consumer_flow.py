@@ -8,6 +8,7 @@ from __future__ import annotations
 from compose.adjustment_parser import (
     CancelConfirmReply,
     CollectingReply,
+    DedupFollowupReply,
     GateReply,
     PlanConfirmationReply,
     RunningReply,
@@ -31,10 +32,12 @@ from session.protocol import (
 
 from session_fakes import (
     bare_compose_plan,
+    bare_compose_plan_deferred_curate,
     deliver_classify,
     make_consumer,
     to_planned,
     to_running,
+    worker_saves_curate_followup_gate,
     worker_saves_gate,
 )
 
@@ -877,6 +880,141 @@ def test_gate_reject_via_llm_prompts_confirmation_not_immediate_cancel(tmp_path)
 
     assert any("确定要取消整批吗" in t for t in env.transport.texts())
     assert env.store.load(job.run_id).status == RunStatus.AWAITING_GATE  # 二次确认前不取消
+
+
+def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
+    # W2026-07-21 目标三决策四：去重后追问"还剩几张，要不要再筛"。
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    assert any("去重后还剩 3 张，要不要再筛选一下留多少张？" in t for t in env.transport.texts())
+    assert env.transport.button_tokens() == ["skip_curate"]
+
+
+def test_gate_curate_followup_narrow_enqueues_rerun_curate_with_count(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    env.push_text("留2张")
+    env.consumer.step()
+    [classify_job] = env.drain_jobs()
+    assert classify_job.kind == "dedup_followup"
+    assert classify_job.context == {"remaining": 3}
+
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="narrow", count=2)))
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()
+    assert drive_job.action == "rerun_curate"
+    assert drive_job.args == {"params": {"count": 2}}
+
+
+def test_gate_curate_followup_skip_via_text_enqueues_rerun_curate_with_none(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    env.push_text("不用了，都留着")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="skip")))
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()
+    assert drive_job.action == "rerun_curate"
+    assert drive_job.args == {"params": {"count": None}}
+
+
+def test_gate_curate_followup_skip_via_button_bypasses_classify(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    env.push_callback(f"skip_curate:{job.run_id}")
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()  # 没有 ClassifyJob，按钮不经分类器
+    assert drive_job.action == "rerun_curate"
+    assert drive_job.args == {"params": {"count": None}}
+
+
+def test_gate_curate_followup_query_replies_describe(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    env.push_text("现在还剩几张？")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="query")))
+    env.consumer.step()
+
+    assert "去重完了，等你说要不要再筛选一下" in env.transport.texts()[-1]
+
+
+def test_gate_curate_followup_cancel_prompts_confirmation(tmp_path):
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+
+    env.push_text("算了不要了")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="cancel")))
+    env.consumer.step()
+
+    assert any("确定要取消整批吗" in t for t in env.transport.texts())
+
+
+def test_planned_deferred_curate_confirmation_text_mentions_dedup_first(tmp_path):
+    # W2026-07-21 目标三：deferred 形状下 count 是 None，确认文案不能是
+    # "留 None 张"。
+    env = make_consumer(tmp_path)
+    to_planned(env, plan_factory=bare_compose_plan_deferred_curate)
+
+    text = env.transport.texts()[-1]
+    assert "先帮你去重，去重完再问要不要接着筛" in text
+    assert "None" not in text
+
+
+def test_planned_refine_deferred_curate_giving_count_clears_pending_gate(tmp_path):
+    # 目标三决策七：PLANNED 阶段提前给数量 = 提前回答了 Dedup 后才会问的
+    # 追问，解除 Curate 的待定状态，不能再挂着 gate="required"。这也是
+    # _on_refine_reply 面对"Dedup 缺席"分支不崩的回归测试(用的是 deferred
+    # 形状，Dedup 是存在的，但同一条代码路径也覆盖了防 StopIteration 的
+    # 那次修复)。
+    env = make_consumer(tmp_path)
+    run = to_planned(env, plan_factory=bare_compose_plan_deferred_curate)
+    env.push_text("留5张")
+    env.consumer.step()
+    env.drain_jobs()
+
+    env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(
+        action="confirmed", count=5, apply_tag="精选", ai_enabled=False, provider="local")))
+    env.consumer.step()
+
+    saved = env.store.load(run.run_id)
+    curate = next(s for s in saved.plan.stages if s.name == "Curate")
+    assert curate.params["count"] == 5
+    assert curate.gate == "off"
+    text = env.transport.texts()[-1]
+    assert "留 5 张" in text
+    assert "None" not in text
 
 
 def test_run_finished_done_cleans_run_files_keeps_deliver_out(tmp_path):

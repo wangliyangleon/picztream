@@ -53,12 +53,19 @@ class SessionView:
         if self.status == RunStatus.COLLECTING:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:
+            if self.plan_summary.get("count") is None:
+                # deferred 形状（W2026-07-21 目标三案例二）：Curate 数量待定。
+                return (f"目前收到 {self.photo_count()} 张照片，方案是："
+                        f"先帮你去重，去重完再问要不要接着筛，"
+                        f"标签叫\"{self.plan_summary['apply_tag']}\"")
             ai_desc = ("AI 帮你从相似照片里挑更好的" if self.plan_summary.get("ai_enabled")
                        else "按拍摄时间挑")
             return (f"目前收到 {self.photo_count()} 张照片，方案是："
                     f"去重复后留 {self.plan_summary['count']} 张（{ai_desc}），"
                     f"标签叫\"{self.plan_summary['apply_tag']}\"")
         if self.status == RunStatus.AWAITING_GATE:
+            if self.gate_stage == "Curate":
+                return "去重完了，等你说要不要再筛选一下"
             return f"已经选好了 {self.selected_count or 0} 张，等你回复"
         if self.status == RunStatus.RUNNING:
             base = STAGE_PROGRESS_MESSAGES.get(self.current_stage or "", "正在处理...")

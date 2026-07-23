@@ -15,7 +15,7 @@ from compose.adjustment_parser import (
     PlanConfirmationReply,
 )
 from compose.llm_client import LlmRequestError
-from orchestrator.types import RunStatus, StageStatus
+from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
 from session.protocol import (
     ClassifyDone,
     ClassifyFailed,
@@ -382,6 +382,87 @@ def test_cancelled_error_mid_dedup_finishes_run_as_cancelled(tmp_path):
     saved = env.store.load(run.run_id)
     assert saved.status == RunStatus.CANCELLED
     assert saved.stage_states["Ingest"] == StageStatus.DONE  # 已完成的不回滚
+    assert env.client.cancel_event is None
+
+
+def test_prepare_gate_payload_curate_computes_remaining(tmp_path):
+    # W2026-07-21 目标三决策四：remaining = Ingest.image_count - Dedup.tagged。
+    env = make_worker(tmp_path)
+    plan = Plan(stages=[StageSpec(name="Ingest"), StageSpec(name="Curate", gate="required")])
+    run = RunState(
+        run_id="r1", project_id="r1", plan=plan,
+        stage_states={"Ingest": StageStatus.DONE, "Curate": StageStatus.PENDING},
+        outputs={
+            "Ingest": StageOutput(ok=True, data={"image_count": 10}),
+            "Dedup": StageOutput(ok=True, data={"groups": 3, "tagged": 4, "skipped_no_capture_time": 0}),
+        },
+    )
+
+    payload = env.worker._prepare_gate_payload(run, "Curate")
+
+    assert payload == {"remaining": 6}
+
+
+def _mark_ingest_dedup_done(run, image_count=2, tagged=0):
+    run.stage_states["Ingest"] = StageStatus.DONE
+    run.stage_states["Dedup"] = StageStatus.DONE
+    run.outputs["Ingest"] = StageOutput(ok=True, data={"image_count": image_count})
+    run.outputs["Dedup"] = StageOutput(ok=True, data={
+        "groups": 0, "tagged": tagged, "skipped_no_capture_time": 0,
+    })
+
+
+def test_drive_rerun_curate_runs_passthrough_and_continues_to_next_gate(tmp_path):
+    # W2026-07-21 目标三决策四：追问回复用 rerun_curate 直接跑 Curate，
+    # 不重新触发它自己的闸门，continue 到下一个闸门（Style）。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    _mark_ingest_dedup_done(run)
+    env.store.save(run)
+    env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
+                           args={"params": {"count": None}}))
+
+    env.step()
+
+    events = env.drain_events()
+    assert _started_stages(events) == ["Curate"]
+    # count=None -> passthrough：走 pzt images，不是 pzt curate（目标三决策三）。
+    assert any(c[0] == "images" for c in env.client.calls)
+    assert not any(c[0] == "curate" for c in env.client.calls)
+    gate = events[-1]
+    assert isinstance(gate, GateReached)
+    assert gate.stage == "Style"
+
+
+def test_drive_rerun_curate_with_count_calls_pzt_curate(tmp_path):
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    _mark_ingest_dedup_done(run)
+    env.store.save(run)
+    env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
+                           args={"params": {"count": 2, "apply_tag": "精选"}}))
+
+    env.step()
+
+    assert any(c[0] == "curate" for c in env.client.calls)
+    assert not any(c[0] == "images" for c in env.client.calls)
+
+
+def test_rerun_curate_cancelled_finishes_run_as_cancelled(tmp_path):
+    env = make_worker(tmp_path, client=FakeClient(raise_cancelled_on=("images",)))
+    run = env.make_running_run()
+    _mark_ingest_dedup_done(run)
+    env.store.save(run)
+    env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
+                           args={"params": {"count": None}}))
+
+    env.step()
+
+    events = env.drain_events()
+    finished = events[-1]
+    assert isinstance(finished, RunFinished)
+    assert finished.status == "cancelled"
+    assert env.store.load(run.run_id).status == RunStatus.CANCELLED
     assert env.client.cancel_event is None
 
 

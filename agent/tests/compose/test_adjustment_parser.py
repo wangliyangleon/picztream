@@ -5,6 +5,7 @@ import pytest
 from compose.adjustment_parser import (
     AdjustmentError,
     classify_collecting_message,
+    classify_dedup_followup,
     classify_gate_reply,
     classify_style_describe,
     parse_adjustment,
@@ -255,5 +256,42 @@ def test_classify_style_describe_recognizes_all_four_actions():
 def test_classify_style_describe_unknown_action_raises():
     with pytest.raises(AdjustmentError) as exc_info:
         classify_style_describe("随便你", http_post=_fake_http_post({"action": "do_something_else"}))
+
+    assert exc_info.value.code == "unknown_action"
+
+
+def test_classify_dedup_followup_recognizes_narrow_with_count():
+    reply = classify_dedup_followup(
+        "留5张", 8, http_post=_fake_http_post({"action": "narrow", "count": 5}))
+
+    assert reply.action == "narrow"
+    assert reply.count == 5
+
+
+def test_classify_dedup_followup_recognizes_skip():
+    reply = classify_dedup_followup(
+        "不用了，都留着", 8, http_post=_fake_http_post({"action": "skip"}))
+
+    assert reply.action == "skip"
+    assert reply.count is None
+
+
+def test_classify_dedup_followup_recognizes_query():
+    reply = classify_dedup_followup(
+        "现在还剩几张？", 8, http_post=_fake_http_post({"action": "query"}))
+
+    assert reply.action == "query"
+
+
+def test_classify_dedup_followup_recognizes_cancel():
+    reply = classify_dedup_followup(
+        "算了不要了", 8, http_post=_fake_http_post({"action": "cancel"}))
+
+    assert reply.action == "cancel"
+
+
+def test_classify_dedup_followup_unknown_action_raises():
+    with pytest.raises(AdjustmentError) as exc_info:
+        classify_dedup_followup("随便你", 8, http_post=_fake_http_post({"action": "do_something_else"}))
 
     assert exc_info.value.code == "unknown_action"

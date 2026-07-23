@@ -198,7 +198,9 @@ JSON 输出：`cmd_dedup` 现有输出（`groups`/`tagged`/`skipped_no_capture_t
 3. **`consumer.py`**：
    - `_process_text` 的 `AWAITING_GATE` 分派里加 `gate_stage == "Curate"` 一支，走新 classify kind `"dedup_followup"`（context 带 `remaining`，从 `self.view` 或 `self.run.outputs` 取）。
    - `_on_gate_reached` 加 `elif event.stage == "Curate":` 渲染分支：`"去重后还剩 {remaining} 张，要不要再筛选一下留多少张？"`，按钮见决策五。
-   - 新增 `_on_dedup_followup_reply(reply)`：`action=="narrow"` → `apply_adjustment(Curate, {"count": reply.count})` 再 `resolve_gate`；`action=="skip"` → `apply_adjustment(Curate, {"count": None})` 再 `resolve_gate`（这一路会触发决策三的 passthrough 分支）；`query`→回 `self.view.describe()`；`cancel`→走 `_prompt_cancel_confirmation()`（跟其它闸门一致）。这两个"narrow/skip"分支复用现成的 `Driver.apply_adjustment` + `resolve_gate`（`driver.py:126-137`, `59-73`），**不新增 Driver 方法**。
+   - 新增 `_on_dedup_followup_reply(reply)`：`action=="narrow"` → 投 `DriveJob(action="rerun_curate", args={"params": {"count": reply.count}})`；`action=="skip"` → 同样投 `rerun_curate`，`count=None`（触发决策三的 passthrough 分支）；`query`→回 `self.view.describe()`；`cancel`→走 `_prompt_cancel_confirmation()`（跟其它闸门一致）。
+
+   **订正（实现 Commit 8 时发现）**：原文这里写的是复用 `Driver.apply_adjustment` + `resolve_gate`。实现阶段追查 `apply_adjustment`（`driver.py:126-137`）发现它只改 `spec.params`，不改 `spec.gate`——Curate 这时候 `gate="required"` 还挂着，`apply_adjustment` 把 `run.status` 设回 `RUNNING` 后，`advance()` 会重新走到 Curate、发现它的 `gate != "off"` 且 `gate_state is None`，又把同一个追问闸门重新挂起一次，用户刚回答"留5张"会被原样再问一遍，死循环。改用 `driver.rerun_stage`（`driver.py:104-124`）：它的设计初衷就是"闸门已经问过、这次给的就是答案，不需要闸门再问一遍"（Style 描述闸门是这么用的），直接调 `_run_stage` 跑掉 Curate，完全绕开 `advance()` 的闸门检查，不需要碰 `.gate` 字段，也**不新增 Driver 方法**（`rerun_stage` 已经是现成的）。`worker.py::_execute_drive` 对应新增 `elif job.action == "rerun_curate":` 分支，同 `rerun_style` 的写法，额外因为 Curate 在 `KILLABLE_STAGES` 里而手动布防/解防 `cancel_event`（绕开了 `_drive_to_stop` 循环自带的布防）。
 
 ## 决策五：AI 可发现性——提醒文案 + 快捷按钮
 
@@ -207,6 +209,8 @@ JSON 输出：`cmd_dedup` 现有输出（`groups`/`tagged`/`skipped_no_capture_t
 - **PLANNED 确认**（`_send_plan_confirmation`）：决策一第一分支（Curate 直接确定）沿用目标二已有的按钮结构，在原 `_CONFIRM_BUTTONS`（`[("好的 ✅", approve)]`）基础上追加 `("AI筛选 🤖", ai_curate)`；决策一第二分支（Dedup 先跑、Curate 待定）确认文案换成"先帮你去重，去重完再问要不要接着筛"，按钮追加 `("AI去重 🤖", ai_dedup)`。
 - **决策四的追问闸门**：按钮在"不筛选了"之外追加 `("AI筛选 🤖", ai_narrow)`——点了视为"narrow，count=remaining，ai_enabled=True"（不问具体数字，AI 从"要不要更狠地筛"这个模糊意图里直接按 remaining 张的默认策略跑，跟"打字给数字"路径共存，不互斥）。
 - 新按钮 token 的点击处理并入 `_handle_callback`（`consumer.py:316-358`）：新增 `_BTN_AI_DEDUP`/`_BTN_AI_CURATE`/`_BTN_AI_NARROW` 三个 token，效果分别等价于"文字回复里带了 AI 意图"，直接调用对应状态的既有处理函数（`_on_refine_reply`/`_on_dedup_followup_reply` 的"confirmed/narrow"分支），不需要真的过一遍 LLM 分类。
+
+**补充（实现 Commit 8 时发现）**：`_send_plan_confirmation`/`view.py::describe()` 在 deferred 形状下（`count is None`）如果不分支会直接把 `None` 插进"留 None 张"这种文案，这是 Commit 8 就得处理的正确性问题，不能拖到这里——Commit 8 已经把"先帮你去重，去重完再问要不要接着筛"这句不提 AI 的版本接上了，这里（Commit 9）要做的只是在这句话基础上加 AI 提醒 + 上面列的按钮，不是从零建这个分支。
 
 ## 决策六：`validate.py` 适配两种 Plan 形状 + `count` 可空规则
 
@@ -218,7 +222,9 @@ JSON 输出：`cmd_dedup` 现有输出（`groups`/`tagged`/`skipped_no_capture_t
 
 决策一第二分支的 PLANNED 确认阶段，用户可能不等 Dedup 跑完就直接在确认时说"留5张"——`_on_refine_reply`（`consumer.py:697-725`）现在拿到 `reply.count` 就直接写 `curate.params["count"]`，但这个分支下 Curate 当前是 `gate="required"` 状态，不能只改 `count` 不改 `gate`（会变成"count 有值但仍然会在 Dedup 后被问一遍"的冗余追问）。
 
-处理：把"给 Curate 一个明确 count 并解除待定状态"抽成一个小 helper（`_resolve_curate_count(curate_spec, count, ai_enabled, provider)`，同时设 `params["count"]`、`gate="off"`），`_on_refine_reply` 的 confirmed 分支和决策四的 `_on_dedup_followup_reply` 的 narrow 分支都调它，不重复逻辑。（`gate="off"` 这时候只是防止之后误挂闸门；实际 Curate 会不会再被问，取决于 Dedup 是否已经跑完——已跑完就是 Driver 正常 `advance` 直接执行 Curate，不会二次经过 `AWAITING_GATE`。）
+处理：`_on_refine_reply` 的 confirmed 分支在 `curate.params["count"] = reply.count` 之后，`reply.count is not None` 时顺手 `curate.gate = "off"`。
+
+**订正（实现 Commit 8 时发现，跟决策四的订正是同一个原因）**：原文设想的 `_resolve_curate_count` 共享 helper 最终没有必要——决策四改用 `rerun_stage` 之后，`_on_dedup_followup_reply` 的 narrow/skip 分支根本不碰 `.gate`（`rerun_stage` 直接绕开闸门检查），需要清 `.gate` 的只有这里（PLANNED 阶段，Driver 还没开始跑，直接改 Plan 对象本身不会触发决策四提到的"运行中重新挂起"那个坑）。两处场景其实不对称，硬抽一个共享 helper 反而增加一层不必要的间接，直接在 `_on_refine_reply` 里内联这一行更清楚。
 
 ## 非目标（本阶段不做）
 
@@ -229,7 +235,7 @@ JSON 输出：`cmd_dedup` 现有输出（`groups`/`tagged`/`skipped_no_capture_t
 
 1. **Commit 6**：决策一 + 决策二 + 决策六（`plan_composer.py` 两分支 + `curate.py` inputs 修正 + `validate.py` 两形状/可空 count）——先把"Plan 形状可以正确变化"这个地基打完，配套测试覆盖三种分支产出的 Plan 结构、以及"Dedup 缺席时 Curate 能正常推进"的 Driver 回归测试。
 2. **Commit 7**：决策三（`CurateStage` passthrough 分支）——独立可测（给定一批带"重复"标签的 fixture，验证 passthrough 输出排除它们），不依赖 Commit 8 的会话层改动。
-3. **Commit 8**：决策四 + 决策七（`worker.py` payload、新分类器、`consumer.py` 新增追问闸门渲染/处理、`_resolve_curate_count` helper）——这是最重的一块，需要新的 `session_fakes.py` fixture 覆盖"Dedup 完成后停在 Curate 闸门"这个新状态。
+3. **Commit 8**：决策四 + 决策七（`worker.py` payload + `rerun_curate` DriveJob action、新分类器、`consumer.py` 新增追问闸门渲染/处理、`_on_refine_reply` 的 `.gate` 清除 + Dedup 缺席防崩）——这是最重的一块，需要新的 `session_fakes.py` fixture 覆盖"Dedup 完成后停在 Curate 闸门"这个新状态。
 4. **Commit 9**：决策五（两处 AI 提醒文案 + 三个新按钮 token）——纯文案/按钮层，放最后因为依赖 Commit 8 已经把两个新确认点的骨架搭好。
 
 ## 验证（目标三部分）

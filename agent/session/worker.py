@@ -202,6 +202,21 @@ class SessionWorker:
                 self.events.put(GateReached(job.generation, run.run_id, "Style",
                                             {"match_failed": True}))
                 return
+        elif job.action == "rerun_curate":
+            # 去重后追问的回复已经落地(留几张/不筛)，直接跑 Curate 拿答案
+            # 生效，不需要闸门再问一遍（W2026-07-21 目标三决策四；同 rerun_style
+            # 的用法）。Curate 在 KILLABLE_STAGES 里，这条路径绕开了
+            # _drive_to_stop 的循环布防，这里手动布防/解防、接住取消。
+            self.events.put(StageStarted(job.generation, run.run_id, "Curate"))
+            self.client.cancel_event = job.cancel_event
+            try:
+                self.driver.rerun_stage(run, "Curate", job.args["params"])
+            except PztCancelledError:
+                # 不 return：跟 _drive_to_stop 循环里的取消处理一样，落到方法
+                # 尾部共享的 _report_stop 才会真的发 RunFinished(cancelled)。
+                self.driver.cancel(run)
+            finally:
+                self.client.cancel_event = None
         elif job.action != "resume":
             raise ValueError(f"unknown drive action: {job.action!r}")
         self._drive_to_stop(run, job)
@@ -270,6 +285,13 @@ class SessionWorker:
                 return {"chosen_recipe": chosen, "preview_sent": False, "export_error": export_error}
             failed = self._send_preview_media(run, [preview_photo])
             return {"chosen_recipe": chosen, "preview_sent": failed == 0, "export_error": None}
+        if stage == "Curate":
+            # 去重后追问："还剩几张，要不要再筛"（W2026-07-21 目标三决策四）。
+            ingest_output = run.outputs.get("Ingest")
+            dedup_output = run.outputs.get("Dedup")
+            total = ingest_output.data.get("image_count", 0) if ingest_output else 0
+            tagged = dedup_output.data.get("tagged", 0) if dedup_output else 0
+            return {"remaining": total - tagged}
         # 默认闸门（当前只有 Deliver）：Curate 选片预览
         curate_output = run.outputs.get("Curate")
         selected = curate_output.data.get("selected", []) if curate_output else []

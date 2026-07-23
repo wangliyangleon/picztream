@@ -20,11 +20,11 @@ from typing import Any, Optional
 class ClassifyJob:
     generation: int
     kind: str  # collecting | gate_reply | refine_plan | style_describe |
-               # style_gate | running | cancel_confirm
+               # style_gate | dedup_followup | running | cancel_confirm
     text: str
     context: dict = field(default_factory=dict)
     # collecting: {photo_count}; gate_reply/style_describe/style_gate: {run_id};
-    # refine_plan: {intent_raw, current_params}
+    # refine_plan: {intent_raw, current_params}; dedup_followup: {remaining}
 
 
 @dataclass
@@ -36,7 +36,7 @@ class ComposeJob:
 @dataclass
 class DriveJob:
     generation: int
-    action: str  # "start" | "resume" | "resolve_gate" | "adjustment" | "rerun_style"
+    action: str  # "start" | "resume" | "resolve_gate" | "adjustment" | "rerun_style" | "rerun_curate"
     run_id: str
     args: dict = field(default_factory=dict)
     # 取消 = consumer set()；worker 在 stage 边界必查，并在可杀 stage
