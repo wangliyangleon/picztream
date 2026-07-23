@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 from orchestrator.driver import Driver
@@ -122,3 +123,70 @@ def test_curate_with_exclude_overfetches_filters_and_truncates():
     assert call_log[2] == ["/fake/pzt", "tag", "apply", "proj-1", "a.jpg", "精选", "--json"]
     assert call_log[3] == ["/fake/pzt", "tag", "apply", "proj-1", "c.jpg", "精选", "--json"]
     assert len(call_log) == 4
+
+
+def _images_json(*, path_tags):
+    images = [{"path": path, "tags": tags} for path, tags in path_tags]
+    return json.dumps({"project": "proj-1", "images": images})
+
+
+def test_curate_passthrough_when_count_is_none_lists_images_excluding_duplicate_and_reject_tags():
+    call_log = []
+    client = _make_client({
+        "images": _images_json(path_tags=[
+            ("a.jpg", []),
+            ("b.jpg", ["重复"]),
+            ("c.jpg", ["废片"]),
+            ("d.jpg", ["精选"]),
+        ]),
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选"})
+
+    assert call_log[0] == ["/fake/pzt", "images", "proj-1", "--json"]
+    assert output.ok is True
+    assert output.data["selected"] == ["a.jpg", "d.jpg"]
+    assert output.data["requested"] is None
+    assert output.data["returned"] == 2
+    assert call_log[1] == ["/fake/pzt", "tag", "clear", "proj-1", "精选", "--json"]
+    assert call_log[2] == ["/fake/pzt", "tag", "apply", "proj-1", "a.jpg", "精选", "--json"]
+    assert call_log[3] == ["/fake/pzt", "tag", "apply", "proj-1", "d.jpg", "精选", "--json"]
+    assert len(call_log) == 4
+
+
+def test_curate_passthrough_respects_exclude():
+    call_log = []
+    client = _make_client({
+        "images": _images_json(path_tags=[("a.jpg", []), ("b.jpg", []), ("c.jpg", [])]),
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选", "exclude": ["b.jpg"]})
+
+    assert output.data["selected"] == ["a.jpg", "c.jpg"]
+    assert call_log[1:] == [
+        ["/fake/pzt", "tag", "clear", "proj-1", "精选", "--json"],
+        ["/fake/pzt", "tag", "apply", "proj-1", "a.jpg", "精选", "--json"],
+        ["/fake/pzt", "tag", "apply", "proj-1", "c.jpg", "精选", "--json"],
+    ]
+
+
+def test_curate_passthrough_ignores_ai_enabled():
+    call_log = []
+    client = _make_client({
+        "images": _images_json(path_tags=[("a.jpg", [])]),
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选", "ai_enabled": True, "provider": "gemini"})
+
+    # 没有比较，AI 开关在这个分支下没有意义——压根不该走到 pzt curate。
+    assert call_log[0] == ["/fake/pzt", "images", "proj-1", "--json"]
+    assert output.ok is True

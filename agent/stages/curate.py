@@ -25,20 +25,32 @@ class CurateStage:
         apply_tag = params.get("apply_tag", "精选")
         exclude = params.get("exclude", [])
 
-        args = [
-            "curate", ctx.project_id,
-            "--count", str(count + len(exclude)),
-            "--apply-tag", apply_tag,
-        ]
-        if params.get("ai_enabled", False):
-            args += ["--ai", "--provider", params.get("provider", "local")]
-
         try:
-            result = self.client.call(*args)
-            # pzt curate --apply-tag 无条件给拿到的每一张候选打标(包括
-            # 多要的 len(exclude) 张、以及要被换掉的那几张)，过滤裁剪
-            # 之后必须重新收口标签状态：不能指望 --apply-tag 自己做对。
-            final_selection = [p for p in result["selected"] if p not in exclude][:count]
+            if count is None:
+                # passthrough：Curate 被跳过聚类，直接把去重后的候选原样
+                # 交付，不调 pzt curate（W2026-07-21 目标三决策三：pzt
+                # curate 的 count 语义是"每簇最多一个 winner"，不是
+                # "top N"，冒充会把用户明确拒绝的"再筛一次"悄悄做了）。
+                images = self.client.call("images", ctx.project_id)["images"]
+                survivors = [img["path"] for img in images
+                             if "重复" not in img["tags"] and "废片" not in img["tags"]]
+                final_selection = [p for p in survivors if p not in exclude]
+                requested = None
+            else:
+                args = [
+                    "curate", ctx.project_id,
+                    "--count", str(count + len(exclude)),
+                    "--apply-tag", apply_tag,
+                ]
+                if params.get("ai_enabled", False):
+                    args += ["--ai", "--provider", params.get("provider", "local")]
+                result = self.client.call(*args)
+                # pzt curate --apply-tag 无条件给拿到的每一张候选打标(包括
+                # 多要的 len(exclude) 张、以及要被换掉的那几张)，过滤裁剪
+                # 之后必须重新收口标签状态：不能指望 --apply-tag 自己做对。
+                final_selection = [p for p in result["selected"] if p not in exclude][:count]
+                requested = count
+
             self.client.call("tag", "clear", ctx.project_id, apply_tag)
             for path in final_selection:
                 self.client.call("tag", "apply", ctx.project_id, path, apply_tag)
@@ -46,7 +58,7 @@ class CurateStage:
             return StageOutput(ok=False, error=f"{e.code}: {e.message}")
 
         return StageOutput(ok=True, data={
-            "requested": count,
+            "requested": requested,
             "returned": len(final_selection),
             "selected": final_selection,
         })
