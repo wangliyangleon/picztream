@@ -144,8 +144,9 @@ def bare_compose_plan() -> Plan:
     # folder / Deliver out_folder / Deliver 闸门）。
     return Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Dedup"),
-        StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
+        StageSpec(name="Dedup", params={"ai_enabled": False, "provider": "local"}),
+        StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选",
+                                          "ai_enabled": False, "provider": "local"}),
         StageSpec(name="Style", params={"provider": "local"}, gate="required"),
         StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver"),
@@ -209,8 +210,9 @@ def make_fixed_plan(incoming_dir: str, out_folder: str) -> Plan:
     # out_folder + required 闸门、Style/StyleApplyAll required 闸门。
     return Plan(stages=[
         StageSpec(name="Ingest", params={"folder": incoming_dir}),
-        StageSpec(name="Dedup"),
-        StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选"}),
+        StageSpec(name="Dedup", params={"ai_enabled": False, "provider": "local"}),
+        StageSpec(name="Curate", params={"count": 2, "apply_tag": "精选",
+                                          "ai_enabled": False, "provider": "local"}),
         StageSpec(name="Style", params={"provider": "local"}, gate="required"),
         StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver", params={"out_folder": out_folder}, gate="required"),

@@ -7,8 +7,9 @@ from orchestrator.types import Plan, StageSpec
 def _valid_plan(**overrides):
     stages = {
         "Ingest": StageSpec(name="Ingest"),
-        "Dedup": StageSpec(name="Dedup"),
-        "Curate": StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选"}),
+        "Dedup": StageSpec(name="Dedup", params={"ai_enabled": False, "provider": "local"}),
+        "Curate": StageSpec(name="Curate", params={"count": 9, "apply_tag": "精选",
+                                                     "ai_enabled": False, "provider": "local"}),
         "Style": StageSpec(name="Style", params={"provider": "gemini"}, gate="required"),
         "StyleApplyAll": StageSpec(name="StyleApplyAll", gate="required"),
         "Deliver": StageSpec(name="Deliver"),
@@ -71,6 +72,28 @@ def test_rejects_bad_style_provider(provider):
         validate_plan(plan)
 
     assert exc_info.value.code == "bad_style_provider"
+
+
+@pytest.mark.parametrize("stage_name", ["Dedup", "Curate"])
+@pytest.mark.parametrize("ai_enabled", ["true", 1, None])
+def test_rejects_non_bool_ai_enabled(stage_name, ai_enabled):
+    plan = _valid_plan(**{stage_name: {"ai_enabled": ai_enabled}})
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_plan(plan)
+
+    assert exc_info.value.code == f"bad_{stage_name.lower()}_ai_enabled"
+
+
+@pytest.mark.parametrize("stage_name", ["Dedup", "Curate"])
+@pytest.mark.parametrize("provider", ["openai", "", None, 123])
+def test_rejects_bad_dedup_or_curate_provider(stage_name, provider):
+    plan = _valid_plan(**{stage_name: {"provider": provider}})
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_plan(plan)
+
+    assert exc_info.value.code == f"bad_{stage_name.lower()}_provider"
 
 
 @pytest.mark.parametrize("count", [0, -1, 51, "9", 9.5, True])

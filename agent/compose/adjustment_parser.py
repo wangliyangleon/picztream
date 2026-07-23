@@ -153,19 +153,24 @@ def _resolve_swap_out(index: int, run: RunState) -> PlanDelta:
 _CONFIRMATION_SCHEMA_INSTRUCTION = (
     "You proposed a photo-culling plan and asked the user to confirm it. You are given "
     "the user's original intent, the plan you proposed (as JSON), and the user's reply. "
-    "The two adjustable fields are count (how many photos to keep) and apply_tag (the "
-    "tag/album/audience name). Respond with a single JSON object in one of five shapes: "
+    "The adjustable fields are count (how many photos to keep), apply_tag (the "
+    "tag/album/audience name), ai_enabled (boolean, whether to use AI visual comparison "
+    "to pick the best photo among similar ones instead of just picking by capture time), "
+    "and provider (string, one of \"local\", \"gemini\", or \"claude\", which AI model to "
+    "use when ai_enabled is true). Respond with a single JSON object in one of five shapes: "
     '{"action": "approve"} if the user is satisfied and wants to proceed, even if '
     'phrased casually or indirectly (for example "好的，处理吧", "可以", "没问题"); '
     '{"action": "reject"} if the user wants to abandon this plan entirely (for example '
     '"算了", "不要了", "cancel"); '
-    '{"action": "confirmed", "count": <integer>, "apply_tag": <string>} if the reply '
-    "asks to CHANGE any field. "
-    "Requests to change the number of photos or the tag are ALWAYS 'confirmed', never "
-    "'query'. Copy every field from the proposed plan and overwrite only what the user "
-    'asked to change. Examples (proposed count=3): "选六张吧"/"改成6张"/"要6张" -> count 6; '
-    '"留9张" -> count 9; "标签叫ins"/"发到ins" -> apply_tag "ins"; "6张，标签叫朋友圈" -> '
-    "count 6 and apply_tag \"朋友圈\"; "
+    '{"action": "confirmed", "count": <integer>, "apply_tag": <string>, '
+    '"ai_enabled": <boolean>, "provider": <string>} if the reply asks to CHANGE any field. '
+    "Requests to change the number of photos, the tag, or whether AI picks are used are "
+    "ALWAYS 'confirmed', never 'query'. Copy every field from the proposed plan and "
+    'overwrite only what the user asked to change. Examples (proposed count=3): "选六张吧"/'
+    '"改成6张"/"要6张" -> count 6; "留9张" -> count 9; "标签叫ins"/"发到ins" -> apply_tag '
+    '"ins"; "6张，标签叫朋友圈" -> count 6 and apply_tag "朋友圈"; "AI帮我选"/"用AI挑"/"挑最好'
+    '的" -> ai_enabled true; "不用AI了"/"按时间选就行"/"别用AI" -> ai_enabled false; "换成'
+    'gemini"/"用gemini" -> provider "gemini"; '
     '{"action": "query"} ONLY if the message is purely a question that asks for '
     'information and requests NO change (for example "你收到几张图片了？", "现在留几张？"); '
     'a message that states a new number or tag is NOT a query; '
@@ -180,6 +185,8 @@ class PlanConfirmationReply:
     action: Literal["confirmed", "clarify", "query", "approve", "reject"]
     count: Optional[int] = None
     apply_tag: Optional[str] = None
+    ai_enabled: Optional[bool] = None
+    provider: Optional[str] = None
     question: Optional[str] = None
 
 
@@ -216,6 +223,8 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
             action="confirmed",
             count=decision.get("count", current_params.get("count")),
             apply_tag=decision.get("apply_tag", current_params.get("apply_tag")),
+            ai_enabled=decision.get("ai_enabled", current_params.get("ai_enabled")),
+            provider=decision.get("provider", current_params.get("provider")),
         )
 
     raise AdjustmentError("unknown_action", f"unrecognized confirmation action {action!r}")

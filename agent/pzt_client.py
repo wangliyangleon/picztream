@@ -75,7 +75,7 @@ class PztClient:
         self.pzt_bin = Path(pzt_bin) if pzt_bin else default_pzt_bin()
         self._runner = runner or _real_runner
         self._popen_factory = popen_factory or _real_popen_factory
-        # 布防点：worker 在可杀 stage（Dedup）即将 advance 前把
+        # 布防点：worker 在可杀 stage（Dedup/Curate）即将 advance 前把
         # DriveJob 的 cancel_event 挂上来、返回后摘除——挂在实例上而不是
         # call() 参数，stages 内部的 client.call(...) 才能零改动吃到取消
         # 能力。worker 用自己专属的 client 实例，consumer 的只读查询走另

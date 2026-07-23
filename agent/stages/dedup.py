@@ -17,8 +17,11 @@ class DedupStage:
     criticality: str = "critical"
 
     def run(self, ctx: StageContext, params: Dict[str, Any]) -> StageOutput:
+        args = ["dedup", ctx.project_id, "--scope", "*"]
+        if params.get("ai_enabled", False):
+            args += ["--ai", "--provider", params.get("provider", "local")]
         try:
-            result = self.client.call("dedup", ctx.project_id, "--scope", "*")
+            result = self.client.call(*args)
         except PztCommandError as e:
             return StageOutput(ok=False, error=f"{e.code}: {e.message}")
         return StageOutput(ok=True, data=result)

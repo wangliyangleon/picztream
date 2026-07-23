@@ -19,10 +19,14 @@ _SCHEMA_INSTRUCTION = (
     "You are translating a user's free-text photo-culling request into structured "
     "pipeline parameters. Respond with a single JSON object with exactly these fields: "
     '"provider" (string, one of "local", "gemini", or "claude", pick "local" unless the '
-    'user explicitly asks for a cloud provider by name), "count" (integer, how many final '
-    'photos the user wants, a reasonable default is 9 if unspecified), "apply_tag" '
-    "(string, the tag name to apply to the selected photos. Derive it from the "
-    "destination or audience the user mentions, using that as the tag name itself: "
+    'user explicitly asks for a cloud provider by name), "ai_enabled" (boolean, whether '
+    "to use AI visual comparison to pick the best photo among similar/duplicate ones "
+    "instead of just picking by capture time or diversity -- true only if the user "
+    'explicitly asks for AI-assisted picking, e.g. "AI帮我选"/"挑最好的"/"用AI选", default '
+    'false), "count" (integer, how many final photos the user wants, a reasonable '
+    'default is 9 if unspecified), "apply_tag" (string, the tag name to apply to the '
+    "selected photos. Derive it from the destination or audience the user mentions, "
+    "using that as the tag name itself: "
     '"发朋友圈"/"发朋友圈的" -> "朋友圈", "发到ins"/"发instagram" -> "ins", '
     '"给我妈看" -> "家人", "选几张精修" -> "精修". Only fall back to the default "精选" when '
     "the user names no destination, audience, album, or tag at all)."
@@ -40,10 +44,15 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
     )
     return Plan(stages=[
         StageSpec(name="Ingest"),
-        StageSpec(name="Dedup"),
+        StageSpec(name="Dedup", params={
+            "ai_enabled": decision.get("ai_enabled", False),
+            "provider": decision.get("provider", "local"),
+        }),
         StageSpec(name="Curate", params={
             "count": decision.get("count", 9),
             "apply_tag": decision.get("apply_tag", "精选"),
+            "ai_enabled": decision.get("ai_enabled", False),
+            "provider": decision.get("provider", "local"),
         }),
         StageSpec(name="Style", params={
             "provider": decision.get("provider", "local"),

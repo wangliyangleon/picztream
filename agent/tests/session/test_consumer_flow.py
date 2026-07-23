@@ -87,7 +87,7 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     assert ingest.params["folder"] == str(tmp_path / "incoming" / run.run_id)
     assert deliver.params["out_folder"] == str(tmp_path / "deliver-out")
     assert deliver.gate == "required"
-    assert "理解你想：去重复后留 2 张，标签叫\"精选\"，对吗？" in \
+    assert "理解你想：去重复后留 2 张（按拍摄时间挑），标签叫\"精选\"，对吗？" in \
         env.transport.texts()[-1]
 
 
@@ -141,17 +141,23 @@ def test_planned_refine_confirmed_updates_params_and_reconfirms(tmp_path):
     assert job.kind == "refine_plan"
     assert job.context["intent_raw"] == "筛一下留2张"
     assert job.context["current_params"]["count"] == 2
+    assert job.context["current_params"]["ai_enabled"] is False
 
     env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(
-        action="confirmed", count=6, apply_tag="ins")))
+        action="confirmed", count=6, apply_tag="ins", ai_enabled=True, provider="gemini")))
     env.consumer.step()
 
     saved = env.store.load(run.run_id)
     assert saved.status == RunStatus.PLANNED  # 改完必须再确认，不自动开跑
+    dedup = next(s for s in saved.plan.stages if s.name == "Dedup")
     curate = next(s for s in saved.plan.stages if s.name == "Curate")
     assert curate.params["count"] == 6
     assert curate.params["apply_tag"] == "ins"
-    assert "去重复后留 6 张" in env.transport.texts()[-1]
+    assert curate.params["ai_enabled"] is True
+    assert curate.params["provider"] == "gemini"
+    assert dedup.params["ai_enabled"] is True  # 全局开关，Dedup 也跟着改
+    assert dedup.params["provider"] == "gemini"
+    assert "去重复后留 6 张（AI 帮你从相似照片里挑更好的）" in env.transport.texts()[-1]
     assert env.drain_jobs() == []
 
 

@@ -40,7 +40,7 @@ class DriveJob:
     run_id: str
     args: dict = field(default_factory=dict)
     # 取消 = consumer set()；worker 在 stage 边界必查，并在可杀 stage
-    # （Dedup）期间把它挂到 PztClient 上做子进程级终止。
+    # （Dedup/Curate）期间把它挂到 PztClient 上做子进程级终止。
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 

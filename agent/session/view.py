@@ -37,7 +37,7 @@ class SessionView:
     current_stage: Optional[str] = None            # StageStarted 事件更新
     stage_progress: Optional[Tuple[int, int]] = None  # (done, total)
     gate_stage: Optional[str] = None               # GateReached 事件更新
-    plan_summary: Optional[dict] = None            # count/apply_tag
+    plan_summary: Optional[dict] = None            # count/apply_tag/ai_enabled
     selected_count: Optional[int] = None           # GateReached payload / 重建时从 outputs 抄
     drive_active: bool = False                     # DriveJob 入队 True，闸门/终态事件 False
 
@@ -53,8 +53,10 @@ class SessionView:
         if self.status == RunStatus.COLLECTING:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:
+            ai_desc = ("AI 帮你从相似照片里挑更好的" if self.plan_summary.get("ai_enabled")
+                       else "按拍摄时间挑")
             return (f"目前收到 {self.photo_count()} 张照片，方案是："
-                    f"留 {self.plan_summary['count']} 张，"
+                    f"去重复后留 {self.plan_summary['count']} 张（{ai_desc}），"
                     f"标签叫\"{self.plan_summary['apply_tag']}\"")
         if self.status == RunStatus.AWAITING_GATE:
             return f"已经选好了 {self.selected_count or 0} 张，等你回复"
@@ -77,6 +79,7 @@ def view_from_run(run: RunState, incoming_root: Path) -> SessionView:
         view.plan_summary = {
             "count": curate.params.get("count"),
             "apply_tag": curate.params.get("apply_tag"),
+            "ai_enabled": curate.params.get("ai_enabled"),
         }
     curate_output = run.outputs.get("Curate")
     if curate_output is not None:

@@ -364,7 +364,7 @@ def test_client_is_armed_only_during_killable_stages(tmp_path):
 
     assert env.client.armed_during["new"] is False       # Ingest 不可杀
     assert env.client.armed_during["dedup"] is True      # Dedup 可杀
-    assert env.client.armed_during["curate"] is False    # Curate 不可杀
+    assert env.client.armed_during["curate"] is True     # Curate 可杀(AI 开时耗时不再恒定)
     assert env.client.cancel_event is None               # 结束后摘除
 
 

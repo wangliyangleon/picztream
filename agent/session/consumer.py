@@ -710,10 +710,16 @@ class SessionConsumer:
             self._prompt_cancel_confirmation()  # LLM 判成取消也要二次确认
             return
         # confirmed：更新参数、重新回显确认，不自动开跑（PLANNED 的存在
-        # 意义就是"改完参数必须再看一眼"，旧拍板保持）。
+        # 意义就是"改完参数必须再看一眼"，旧拍板保持）。ai_enabled/provider
+        # 是全局开关，Dedup/Curate 两份拷贝一起改，不是共享引用。
+        dedup = next(s for s in self.run.plan.stages if s.name == "Dedup")
         curate = next(s for s in self.run.plan.stages if s.name == "Curate")
         curate.params["count"] = reply.count
         curate.params["apply_tag"] = reply.apply_tag
+        curate.params["ai_enabled"] = reply.ai_enabled
+        curate.params["provider"] = reply.provider
+        dedup.params["ai_enabled"] = reply.ai_enabled
+        dedup.params["provider"] = reply.provider
         self.store.save(self.run)
         self.view.plan_summary = self._current_plan_params(self.run)
         self._send_plan_confirmation(self.run)
@@ -1048,12 +1054,16 @@ class SessionConsumer:
         return {
             "count": curate.params["count"],
             "apply_tag": curate.params["apply_tag"],
+            "ai_enabled": curate.params.get("ai_enabled", False),
+            "provider": curate.params.get("provider", "local"),
         }
 
     def _send_plan_confirmation(self, run: RunState) -> None:
         curate = next(s for s in run.plan.stages if s.name == "Curate")
+        ai_desc = ("AI 帮你从相似照片里挑更好的" if curate.params.get("ai_enabled")
+                   else "按拍摄时间挑")
         self._send_buttons(
-            f"理解你想：去重复后留 {curate.params['count']} 张，"
+            f"理解你想：去重复后留 {curate.params['count']} 张（{ai_desc}），"
             f"标签叫\"{curate.params['apply_tag']}\"，对吗？"
             "\n满意就点\"好的\"，想改直接打字说",
             _CONFIRM_BUTTONS,

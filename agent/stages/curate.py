@@ -21,12 +21,16 @@ class CurateStage:
         apply_tag = params.get("apply_tag", "精选")
         exclude = params.get("exclude", [])
 
+        args = [
+            "curate", ctx.project_id,
+            "--count", str(count + len(exclude)),
+            "--apply-tag", apply_tag,
+        ]
+        if params.get("ai_enabled", False):
+            args += ["--ai", "--provider", params.get("provider", "local")]
+
         try:
-            result = self.client.call(
-                "curate", ctx.project_id,
-                "--count", str(count + len(exclude)),
-                "--apply-tag", apply_tag,
-            )
+            result = self.client.call(*args)
             # pzt curate --apply-tag 无条件给拿到的每一张候选打标(包括
             # 多要的 len(exclude) 张、以及要被换掉的那几张)，过滤裁剪
             # 之后必须重新收口标签状态：不能指望 --apply-tag 自己做对。

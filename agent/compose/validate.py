@@ -33,6 +33,20 @@ def validate_plan(plan: Plan) -> Plan:
 
     by_name = {s.name: s for s in plan.stages}
 
+    for stage_name in ("Dedup", "Curate"):
+        ai_enabled = by_name[stage_name].params.get("ai_enabled")
+        if not isinstance(ai_enabled, bool):
+            raise ValidationError(
+                f"bad_{stage_name.lower()}_ai_enabled",
+                f"{stage_name}.params['ai_enabled'] must be a bool, got {ai_enabled!r}",
+            )
+        provider = by_name[stage_name].params.get("provider")
+        if provider not in _VALID_PROVIDERS:
+            raise ValidationError(
+                f"bad_{stage_name.lower()}_provider",
+                f"{stage_name}.params['provider'] must be one of {_VALID_PROVIDERS}, got {provider!r}",
+            )
+
     count = by_name["Curate"].params.get("count")
     # bool 是 int 的子类(isinstance(True, int) 为真)，模型如果回
     # true/false 混进 count 字段要单独拦住，不能被 isinstance(count, int)

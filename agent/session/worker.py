@@ -7,10 +7,10 @@ stage 边界 save 就是断点续跑检查点），交接靠"落盘 + 事件"，
 对象——consumer 收到事件后要读 run 就自己重新 load。
 
 取消：cancel_event 在 stage 边界（推进循环每轮开头）必查；可杀 stage
-（Dedup，仅有的分钟级子进程）advance 前把事件挂到 worker 专属的 client
-实例上，PztCancelledError 从 stage.run/driver.advance 一路穿透到这里
-（它不是 PztCommandError，stages 吞不掉），统一走 CANCELLED 收尾。其余
-stage 秒级，跑完为止。
+（Dedup/Curate，AI 开时可能跑到分钟级）advance 前把事件挂到 worker 专属
+的 client 实例上，PztCancelledError 从 stage.run/driver.advance 一路穿
+透到这里（它不是 PztCommandError，stages 吞不掉），统一走 CANCELLED 收
+尾。其余 stage 秒级，跑完为止。
 
 step() 单步驱动是测试口径，线程只是 run() 这层薄壳。
 """
@@ -44,7 +44,7 @@ from session.protocol import (
 
 _log = logging.getLogger("pzt.agent.worker")
 
-KILLABLE_STAGES = ("Dedup",)
+KILLABLE_STAGES = ("Dedup", "Curate")
 
 
 class SessionWorker:

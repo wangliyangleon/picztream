@@ -33,6 +33,21 @@ def test_curate_fresh_run_calls_curate_then_retags_final_selection():
     assert output.data["returned"] == 2
 
 
+def test_curate_with_ai_enabled_appends_ai_and_provider_flags():
+    call_log = []
+    client = _make_client({"curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"], '
+                                      '"ai_fallback_count": 0}',
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": 2, "apply_tag": "精选", "ai_enabled": True, "provider": "gemini"})
+
+    assert call_log[0] == ["/fake/pzt", "curate", "proj-1", "--count", "2", "--apply-tag", "精选",
+                            "--ai", "--provider", "gemini", "--json"]
+    assert output.ok is True
+
+
 def test_curate_maps_command_failure_to_stage_failure():
     def fake_runner(argv):
         return subprocess.CompletedProcess(argv, 1, stdout="", stderr='{"error": "usage", "message": "x"}\n')

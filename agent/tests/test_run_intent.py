@@ -61,8 +61,9 @@ def test_intent_run_adjustment_reruns_only_curate_and_deliver(tmp_path):
     # 用。
     plan = validate_plan(Plan(stages=[
         StageSpec(name="Ingest", params={"folder": str(tmp_path / "in")}),
-        StageSpec(name="Dedup"),
-        StageSpec(name="Curate", params={"count": 1, "apply_tag": "精选"}),
+        StageSpec(name="Dedup", params={"ai_enabled": False, "provider": "local"}),
+        StageSpec(name="Curate", params={"count": 1, "apply_tag": "精选",
+                                          "ai_enabled": False, "provider": "local"}),
         StageSpec(name="Style", params={"provider": "gemini"}, gate="required"),
         StageSpec(name="StyleApplyAll", gate="required"),
         StageSpec(name="Deliver", params={"out_folder": str(tmp_path / "out")}),

@@ -130,7 +130,7 @@ def test_classify_gate_reply_unknown_action_raises(monkeypatch):
 
 
 def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monkeypatch):
-    current_params = {"count": 9, "apply_tag": "精选"}
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 
     reply = refine_plan_confirmation(
         "帮我选几张发朋友圈", current_params, "不对",
@@ -142,7 +142,7 @@ def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monke
 
 
 def test_refine_plan_confirmation_merges_specific_correction_and_keeps_the_rest(monkeypatch):
-    current_params = {"count": 9, "apply_tag": "精选"}
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 
     reply = refine_plan_confirmation(
         "帮我选几张发朋友圈", current_params, "改成6张",
@@ -152,10 +152,27 @@ def test_refine_plan_confirmation_merges_specific_correction_and_keeps_the_rest(
     assert reply.action == "confirmed"
     assert reply.count == 6
     assert reply.apply_tag == "精选"          # 用户没提，保留原值
+    assert reply.ai_enabled is False          # 用户没提，保留原值
+    assert reply.provider == "local"          # 用户没提，保留原值
+
+
+def test_refine_plan_confirmation_merges_ai_enabled_and_provider_and_keeps_the_rest(monkeypatch):
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "AI帮我选，换成gemini",
+        http_post=_fake_http_post({"action": "confirmed", "ai_enabled": True, "provider": "gemini"}),
+    )
+
+    assert reply.action == "confirmed"
+    assert reply.ai_enabled is True
+    assert reply.provider == "gemini"
+    assert reply.count == 9                   # 用户没提，保留原值
+    assert reply.apply_tag == "精选"          # 用户没提，保留原值
 
 
 def test_refine_plan_confirmation_unknown_action_raises(monkeypatch):
-    current_params = {"count": 9, "apply_tag": "精选"}
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 
     with pytest.raises(AdjustmentError) as exc_info:
         refine_plan_confirmation(
@@ -175,7 +192,7 @@ def test_classify_gate_reply_recognizes_a_status_query(monkeypatch):
 
 
 def test_refine_plan_confirmation_recognizes_a_status_query(monkeypatch):
-    current_params = {"count": 9, "apply_tag": "精选"}
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 
     reply = refine_plan_confirmation(
         "帮我选几张发朋友圈", current_params, "你收到几张图片了？",
@@ -186,7 +203,7 @@ def test_refine_plan_confirmation_recognizes_a_status_query(monkeypatch):
 
 
 def test_refine_plan_confirmation_recognizes_natural_language_approval(monkeypatch):
-    current_params = {"count": 9, "apply_tag": "精选"}
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 
     reply = refine_plan_confirmation(
         "帮我选几张发朋友圈", current_params, "好的，处理吧",
@@ -197,7 +214,7 @@ def test_refine_plan_confirmation_recognizes_natural_language_approval(monkeypat
 
 
 def test_refine_plan_confirmation_recognizes_natural_language_rejection(monkeypatch):
-    current_params = {"count": 9, "apply_tag": "精选"}
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 
     reply = refine_plan_confirmation(
         "帮我选几张发朋友圈", current_params, "算了不用了",
