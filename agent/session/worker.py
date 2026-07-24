@@ -275,7 +275,23 @@ class SessionWorker:
 
     def _prepare_gate_payload(self, run: RunState, stage: str) -> dict:
         if stage == "Style":
-            return {}
+            # 阶段一：真正筛选过（不是"不筛选了"passthrough）才有选片结果
+            # 可展示；确认了才问风格（真机反馈：选片确认放在滤镜之前，
+            # Deliver 也不再挂闸门二次预览，见 consumer.py 决策同批改动）。
+            curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
+            if curate_spec.params.get("count") is None:
+                return {}
+            curate_output = run.outputs.get("Curate")
+            selected = curate_output.data.get("selected", []) if curate_output else []
+            payload = {"selected_count": len(selected), "preview_failed_count": 0, "export_error": None}
+            if not selected:
+                return payload
+            export_error = self._export_previews(run, selected)
+            if export_error is not None:
+                payload["export_error"] = export_error
+                return payload
+            payload["preview_failed_count"] = self._send_preview_media(run, selected, numbered=True)
+            return payload
         if stage == "StyleApplyAll":
             style_output = run.outputs.get("Style")
             chosen = style_output.data.get("chosen_recipe") if style_output else None
@@ -296,25 +312,7 @@ class SessionWorker:
             tagged = dedup_output.data.get("tagged", 0) if dedup_output else 0
             curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
             return {"remaining": total - tagged, "ai_enabled": curate_spec.params.get("ai_enabled", False)}
-        # 默认闸门（当前只有 Deliver）：Curate 选片预览
-        curate_output = run.outputs.get("Curate")
-        selected = curate_output.data.get("selected", []) if curate_output else []
-        style_output = run.outputs.get("StyleApplyAll")
-        applied = style_output.data.get("applied", {}) if style_output else {}
-        payload = {
-            "selected_count": len(selected),
-            "applied_recipe": next(iter(applied.values())) if applied else None,
-            "preview_failed_count": 0,
-            "export_error": None,
-        }
-        if not selected:
-            return payload
-        export_error = self._export_previews(run, selected)
-        if export_error is not None:
-            payload["export_error"] = export_error
-            return payload
-        payload["preview_failed_count"] = self._send_preview_media(run, selected, numbered=True)
-        return payload
+        return {}  # Deliver 不挂闸门，这里理论上不会被调用；留一个安全兜底
 
     def _export_previews(self, run: RunState, selected: list) -> "str | None":
         # selected 是项目 root_path 相对路径，必须先过一次 export-images

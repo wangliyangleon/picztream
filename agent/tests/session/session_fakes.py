@@ -244,7 +244,8 @@ def worker_saves_curate_followup_gate(env: "ConsumerEnv", run_id: str,
 
 def make_fixed_plan(incoming_dir: str, out_folder: str) -> Plan:
     # 形状对齐 router 侧 _propose_plan 的注入结果：Ingest folder、Deliver
-    # out_folder + required 闸门、Style/StyleApplyAll required 闸门。
+    # out_folder；Style/StyleApplyAll required 闸门，Deliver 不挂闸门（真机
+    # 反馈：滤镜确认完直接交付，选片确认挪到 Style 闸门阶段一）。
     return Plan(stages=[
         StageSpec(name="Ingest", params={"folder": incoming_dir}),
         StageSpec(name="Dedup", params={"ai_enabled": False, "provider": "local"}),
@@ -252,7 +253,7 @@ def make_fixed_plan(incoming_dir: str, out_folder: str) -> Plan:
                                           "ai_enabled": False, "provider": "local"}),
         StageSpec(name="Style", params={"provider": "local"}, gate="required"),
         StageSpec(name="StyleApplyAll", gate="required"),
-        StageSpec(name="Deliver", params={"out_folder": out_folder}, gate="required"),
+        StageSpec(name="Deliver", params={"out_folder": out_folder}),
     ])
 
 

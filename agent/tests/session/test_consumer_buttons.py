@@ -190,6 +190,12 @@ def test_callback_during_drive_is_treated_as_stale(tmp_path):
 def test_style_ask_gate_has_no_buttons(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
+    # 阶段一（选片确认）只在真正筛选过（count 不是 None）时触发；这条测
+    # 试要测的是阶段二（问风格），把 count 设成 None 模拟"已经过了阶段
+    # 一/passthrough"，直接进阶段二（真机反馈：选片确认挪到滤镜之前）。
+    run = env.store.load(job.run_id)
+    next(s for s in run.plan.stages if s.name == "Curate").params["count"] = None
+    env.store.save(run)
     worker_saves_gate(env, job.run_id, "Style")
     before = len(env.transport.sent_buttons)
     env.put_event(GateReached(0, job.run_id, "Style", {}))
@@ -198,6 +204,56 @@ def test_style_ask_gate_has_no_buttons(tmp_path):
     # 问描述是开放式，纯文本，不挂任何按钮
     assert len(env.transport.sent_buttons) == before
     assert "想要什么风格？用一句话描述就行，比如\"复古暖色调\"" in env.transport.texts()
+
+
+def test_style_selection_confirm_gate_has_buttons(tmp_path):
+    # 对照：真正筛选过（count 不是 None）时，阶段一的选片确认带按钮。
+    env = make_consumer(tmp_path)
+    job = to_running(env)  # bare_compose_plan 的 Curate.count=2
+    worker_saves_gate(env, job.run_id, "Style")
+
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
+    env.consumer.step()
+
+    assert env.transport.button_tokens() == ["approve", "restyle"]
+    assert not any("想要什么风格" in t for t in env.transport.texts())
+
+
+def test_approve_button_at_selection_confirm_asks_style_next(tmp_path):
+    # 阶段一"满意" -> 确认选片完，问风格（真机反馈：选片确认放在滤镜之
+    # 前），不是 resolve_gate（Style 还没跑）。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
+    env.consumer.step()
+    assert env.consumer._pending_selection_approval is True
+
+    env.push_callback(f"approve:{job.run_id}")
+    env.consumer.step()
+
+    assert "想要什么风格？用一句话描述就行，比如\"复古暖色调\"" in env.transport.texts()
+    assert env.consumer._pending_selection_approval is False
+    assert env.drain_jobs() == []  # 只是问风格，不触发任何 drive
+
+
+def test_restyle_button_at_selection_confirm_prompts_for_adjustment(tmp_path):
+    # 阶段一"重选"问的是"想怎么调整"（选片），跟 StyleApplyAll 的"重选"
+    # （问风格）是同一个按钮 token、不同文案。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
+    env.consumer.step()
+
+    env.push_callback(f"restyle:{job.run_id}")
+    env.consumer.step()
+
+    assert "想怎么调整？直接打字告诉我，比如\"换掉第3张\"、\"留5张\"" in env.transport.texts()
+    assert env.drain_jobs() == []
 
 
 def test_degrades_to_plain_text_without_send_buttons_capability(tmp_path):

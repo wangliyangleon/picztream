@@ -143,6 +143,10 @@ class SessionConsumer:
         # 去重追问打字给了数量后，等用户确认才真正执行——纯内存态、不落
         # 盘，跟 _cancel_confirm_pending 同一个先例（真机反馈，见目标三）。
         self._curate_narrow_pending: Optional[dict] = None
+        # Style 闸门拆两阶段：先确认选片结果（真正筛选过才有），再问风格
+        # 描述。True＝还在等选片确认，此时打字/按钮走 gate_reply 语义
+        # （真机反馈：选片确认要放在滤镜之前）。
+        self._pending_selection_approval: bool = False
 
     # -- 生命周期 --
 
@@ -355,8 +359,14 @@ class SessionConsumer:
                     pending, self._curate_narrow_pending = self._curate_narrow_pending, None
                     self._enqueue_drive("rerun_curate", self.run.run_id, {"params": pending})
                     return
-                # StyleApplyAll 预览确认、Deliver 选图确认都是"批准即推进"。
-                # Style 问描述那步没有批准按钮，不会走到这里。
+                if self._pending_selection_approval:
+                    # Style 闸门阶段一：选片确认完，问风格（真机反馈：选片
+                    # 确认放在滤镜之前）。
+                    self._pending_selection_approval = False
+                    self._ask_style_description()
+                    return
+                # StyleApplyAll 预览确认是"批准即推进"。Style 问描述那步没
+                # 有批准按钮，不会走到这里。
                 self._enqueue_drive("resolve_gate", self.run.run_id)
                 return
         if action == _BTN_SKIP_CURATE and self.run.status == RunStatus.AWAITING_GATE:
@@ -385,7 +395,8 @@ class SessionConsumer:
             return
         if action == _BTN_RESTYLE and self.run.status == RunStatus.AWAITING_GATE:
             # 重选：不带新内容，提示用户打字说想怎么改，下一条文字走既有路径
-            # （StyleApplyAll -> rerun_style 换风格；Deliver -> gate_reply 调整）。
+            # （StyleApplyAll -> rerun_style 换风格；Style 阶段一(选片确认)
+            # -> gate_reply 调整）。
             gate = self.view.gate_stage or (
                 self.run.gate_state.stage_name if self.run.gate_state else None)
             if gate == "StyleApplyAll":
@@ -438,6 +449,7 @@ class SessionConsumer:
         self._cancel_confirm_pending = False
         self._collecting_progress = None  # 进度消息槽随会话重置（AG-16.3）
         self._curate_narrow_pending = None
+        self._pending_selection_approval = False
 
     # -- 文本串行处理 --
 
@@ -477,8 +489,14 @@ class SessionConsumer:
             if gate_stage is None and self.run.gate_state is not None:
                 gate_stage = self.run.gate_state.stage_name
             if gate_stage == "Style":
-                # 问描述那步：交 style_describe 分类器判 describe/skip/cancel/query
-                # （AG-01/AG-02）。不再把"算了不弄了"/"有哪些风格"当风格描述。
+                if self._pending_selection_approval:
+                    # 阶段一：确认/调整选片结果，跟原来 Deliver 闸门同一套
+                    # 分类器（真机反馈：选片确认放在滤镜之前）。
+                    self._submit_classify("gate_reply", text, {"run_id": self.run.run_id})
+                    return
+                # 阶段二：问描述那步，交 style_describe 分类器判
+                # describe/skip/cancel/query（AG-01/AG-02）。不再把"算了不
+                # 弄了"/"有哪些风格"当风格描述。
                 self._submit_classify("style_describe", text, {"run_id": self.run.run_id})
                 return
             if gate_stage == "StyleApplyAll":
@@ -762,10 +780,14 @@ class SessionConsumer:
                                           reply.ai_enabled, reply.provider)
 
     def _on_gate_reply(self, reply: Any) -> None:
+        # 现在只服务 Style 闸门的阶段一（选片确认，真机反馈挪到滤镜之前）—
+        # Deliver 不再挂闸门，approve 不再是"resolve_gate"，是"选片确认完，
+        # 问风格"。
         if self.run is None or self.run.status != RunStatus.AWAITING_GATE:
             return
         if reply.action == "approve":
-            self._enqueue_drive("resolve_gate", self.run.run_id)
+            self._pending_selection_approval = False
+            self._ask_style_description()
             return
         if reply.action == "reject":
             self._prompt_cancel_confirmation()  # LLM 判成取消也要二次确认
@@ -816,13 +838,13 @@ class SessionConsumer:
         if inflight is None or self.run is None or self.run.status != RunStatus.COLLECTING:
             return
         plan = event.plan
-        # 参数注入对齐旧 _propose_plan：Ingest 收图目录、Deliver 目的地 +
-        # 必选闸门（两段式交付的关键决定）。
+        # 参数注入对齐旧 _propose_plan：Ingest 收图目录、Deliver 目的地。
+        # Deliver 不挂闸门（真机反馈：滤镜确认完直接交付，不再二次预览全部
+        # 选片），选片确认已经挪到 Style 闸门的阶段一。
         ingest_spec = next(s for s in plan.stages if s.name == "Ingest")
         deliver_spec = next(s for s in plan.stages if s.name == "Deliver")
         ingest_spec.params["folder"] = str(incoming_dir_for(self.incoming_root, self.run.run_id))
         deliver_spec.params["out_folder"] = str(self.deliver_out_folder)
-        deliver_spec.gate = "required"
         run = self.run
         run.plan = plan
         run.stage_states = {s.name: StageStatus.PENDING for s in plan.stages}
@@ -860,29 +882,26 @@ class SessionConsumer:
         self._touch_activity()
         payload = event.payload
         if event.stage == "Style":
-            # 问描述是开放式，只能打字，不挂按钮。
             if payload.get("match_failed"):
                 # 上一句描述没匹配上任何 preset：原地重问，不报废整批（AG-01）。
                 self._send("没能选出对应的风格，换个说法再说说？比如\"复古暖色调\"、"
                            "\"黑白胶片\"；不想套滤镜就说\"原图就行\"")
                 return
-            style_spec = next((s for s in run.plan.stages if s.name == "Style"), None)
-            prev = style_spec.params.get("style_description") if style_spec else None
-            if prev is not None:
-                # 调整选片后 Style 被 apply_adjustment 连带重置，但风格早已答过
-                # （style_description key 只有答过才有）：不重问，按上次的重套
-                # 用（AG-04）。想换仍可在 StyleApplyAll 预览闸门重选。
-                self._send(f"还按「{prev}」重新套用" if prev.strip() else "这批还是不套滤镜，用原图～")
-                self._enqueue_drive("rerun_style", run.run_id, {"style_description": prev})
+            curate = next(s for s in run.plan.stages if s.name == "Curate")
+            if curate.params.get("count") is not None:
+                # 真正筛选过（不是"不筛选了"passthrough）：先确认/调整选片
+                # 结果，确认了才问风格（真机反馈：选片确认放在滤镜之前，
+                # 不然到滤镜那一步才发现选片不对就晚了）。
+                self._pending_selection_approval = True
+                self._render_selection_confirm_gate(payload)
                 return
-            self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
+            self._pending_selection_approval = False
+            self._ask_style_description()
             return
         if event.stage == "Curate":
             self._render_dedup_followup_gate(payload)
         elif event.stage == "StyleApplyAll":
             self._render_style_apply_all_gate(payload)
-        else:
-            self._render_deliver_gate(payload)
 
     def _render_dedup_followup_gate(self, payload: dict) -> None:
         ai_enabled = payload.get("ai_enabled", False)
@@ -898,10 +917,10 @@ class SessionConsumer:
     def _render_style_apply_all_gate(self, payload: dict) -> None:
         chosen = payload.get("chosen_recipe")
         if not chosen:
-            # 无风格（用户选了原图直出）：没有预览可确认，直接推进到交付闸门。
-            # 匹配失败现在已在 Style 闸门就拦下重问，这里 chosen=None 只可能是
-            # skip（AG-16.1）。
-            self._send("这批不套滤镜，直接看选片吧")
+            # 无风格（用户选了原图直出）：没有预览可确认，直接推进到交付
+            # （Deliver 不再挂闸门，批准即直接发文件）。匹配失败现在已在
+            # Style 闸门就拦下重问，这里 chosen=None 只可能是 skip（AG-16.1）。
+            self._send("这批不套滤镜，直接交付了")
             self._enqueue_drive("resolve_gate", self.run.run_id)
             return
         if payload.get("export_error"):
@@ -913,16 +932,19 @@ class SessionConsumer:
                            "想换风格点\"重选\"或直接打字描述",
                            _STYLE_APPLY_ALL_BUTTONS)
 
-    def _render_deliver_gate(self, payload: dict) -> None:
+    def _ask_style_description(self) -> None:
+        self._send("想要什么风格？用一句话描述就行，比如\"复古暖色调\"")
+
+    def _render_selection_confirm_gate(self, payload: dict) -> None:
+        # 选片确认（真机反馈：挪到滤镜之前），这一步风格还没套，不提
+        # "已套用风格"。
         if payload.get("export_error"):
             self._send(f"预览导出失败：{payload['export_error']}")
             return
         summary = f"选好了 {payload.get('selected_count', 0)} 张"
-        if payload.get("applied_recipe"):
-            summary += f"，已套用风格「{payload['applied_recipe']}」"
         if payload.get("preview_failed_count"):
-            summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，交付时仍会正常导出)"
-        summary += "，满意点\"满意\"，想调整点\"重选\"或直接打字说"
+            summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，风格/交付时仍会正常导出)"
+        summary += "，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
         self._send_buttons(summary, _DELIVER_BUTTONS)
 
     def _on_run_finished(self, event: RunFinished) -> None:

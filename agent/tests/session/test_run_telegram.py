@@ -172,16 +172,18 @@ def test_two_thread_end_to_end_smoke(tmp_path):
         # 意图 -> collecting 分类(intent) -> compose -> PLANNED 确认(带按钮)
         assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="筛一下留2张"),
                      lambda: any("理解你想" in t for t in transport.texts()))
-        # 点"好的"按钮 -> begin_running -> drive 到 Style 闸门
+        # 点"好的"按钮 -> begin_running -> drive 到 Style 闸门阶段一（选片确
+        # 认，真机反馈挪到滤镜之前）
+        assert pump(approve_callback(),
+                     lambda: any("选好了 2 张" in t for t in transport.texts()))
+        # 点"满意"按钮 -> 阶段一确认完，问风格
         assert pump(approve_callback(),
                      lambda: any("想要什么风格" in t for t in transport.texts()))
         # 打字给描述 -> StyleApplyAll 预览闸门
         assert pump(InboundMessage(kind="text", chat_id=CHAT_ID, text="复古暖色调"),
                      lambda: any("套用的效果" in t for t in transport.texts()))
-        # 点"满意"按钮 -> resolve -> Deliver 闸门
-        assert pump(approve_callback(),
-                     lambda: any("选好了 2 张" in t for t in transport.texts()))
-        # 点"满意"按钮 -> deliver -> 完成（Deliver stage 自己发文件）
+        # 点"满意"按钮 -> resolve -> Deliver 不挂闸门，直接交付到底（Deliver
+        # stage 自己发文件）
         assert pump(approve_callback(),
                      lambda: any(kind == "file" for kind, _ in transport.log))
         assert _wait_until(lambda: consumer.store.list_active() == [])

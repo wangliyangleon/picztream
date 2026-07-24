@@ -178,7 +178,9 @@ def test_drive_start_runs_to_style_gate(tmp_path):
     gate = events[-1]
     assert isinstance(gate, GateReached)
     assert gate.stage == "Style"
-    assert gate.payload == {}
+    # make_fixed_plan 的 Curate.count=2（真正筛选过），阶段一先给选片预览
+    # payload（真机反馈：选片确认放在滤镜之前）。
+    assert gate.payload == {"selected_count": 2, "preview_failed_count": 0, "export_error": None}
     assert env.store.load(run.run_id).status == RunStatus.AWAITING_GATE
 
 
@@ -187,6 +189,8 @@ def _started_stages(events):
 
 
 def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
+    # 真机反馈：选片确认挪到 Style 闸门的阶段一（滤镜之前），Deliver 不
+    # 再挂闸门二次预览全部选片，StyleApplyAll 批准后直接交付到底。
     env = make_worker(tmp_path)
     run = env.make_running_run()
     env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
@@ -195,6 +199,14 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     # 跑到 Style 闸门停下：只发真运行过的 stage，不发被闸门挡住的 Style（AG-05）。
     started = _started_stages(events)
     assert started == ["Ingest", "Dedup", "Curate"]
+    gate = events[-1]
+    assert isinstance(gate, GateReached)
+    assert gate.stage == "Style"
+    # make_fixed_plan 的 Curate.count=2（真正筛选过），阶段一先给选片预览。
+    assert gate.payload == {"selected_count": 2, "preview_failed_count": 0, "export_error": None}
+    assert len(env.transport.sent_photos) == 2  # 选片预览
+    # 选片预览逐张带"第 N 张"编号（AG-15）。
+    assert env.transport.sent_photo_captions == ["第 1 张", "第 2 张"]
 
     # Style 闸门收到描述 -> rerun_style -> 停在 StyleApplyAll 预览闸门
     env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
@@ -209,60 +221,19 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     assert gate.payload["chosen_recipe"] == "Havana 1959"
     assert gate.payload["preview_sent"] is True
     assert gate.payload["export_error"] is None
-    assert len(env.transport.sent_photos) == 1  # 代表图预览
+    assert len(env.transport.sent_photos) == 3  # +1 代表图预览
 
-    # 确认风格 -> resolve_gate 跑 StyleApplyAll -> 停在 Deliver 闸门(带选片预览)
+    # 确认风格 -> resolve_gate 跑 StyleApplyAll -> Deliver 不挂闸门，同一次
+    # step() 里直接跑到底、真正交付。
     env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
     env.step()
     events = env.drain_events()
-    # 放行后才跑 StyleApplyAll，发 StageStarted(StyleApplyAll)；Deliver 停闸门不发。
-    assert _started_stages(events) == ["StyleApplyAll"]
-    gate = events[-1]
-    assert isinstance(gate, GateReached)
-    assert gate.stage == "Deliver"
-    assert gate.payload["selected_count"] == 2
-    assert gate.payload["applied_recipe"] == "Havana 1959"
-    assert gate.payload["preview_failed_count"] == 0
-    assert len(env.transport.sent_photos) == 3  # 又发了 2 张选片预览
-    # Deliver 选片预览逐张带"第 N 张"编号（AG-15）；StyleApplyAll 单张代表图不编号。
-    assert env.transport.sent_photo_captions == [None, "第 1 张", "第 2 张"]
-
-    # 确认交付 -> Deliver 真正执行(stage 自己发文件) -> AWAITING_REVIEW 自动 approve
-    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
-    env.step()
-    events = env.drain_events()
-    # "正在交付..."(StageStarted(Deliver)) 出现在批准之后、RunFinished 之前（AG-05）。
-    assert _started_stages(events) == ["Deliver"]
-    assert isinstance(events[0], StageStarted) and events[0].stage == "Deliver"
+    assert _started_stages(events) == ["StyleApplyAll", "Deliver"]
     finished = events[-1]
     assert isinstance(finished, RunFinished)
     assert finished.status == "done"
     assert len(env.transport.sent_files) == 2
     assert env.store.load(run.run_id).status == RunStatus.DONE
-
-
-def test_gated_deliver_stage_started_fires_after_gate_not_before(tmp_path):
-    # AG-05 聚焦：走到 Deliver 闸门时不应发 StageStarted(Deliver)，放行后才发。
-    env = make_worker(tmp_path)
-    run = env.make_running_run()
-    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
-    env.step()
-    env.drain_events()
-    env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
-                           args={"style_description": "复古暖色调"}))
-    env.step()
-    env.drain_events()
-    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
-    env.step()
-    reached_deliver_gate = env.drain_events()
-    assert "Deliver" not in _started_stages(reached_deliver_gate)  # 停在闸门，没"正在交付..."
-    assert isinstance(reached_deliver_gate[-1], GateReached)
-    assert reached_deliver_gate[-1].stage == "Deliver"
-
-    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
-    env.step()
-    after_approve = env.drain_events()
-    assert "Deliver" in _started_stages(after_approve)  # 批准后才发
 
 
 def test_preview_send_total_failure_emits_ordered_placeholder(tmp_path):
@@ -291,16 +262,17 @@ def test_preview_send_total_failure_emits_ordered_placeholder(tmp_path):
 
 def test_deliver_export_failure_fails_run(tmp_path):
     # AG-06：交付 export-images 失败 = run FAILED（而非旧的 optional 吞成
-    # SKIPPED -> DONE -> 误报"这批就处理完啦"）。Style/StyleApplyAll 只用
-    # recipe apply 不用 export-images，所以让所有 export-images 失败只会让
-    # 预览在闸门 payload 里降级为 export_error，不挡路，最终真正卡在 Deliver。
+    # SKIPPED -> DONE -> 误报"这批就处理完啦"）。Style/StyleApplyAll 的闸门
+    # 预览也调 export-images，但预览失败只降级成 payload 里的 export_error
+    # （不挡路，见 _prepare_gate_payload）；真正致命的是 Deliver stage 自
+    # 己 run() 里的 export-images 调用。Deliver 不挂闸门，批准 StyleApplyAll
+    # 后同一个 resolve_gate 就直接跑到 Deliver 失败。
     env = make_worker(tmp_path, client=FakeClient(raise_command_on=("export-images",)))
     run = env.make_running_run()
     for action, args in [
         ("start", {}),
         ("rerun_style", {"style_description": "复古暖色调"}),
-        ("resolve_gate", {}),  # 放行 StyleApplyAll -> 停 Deliver 闸门
-        ("resolve_gate", {}),  # 放行 Deliver -> 真正交付, export 失败
+        ("resolve_gate", {}),  # 放行 StyleApplyAll -> Deliver 直接跑, export 失败
     ]:
         env.put_drive(DriveJob(generation=1, action=action, run_id=run.run_id, args=args))
         env.step()
@@ -440,6 +412,43 @@ def test_prepare_gate_payload_curate_surfaces_ai_enabled(tmp_path):
     payload = env.worker._prepare_gate_payload(run, "Curate")
 
     assert payload == {"remaining": 6, "ai_enabled": True}
+
+
+def test_prepare_gate_payload_style_empty_when_curate_passthrough(tmp_path):
+    # 真机反馈：passthrough（count=None，没有真正筛选）时 Style 闸门不用
+    # 展示选片结果，直接问风格——payload 应该是空的，不触发预览导出。
+    env = make_worker(tmp_path)
+    plan = Plan(stages=[StageSpec(name="Ingest"),
+                        StageSpec(name="Curate", params={"count": None}),
+                        StageSpec(name="Style", gate="required")])
+    run = RunState(
+        run_id="r1", project_id="r1", plan=plan,
+        stage_states={"Ingest": StageStatus.DONE, "Curate": StageStatus.DONE,
+                      "Style": StageStatus.PENDING},
+        outputs={"Curate": StageOutput(ok=True, data={"selected": ["a.jpg", "b.jpg"]})},
+    )
+
+    payload = env.worker._prepare_gate_payload(run, "Style")
+
+    assert payload == {}
+
+
+def test_prepare_gate_payload_style_shows_selection_when_curate_narrowed(tmp_path):
+    env = make_worker(tmp_path)
+    plan = Plan(stages=[StageSpec(name="Ingest"),
+                        StageSpec(name="Curate", params={"count": 2}),
+                        StageSpec(name="Style", gate="required")])
+    run = RunState(
+        run_id="r1", project_id="r1", plan=plan,
+        stage_states={"Ingest": StageStatus.DONE, "Curate": StageStatus.DONE,
+                      "Style": StageStatus.PENDING},
+        outputs={"Curate": StageOutput(ok=True, data={"selected": ["a.jpg", "b.jpg"]})},
+    )
+
+    payload = env.worker._prepare_gate_payload(run, "Style")
+
+    assert payload["selected_count"] == 2
+    assert payload["export_error"] is None
 
 
 def _mark_ingest_dedup_done(run, image_count=2, tagged=0):

@@ -89,7 +89,9 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     deliver = next(s for s in run.plan.stages if s.name == "Deliver")
     assert ingest.params["folder"] == str(tmp_path / "incoming" / run.run_id)
     assert deliver.params["out_folder"] == str(tmp_path / "deliver-out")
-    assert deliver.gate == "required"
+    # Deliver 不挂闸门（真机反馈：滤镜确认完直接交付，不再二次预览全部
+    # 选片，选片确认挪到 Style 闸门阶段一）。
+    assert deliver.gate == "off"
     assert "理解你想：去重复后留 2 张（按拍摄时间挑），选中的加个标签\"精选\"，可以吗？" in \
         env.transport.texts()[-1]
 
@@ -360,9 +362,19 @@ def test_stale_generation_events_are_dropped_after_cancel(tmp_path):
     assert env.consumer.view.current_stage is None
 
 
+def _skip_to_style_phase_two(env, job) -> None:
+    # 阶段一（选片确认）只在真正筛选过（count 不是 None）时触发；这些测
+    # 试要测的是阶段二（问风格），把 count 设成 None 模拟"已经过了阶段
+    # 一/passthrough"，直接進阶段二（真机反馈：选片确认挪到滤镜之前）。
+    run = env.store.load(job.run_id)
+    next(s for s in run.plan.stages if s.name == "Curate").params["count"] = None
+    env.store.save(run)
+
+
 def test_gate_style_prompts_then_rerun_with_description(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
+    _skip_to_style_phase_two(env, job)
     worker_saves_gate(env, job.run_id, "Style")
 
     env.put_event(GateReached(0, job.run_id, "Style", {}))
@@ -386,51 +398,11 @@ def test_gate_style_prompts_then_rerun_with_description(tmp_path):
     assert next_job.args == {"style_description": "复古暖色调"}
 
 
-def test_gate_style_reprompt_skipped_when_description_already_answered(tmp_path):
-    # AG-04：Deliver 闸门调整选片会连带把 Style 重置回闸门，但风格早已答过
-    # （style_description 幸存在 spec.params）：不再重问，按上次的自动重套。
-    env = make_consumer(tmp_path)
-    job = to_running(env)
-    run = env.store.load(job.run_id)
-    next(s for s in run.plan.stages if s.name == "Style").params["style_description"] = "复古暖色调"
-    env.store.save(run)
-    worker_saves_gate(env, job.run_id, "Style")
-
-    env.put_event(GateReached(0, job.run_id, "Style", {}))
-    env.consumer.step()
-
-    texts = env.transport.texts()
-    assert not any("想要什么风格" in t for t in texts)
-    assert any("还按「复古暖色调」重新套用" in t for t in texts)
-    [next_job] = env.drain_jobs()
-    assert next_job.action == "rerun_style"
-    assert next_job.args == {"style_description": "复古暖色调"}
-
-
-def test_gate_style_reprompt_skipped_keeps_no_filter_when_previously_skipped(tmp_path):
-    # AG-04 skip 变体：上次选了原图直出（style_description==""），调整选片后
-    # 仍不重问、不套滤镜。
-    env = make_consumer(tmp_path)
-    job = to_running(env)
-    run = env.store.load(job.run_id)
-    next(s for s in run.plan.stages if s.name == "Style").params["style_description"] = ""
-    env.store.save(run)
-    worker_saves_gate(env, job.run_id, "Style")
-
-    env.put_event(GateReached(0, job.run_id, "Style", {}))
-    env.consumer.step()
-
-    assert not any("想要什么风格" in t for t in env.transport.texts())
-    assert any("不套滤镜" in t for t in env.transport.texts())
-    [next_job] = env.drain_jobs()
-    assert next_job.action == "rerun_style"
-    assert next_job.args == {"style_description": ""}
-
-
 def test_gate_style_describe_skip_runs_original_no_filter(tmp_path):
     # AG-16.1：说"原图就行" -> skip -> rerun_style 空描述（chosen_recipe None 空跑）。
     env = make_consumer(tmp_path)
     job = to_running(env)
+    _skip_to_style_phase_two(env, job)
     worker_saves_gate(env, job.run_id, "Style")
     env.put_event(GateReached(0, job.run_id, "Style", {}))
     env.consumer.step()
@@ -449,6 +421,7 @@ def test_gate_style_describe_cancel_prompts_confirmation(tmp_path):
     # AG-02：说"算了不弄了" -> cancel -> 二次确认，而不是被当风格描述。
     env = make_consumer(tmp_path)
     job = to_running(env)
+    _skip_to_style_phase_two(env, job)
     worker_saves_gate(env, job.run_id, "Style")
     env.put_event(GateReached(0, job.run_id, "Style", {}))
     env.consumer.step()
@@ -466,6 +439,7 @@ def test_gate_style_describe_query_lists_presets(tmp_path):
     # AG-16.4 基础版：说"有哪些风格" -> query -> 列出 9 个 preset。
     env = make_consumer(tmp_path)
     job = to_running(env)
+    _skip_to_style_phase_two(env, job)
     worker_saves_gate(env, job.run_id, "Style")
     env.put_event(GateReached(0, job.run_id, "Style", {}))
     env.consumer.step()
@@ -496,6 +470,7 @@ def test_gate_style_describe_classify_failure_falls_back_to_description(tmp_path
     # 分类失败降级为当描述，不卡用户。
     env = make_consumer(tmp_path)
     job = to_running(env)
+    _skip_to_style_phase_two(env, job)
     worker_saves_gate(env, job.run_id, "Style")
     env.put_event(GateReached(0, job.run_id, "Style", {}))
     env.consumer.step()
@@ -515,6 +490,7 @@ def test_style_describe_infra_failure_says_service_down(tmp_path):
     # AG-10：Ollama 挂掉(retryable)时回"AI 连不上", 不误当描述去 rerun_style。
     env = make_consumer(tmp_path)
     job = to_running(env)
+    _skip_to_style_phase_two(env, job)
     worker_saves_gate(env, job.run_id, "Style")
     env.put_event(GateReached(0, job.run_id, "Style", {}))
     env.consumer.step()
@@ -571,15 +547,17 @@ def test_gate_style_apply_all_without_chosen_recipe_auto_proceeds(tmp_path):
 def test_gate_deliver_summary_then_llm_adjustment(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
-    worker_saves_gate(env, job.run_id, "Deliver")
+    # bare_compose_plan 的 Curate.count=2（真正筛选过），Style 闸门阶段一
+    # 直接就是这个选片确认（真机反馈：挪到滤镜之前，这一步风格还没套，
+    # 不提"已套用风格"）。
+    worker_saves_gate(env, job.run_id, "Style")
 
-    env.put_event(GateReached(0, job.run_id, "Deliver", {
-        "selected_count": 2, "applied_recipe": "Havana 1959",
-        "preview_failed_count": 0, "export_error": None}))
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
     env.consumer.step()
 
-    assert ("选好了 2 张，已套用风格「Havana 1959」，"
-            "满意点\"满意\"，想调整点\"重选\"或直接打字说") in env.transport.texts()
+    assert ("选好了 2 张，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
+            ) in env.transport.texts()
     assert env.transport.button_tokens() == ["approve", "restyle"]
 
     env.push_text("换掉第1张")
@@ -600,10 +578,9 @@ def test_gate_deliver_summary_then_llm_adjustment(tmp_path):
 def test_gate_classify_not_understood_replies_guidance(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
-    worker_saves_gate(env, job.run_id, "Deliver")
-    env.put_event(GateReached(0, job.run_id, "Deliver", {
-        "selected_count": 2, "applied_recipe": None,
-        "preview_failed_count": 0, "export_error": None}))
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
     env.consumer.step()
 
     env.push_text("呃呃呃")
@@ -620,10 +597,9 @@ def test_gate_reply_infra_failure_says_service_down(tmp_path):
     # AG-10：闸门回复分类因 Ollama 连不上(retryable)失败 -> "AI 连不上"而非"没听懂"。
     env = make_consumer(tmp_path)
     job = to_running(env)
-    worker_saves_gate(env, job.run_id, "Deliver")
-    env.put_event(GateReached(0, job.run_id, "Deliver", {
-        "selected_count": 2, "applied_recipe": None,
-        "preview_failed_count": 0, "export_error": None}))
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
     env.consumer.step()
 
     env.push_text("留三张吧")
@@ -866,10 +842,9 @@ def test_run_finished_done_sends_batch_wrapup(tmp_path):
 def test_gate_reject_via_llm_prompts_confirmation_not_immediate_cancel(tmp_path):
     env = make_consumer(tmp_path)
     job = to_running(env)
-    worker_saves_gate(env, job.run_id, "Deliver")
-    env.put_event(GateReached(0, job.run_id, "Deliver", {
-        "selected_count": 2, "applied_recipe": None,
-        "preview_failed_count": 0, "export_error": None}))
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(0, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
     env.consumer.step()
 
     env.push_text("这几张都不满意，不想要了")  # 非关键词，走 LLM 分类
