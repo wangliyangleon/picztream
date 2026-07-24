@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
     if (subcommand == "list") return cmd_list(args);
     if (subcommand == "open") return cmd_open(args);
     if (subcommand == "archive") return cmd_archive(args);
+    if (subcommand == "unarchive") return cmd_unarchive(args);
     if (subcommand == "delete") return cmd_delete(args);
     if (subcommand == "rescan") return cmd_rescan(args);
     if (subcommand == "export") return cmd_export(args);

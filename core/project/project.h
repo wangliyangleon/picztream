@@ -74,6 +74,11 @@ Result<ProjectSummary, ProjectNotFoundError> open_project(db::Database& db, Proj
 // 幂等：对已归档项目重复调用只是更新时间戳，不当错误处理。
 Result<void, ProjectNotFoundError> archive_project(db::Database& db, ProjectId id);
 
+// archive_project 的对称逆操作：把 archived_at 清回 NULL。幂等（对未归档项
+// 目重复调用也是成功的 no-op），id 不存在时返回 NotFound——判据跟
+// archive_project 一致（UPDATE 命中 0 行）。
+Result<void, ProjectNotFoundError> unarchive_project(db::Database& db, ProjectId id);
+
 // 级联清除该项目的 images/tags/image_tags（靠 schema 的 ON DELETE CASCADE），
 // 不触碰磁盘上的原始文件。
 Result<void, ProjectNotFoundError> delete_project(db::Database& db, ProjectId id);

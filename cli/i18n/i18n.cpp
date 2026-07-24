@@ -85,6 +85,7 @@ std::string usage_main() {
            "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
            "不显示也不产生这些日志)\n"
            "  pzt archive <project_name>\n"
+           "  pzt unarchive <project_name>\n"
            "  pzt delete <project_name>\n"
            "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
            "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
@@ -104,6 +105,7 @@ std::string usage_main() {
            "q Quit; --debug displays internal logs in an area below the image, "
            "hidden and disabled by default)\n"
            "  pzt archive <project_name>\n"
+           "  pzt unarchive <project_name>\n"
            "  pzt delete <project_name>\n"
            "  pzt rescan <project_name> [--no-prune]  (Clears missing file "
            "records "
@@ -253,6 +255,30 @@ std::string msg_project_archived(const std::string &name) {
     return "已归档项目 '" + name + "'\n";
   } else {
     return "Project '" + name + "' archived\n";
+  }
+}
+
+std::string err_unarchive_missing_name() {
+  if (g_lang == Lang::zh) {
+    return "pzt unarchive: 缺少 <project_name>\n";
+  } else {
+    return "pzt unarchive: missing <project_name>\n";
+  }
+}
+
+std::string err_unarchive_failed(const std::string &name) {
+  if (g_lang == Lang::zh) {
+    return "pzt unarchive: 找不到项目 '" + name + "'\n";
+  } else {
+    return "pzt unarchive: project '" + name + "' not found\n";
+  }
+}
+
+std::string msg_project_unarchived(const std::string &name) {
+  if (g_lang == Lang::zh) {
+    return "已恢复项目 '" + name + "'\n";
+  } else {
+    return "Project '" + name + "' unarchived\n";
   }
 }
 

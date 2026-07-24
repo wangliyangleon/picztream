@@ -121,6 +121,7 @@ std::optional<ProjectId> find_project_by_root_path(const std::string& path);
 Result<ProjectSummary, ProjectNotFoundError> open_project(ProjectId id);
 
 Result<void, ProjectNotFoundError> archive_project(ProjectId id);
+Result<void, ProjectNotFoundError> unarchive_project(ProjectId id);
 
 // F-24 会话续点：记录这个项目上次浏览到的那张图,供 cmd_open 退出时写。
 void set_last_image_id(ProjectId project_id, ImageId image_id);

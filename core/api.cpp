@@ -43,6 +43,11 @@ Result<void, ProjectNotFoundError> archive_project(ProjectId id) {
   return project::archive_project(db, id);
 }
 
+Result<void, ProjectNotFoundError> unarchive_project(ProjectId id) {
+  db::Database db = db::Database::open_default();
+  return project::unarchive_project(db, id);
+}
+
 void set_last_image_id(ProjectId project_id, ImageId image_id) {
   db::Database db = db::Database::open_default();
   project::set_last_image_id(db, project_id, image_id);

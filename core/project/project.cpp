@@ -391,6 +391,19 @@ Result<void, ProjectNotFoundError> archive_project(db::Database& db, ProjectId i
   return Result<void, ProjectNotFoundError>::Ok();
 }
 
+Result<void, ProjectNotFoundError> unarchive_project(db::Database& db, ProjectId id) {
+  sqlite3* conn = db.handle();
+  Stmt stmt(conn, "UPDATE projects SET archived_at = NULL WHERE id = ?;");
+  sqlite3_bind_int64(stmt.get(), 1, id);
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("unarchive failed: ") + sqlite3_errmsg(conn));
+  }
+  if (sqlite3_changes(conn) == 0) {
+    return Result<void, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
+  }
+  return Result<void, ProjectNotFoundError>::Ok();
+}
+
 Result<void, ProjectNotFoundError> delete_project(db::Database& db, ProjectId id) {
   sqlite3* conn = db.handle();
   Stmt stmt(conn, "DELETE FROM projects WHERE id = ?;");

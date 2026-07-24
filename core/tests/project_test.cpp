@@ -12,6 +12,7 @@
 namespace fs = std::filesystem;
 using pzt::core::db::Database;
 using pzt::core::project::archive_project;
+using pzt::core::project::unarchive_project;
 using pzt::core::project::create_project;
 using pzt::core::project::CreateProjectError;
 using pzt::core::project::delete_project;
@@ -311,6 +312,27 @@ TEST_CASE("archive_project sets archived_at and is idempotent") {
   REQUIRE(archive_project(db, created.value()).ok());
 
   auto missing = archive_project(db, created.value() + 999);
+  REQUIRE(!missing.ok());
+  CHECK(missing.error() == ProjectNotFoundError::NotFound);
+}
+
+TEST_CASE("unarchive_project clears archived_at and is idempotent") {
+  auto db = Database::open_at(fresh_db_path("unarchive_project"));
+  auto photos = fresh_photo_dir("unarchive_project");
+  touch(photos / "a.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  REQUIRE(archive_project(db, created.value()).ok());
+  REQUIRE(open_project(db, created.value()).value().archived);
+
+  REQUIRE(unarchive_project(db, created.value()).ok());
+  CHECK(!open_project(db, created.value()).value().archived);
+
+  // Unarchiving an already-unarchived project is a no-op success, not an error.
+  REQUIRE(unarchive_project(db, created.value()).ok());
+
+  auto missing = unarchive_project(db, created.value() + 999);
   REQUIRE(!missing.ok());
   CHECK(missing.error() == ProjectNotFoundError::NotFound);
 }

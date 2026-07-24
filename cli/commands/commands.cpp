@@ -852,6 +852,26 @@ int cmd_archive(const std::vector<std::string>& args) {
   return 0;
 }
 
+int cmd_unarchive(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_unarchive_missing_name().c_str());
+    print_usage();
+    return 1;
+  }
+  const std::string& name = args[0];
+  auto id = pzt::core::find_project_by_name(name);
+  if (!id) {
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found("pzt unarchive", name).c_str());
+    return 1;
+  }
+  if (!pzt::core::unarchive_project(*id).ok()) {
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_unarchive_failed(name).c_str());
+    return 1;
+  }
+  std::printf("%s", pzt::cli::i18n::msg_project_unarchived(name).c_str());
+  return 0;
+}
+
 int cmd_delete(const std::vector<std::string>& args) {
   // 先分离出 flag：--json/--force 走 agent 用的 headless 路径，跳过交互式
   // stdin 确认（AG-14：agent 清扫超龄终态 run 的 pzt 项目需要能 headless
