@@ -114,11 +114,11 @@
       </div>
       <div class="feature">
         <h3>AI 辅助（可选）</h3>
-        <p>看图打分、近似重复检测。本地 Ollama（免配额）或云端 Claude/Gemini，不占核心执行路径。</p>
+        <p>看图点评（文字 + 硬伤标记，不打分）、去重/选片用 AI 锦标赛式两两比较。本地 Ollama（免配额）或云端 Claude/Gemini，不占核心执行路径。</p>
       </div>
       <div class="feature">
         <h3>Telegram agent</h3>
-        <p>发照片 → 一句话说想怎么弄 → 收成品。收图、评分、去重、选片、套风格、交付的半自动闭环。</p>
+        <p>发照片 → 一句话说想怎么弄 → 收成品。收图、按需去重、AI 比较选片、套风格、交付的半自动闭环。</p>
       </div>
     </div>
   </section>
@@ -183,11 +183,11 @@
       <thead><tr><th>字段</th><th>默认</th><th>说明</th></tr></thead>
       <tbody>
         <tr><td class="k"><code>ai_provider</code></td><td class="mono">local</td><td>视觉评估 provider：<code>local</code>（本地 Ollama）/ <code>gemini</code> / <code>claude</code></td></tr>
-        <tr><td class="k"><code>ollama_model</code></td><td class="mono">gemma4:e2b</td><td><b>本地视觉模型名</b>（打分/去重用）；换模型改这里</td></tr>
+        <tr><td class="k"><code>ollama_model</code></td><td class="mono">gemma4:e2b</td><td><b>本地视觉模型名</b>（看图点评/去重-选片比较用）；换模型改这里</td></tr>
         <tr><td class="k"><code>ollama_base_url</code></td><td class="mono">localhost:11434</td><td>本地 Ollama 服务地址</td></tr>
         <tr><td class="k"><code>curate_time_window_seconds</code><br><code>curate_hash_threshold</code></td><td class="mono">20<br>10</td><td>选片分簇的时间窗（秒）与哈希阈值</td></tr>
         <tr><td class="k"><code>dedup_time_window_seconds</code><br><code>dedup_hash_threshold</code></td><td class="mono">10<br>5</td><td>近似重复分簇的时间窗（秒）与哈希阈值</td></tr>
-        <tr><td class="k"><code>auto_ai_reject</code></td><td class="mono">false</td><td>评分任一项不达标就自动打「废片」标签</td></tr>
+        <tr><td class="k"><code>auto_ai_reject</code></td><td class="mono">false</td><td>AI 点评判定有硬伤（unusable）就自动打「废片」标签</td></tr>
         <tr><td class="k"><code>eval_reject</code> / <code>dedup_reject</code><br><code>export_reject</code> / <code>export_dup</code></td><td class="mono">false</td><td>批量操作的默认排除策略开关（改成 true 即「不排除」）</td></tr>
         <tr><td class="k"><code>lang</code></td><td class="mono">跟随系统</td><td>界面语言：<code>zh</code> / <code>en</code></td></tr>
         <tr><td class="k"><code>ui_width_ratio</code></td><td class="mono">0.7</td><td>图片显示宽度占终端的比例</td></tr>
@@ -210,7 +210,7 @@
     <p class="steps">命令行参数（状态目录、各种播报/提醒间隔）用 <code>pzt-agent --help</code> 查，状态默认落在 <code>~/.pzt-agent</code>。</p>
 
     <div class="callout" style="border-left-color: var(--accent2); margin-top: 20px;">
-      <b>两个本地模型是分开的：</b>CLI 的<b>视觉</b>模型（看图打分/去重，<code>config.json</code> 的 <code>ollama_model</code>）
+      <b>两个本地模型是分开的：</b>CLI 的<b>视觉</b>模型（看图点评/去重-选片比较，<code>config.json</code> 的 <code>ollama_model</code>）
       与 agent 的<b>语言</b>模型（意图/风格匹配，<code>PZT_AGENT_OLLAMA_MODEL</code>）各自独立、都可换，默认都是 <code>gemma4:e2b</code>。
     </div>
   </section>
