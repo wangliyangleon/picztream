@@ -17,7 +17,7 @@
 | F-29 | 补 `unarchive` 子命令 | S | 无 | M0 起挂账的对称缺口。core 一个 UPDATE(清 `archived_at`) + cli 一个子命令,对称 `archive`。 |
 | F-27 | 信息栏显示"未标记剩余 N 张" | S | 无 | j/k 工作流的进度感。一条 COUNT 查询 + 一行展示。**别做成每帧全表扫描**(信息栏每帧重画;计数走增量或缓存,跟 F-38 的每帧开销一起权衡)。 |
 | F-47 | 纯 JPEG 大项目导入进度输出 | S | 无 | 逐张读 EXIF(~2ms/张)在千张级要数秒、期间无输出。复用 `ScanProgressFn` 加一档"扫描中 X/N"(与 RAW 缓存进度文案区分)。 |
-| F-43 | 导出路径记忆 | S | 会话内存级无依赖;持久化则接入已有 Settings | `e`/`g e` 路径输入预填上次用过的目录。会话内存级即可独立做(S);要跨会话持久化就存进配置(原 F-12 Settings 已落地)。 |
+| F-43 | 导出路径记忆 | S | 会话内存级无依赖;持久化则接入已有 Settings | 顶层 `e` 导出子菜单(`e` 导出当前 / `f` 导出筛选结果)的路径输入预填上次用过的目录(原文提的 `g e` "挑任意标签导出"入口已退休,见 `cli/i18n/i18n.cpp` msg_export_submenu_prompt 说明)。会话内存级即可独立做(S);要跨会话持久化就存进配置(原 F-12 Settings 已落地)。 |
 | F-30 | version 改名的应用内入口 | S | 触发:真实使用出现改名需求 | 现在只有 CLI 寻址语法能改 version 名,应用内无入口。低频;真用到了再决定加 `r` 菜单 rename 还是维持现状。 |
 | F-46a | 渲染失败时 tmpfile 残留清理 | S | 无 | Kitty `WriteFailed` 分支会留下临时文件(正常路径由终端读后删除)。补一个失败路径的显式清理。 |
 | Origin 彩蛋命名 | `r` 菜单里 `0:[Origin]` 的显示名换成"系统 locale 城市 + 当前年份"(如 "Shanghai 2026"),跟 9 个 City+Year 预设(`core/recipe/recipe.cpp::builtin_presets`)的命名语感呼应 | S | 无,纯展示彩蛋;行为不变(仍是 `recipe_id=NULL` 清除风格),全图统一一个名字,不按单张照片的拍摄地。开工时需定"城市"取值来源(系统 locale 区域码本身只到国家/地区,没有城市颗粒度,要么接 `CoreLocation` 反查真实定位,要么退化成一份区域码→代表城市的静态映射表)。 |
@@ -27,13 +27,13 @@
 | 编号 | 一句话 | Size | 依赖/触发前提 |
 |---|---|---|---|
 | bottle 分发 + 安装统计 | CI 构建预编译 bottle 作为 GitHub Release asset —— 装得更快(不用每次源码构建)+ 拿到真实安装数(读 asset `download_count`) | M | **触发:有一定用户量、想要精确安装曲线,或嫌源码构建慢。** 现状:自托管第三方 tap 是 source-build,Homebrew 官方 analytics 不覆盖它,只能靠 tap 仓 Insights→Traffic 的 clone 流量粗估(14 天窗口、只知"tap 过"不知装了哪个)。做法:release workflow 里加按 macOS 版本 `brew bottle` 产出、传成 Release asset、formula 加 `bottle do` block。见 `docs/RELEASE.md`。 |
-| 几何变换 | 裁切 + 水平矫正,走 `set_image_recipe` 同一条路径应用并渲染(非另起一套机制);也是 agent `Style` Stage 的前置阻塞项之一 | L | **先出 Eng Design**。产品要求已在 `docs/W2026-07-15_PRD.md` 目标二第 3 项落定(验收标准都写好了),缺的是工程方案——裁切改图像尺寸、矫正需旋转重采样,牵涉渲染管线、预取缓存与 version schema。本周目标二拆两刀实现时未纳入、顺延至此。背景见 `docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md`(归档说明)与 `docs/SPEC.md` 未来/搁置一节。 |
+| 几何变换 | 裁切 + 水平矫正,走 `set_image_recipe` 同一条路径应用并渲染(非另起一套机制);也是 agent `Style` Stage 的前置阻塞项之一 | L | **先出 Eng Design**。产品要求已在 `docs/history/W2026-07-15_PRD.md` 目标二第 3 项落定(验收标准都写好了),缺的是工程方案——裁切改图像尺寸、矫正需旋转重采样,牵涉渲染管线、预取缓存与 version schema。本周目标二拆两刀实现时未纳入、顺延至此。背景见 `docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md`(归档说明)与 `docs/SPEC.md` 未来/搁置一节。 |
 | F-44 | 对当前筛选视图批量打标签 | M | **先用出 `/filter` 手感 + 先出 PRD**。触发前提是能回答 5 个设计问题(入口与触发、作用域边界、确认与撤销、与 cap 交互、批量语义唯一性)——细节见归档报告 F-44 条。核心是"对当前视图批量作用"要能同时覆盖打标签/未来批量导出/清标签,避免两套选择模型。 |
 | F-13 | 有界解码(subsampled decode) | M | **先在真实 24MP+/60MP 素材上量 RSS 与 60MP key-to-render**,把收益写成数字再定 max_px 上限 | 预取缓存全分辨率 RGBA(24MP×7≈0.7GB;60MP 单张解码~180ms 超预算)、dedup 全量解码(~70ms/张)、AI 上传同源的统一杠杆。方案:`core/decode` 加 `decode_jpeg_file_bounded(path, max_px)`(`CGImageSourceCreateThumbnailAtIndex`)。当前 24MP 内体验尚达标,不算急。 |
 | F-37 | api.h 头部重量(json 头透传全 cli TU) | M | 触发:cli 编译时长成体感(header-cascade 影响 edit-build 循环) | 已实测基线(2026-07-19):api.h 头解析 ~0.66s/TU,8/13 cli TU 透传,clean cli 全量 8.6s——**未越阈值**。越阈值再动:worker pimpl 让 `ai.h`/`json.hpp` 停止透传,可从 8 个 TU 各砍 ~0.66s。 |
 | F-38 | 门面每帧多次开连接 | M | 建议随 M4 headless 层立项一起做(引 `core::Session` 持连接);否则触发=key-to-render 超 60ms | 已实测基线(2026-07-19):`open_default`(开连接+全量 schema init)~184µs,导航帧 ~5 次 O(1) 开连接 ≈0.9ms/帧、占 60ms 预算 1.5%——**可忽略**。不预做。 |
 | F-45 | Esc 消歧 20ms 阈值在高延迟终端误判方向键 | M | 依赖:远程/ssh 支持立项(当前锁定本地 Ghostty,不触发) | 若未来支持远程,改读 ESC 后跟随字节的状态机(不依赖时延),而不是靠 20ms 时间窗。 |
-| Apple Vision 聚类评估 | 评估 `VNGenerateImageFeaturePrintRequest` 语义聚类相对现有 dHash+时间窗口的优劣,决定要不要替换 dedup/curate 的分簇底层 | L | **先出 Eng Design(含新依赖评估)**。来源:`docs/W2026-07-21_PRD.md` 拍板——本周锦标赛改造复用现有 dHash,Apple Vision 语义聚类(更懂"同一场景"而非仅"近乎相同")单列于此。需新增 Vision.framework + ObjC++ 桥接;先在真实素材上比 featureprint 距离 vs dHash 汉明距离的分簇质量,把收益写成数字再决定是否切换。 |
+| Apple Vision 聚类评估 | 评估 `VNGenerateImageFeaturePrintRequest` 语义聚类相对现有 dHash+时间窗口的优劣,决定要不要替换 dedup/curate 的分簇底层 | L | **先出 Eng Design(含新依赖评估)**。来源:`docs/history/W2026-07-21_PRD.md` 拍板——锦标赛改造复用现有 dHash,Apple Vision 语义聚类(更懂"同一场景"而非仅"近乎相同")单列于此。需新增 Vision.framework + ObjC++ 桥接;先在真实素材上比 featureprint 距离 vs dHash 汉明距离的分簇质量,把收益写成数字再决定是否切换。 |
 | 锦标赛双输判定 | pairwise 比较(`core::ai::request_comparison`)允许返回"双输"(两张都有硬伤/不可用),不再强制二选一;锦标赛簇选 winner 时如果判成双输,两张都不进 keep 候选,簇的 winner 可以为空 | L | **先出 Eng Design**。来源:目标三真机验证期间(2026-07-23)提出,打算给 agent 选图场景用。现有 `ComparisonResult.winner` 是 `int`(0/1,"必须二选一,禁止平局",见 `core/ai/compare.h:17-28`),`tournament::ClusterChoice.winner` 是必填 `project::ImageId`(`core/tournament/tournament.h:31`)——两处都要放松成"可能没有 winner"。下游 dedup(这一簇是不是全打"重复"?)、curate(这一簇直接不贡献候选?)、agent 选图各自怎么处理"这一簇没人入选"需要先想清楚,且要跟目标一已有的 eval `unusable` 硬伤判据对齐,不能让 pairwise 判定和 eval 判定用两套不一致的"硬伤"定义。 |
 | F-46b | Kitty `t=s` 共享内存介质验证 | S | 无(可选优化,需真机验证收益) | M0 起挂账的可选传输优化,收益需在真机量过再决定是否切换。 |
 
