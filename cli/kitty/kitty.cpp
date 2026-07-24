@@ -132,7 +132,14 @@ pzt::core::Result<void, RenderError> render_rgba_via_tmpfile(
     ctrl << ",c=" << target_cols << ",r=" << target_rows;
   }
   std::string seq = "\x1b_G" + ctrl.str() + ";" + path_b64 + "\x1b\\";
-  return send_sequence(fd, mode, seq);
+  auto sent = send_sequence(fd, mode, seq);
+  // 正常路径下终端读完 t=t 临时文件后会自行删除它;但写控制序列失败时
+  // (WriteFailed)终端根本没收到序列、不会去读也不会删,临时文件会残留。
+  // 这条失败路径显式清理,避免 TMPDIR 里堆积孤儿 .rgba 文件。
+  if (!sent.ok()) {
+    std::remove(tmp_path.c_str());
+  }
+  return sent;
 }
 
 pzt::core::Result<void, RenderError> clear_placement(int fd, const TerminalMode& mode,

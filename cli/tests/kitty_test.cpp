@@ -131,3 +131,30 @@ TEST_CASE("render_rgba_via_tmpfile writes the tmp file and control sequence when
   CHECK(written == img.rgba);
   std::remove(tmp_path.c_str());
 }
+
+TEST_CASE("render_rgba_via_tmpfile removes the tmp file when writing the control sequence fails") {
+  pzt::core::decode::DecodedImage img;
+  img.width = 2;
+  img.height = 1;
+  img.rgba = {255, 0, 0, 255, 0, 255, 0, 255};
+
+  TerminalMode mode;
+  mode.inside_tmux = false;  // 独立 Ghostty 窗口路径,不需要 passthrough 检测
+
+  std::string tmp_path = "/tmp/pzt_kitty_test_write_failed.rgba";
+  std::remove(tmp_path.c_str());  // 保证从干净状态开始
+
+  // 已关闭的 fd:临时文件照写,但 write() 控制序列必然 EBADF 失败,复现
+  // WriteFailed 分支——终端没收到序列、不会去读也不会删临时文件。
+  int fd = open("/dev/null", O_WRONLY);
+  REQUIRE(fd >= 0);
+  close(fd);
+  auto result = render_rgba_via_tmpfile(fd, mode, img, /*image_id=*/3, tmp_path);
+  REQUIRE(!result.ok());
+  CHECK(result.error() == RenderError::WriteFailed);
+
+  // 失败路径必须显式清理临时文件,不能留孤儿。
+  std::ifstream leftover(tmp_path, std::ios::binary);
+  CHECK_FALSE(leftover.good());
+  std::remove(tmp_path.c_str());
+}
