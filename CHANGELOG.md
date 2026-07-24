@@ -3,6 +3,47 @@
 > 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
 > 发布与生成流程见 `scripts/release.sh`。
 
+## v2026.7.24 - 2026-07-24
+
+
+### 📝 文档
+- Docs: 更新 README/agent README/主页，去掉过时的"打分"描述
+- Docs: W2026-07-21 周目标全部收口，归档进 history
+- Docs: Task_Pool 新增锦标赛双输判定条目(pairwise 允许双硬伤都不进候选)
+- Docs: W2026-07-21 目标三 Eng Design(dedup/选片流程可选化，Commit 6-9 任务分解)
+- Docs: W2026-07-21 PRD 新增目标三(dedup/选片流程可选化)，收窄手动选片为延后项
+- Docs: 目标一任务分解按可构建顺序重排(下游解耦先于删分数函数)
+- Docs: W2026-07-21 周目标 PRD + 目标一 Eng Design(eval 解耦 + core pairwise 地基)
+
+### 🔩 其它
+- agent: 选片确认挪到滤镜之前, 简化最终交付(真机反馈)
+- agent: 修复"去重+筛N张"数量识别失败, 调整确认文案措辞(真机反馈)
+- agent: 去重确认精简 + 追问后打字给数量要二次确认(目标三真机反馈)
+- agent: 修复 dedup_followup classify 崩溃(目标三真机验证发现)
+- agent: 修复"去重"意图在收图阶段识别不出来的问题(目标三真机验证发现)
+- agent: AI 可发现性提醒文案 + 快捷按钮(目标三 Commit 9), 收官
+- agent: Dedup 后追问闸门接上会话层(目标三 Commit 8), 修复 Commit 6 遗留的两个消费侧回归
+- agent: Curate 新增 passthrough 模式(目标三 Commit 7): count=None 时不聚类, 原样交付去重幸存者
+- agent: Plan 形状按意图可选(目标三 Commit 6): count 给了跳过 Dedup、只说去重先 Dedup 再问
+- feat(agent): 接入全局 AI 开关(ai_enabled/provider)
+- refactor(agent): 删除 Evaluate stage 及全部引用
+- feat(cli): pzt dedup/curate 接上 --ai/--provider
+- feat(core): dedup/curate 收口成 cluster_and_choose 的调用方
+- feat(core): 新增 core::tournament::cluster_and_choose 锦标赛原语
+- docs: W2026-07-21 目标二 Eng Design(dedup/curate 锦标赛 + 全局 AI 开关)
+- refactor(cli): 去掉 PZT_LANG/PZT_AI_PROVIDER 环境变量覆盖
+- fix(core): 收紧 eval unusable 判据的 prompt 措辞
+- refactor(core): eval 落库改存单列 result_json, 不再拆 assessment/unusable 两列
+- fix(cli): recipe 菜单补回 0:[Origin] 展示项
+- fix(cli): 控制台折行第二行留前导空格 + recipe 菜单编号选项铺满两行
+- fix(core): eval assessment 始终用界面语言, 不跟随 guidance
+- fix(cli): AI 点评信息栏改标题为"AI 点评", 可用不显示状态, 不可用加粗提示
+- feat: core pairwise 视觉比较能力 + pzt compare headless
+- feat: eval 重构为"文字 assessment + unusable flag", 移除跨图分数
+- feat: dedup/curate 脱离 AI 分数(留最新+排废片 / 纯标签候选+时间多样性)
+
+### 🚀 部署与分发
+- Deploy: 回填 pzt/pzt-agent formula 到 v2026.7.21 (sha256)
 ## v2026.7.21 - 2026-07-21
 
 
@@ -11,6 +52,7 @@
 - Docs: W2026-07-15 周目标全部收口, PRD 归档进 history, 标记部署完成
 
 ### 🔩 其它
+- Release v2026.7.21
 - pzt: ai_provider 默认改 Local(本地 Ollama), 不再默认 Gemini
 
 ### 🚀 部署与分发
