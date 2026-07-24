@@ -26,6 +26,19 @@
 - `W2026-07-15_AgentStyle_Eng_Design.md` - 目标三，agent 选风格（最终形态=文字描述+纯文本匹配+整批统一两段式闸门，第一节记录相对 PRD 的翻转；第七节 router 接入已被目标五 consumer 取代）
 - `W2026-07-15_AgentRuntime_Eng_Design.md` - 目标五（2026-07-17 追加），agent 运行时 consumer/worker 双线程重构（含多轮真机反馈的刻意偏离，第八节）
 
+## 周开发目标（W2026-07-21，已收口归档）
+
+本周三个目标已全部收口（2026-07-24），PRD 与两份 Eng Design 均已归档到这里：
+
+- `W2026-07-21_PRD.md` - 本周开发目标 PRD（三个目标：eval 解耦地基 / AI 锦标赛接线 / dedup-选片流程可选化）。手动选片模式已明确移出范围，延后到未来单独立项
+
+以下两份 Eng Design 的落地形态与文档一致，各自顶部有归档说明：
+
+- `W2026-07-21_Eval_Eng_Design.md` - 目标一，eval 解耦（`overall_score`/`passes_gate` 移除，改产文字描述 + `unusable` flag）+ core pairwise 比较地基
+- `W2026-07-21_Tournament_Eng_Design.md` - 目标二（dedup 两类 + curate 两模式 + 全局 AI 开关，Commit 1-5）+ 目标三补充设计（dedup/选片流程可选化，Commit 6-9，文内单独一节）
+
+实现完成后的真机反馈还触发了一次超出本周 PRD 范围的架构调整（选片确认闸门挪到滤镜之前、Deliver 不再挂闸门），归档说明里有指路，具体没有独立文档，改动落在 `agent/session/consumer.py`/`worker.py` 的对应 commit 里。
+
 ## 跨里程碑活文档（归档时的状态快照）
 
 - `Roadmap.md` - 项目路线图原稿；其背景、双层流水线、设计哲学、里程碑总览已吸收进 `docs/SPEC.md`

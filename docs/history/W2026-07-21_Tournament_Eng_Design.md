@@ -1,5 +1,7 @@
 # PicZTream (PZT) 工程设计文档（W2026-07-21 目标二：dedup 两类 + curate 两模式 + 全局 AI 开关）
 
+> **已归档(2026-07-24)**：目标二（Commit 1-5）与目标三补充设计（文内"目标三补充设计"一节，Commit 6-9）均已完成，落地与本文档一致。真机反馈之后又触发了一次超出本文档范围的架构调整——选片确认闸门从 Deliver 前挪到 Style 前、Deliver 不再挂闸门，详见 `docs/W2026-07-21_PRD.md` 归档说明。本周开发目标全貌见 `docs/W2026-07-21_PRD.md`。
+
 ## 背景
 
 本文档是 `docs/W2026-07-21_PRD.md` 两阶段方案的第二份 Eng Design，覆盖目标二（接线）。目标一（地基）已完成并归档为 `docs/W2026-07-21_Eval_Eng_Design.md`：eval 跟比较解耦、dedup/curate 降级到"非 AI 基线"、建好 pairwise 视觉比较能力（`core/ai/compare.h` + `pzt compare`）。

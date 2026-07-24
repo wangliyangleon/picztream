@@ -1,5 +1,7 @@
 # PicZTream (PZT) 工程设计文档（W2026-07-21 目标一：eval 解耦 + core pairwise 地基）
 
+> **已归档(2026-07-24)**：目标一「eval 解耦 + core pairwise 地基」已完成，落地与本文档一致。`overall_score`/`passes_gate` 已全面移除（除解释性注释），`unusable` flag 落在 `core/ai/evaluation.h`/`compare.cpp`/`evaluation_worker.cpp`，`pzt open` 信息栏与 `pzt compare` 均已接上。本周开发目标全貌见 `docs/W2026-07-21_PRD.md`。
+
 ## 背景
 
 本文档是 `docs/W2026-07-21_PRD.md` 两阶段方案的第一份 Eng Design，覆盖目标一（地基）。目标二（dedup 两类 / curate 两模式 / 全局 AI 开关 / agent 锦标赛编排）另出 `W2026-07-21_Tournament_Eng_Design.md`，不在本文范围。
