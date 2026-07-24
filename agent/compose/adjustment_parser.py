@@ -76,6 +76,23 @@ class AdjustmentError(Exception):
         self.message = message
 
 
+def _classify_action(user_prompt: str, schema_instruction: str, allowed: tuple,
+                     http_post: Optional[HttpPostFn], meta_provider: str, label: str) -> str:
+    """跑一次 LLM 分类、取出 action 并校验它属于 `allowed`，不匹配就抛
+    `AdjustmentError`。承载各"单 action 字段"分类器逐字同构的那段确定性管
+    线；schema、允许集合、返回的 `*Reply` 类型仍由各调用方显式持有。"""
+    decision = request_json(
+        user_prompt=user_prompt,
+        schema_instruction=schema_instruction,
+        provider=meta_provider,
+        http_post=http_post,
+    )
+    action = decision.get("action")
+    if action not in allowed:
+        raise AdjustmentError("unknown_action", f"unrecognized {label} action {action!r}")
+    return action
+
+
 @dataclass
 class GateReply:
     action: Literal["approve", "reject", "adjust", "query"]
@@ -264,15 +281,9 @@ class CollectingReply:
 def classify_collecting_message(text: str, photo_count: int, http_post: Optional[HttpPostFn] = None,
                                  meta_provider: str = "local") -> CollectingReply:
     user_prompt = f"目前已收到 {photo_count} 张照片。用户消息：{text}"
-    decision = request_json(
-        user_prompt=user_prompt,
-        schema_instruction=_COLLECTING_SCHEMA_INSTRUCTION,
-        provider=meta_provider,
-        http_post=http_post,
-    )
-    action = decision.get("action")
-    if action not in ("query", "intent", "start", "cancel", "other"):
-        raise AdjustmentError("unknown_action", f"unrecognized collecting message action {action!r}")
+    action = _classify_action(user_prompt, _COLLECTING_SCHEMA_INSTRUCTION,
+                              ("query", "intent", "start", "cancel", "other"),
+                              http_post, meta_provider, "collecting message")
     return CollectingReply(action=action)
 
 
@@ -304,15 +315,9 @@ class StyleDescribeReply:
 
 def classify_style_describe(text: str, http_post: Optional[HttpPostFn] = None,
                             meta_provider: str = "local") -> StyleDescribeReply:
-    decision = request_json(
-        user_prompt=text,
-        schema_instruction=_STYLE_DESCRIBE_SCHEMA_INSTRUCTION,
-        provider=meta_provider,
-        http_post=http_post,
-    )
-    action = decision.get("action")
-    if action not in ("describe", "skip", "cancel", "query"):
-        raise AdjustmentError("unknown_action", f"unrecognized style describe action {action!r}")
+    action = _classify_action(text, _STYLE_DESCRIBE_SCHEMA_INSTRUCTION,
+                              ("describe", "skip", "cancel", "query"),
+                              http_post, meta_provider, "style describe")
     return StyleDescribeReply(action=action)
 
 
@@ -338,15 +343,9 @@ class StyleGateReply:
 
 def classify_style_gate_reply(text: str, http_post: Optional[HttpPostFn] = None,
                                meta_provider: str = "local") -> StyleGateReply:
-    decision = request_json(
-        user_prompt=text,
-        schema_instruction=_STYLE_GATE_SCHEMA_INSTRUCTION,
-        provider=meta_provider,
-        http_post=http_post,
-    )
-    action = decision.get("action")
-    if action not in ("approve", "redescribe", "cancel", "query"):
-        raise AdjustmentError("unknown_action", f"unrecognized style gate action {action!r}")
+    action = _classify_action(text, _STYLE_GATE_SCHEMA_INSTRUCTION,
+                              ("approve", "redescribe", "cancel", "query"),
+                              http_post, meta_provider, "style gate")
     return StyleGateReply(action=action)
 
 
@@ -423,15 +422,9 @@ class RunningReply:
 
 def classify_running_message(text: str, http_post: Optional[HttpPostFn] = None,
                              meta_provider: str = "local") -> RunningReply:
-    decision = request_json(
-        user_prompt=text,
-        schema_instruction=_RUNNING_SCHEMA_INSTRUCTION,
-        provider=meta_provider,
-        http_post=http_post,
-    )
-    action = decision.get("action")
-    if action not in ("cancel", "query", "other"):
-        raise AdjustmentError("unknown_action", f"unrecognized running message action {action!r}")
+    action = _classify_action(text, _RUNNING_SCHEMA_INSTRUCTION,
+                              ("cancel", "query", "other"),
+                              http_post, meta_provider, "running message")
     return RunningReply(action=action)
 
 
@@ -455,13 +448,7 @@ class CancelConfirmReply:
 
 def classify_cancel_confirmation(text: str, http_post: Optional[HttpPostFn] = None,
                                  meta_provider: str = "local") -> CancelConfirmReply:
-    decision = request_json(
-        user_prompt=text,
-        schema_instruction=_CANCEL_CONFIRM_SCHEMA_INSTRUCTION,
-        provider=meta_provider,
-        http_post=http_post,
-    )
-    action = decision.get("action")
-    if action not in ("confirm", "deny", "other"):
-        raise AdjustmentError("unknown_action", f"unrecognized cancel confirmation action {action!r}")
+    action = _classify_action(text, _CANCEL_CONFIRM_SCHEMA_INSTRUCTION,
+                              ("confirm", "deny", "other"),
+                              http_post, meta_provider, "cancel confirmation")
     return CancelConfirmReply(action=action)
