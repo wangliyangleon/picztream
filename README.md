@@ -98,4 +98,4 @@ ctest --test-dir build --output-on-failure
 
 ## 许可
 
-License 尚未确定(仓库暂无 `LICENSE` 文件)。发布正式版前需补上。
+[MIT](LICENSE)

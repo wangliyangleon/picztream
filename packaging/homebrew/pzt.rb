@@ -2,13 +2,12 @@
 # 这份是版本管理里的真相源;发布时由 scripts/release.sh 回填 url/sha256,
 # 并同步到独立的 tap 仓库 wangliyangleon/homebrew-pzt 的 Formula/pzt.rb。
 # 用户侧:brew tap wangliyangleon/pzt && brew install pzt
-#
-# 注:仓库暂无 LICENSE 文件,故未声明 license(brew audit 会提示);补 LICENSE 后加上。
 class Pzt < Formula
   desc "Terminal keyboard-driven photo culling and local color pipeline"
   homepage "https://github.com/wangliyangleon/picztream"
   url "https://github.com/wangliyangleon/picztream/archive/refs/tags/v2026.7.24.tar.gz"
   sha256 "2df68afb8af711bb0ee4dff955bb54dcd27c80de54fe68990804bd5aa65c1496"
+  license "MIT"
   head "https://github.com/wangliyangleon/picztream.git", branch: "main"
 
   depends_on "cmake" => :build

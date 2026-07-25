@@ -11,6 +11,7 @@ class PztAgent < Formula
   homepage "https://github.com/wangliyangleon/picztream"
   url "https://github.com/wangliyangleon/picztream/archive/refs/tags/v2026.7.24.tar.gz"
   sha256 "2df68afb8af711bb0ee4dff955bb54dcd27c80de54fe68990804bd5aa65c1496"
+  license "MIT"
   head "https://github.com/wangliyangleon/picztream.git", branch: "main"
 
   depends_on "python@3.14"
