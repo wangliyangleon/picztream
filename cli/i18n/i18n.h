@@ -46,6 +46,10 @@ std::string err_project_not_found(const std::string& cmd, const std::string& pro
 std::string err_new_missing_name();
 std::string err_new_name_exists(const std::string& name);
 std::string err_new_no_images(const std::string& folder_path);
+// 目录里没有可用的 JPEG，但确实存在 RAW 文件，区别于 err_new_no_images，
+// 明确告知用户 RAW 文件被 support_raw=false（默认）挡在外面，提示加
+// --support-raw 重试，而不是让用户误以为目录是空的（见 T-2 proposal）。
+std::string err_new_no_images_raw_ignored(const std::string& folder_path);
 // F-06：`--` 开头但不是 `--support-raw` 的参数(比如拼错的
 // `--supportraw`)不再被静默当成 folder_path——那样会让扫描目标变成一
 // 个不存在的"目录",容易被误解成程序坏了而不是自己打错了参数。

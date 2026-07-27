@@ -66,6 +66,10 @@ struct ScanResult {
   // 的 JPEG——rescan_project 的 prune 步骤要靠这个判断"文件是不是还在磁盘
   // 上"，只看 images 会把被挤掉但物理上仍然存在的 JPEG 误判成"消失了"。
   std::unordered_set<std::string> on_disk_paths;
+  // support_raw=false 时撞见过至少一个 RAW 文件（因此被忽略、没产出记录）。
+  // create_project 用这个字段区分"目录真的是空的"和"目录里全是被
+  // support_raw=false 挡在外面的 RAW 文件"，见 T-2 proposal。
+  bool found_ignorable_raw = false;
 };
 
 // "目录 + 文件名主干(不含扩展名)"用来判断"这个 JPEG 是不是应该被同名 RAW
@@ -126,7 +130,11 @@ ScanResult scan_media(const fs::path& root, bool support_raw) {
           "jpeg",
       });
       result.on_disk_paths.insert(rel.string());
-    } else if (support_raw && is_raw(entry.path())) {
+    } else if (is_raw(entry.path())) {
+      if (!support_raw) {
+        result.found_ignorable_raw = true;
+        continue;
+      }
       std::error_code size_ec;
       auto size = entry.file_size(size_ec);
       if (size_ec) continue;
@@ -242,8 +250,13 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
     return Result<ProjectId, CreateProjectError>::Err(CreateProjectError::NameAlreadyExists);
   }
 
-  std::vector<ScannedImage> images = scan_media(fs::path(folder_path), support_raw).images;
+  ScanResult scan = scan_media(fs::path(folder_path), support_raw);
+  std::vector<ScannedImage> images = std::move(scan.images);
   if (images.empty()) {
+    if (!support_raw && scan.found_ignorable_raw) {
+      return Result<ProjectId, CreateProjectError>::Err(
+          CreateProjectError::NoImagesFoundRawIgnored);
+    }
     return Result<ProjectId, CreateProjectError>::Err(CreateProjectError::NoImagesFound);
   }
 

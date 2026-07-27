@@ -181,6 +181,17 @@ std::string err_new_no_images(const std::string &folder_path) {
   }
 }
 
+std::string err_new_no_images_raw_ignored(const std::string &folder_path) {
+  if (g_lang == Lang::zh) {
+    return "pzt new: '" + folder_path +
+           "' 目录下没有找到 JPEG，但发现了 RAW 文件，RAW 支持默认关闭，加 --support-raw 重试\n";
+  } else {
+    return "pzt new: no JPEG files found in directory '" + folder_path +
+           "', but RAW files are present - RAW support is off by default, retry with "
+           "--support-raw\n";
+  }
+}
+
 std::string err_new_unknown_arg(const std::string &arg) {
   if (g_lang == Lang::zh) {
     return "pzt new: 未知参数 '" + arg + "'\n";

@@ -199,6 +199,22 @@ TEST_CASE("create_project rejects an empty (no-JPEG) folder") {
   CHECK(list_projects(db).empty());
 }
 
+// T-2 proposal: a folder that's all RAW with support_raw=false used to fall
+// into the same NoImagesFound bucket as a truly empty folder, and the error
+// message claimed no JPEG/RAW files existed at all - false when RAW files
+// are sitting right there, just silently skipped.
+TEST_CASE("create_project reports NoImagesFoundRawIgnored for a pure-RAW folder without support_raw") {
+  auto db = Database::open_at(fresh_db_path("pure_raw_no_support"));
+  auto photos = fresh_photo_dir("pure_raw_no_support");
+  touch(photos / "IMG_001.dng");
+  touch(photos / "IMG_002.dng");
+
+  auto result = create_project(db, "raw_trip", photos.string());  // support_raw 默认 false
+  REQUIRE(!result.ok());
+  CHECK(result.error() == CreateProjectError::NoImagesFoundRawIgnored);
+  CHECK(list_projects(db).empty());
+}
+
 // F-06：scan_media 以前用会抛异常的 recursive_directory_iterator 重载,
 // 目标目录根本不存在时会让 create_project(进而 `pzt new`)直接崩溃,而
 // 不是走 Result<T,E> 的 NoImagesFound 错误路径。改用 error_code 版本之

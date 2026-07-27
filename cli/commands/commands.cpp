@@ -779,6 +779,11 @@ int cmd_new(const std::vector<std::string>& args) {
           return emit_json_error("name_exists", "project name already exists: " + name);
         case pzt::core::CreateProjectError::NoImagesFound:
           return emit_json_error("no_images_found", "no images found in folder: " + folder_path);
+        case pzt::core::CreateProjectError::NoImagesFoundRawIgnored:
+          return emit_json_error(
+              "no_images_found_raw_ignored",
+              "no JPEG found in folder: " + folder_path +
+                  ", but RAW files are present - retry with --support-raw");
       }
     }
     switch (result.error()) {
@@ -787,6 +792,10 @@ int cmd_new(const std::vector<std::string>& args) {
         break;
       case pzt::core::CreateProjectError::NoImagesFound:
         std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_no_images(folder_path).c_str());
+        break;
+      case pzt::core::CreateProjectError::NoImagesFoundRawIgnored:
+        std::fprintf(stderr, "%s",
+                     pzt::cli::i18n::err_new_no_images_raw_ignored(folder_path).c_str());
         break;
     }
     return 1;

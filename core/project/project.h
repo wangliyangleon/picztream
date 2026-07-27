@@ -23,6 +23,10 @@ using ImageId = std::int64_t;
 enum class CreateProjectError {
   NameAlreadyExists,
   NoImagesFound,
+  // 目录里没有可用的 JPEG，但确实存在 RAW 文件、只是 support_raw=false
+  // （默认）没去扫它们，跟 NoImagesFound 区分开，好让调用方提示"要不要
+  // 加 --support-raw"，而不是让用户误以为目录是空的（见 T-2 proposal）。
+  NoImagesFoundRawIgnored,
 };
 
 struct ProjectSummary {
