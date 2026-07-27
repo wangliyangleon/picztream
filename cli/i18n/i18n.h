@@ -84,9 +84,11 @@ std::string err_rescan_unknown_arg(const std::string& arg);
 std::string err_rescan_failed(const std::string& name);
 std::string msg_rescan_result(long long added, long long removed, long long total, long long upgraded);
 std::string err_export_missing_args();
+std::string err_export_unknown_arg(const std::string& arg);
 std::string err_export_tag_not_found(const std::string& tag_name);
 std::string err_export_io_error(const std::string& path);
 std::string msg_export_no_images(const std::string& tag_name);
+std::string msg_export_no_images_all();
 std::string msg_export_success(int count, const std::string& path, bool created_folder);
 std::string msg_export_skipped(size_t count);
 std::string msg_export_skipped_item(const std::string& file_name, const std::string& reason);
@@ -273,9 +275,9 @@ std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags
 std::string tag_menu_actions_line();
 
 // Filter Menu
-// 点 2：`e` 键的二级子菜单提示——只在有 active filter 时用，见
-// browse.cpp 顶层 `e` 键处理的说明。
-std::string msg_export_submenu_prompt();
+// `e` 键的二级子菜单提示——始终弹出，filter_active 只决定要不要把
+// `f`(导出筛选结果)这一项拼进去，见 browse.cpp 顶层 `e` 键处理的说明。
+std::string msg_export_submenu_prompt(bool filter_active);
 std::string filter_menu_export_to_prompt();
 std::string filter_menu_export_path_empty();
 std::string filter_menu_export_io_error(const std::string& path);

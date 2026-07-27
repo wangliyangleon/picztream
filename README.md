@@ -34,10 +34,13 @@ tap 装东西时,Homebrew 6 会要求先 `brew trust` 这个 tap(一次即可),�
 ## 快速上手
 
 ```sh
-pzt new trip ~/Photos/trip        # 建项目,指向一个照片目录
-pzt open trip                     # 进入全键盘选片
-pzt export trip 精选 ~/Photos/out # 把打了"精选"标签的图导出到目录
+pzt new trip ~/Photos/trip                 # 建项目,指向一个照片目录
+pzt open trip                              # 进入全键盘选片,x 标废片
+pzt export trip --all-keep ~/Photos/out    # 导出没被标废片的图
 ```
+
+也可以先用 `space` 给要留的图打自定义标签（比如"精选"），再用
+`pzt export trip 精选 ~/Photos/out` 按标签导出。
 
 选片界面按键（`pzt open` 里）:
 
@@ -47,7 +50,7 @@ pzt export trip 精选 ~/Photos/out # 把打了"精选"标签的图导出到目�
 | `j` / `k` | 跳到下一张 / 上一张**未打标签**的图 |
 | `space` | 给当前图打标签（分组） |
 | `x` | 标记为废片 |
-| `e` | 导出当前这张 |
+| `e` | 导出（当前这张 / 全部,排除废片重复 / 当前筛选结果，二级菜单选） |
 | `g` | 按标签筛选视图 |
 | `r` | 应用 / 清除 / 新建 / 删除风格；`r v` 临时看原图 |
 | `q` | 退出 |

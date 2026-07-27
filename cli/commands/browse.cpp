@@ -1372,45 +1372,51 @@ int cmd_open(const std::vector<std::string>& args) {
           }
         }
       } else if (c == 'e') {
-        // 顶层导出快捷键。没有 active filter(g 层标签筛选和控制台二级
-        // 筛选都没生效)时保持原样:单键直接导出当前这一张。有筛选生效
-        // 时弹一个二级菜单再选"当前照片"还是"当前筛选范围"——点 2：
-        // 以前"导出任意标签"挂在 g+e 下面,交互起来很诡异,已经退休；
-        // "导出全部"和"导出某个标签组"也刻意不共用同一个快捷键,避免
-        // 手滑导出了不想要的范围。
+        // 顶层导出快捷键。二级菜单始终弹出(不再区分有没有 active
+        // filter):e=当前这张,a=全部(默认排除废片/重复,跟
+        // `pzt export --all-keep` 同一套语义,不受 filter 是否生效影
+        // 响),f=当前筛选范围(仅 filter 生效时可选)。以前"导出任意标
+        // 签"挂在 g+e 下面,交互起来很诡异,已经退休；"导出全部"和"导
+        // 出某个标签组"也刻意不共用同一个快捷键,避免手滑导出了不想要
+        // 的范围——这也是加了 a 选项之后单键直出不再保留的理由:多一
+        // 次按键换来避免误触全量导出。
         if (current_ref) {
           highlight_active_menu_key('e', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
           bool filter_active = active_filter_tag_id.has_value() || active_console_filter.has_value();
-          if (!filter_active) {
+          char sub = prompt_and_read_key(pzt::cli::i18n::msg_export_submenu_prompt(filter_active),
+                                          banner_row, start_col, content_cols);
+          if (sub == 'e') {
             status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
                                                            banner_row, start_col, content_cols);
-          } else {
-            char sub = prompt_and_read_key(pzt::cli::i18n::msg_export_submenu_prompt(), banner_row,
-                                            start_col, content_cols);
-            if (sub == 'e') {
-              status_override = handle_export_current_flow(current_ref->id, current_ref->file_name,
-                                                             banner_row, start_col, content_cols);
-            } else if (sub == 'f') {
-              // 目标本身就是废片/重复时不排除——跟 /ai_eval、/dedup、
-              // pzt export 的对称例外规则一致，只是这里"目标"可能来自
-              // g 层标签，也可能来自控制台二级筛选 criterion。
-              auto duplicate_tag_id =
-                  pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
-              bool target_is_reject =
-                  (active_filter_tag_id && *active_filter_tag_id == reject_tag_id) ||
-                  (active_console_filter && *active_console_filter == ConsoleFilterCriterion::Reject);
-              bool target_is_dup =
-                  (active_filter_tag_id && duplicate_tag_id &&
-                   *active_filter_tag_id == *duplicate_tag_id) ||
-                  (active_console_filter && *active_console_filter == ConsoleFilterCriterion::Dup);
-              status_override = handle_export_filtered_flow(
-                  *id, images, target_is_reject || settings.export_reject,
-                  target_is_dup || settings.export_dup, banner_row, start_col, content_cols);
-            } else if (sub != 0x1B) {
-              // 不是 Esc,也不是 e/f 里的任何一个——给一句反馈而不是完全
-              // 没反应,跟这个文件里其它子菜单同样的约定。Esc 静默取消。
-              status_override = pzt::cli::i18n::recipe_menu_invalid_key();
-            }
+          } else if (sub == 'a') {
+            // 全项目,不是当前筛选范围——跟 f 不同,这里没有单一目标标
+            // 签,不存在"目标本身就是废片/重复"这个对称例外,直接看
+            // settings。
+            auto all_images = pzt::core::list_images(*id);
+            status_override = handle_export_filtered_flow(*id, all_images, settings.export_reject,
+                                                            settings.export_dup, banner_row,
+                                                            start_col, content_cols);
+          } else if (sub == 'f' && filter_active) {
+            // 目标本身就是废片/重复时不排除——跟 /ai_eval、/dedup、
+            // pzt export 的对称例外规则一致，只是这里"目标"可能来自
+            // g 层标签，也可能来自控制台二级筛选 criterion。
+            auto duplicate_tag_id =
+                pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
+            bool target_is_reject =
+                (active_filter_tag_id && *active_filter_tag_id == reject_tag_id) ||
+                (active_console_filter && *active_console_filter == ConsoleFilterCriterion::Reject);
+            bool target_is_dup =
+                (active_filter_tag_id && duplicate_tag_id &&
+                 *active_filter_tag_id == *duplicate_tag_id) ||
+                (active_console_filter && *active_console_filter == ConsoleFilterCriterion::Dup);
+            status_override = handle_export_filtered_flow(
+                *id, images, target_is_reject || settings.export_reject,
+                target_is_dup || settings.export_dup, banner_row, start_col, content_cols);
+          } else if (sub != 0x1B) {
+            // 不是 Esc,也不是当前可选选项里的任何一个(含 filter 未生
+            // 效时按了 f)——给一句反馈而不是完全没反应,跟这个文件里其
+            // 它子菜单同样的约定。Esc 静默取消。
+            status_override = pzt::cli::i18n::recipe_menu_invalid_key();
           }
         }
       } else if (c == ':') {

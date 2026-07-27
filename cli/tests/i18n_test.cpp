@@ -213,17 +213,26 @@ TEST_CASE("err_help_unknown_command includes the command name and follows langua
   g_lang = Lang::zh;  // 还原
 }
 
-// 点 2：`e` 二级子菜单只提供"当前照片"/"当前筛选"两个选项，不带任何
-// 标签名——跟被退休的 g+e 流程不同，没有单一 target 概念。
-TEST_CASE("msg_export_submenu_prompt offers exactly e (current) and f (filtered), no tag name") {
+// 点 2：`e` 二级子菜单不带任何标签名——跟被退休的 g+e 流程不同，没有
+// 单一 target 概念。`a`(全部)始终出现；`f`(筛选结果)只在 filter_active
+// 时才该出现在提示里，没有筛选时选它没有意义。
+TEST_CASE("msg_export_submenu_prompt offers e/a always, f only when filter_active") {
   g_lang = Lang::zh;
-  auto prompt = msg_export_submenu_prompt();
-  CHECK(prompt.find("e") != std::string::npos);
-  CHECK(prompt.find("f") != std::string::npos);
+  auto prompt_active = msg_export_submenu_prompt(true);
+  CHECK(prompt_active.find("e") != std::string::npos);
+  CHECK(prompt_active.find("a") != std::string::npos);
+  CHECK(prompt_active.find("f") != std::string::npos);
+
+  auto prompt_inactive = msg_export_submenu_prompt(false);
+  CHECK(prompt_inactive.find("e") != std::string::npos);
+  CHECK(prompt_inactive.find("a") != std::string::npos);
+  CHECK(prompt_inactive.find("f") == std::string::npos);
 
   g_lang = Lang::en;
-  CHECK(msg_export_submenu_prompt().find("Export current") != std::string::npos);
-  CHECK(msg_export_submenu_prompt().find("Export filtered") != std::string::npos);
+  CHECK(msg_export_submenu_prompt(true).find("Export current") != std::string::npos);
+  CHECK(msg_export_submenu_prompt(true).find("Export all") != std::string::npos);
+  CHECK(msg_export_submenu_prompt(true).find("Export filtered") != std::string::npos);
+  CHECK(msg_export_submenu_prompt(false).find("Export filtered") == std::string::npos);
 
   g_lang = Lang::zh;  // 还原
 }
@@ -239,6 +248,18 @@ TEST_CASE("filter_menu_export_no_images/success no longer take a tag name") {
   g_lang = Lang::en;
   CHECK(!filter_menu_export_no_images().empty());
   CHECK(filter_menu_export_success(3, "/tmp/out", false, 0).find("3") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// `--all-keep`(headless)对应的"0 张"提示,跟按标签名的 msg_export_no_images
+// 区别只在于没有标签名可带。
+TEST_CASE("msg_export_no_images_all is non-empty in both languages") {
+  g_lang = Lang::zh;
+  CHECK(!msg_export_no_images_all().empty());
+
+  g_lang = Lang::en;
+  CHECK(!msg_export_no_images_all().empty());
 
   g_lang = Lang::zh;  // 还原
 }

@@ -73,7 +73,7 @@ PZT 对外有两个界面：面向人的 `pzt` CLI 命令，以及面向 agent �
 - **项目管理**：`new`（新建项目、导入文件夹）、`list`（项目名 + 图片总数 + 根路径 + 归档态，保持轻量；各标签下的图片数量由 `pzt tag list <项目>` 与应用内 space 菜单承载，不在 `list` 里展开——见 F-41 拍板）、`open`（进入全键盘浏览主循环）、`archive`、`unarchive`（清除归档态，对称 `archive`）、`delete`、`rescan`（重新扫描文件夹）、`images`。
 - **选片交互**（`pzt open` 内）：`h`/`l` 上一张/下一张的秒切浏览，带上限的标签分组，`g` 按标签筛选、控制台 `/filter` 二级筛选，废片系统标签，recipe 风格切换与同步预览，导出。
 - **色彩配方**：`recipe`（`list`/`rename`/`delete` 及交互式创建流程）。
-- **导出**：`export`（按标签导出到文件夹）。
+- **导出**：`export`（按标签导出到文件夹，或 `--all-keep` 导出全部并默认排除废片/重复）。
 - **多语言**：默认中文，`config.json` 的 `lang` 字段可切英文（缺省时回退系统 `LANG`）。i18n 只在 cli 层，`core` 不承载任何面向用户的文案。
 
 ### 3.2 Headless 命令面（面向 agent，`--json`）

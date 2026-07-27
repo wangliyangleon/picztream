@@ -91,6 +91,8 @@ std::string usage_main() {
            "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
            "加 --no-prune 跳过清理)\n"
            "  pzt export <project_name> <tag_name> <output_folder>\n"
+           "  pzt export <project_name> --all-keep <output_folder>  (导出全部,"
+           "默认排除废片/重复)\n"
            "  pzt tag list <project_name>\n"
            "  pzt recipe list\n";
   } else {
@@ -113,6 +115,8 @@ std::string usage_main() {
            "running "
            "on temporarily unmounted storage)\n"
            "  pzt export <project_name> <tag_name> <output_folder>\n"
+           "  pzt export <project_name> --all-keep <output_folder>  (export "
+           "everything, excluding reject/duplicate by default)\n"
            "  pzt tag list <project_name>\n"
            "  pzt recipe list\n";
   }
@@ -450,6 +454,14 @@ std::string err_export_missing_args() {
   }
 }
 
+std::string err_export_unknown_arg(const std::string &arg) {
+  if (g_lang == Lang::zh) {
+    return "pzt export: 未知参数 '" + arg + "'\n";
+  } else {
+    return "pzt export: unknown option '" + arg + "'\n";
+  }
+}
+
 std::string err_export_tag_not_found(const std::string &tag_name) {
   if (g_lang == Lang::zh) {
     return "pzt export: 找不到标签 '" + tag_name + "'\n";
@@ -473,6 +485,16 @@ std::string msg_export_no_images(const std::string &tag_name) {
     return "标签 '" + tag_name + "' 下没有图片,未导出\n";
   } else {
     return "No images under tag '" + tag_name + "', not exported\n";
+  }
+}
+
+// `--all-keep` 没有单一标签名可以带进文案,跟 msg_export_no_images 的区别
+// 只在于此。
+std::string msg_export_no_images_all() {
+  if (g_lang == Lang::zh) {
+    return "项目里没有可导出的图片(排除废片/重复后为空),未导出\n";
+  } else {
+    return "No images to export (empty after excluding reject/duplicate), not exported\n";
   }
 }
 
@@ -1402,17 +1424,24 @@ std::string tag_menu_actions_line() {
   }
 }
 
-// 点 2/3：`e` 键的二级菜单——只在当前有 active filter(g 层标签筛选和/
-// 或控制台二级筛选)时才出现,没有筛选时 `e` 保持原来的单键直接导出当
-// 前照片。`f` 导出的是"当前 active filter 范围"(g 层 ∘ 二级筛选叠加
-// 之后 cmd_open 手上的 images),不是某个具体标签,所以这里不带标签名。
-std::string msg_export_submenu_prompt() {
+// 点 2/3：`e` 键的二级菜单——现在始终弹出(不再区分有没有 active
+// filter),`e` 导出当前这张、`a` 导出全项目(默认排除废片/重复,跟
+// `--all-keep` 同一套语义)。`f` 导出的是"当前 active filter 范围"(g
+// 层 ∘ 二级筛选叠加之后 cmd_open 手上的 images),不是某个具体标签,
+// 所以这里不带标签名,且只在 filter_active 时才拼进选项里——没有筛选
+// 时选它没有意义。
+std::string msg_export_submenu_prompt(bool filter_active) {
   if (g_lang == Lang::zh) {
-    return " " + menu_item("e", "导出当前") + "  " + menu_item("f", "导出筛选结果") + "  " +
-           menu_item("Esc", "取消");
+    std::string s = " " + menu_item("e", "导出当前") + "  " + menu_item("a", "导出全部");
+    if (filter_active) s += "  " + menu_item("f", "导出筛选结果");
+    s += "  " + menu_item("Esc", "取消");
+    return s;
   } else {
-    return " " + menu_item("e", "Export current") + "  " + menu_item("f", "Export filtered") +
-           "  " + menu_item("Esc", "Cancel");
+    std::string s =
+        " " + menu_item("e", "Export current") + "  " + menu_item("a", "Export all");
+    if (filter_active) s += "  " + menu_item("f", "Export filtered");
+    s += "  " + menu_item("Esc", "Cancel");
+    return s;
   }
 }
 

@@ -1112,41 +1112,18 @@ int cmd_rescan(const std::vector<std::string>& args) {
   return 0;
 }
 
-int cmd_export(const std::vector<std::string>& args) {
-  if (args.size() < 3) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_missing_args().c_str());
-    print_usage();
-    return 1;
-  }
-  auto project_id = resolve_project("pzt export", args[0]);
-  if (!project_id) return 1;
-  auto tag_id = pzt::core::find_tag_by_name(*project_id, args[1]);
-  if (!tag_id) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_tag_not_found(args[1]).c_str());
-    return 1;
-  }
-  std::string output_folder = expand_home_path(args[2]);
-
-  // F-26：默认排除废片/重复，除非目标标签本身就是废片/重复，或者用户
-  // 在 Settings 里显式打开了 export_reject/export_dup。
-  auto settings = pzt::core::load_settings();
-  auto result = pzt::core::export_tag(*tag_id, output_folder, print_export_progress,
-                                       settings.export_reject, settings.export_dup);
-  if (!result.ok()) {
-    if (result.error() == pzt::core::ExportTagError::IoError) {
-      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());
-    } else {
-      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_tag_not_found(args[1]).c_str());
-    }
-    return 1;
-  }
-
-  const auto& r = result.value();
+// export_tag 和 --all-keep 两条路径导出成功之后的结果打印是同一套(成功
+// 数/跳过明细),只有"0 张"时的提示文案不同(有没有标签名可带),抽出来避
+// 免两份几乎一样的打印代码分叉维护。
+void print_export_result(const pzt::core::ExportResult& r, const std::string& output_folder,
+                          const std::string& no_images_msg) {
   if (r.exported_count == 0 && r.skipped.empty()) {
-    std::printf("%s", pzt::cli::i18n::msg_export_no_images(args[1]).c_str());
-    return 0;
+    std::printf("%s", no_images_msg.c_str());
+    return;
   }
-  std::printf("%s", pzt::cli::i18n::msg_export_success(r.exported_count, output_folder, r.created_output_folder).c_str());
+  std::printf("%s", pzt::cli::i18n::msg_export_success(r.exported_count, output_folder,
+                                                         r.created_output_folder)
+                         .c_str());
   if (r.skipped.empty()) {
     std::printf("\n");
   } else {
@@ -1157,6 +1134,82 @@ int cmd_export(const std::vector<std::string>& args) {
                              .c_str());
     }
   }
+}
+
+int cmd_export(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_missing_args().c_str());
+    print_usage();
+    return 1;
+  }
+  // --all-keep 走 flag 摘取而不是"第二个位置参数刚好等于这个字面量"——
+  // 后者会把 flag 和 tag_name 挤进同一个命名空间:拼错的 --all-keeps 会
+  // 静默变成一个标签名,报出来的是"找不到标签",把 flag 打错说成标签问
+  // 题(F-06 在 cmd_new 记的是同一个失败模式)。摘出来之后剩下的位置参数
+  // 才是 tag_name/output_folder,flag 出现在第几个位置都认。
+  bool all_keep = false;
+  std::vector<std::string> positional;
+  for (std::size_t i = 1; i < args.size(); ++i) {
+    if (args[i] == "--all-keep") {
+      all_keep = true;
+    } else if (args[i].rfind("--", 0) == 0) {
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_unknown_arg(args[i]).c_str());
+      print_usage();
+      return 1;
+    } else {
+      positional.push_back(args[i]);
+    }
+  }
+  // --all-keep 不占位置参数:带它时只需要 output_folder,不带时还要 tag_name。
+  if (positional.size() < (all_keep ? 1u : 2u)) {
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_missing_args().c_str());
+    print_usage();
+    return 1;
+  }
+
+  auto project_id = resolve_project("pzt export", args[0]);
+  if (!project_id) return 1;
+  // --all-keep 时 positional[0] 就是 output_folder(没有 tag_name)。
+  std::string output_folder = expand_home_path(all_keep ? positional[0] : positional[1]);
+
+  // F-26：默认排除废片/重复，除非目标标签本身就是废片/重复(--all-keep
+  // 没有单一目标标签,这条例外不适用),或者用户在 Settings 里显式打开
+  // 了 export_reject/export_dup。
+  auto settings = pzt::core::load_settings();
+
+  if (all_keep) {
+    auto images = pzt::core::list_images(*project_id);
+    std::vector<pzt::core::ImageId> ids;
+    ids.reserve(images.size());
+    for (const auto& img : images) ids.push_back(img.id);
+    auto result = pzt::core::export_images(*project_id, ids, output_folder, print_export_progress,
+                                            settings.export_reject, settings.export_dup);
+    if (!result.ok()) {
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());
+      return 1;
+    }
+    print_export_result(result.value(), output_folder, pzt::cli::i18n::msg_export_no_images_all());
+    return 0;
+  }
+
+  const std::string& tag_name = positional[0];
+  auto tag_id = pzt::core::find_tag_by_name(*project_id, tag_name);
+  if (!tag_id) {
+    std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_tag_not_found(tag_name).c_str());
+    return 1;
+  }
+  auto result = pzt::core::export_tag(*tag_id, output_folder, print_export_progress,
+                                       settings.export_reject, settings.export_dup);
+  if (!result.ok()) {
+    if (result.error() == pzt::core::ExportTagError::IoError) {
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_io_error(output_folder).c_str());
+    } else {
+      std::fprintf(stderr, "%s", pzt::cli::i18n::err_export_tag_not_found(tag_name).c_str());
+    }
+    return 1;
+  }
+
+  print_export_result(result.value(), output_folder, pzt::cli::i18n::msg_export_no_images(tag_name));
   return 0;
 }
 
