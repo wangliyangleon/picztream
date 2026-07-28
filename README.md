@@ -62,6 +62,9 @@ pzt export trip --all-keep ~/Photos/out    # 导出没被标废片的图
 
 所有项目、标签、recipe 存在一个本地 SQLite 库：`~/.config/pzt/pzt.db`
 （若设了 `XDG_CONFIG_HOME` 则在其下）。照片本身不搬动,库里只存路径与元数据。
+同目录下还可能有 `pzt.db-wal` / `pzt.db-shm`（SQLite WAL 边车文件）和
+`raw_previews/`；备份时连 `-wal` 一起拷，`pzt` 运行期间只拷 `pzt.db` 会丢
+掉最近的写入。
 
 ## AI 评估（可选）
 

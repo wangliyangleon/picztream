@@ -83,6 +83,35 @@ scripts/release.sh 2026.7.20     # CalVer,不带 v 前缀
 
 ---
 
+## 数据兼容性
+
+`pzt.db` 的 schema 版本记在库文件自己的 `PRAGMA user_version` 里，当前是 **1**（源头是 `core/db/schema.h` 的 `kSchemaVersion`）。跟 CalVer 无关，各走各的：CalVer 每次发布都变，schema 版本只在结构真的变了才变。
+
+- **升级**自动、就地、单向。老库首次被新版打开时跑一次 `migrate_v0_to_v1`（建表、补列、盖章），整段在一个事务里，盖章放最后。已盖章的库直接跳过全部 schema 工作。
+- **降级**被明确拒绝：库的版本比程序新时 `pzt` 打印一句"数据库是更新版本的 pzt 创建的…请升级"并 exit 1，不会尝试在未知结构上写入，也不碰这个库一个字节。所以**装回旧版之前先备份库**。
+
+### 改 schema 必须 bump 版本号
+
+这是本节最要紧的一条。T-7 之前，往 `initialize_schema` 里加一条 `ensure_column` 就能让新列在所有存量库上自动出现，因为每次开库都会把全部加列检查跑一遍。现在已盖章的库走快路径、根本不看那段代码，所以：
+
+> 任何对 `initialize_schema` 的 DDL 改动，**包括纯粹加一列**，都必须同时把 `kSchemaVersion` 加一，并新增对应的 `migrate_vN_to_vN+1` 步骤。
+
+忘了 bump 不会报错，只会让新列在所有存量安装上永远不出现，而在开发机的新建库上一切正常，是最难发现的那类 bug。
+
+### WAL 与备份
+
+库跑在 WAL 模式下，`pzt.db` 旁边会出现 `pzt.db-wal` 和 `pzt.db-shm`。最后一条连接关闭时会 checkpoint 并删掉它们，但 `pzt`（或 agent）运行期间**只拷 `pzt.db` 不是有效备份**，最近的写入还在 `-wal` 里。要么三个文件一起拷，要么先跑：
+
+```sh
+sqlite3 ~/.config/pzt/pzt.db "PRAGMA wal_checkpoint(TRUNCATE);"
+```
+
+### 历史记录：一次已经发生的静默数据丢失
+
+T-7 之前，`initialize_schema` 里常驻着一条按列名匹配的破坏性迁移：检测到 `image_evaluations` 有 `exposure_score` 或 `unusable` 列就整表 `DROP`。它的依据是"库里都是迭代测试数据，无真实用户数据要保留"，这在开 tap 之前成立，之后不再成立。结果是：**任何在 v2026.7.20 装过、跑过评估、之后才升级的用户，评估结果在 `brew upgrade` 时被静默丢弃**，无提示无备份。T-7 把它换成了版本闸门下的一次性结构校验。
+
+---
+
 ## 安装统计
 
 第三方个人 tap **拿不到 Homebrew 官方 analytics**（formulae.brew.sh / `brew analytics` 只覆盖 homebrew/core）。现有粗略信号：**tap 仓 `homebrew-pzt` → Insights → Traffic → Git clones**（≈ 多少台机器 tap 过；14 天窗口，不区分 formula）。GitHub 对自动生成的源码 tarball 下载不计数。
