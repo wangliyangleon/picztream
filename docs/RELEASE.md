@@ -100,7 +100,7 @@ scripts/release.sh 2026.7.20     # CalVer,不带 v 前缀
 
 ### WAL 与备份
 
-库跑在 WAL 模式下，`pzt.db` 旁边会出现 `pzt.db-wal` 和 `pzt.db-shm`。最后一条连接关闭时会 checkpoint 并删掉它们，但 `pzt`（或 agent）运行期间**只拷 `pzt.db` 不是有效备份**，最近的写入还在 `-wal` 里。要么三个文件一起拷，要么先跑：
+库跑在 WAL 模式下，`pzt.db` 旁边会出现 `pzt.db-wal` 和 `pzt.db-shm`。最后一条连接干净关闭时会 checkpoint，`-wal` 回落到 0 字节（实测这两个文件本身会留在原地，不一定被删除，属正常现象，不是没退干净）。但 `pzt`（或 agent）运行期间**只拷 `pzt.db` 不是有效备份**，最近的写入还在 `-wal` 里。要么三个文件一起拷，要么先跑：
 
 ```sh
 sqlite3 ~/.config/pzt/pzt.db "PRAGMA wal_checkpoint(TRUNCATE);"
