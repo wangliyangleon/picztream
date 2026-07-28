@@ -34,6 +34,8 @@ std::string fresh_db_path(const std::string& tag) {
   fs::create_directories(dir);
   auto path = (dir / (tag + ".db")).string();
   fs::remove(path);
+  fs::remove(path + "-wal");  // WAL 边车,理由见 db_test.cpp 的同名 helper
+  fs::remove(path + "-shm");
   return path;
 }
 

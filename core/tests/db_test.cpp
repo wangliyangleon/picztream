@@ -10,17 +10,27 @@ namespace {
 // Each test gets its own throwaway DB path under the OS temp dir so tests
 // never touch the real ~/.config/pzt/pzt.db and don't collide with each
 // other.
+//
+// 删除动作在 helper 里而不是各个调用点:开了 WAL 之后每次开库都会在主文
+// 件旁边生成 <path>-wal 和 <path>-shm,而这个目录是跨轮复用的。只删主文
+// 件的话,下一轮 sqlite3_open 会在一个零字节库旁边发现同名的、上一轮留
+// 下的活 WAL 并对它做恢复,"fresh" 库就不 fresh 了,可能读到陈旧内容或
+// 直接报损坏。core/tests 里另外 9 个 fresh_db_path/temp_db_path 出于同
+// 样的理由各自也删这两个边车。
 std::string temp_db_path(const std::string& tag) {
   auto dir = std::filesystem::temp_directory_path() / "pzt_test";
   std::filesystem::create_directories(dir);
-  return (dir / (tag + ".db")).string();
+  auto path = (dir / (tag + ".db")).string();
+  std::filesystem::remove(path);
+  std::filesystem::remove(path + "-wal");
+  std::filesystem::remove(path + "-shm");
+  return path;
 }
 
 }  // namespace
 
 TEST_CASE("opening a fresh database creates it and initializes schema") {
   std::string path = temp_db_path("fresh_schema");
-  std::filesystem::remove(path);
 
   auto db = pzt::core::db::Database::open_at(path);
   CHECK(std::filesystem::exists(path));
@@ -29,7 +39,6 @@ TEST_CASE("opening a fresh database creates it and initializes schema") {
 
 TEST_CASE("schema initialization is idempotent - reopening doesn't fail") {
   std::string path = temp_db_path("reopen_schema");
-  std::filesystem::remove(path);
 
   { auto db1 = pzt::core::db::Database::open_at(path); }
   auto db2 = pzt::core::db::Database::open_at(path);
@@ -48,7 +57,6 @@ TEST_CASE("default_db_path respects XDG_CONFIG_HOME") {
 // 接确实带着这个设置,不用真的起两个线程去竞争锁。
 TEST_CASE("opening a database sets a non-zero busy_timeout") {
   std::string path = temp_db_path("busy_timeout");
-  std::filesystem::remove(path);
 
   auto db = pzt::core::db::Database::open_at(path);
   sqlite3_stmt* stmt = nullptr;
