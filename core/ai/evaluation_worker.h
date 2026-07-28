@@ -39,12 +39,12 @@ class EvaluationWorker {
   EvaluationWorker& operator=(const EvaluationWorker&) = delete;
 
   // 提交一个评估请求，立即返回，不阻塞。同一张图已经有请求在排队/处理
-  // 中时返回 false（去重——调用方据此提示"正在处理"，不是报错）。
-  // auto_reject 是显式参数，不是从 Settings.auto_ai_reject 读——
+  // 中时返回 false（去重,调用方据此提示"正在处理"，不是报错）。
+  // auto_reject 是显式参数，不是从 Settings.auto_ai_reject 读,
   // process_request 本身不知道、也不该知道调用方是交互路径还是 agent，
   // 见 docs/M4_PRD.md P6"物理隔离"：agent 触发时可以比人工更激进（评估
   // 不达标直接打废片），交互路径的默认设置完全不受影响。调用方（
-  // browse.cpp）自己决定传什么值——交互路径传
+  // browse.cpp）自己决定传什么值,交互路径传
   // load_settings().auto_ai_reject，行为跟以前一样。
   // language：assessment 的输出语言(guidance 为空时用它)，cli 按当前界面
   // 语言映射后传进来，默认 Chinese。见 core/ai/evaluation.h 的 Language。
@@ -52,13 +52,13 @@ class EvaluationWorker {
                bool auto_reject, Language language = Language::Chinese,
                const LocalModelConfig& local_config = LocalModelConfig{});
 
-  // 有没有请求正在排队或者处理中——跟 request() 的去重判断是两回事，这个
+  // 有没有请求正在排队或者处理中,跟 request() 的去重判断是两回事，这个
   // 是给"要不要显示一个全局的处理中提示"这类场景用的。
   bool has_pending() const;
 
   // 轮询用：每完成一个请求（无论成功失败）内部计数器就 +1。调用方保存
   // 上一次看到的值传进来比较，跟当前值不一样就说明有新结果落地了，函数
-  // 返回 true 并把调用方持有的值更新到最新——调用方据此决定要不要重绘，
+  // 返回 true 并把调用方持有的值更新到最新,调用方据此决定要不要重绘，
   // 不是每次 poll 都重绘。
   bool consume_new_result(std::uint64_t& last_seen_generation) const;
 
@@ -70,13 +70,13 @@ class EvaluationWorker {
     bool processing;
   };
   // processing 靠 in_flight_.size() > queue_.size() 推出来，不需要单独
-  // 一个"当前正在处理哪一个"的状态——worker_loop 是单线程的，任意时刻最
+  // 一个"当前正在处理哪一个"的状态,worker_loop 是单线程的，任意时刻最
   // 多只有一个请求处于"已经从 queue_ 弹出、还没处理完"的状态，
   // in_flight_ 比 queue_ 多出来的那一个就是它。
   QueueStatus queue_status() const;
 
   // F-03：评估请求失败(网络/key/解析，或者请求真正发出去之前就失败
-  // ——图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug
+  // ,图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug
   // 时用户完全看不到，提交之后要么等到结果、要么永远等不到也不知道为
   // 什么。跟 generation_ 用途不同：generation_ 只回答"有没有新结果落
   // 地"(成功/失败都算)，这个回答"最近一次落地的结果是不是失败的、失
@@ -104,6 +104,11 @@ class EvaluationWorker {
   // 把它记进 last_failure_(process_request 本身不碰 mu_ 保护的状态，
   // 维持它原来"纯粹是 db I/O + 网络调用"的定位）。
   std::optional<EvaluationError> process_request(const PendingRequest& req);
+  // 真正干活的那一半。拆出来是为了让 process_request 只剩一层 catch-all：
+  // 这条线程上会 throw 的地方远不止一处(Database::open_at、db::Stmt 的构
+  // 造函数、project/tagging 里所有 DAO 风格的函数遇到 sqlite 失败都是
+  // throw)，而 jthread 上任何未捕获的异常都是 std::terminate。
+  std::optional<EvaluationError> process_request_impl(const PendingRequest& req);
 
   std::string db_path_;
   EvaluationFn evaluation_fn_;
@@ -115,7 +120,7 @@ class EvaluationWorker {
   std::uint64_t generation_ = 0;
   std::optional<LastFailure> last_failure_;
 
-  // 声明在最后，保证析构时先于其它成员被销毁——它的析构自动
+  // 声明在最后，保证析构时先于其它成员被销毁,它的析构自动
   // request_stop()+join()，worker 线程在其它成员真正被销毁之前已经彻底
   // 退出，不会访问悬空引用(照抄 PrefetchCache)。
   std::jthread worker_;

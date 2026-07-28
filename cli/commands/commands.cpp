@@ -298,6 +298,8 @@ const char* evaluation_error_str(pzt::core::EvaluationError error) {
       return "image_unavailable";
     case pzt::core::EvaluationError::StorageFailed:
       return "storage_failed";
+    case pzt::core::EvaluationError::DatabaseUnavailable:
+      return "database_unavailable";
   }
   return "unknown";
 }

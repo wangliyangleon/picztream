@@ -1033,6 +1033,8 @@ std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
       return g_lang == Lang::zh ? "图片暂时无法评估" : "image is currently unavailable";
     case pzt::core::EvaluationError::StorageFailed:
       return g_lang == Lang::zh ? "结果未能保存" : "failed to save the result";
+    case pzt::core::EvaluationError::DatabaseUnavailable:
+      return g_lang == Lang::zh ? "数据库暂时不可用" : "database is currently unavailable";
   }
   return g_lang == Lang::zh ? "未知错误" : "unknown error";  // 不可达，安抚 -Wreturn-type
 }

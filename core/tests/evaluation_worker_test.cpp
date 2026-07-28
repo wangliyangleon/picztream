@@ -42,7 +42,7 @@ fs::path fresh_photo_dir(const std::string& tag) {
   return dir;
 }
 
-// evaluation_worker 的处理流程会真的调用 decode_preview_file——跟其它测
+// evaluation_worker 的处理流程会真的调用 decode_preview_file,跟其它测
 // 试用 touch() 写几个字节假装成 JPEG 不同，这里必须是一张能被真实解码的
 // 图片，不然还没走到假 EvaluationFn 就会在解码这一步失败。
 void write_real_jpeg(const fs::path& p) {
@@ -61,7 +61,7 @@ EvaluationResult make_evaluation_result() {
   return EvaluationResult{"balanced composition, warm color, sharp", false};
 }
 
-// unusable=true 的样本——auto_reject 的"打废片"用例用它。
+// unusable=true 的样本,auto_reject 的"打废片"用例用它。
 EvaluationResult make_unusable_evaluation_result() {
   return EvaluationResult{"subject badly out of focus", true};
 }
@@ -73,7 +73,7 @@ bool has_reject_tag(Database& db, ImageId id) {
   return false;
 }
 
-// 假 EvaluationFn 立即返回，后台线程处理一个请求应该是毫秒级——用一个短
+// 假 EvaluationFn 立即返回，后台线程处理一个请求应该是毫秒级,用一个短
 // 间隔的忙等循环，给个宽松的超时上限，避免真的卡住时无限等待。
 bool wait_for_result(EvaluationWorker& worker, std::uint64_t& generation) {
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -165,7 +165,7 @@ TEST_CASE("a failed request leaves no evaluation row") {
 }
 
 // F-03：失败原因原来只打 stderr，用户在 --debug 之外完全看不到。
-// take_last_failure() 把它暴露出来，一次取走就清空——避免同一次失败被
+// take_last_failure() 把它暴露出来，一次取走就清空,避免同一次失败被
 // 反复报出来（跟 consume_new_result 的"消费一次"精神一致）。
 TEST_CASE("a failed request is recorded in take_last_failure, consumed exactly once") {
   Fixture fx("evaluation_worker_last_failure");
@@ -205,9 +205,9 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
 }
 
 // auto_reject 现在是 request() 的显式参数，不再从 Settings.auto_ai_reject
-// 读取——process_request 不知道调用方是交互路径还是 agent，物理隔离见
+// 读取,process_request 不知道调用方是交互路径还是 agent，物理隔离见
 // docs/M4_PRD.md P6。W2026-07-21：判据从 passes_gate 三项阈值改成模型直接
-// 给的 unusable flag——unusable=true 且 auto_reject=true 时，落库之后自动
+// 给的 unusable flag,unusable=true 且 auto_reject=true 时，落库之后自动
 // 给这张图打上"废片"系统标签。
 TEST_CASE("auto_reject tags an unusable evaluation with the reject tag when true") {
   Fixture fx("evaluation_worker_auto_reject_fail");
@@ -226,7 +226,7 @@ TEST_CASE("auto_reject tags an unusable evaluation with the reject tag when true
   CHECK(has_reject_tag(db, fx.image_id));
 }
 
-// 同样 auto_reject=true，但这次评估可用(unusable=false)——不该被打废片。
+// 同样 auto_reject=true，但这次评估可用(unusable=false),不该被打废片。
 TEST_CASE("auto_reject does not tag a usable evaluation") {
   Fixture fx("evaluation_worker_auto_reject_pass");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
@@ -244,7 +244,7 @@ TEST_CASE("auto_reject does not tag a usable evaluation") {
   CHECK(!has_reject_tag(db, fx.image_id));
 }
 
-// 默认(auto_reject=false)不自动打标签，即便 unusable——这是现有行为的
+// 默认(auto_reject=false)不自动打标签，即便 unusable,这是现有行为的
 // 回归防护，上面绝大多数其它测试用例都隐式依赖这一点。
 TEST_CASE("auto_reject leaves unusable evaluations untagged when false") {
   Fixture fx("evaluation_worker_auto_reject_disabled");
@@ -263,7 +263,7 @@ TEST_CASE("auto_reject leaves unusable evaluations untagged when false") {
   CHECK(!has_reject_tag(db, fx.image_id));
 }
 
-// F-17：process_request 落库那一步以前不检查 sqlite3_step 的返回值——
+// F-17：process_request 落库那一步以前不检查 sqlite3_step 的返回值,
 // AI 已经给出结果，但写库失败(磁盘满/库损坏)时会静默发生，generation_
 // 照样 +1 触发一次什么都没变的空重绘。这里用真实的只读文件权限强迫写
 // 入失败(而不是伪造返回码)，验证这条路径现在会被 take_last_failure()
@@ -351,7 +351,7 @@ TEST_CASE("re-evaluating an image overwrites the previous result") {
 
 // M3:`/tasks` 用的聚合状态查询。单个 worker 线程一次只处理一个请求，
 // "queued>0 但 processing 还是 false"这个状态在真实运行中只存在于请求
-// 刚提交、worker 线程还没被调度醒来的极短窗口内，没法确定性地测——三个
+// 刚提交、worker 线程还没被调度醒来的极短窗口内，没法确定性地测,三个
 // 有意义、能稳定复现的状态是:全空闲、只有一个在处理(没有排队积压)、一
 // 个在处理+还有积压排队。用一个会阻塞在条件变量上的假 EvaluationFn 精
 // 确控制"正在处理中"这个状态持续多久，见 docs/M3_Eng_Design.md 任务 6
@@ -447,6 +447,37 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   REQUIRE(failure.has_value());
   CHECK(failure->image_id == 999999);
   CHECK(failure->error == EvaluationError::ImageUnavailable);
+}
+
+// T-7：process_request 跑在后台 jthread 上,过去它任何一处 throw 都是
+// std::terminate,整个 pzt 直接死掉。用"库的 schema 版本比程序新"来触发
+// 是最干净的provocation:Database::open_at 必定抛,而且抛在函数第一行。
+// 修之前这个用例会把整个 core_tests 二进制拖垮,而不是红一条。
+TEST_CASE("a request against an unopenable database fails instead of terminating the worker") {
+  auto db_path = fresh_db_path("evaluation_worker_db_too_new");
+  Database::open_at(db_path);  // 建库(此时被盖章成当前版本)
+
+  sqlite3* raw = nullptr;
+  REQUIRE(sqlite3_open(db_path.c_str(), &raw) == SQLITE_OK);
+  REQUIRE(sqlite3_exec(raw, "PRAGMA user_version = 99;", nullptr, nullptr, nullptr) == SQLITE_OK);
+  sqlite3_close(raw);
+
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider, Language, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
+  };
+  EvaluationWorker worker(db_path, fake_evaluation);
+
+  CHECK(worker.request(1, Provider::Claude, "", false));
+
+  std::uint64_t generation = 0;
+  REQUIRE(wait_for_result(worker, generation));
+  CHECK(!worker.has_pending());
+
+  auto failure = worker.take_last_failure();
+  REQUIRE(failure.has_value());
+  CHECK(failure->image_id == 1);
+  CHECK(failure->error == EvaluationError::DatabaseUnavailable);
 }
 
 TEST_CASE("request threads LocalModelConfig through to evaluation_fn_") {
