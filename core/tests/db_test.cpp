@@ -27,6 +27,27 @@ std::string temp_db_path(const std::string& tag) {
   return path;
 }
 
+// `PRAGMA <name>;`(不带参数)是查询当前值的标准写法。这两个 helper 让下
+// 面几个用例可以直接对一条开出来的连接断言 pragma 的实际取值。
+int read_int_pragma(sqlite3* conn, const char* sql) {
+  sqlite3_stmt* stmt = nullptr;
+  REQUIRE(sqlite3_prepare_v2(conn, sql, -1, &stmt, nullptr) == SQLITE_OK);
+  REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+  int value = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  return value;
+}
+
+std::string read_text_pragma(sqlite3* conn, const char* sql) {
+  sqlite3_stmt* stmt = nullptr;
+  REQUIRE(sqlite3_prepare_v2(conn, sql, -1, &stmt, nullptr) == SQLITE_OK);
+  REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+  const unsigned char* text = sqlite3_column_text(stmt, 0);
+  std::string value = text ? reinterpret_cast<const char*>(text) : "";
+  sqlite3_finalize(stmt);
+  return value;
+}
+
 }  // namespace
 
 TEST_CASE("opening a fresh database creates it and initializes schema") {
@@ -66,4 +87,43 @@ TEST_CASE("opening a database sets a non-zero busy_timeout") {
   sqlite3_finalize(stmt);
 
   CHECK(timeout_ms > 0);
+}
+
+// T-7：schema 版本闸门。SQLite 给每个库留了一个 4 字节的 user_version
+// 供应用自己用,默认 0。PZT 把"当前 schema"定为 1,于是"读到 0"同时覆盖
+// 了全新空文件和任何 T-7 之前建的老库,两者走同一条全量初始化路径,跑完
+// 盖章;读到 1 就直接跳过全部建表与加列检查。
+TEST_CASE("a freshly created database is stamped at the current schema version") {
+  std::string path = temp_db_path("schema_version_fresh");
+
+  auto db = pzt::core::db::Database::open_at(path);
+  CHECK(read_int_pragma(db.handle(), "PRAGMA user_version;") == 1);
+}
+
+TEST_CASE("reopening an already-stamped database leaves user_version unchanged") {
+  std::string path = temp_db_path("schema_version_reopen");
+
+  { auto db1 = pzt::core::db::Database::open_at(path); }
+  auto db2 = pzt::core::db::Database::open_at(path);
+  CHECK(read_int_pragma(db2.handle(), "PRAGMA user_version;") == 1);
+}
+
+// T-7：WAL。默认的 rollback journal 下写者阻塞读者,而 PZT 现在确实是多
+// 写者(EvaluationWorker 后台 jthread 一条连接 + 主线程 + agent 每图派生
+// 的 pzt 子进程)。
+TEST_CASE("opening a database enables WAL journal mode") {
+  std::string path = temp_db_path("wal_mode");
+
+  auto db = pzt::core::db::Database::open_at(path);
+  CHECK(read_text_pragma(db.handle(), "PRAGMA journal_mode;") == "wal");
+}
+
+// journal_mode 是持久化在库文件里的,不是每条连接的设置,这条用例钉住
+// 这个前提,因为开库路径正是靠它才能"先读一次,已经是 wal 就不再设"。
+TEST_CASE("WAL journal mode persists across close and reopen") {
+  std::string path = temp_db_path("wal_persists");
+
+  { auto db1 = pzt::core::db::Database::open_at(path); }
+  auto db2 = pzt::core::db::Database::open_at(path);
+  CHECK(read_text_pragma(db2.handle(), "PRAGMA journal_mode;") == "wal");
 }
