@@ -89,10 +89,14 @@ Database Database::open_at(const std::string& path) {
   // 之后"库的 schema 版本比程序新"是一条常规路径(SchemaTooNewError),抛
   // 出不再是意外,泄漏就得堵上。
   try {
-    // WAL 要在 initialize_schema 之前:v0 迁移整段跑在一个事务里,而
-    // journal_mode 不能在事务内切换。
-    enable_wal_if_needed(db);
+    // 顺序:先 initialize_schema 再切 WAL。两个理由。
+    // (1) journal_mode 不能在事务内切换,而 v0 迁移整段跑在一个事务里,
+    //     initialize_schema 返回时事务已经提交,这里是安全的。
+    // (2) 更重要的是,schema 版本闸门在 initialize_schema 里:版本比本程序
+    //     新时它会抛,而 journal_mode 是要写进库文件头的。放在后面才能保证
+    //     "拒绝打开"真的不碰这个库一个字节。
     initialize_schema(db);
+    enable_wal_if_needed(db);
   } catch (...) {
     sqlite3_close(db);
     throw;

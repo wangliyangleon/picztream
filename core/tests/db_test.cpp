@@ -291,6 +291,12 @@ TEST_CASE("opening a database stamped at a newer schema version throws SchemaToo
   sqlite3_close(raw);
 
   CHECK_THROWS_AS(pzt::core::db::Database::open_at(path), pzt::core::db::SchemaTooNewError);
+  // "拒绝打开"必须真的不碰这个库:版本号原样,也没有被顺手切成 WAL。
+  // (open_at 里 enable_wal_if_needed 排在 initialize_schema 之后就是为
+  // 了这个,journal_mode 是要写进库文件头的。)
+  REQUIRE(sqlite3_open(path.c_str(), &raw) == SQLITE_OK);
+  CHECK(scalar_int(raw, "PRAGMA user_version;") == 99);
+  sqlite3_close(raw);
   // cli 的顶层 main() 有一条兜底的 catch (const std::exception&),这条断言
   // 钉住"专用类型没被 catch 到时仍会落进兜底"这个继承关系。
   CHECK_THROWS_AS(pzt::core::db::Database::open_at(path), std::runtime_error);

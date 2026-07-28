@@ -150,6 +150,20 @@ std::string err_internal_error(const std::string &what) {
   }
 }
 
+std::string err_db_schema_too_new(int found_version, int supported_version) {
+  if (g_lang == Lang::zh) {
+    return "pzt: 数据库是更新版本的 pzt 创建的(schema v" +
+           std::to_string(found_version) + "，当前程序支持 v" +
+           std::to_string(supported_version) +
+           ")，请升级：brew update && brew upgrade pzt\n";
+  } else {
+    return "pzt: this database was created by a newer pzt (schema v" +
+           std::to_string(found_version) + ", this build supports v" +
+           std::to_string(supported_version) +
+           "), please upgrade: brew update && brew upgrade pzt\n";
+  }
+}
+
 std::string err_project_not_found(const std::string &cmd,
                                   const std::string &project_name) {
   if (g_lang == Lang::zh) {

@@ -292,6 +292,22 @@ TEST_CASE("err_internal_error includes the exception message and follows languag
 
 // F-03：评估失败提示——只验证文案包含图片 id 和一句能区分错误类型的原
 // 因，具体措辞不是接口契约。
+TEST_CASE("err_db_schema_too_new carries both versions and follows language") {
+  g_lang = Lang::zh;
+  auto zh_text = err_db_schema_too_new(2, 1);
+  CHECK(zh_text.find("v2") != std::string::npos);
+  CHECK(zh_text.find("v1") != std::string::npos);
+  CHECK(zh_text.find("brew upgrade pzt") != std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_text = err_db_schema_too_new(2, 1);
+  CHECK(en_text.find("v2") != std::string::npos);
+  CHECK(en_text.find("v1") != std::string::npos);
+  CHECK(en_text != zh_text);
+
+  g_lang = Lang::zh;  // 还原
+}
+
 TEST_CASE("msg_ai_evaluation_failed includes the image id and a reason, follows language") {
   g_lang = Lang::zh;
   auto zh_text = msg_ai_evaluation_failed(42, pzt::core::EvaluationError::NetworkError);

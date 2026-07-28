@@ -5,6 +5,7 @@
 
 #include "cli/commands/commands.h"
 #include "cli/i18n/i18n.h"
+#include "core/api.h"
 
 // `pzt` 入口:只做子命令名分发,具体逻辑在 cli/commands(小命令 +
 // browse 浏览主循环)、cli/menu(交互菜单)、cli/ui、cli/text 等模块里。
@@ -28,7 +29,7 @@ int main(int argc, char** argv) {
   }
 
   // core 用 Result<T,E> 表达预期的业务错误,异常只留给"不该发生"的场景
-  // (数据库 busy、磁盘满、库损坏、扫描目录时的文件系统异常等)——但
+  // (数据库 busy、磁盘满、库损坏、扫描目录时的文件系统异常等),但
   // "不该发生"不等于"不会发生"。这里兜底捕获,保证任何逃逸的异常都能
   // 触发正常的栈回退,让 cmd_open 内层 AltScreen/CbreakMode 这些 RAII
   // 对象的析构函数真的执行,不会把用户终端留在无回显/备用屏的坏状态。
@@ -49,6 +50,14 @@ int main(int argc, char** argv) {
     if (subcommand == "eval") return cmd_eval(args);
     if (subcommand == "curate") return cmd_curate(args);
     if (subcommand == "compare") return cmd_compare(args);
+  } catch (const pzt::core::SchemaTooNewError& e) {
+    // 必须排在下面那条 catch (const std::exception&) 之前:SchemaTooNewError
+    // 继承自 std::exception,handler 按源码顺序匹配,放在基类后面就是死代码。
+    // 这是唯一一个我们认得出、能给出可操作提示的逃逸异常。
+    std::fprintf(stderr, "%s",
+                 pzt::cli::i18n::err_db_schema_too_new(e.found_version(), e.supported_version())
+                     .c_str());
+    return 1;
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_internal_error(e.what()).c_str());
     return 1;

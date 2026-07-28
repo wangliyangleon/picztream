@@ -14,7 +14,7 @@ extern Lang g_lang;
 
 void init_lang();
 
-// "废片"/reject 系统标签的显示名——单独抽出来是因为它跟其它 UI 文本不一
+// "废片"/reject 系统标签的显示名,单独抽出来是因为它跟其它 UI 文本不一
 // 样,不是纯 cli 生成的字符串:这个标签的真实名字是 core::tagging::
 // kRejectTagName,创建时就以固定的中文字面量写进数据库,`TagSummary::name`
 // 读出来的永远是那个字面量,不会跟着 g_lang 变。任何直接显示 tag.name 的
@@ -38,10 +38,15 @@ std::string usage_recipe();
 
 // Command errors/status
 std::string err_unknown_subcommand(const std::string& subcommand);
-// 顶层 main() 兜底的异常边界用——core 里任何逃逸的异常(数据库 busy、磁
+// 顶层 main() 兜底的异常边界用,core 里任何逃逸的异常(数据库 busy、磁
 // 盘满、库损坏)落到这里,打一句人话再退出,而不是让 uncaught 异常直接
 // terminate(那样 AltScreen/CbreakMode 的析构不会跑,终端会留在坏状态)。
 std::string err_internal_error(const std::string& what);
+// T-7：上面那条兜底之外唯一一个"认识的"逃逸异常。库的 schema 版本比这个
+// 二进制新(装过更新版 pzt、又装回了旧版)时 core 拒绝打开并抛
+// SchemaTooNewError，这里给一句能照着做的话，而不是笼统的"内部错误"。
+// 不带子命令前缀：任何子命令的第一次 core 调用都可能撞上。
+std::string err_db_schema_too_new(int found_version, int supported_version);
 std::string err_project_not_found(const std::string& cmd, const std::string& project_name);
 std::string err_new_missing_name();
 std::string err_new_name_exists(const std::string& name);
@@ -51,14 +56,14 @@ std::string err_new_no_images(const std::string& folder_path);
 // --support-raw 重试，而不是让用户误以为目录是空的（见 T-2 proposal）。
 std::string err_new_no_images_raw_ignored(const std::string& folder_path);
 // F-06：`--` 开头但不是 `--support-raw` 的参数(比如拼错的
-// `--supportraw`)不再被静默当成 folder_path——那样会让扫描目标变成一
+// `--supportraw`)不再被静默当成 folder_path,那样会让扫描目标变成一
 // 个不存在的"目录",容易被误解成程序坏了而不是自己打错了参数。
 std::string err_new_unknown_arg(const std::string& arg);
 std::string msg_raw_preview_progress(int done, int total);
 std::string msg_export_raw_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
 std::string msg_project_created_simple(const std::string& name);
-// `pzt new` 成功之后，交互终端下追问"要不要直接打开"——见
+// `pzt new` 成功之后，交互终端下追问"要不要直接打开",见
 // cli/commands/commands.cpp 的 cmd_new，非 tty(脚本调用)时不会显示这
 // 条、也不会阻塞等按键。
 std::string msg_new_press_any_key_to_open();
@@ -118,10 +123,10 @@ std::string err_open_project_not_found();
 std::string err_open_project_no_images(const std::string& name);
 std::string err_open_tmux_passthrough();
 
-// 右侧菜单区(下半 block)逐行显示的顶层按键提示，一行一条——只收会派生二
+// 右侧菜单区(下半 block)逐行显示的顶层按键提示，一行一条,只收会派生二
 // 级菜单的键(' '/'x'/'f'/'e'/'r'，跟按键本身一致)，不派生二级菜单的
 // h/l、j/k、q 挪到底部导航栏(见 nav_bar_text)。空行分隔符用 key=0 表
-// 示、text 是空字符串——cli/commands/browse.cpp 触发某个二级菜单前,靠这
+// 示、text 是空字符串,cli/commands/browse.cpp 触发某个二级菜单前,靠这
 // 个 key 字段找到对应行做加粗高亮,不依赖硬编码下标。见
 // cli/commands/browse.cpp 的布局说明。
 struct MenuLine {
@@ -130,11 +135,11 @@ struct MenuLine {
 };
 std::vector<MenuLine> menu_lines();
 // 底部导航栏空闲时的常驻内容,分两行画(跟 space/g/r 的顶层二级菜单借用
-// 同一块两行的 banner 区域):第一行 h/l、j/k,第二行 q——不这样分的话第
+// 同一块两行的 banner 区域):第一行 h/l、j/k,第二行 q,不这样分的话第
 // 二行会一直空着,不好看。
 std::string nav_bar_line1();
 std::string nav_bar_line2();
-// g 层标签筛选/控制台二级筛选各自可能生效，也可能同时生效——统一拼成
+// g 层标签筛选/控制台二级筛选各自可能生效，也可能同时生效,统一拼成
 // "TagName | criterion" 这种不带标签前缀的紧凑写法，都不生效时返回空
 // 串。console_criterion_keyword 是 "unevaluated"/"fail"/"reject"/"dup"
 // 之一(跟解析 `/filter <criterion>` 用的是同一套关键字)，这个函数不
@@ -149,7 +154,7 @@ std::string info_source_label(bool is_raw);
 std::string info_captured_at_heading();
 std::string format_captured_at(std::optional<std::int64_t> captured_at);
 // 标签本身("风格:"/"Recipe:")，值部分(预设名，或者没有 recipe 时复用
-// info_none_label())在 browse.cpp 里跟标签拼在同一行——两部分分开是因
+// info_none_label())在 browse.cpp 里跟标签拼在同一行,两部分分开是因
 // 为只有值那部分需要加粗，标签本身不加粗，见 browse.cpp 的说明。
 std::string info_style_label();
 std::string msg_press_any_key_to_continue(const std::string& status);
@@ -159,7 +164,7 @@ std::string msg_all_tagged();
 std::string err_remove_tag_failed();
 std::string err_filter_failed();
 std::string msg_filter_no_images();
-// F-09：`/filter <criterion>` 计算结果为空时显示——跟 msg_filter_no_images
+// F-09：`/filter <criterion>` 计算结果为空时显示,跟 msg_filter_no_images
 // 分开，那条是"这个标签下没有图片"(标签语义)，这条是"没有满足这个
 // 状态条件的图片"(评估/去重状态语义)。
 std::string msg_console_filter_no_images();
@@ -170,25 +175,25 @@ std::string export_current_skipped(const std::string& file_name, pzt::core::Skip
 // M3：`:` 键触发的控制台。placeholder 按了冒号之后立刻显示，用户一开始
 // 输入就整个让位给输入内容(见 read_text_line_with_placeholder)。控制台
 // 现在要求所有输入必须以 `/` 开头(见 docs/M3_PRD.md"触发入口"一
-// 节)——placeholder 直接把这几个命令列出来，不是笼统的"输入额外指引"。
+// 节),placeholder 直接把这几个命令列出来，不是笼统的"输入额外指引"。
 std::string msg_ai_prompt_placeholder();
-// 命名刻意不提具体能力——以后加别的能力会复用同一条"处理中"/"已提交"反
+// 命名刻意不提具体能力,以后加别的能力会复用同一条"处理中"/"已提交"反
 // 馈，不是新开一套文案。
 std::string msg_ai_processing_pending();
 std::string msg_ai_processing_submitted();
-// F-03：评估请求失败(网络/key/解析，或者请求还没真正发出去就失败——
+// F-03：评估请求失败(网络/key/解析，或者请求还没真正发出去就失败,
 // 图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug 时用
 // 户完全看不到。poll 逻辑检测到有新结果落地时顺带查一次
 // EvaluationWorker::take_last_failure()，非空就用这条文案当
 // status_override 显示一次，不需要用户主动去 --debug 面板里找原因。
 std::string msg_ai_evaluation_failed(pzt::core::ImageId image_id, pzt::core::EvaluationError error);
-// 输入为空、或者非空但不以 `/` 开头时统一显示——控制台不再有"裸文本=当
+// 输入为空、或者非空但不以 `/` 开头时统一显示,控制台不再有"裸文本=当
 // 前图片额外指引"这条隐藏路径，用户忘了打 `/` 不会被无声当成提交了一次
 // 评估请求（这是本轮改动明确要解决的误触发风险）。Esc 依然是唯一真正的
 // "取消"，这条不算取消，是"没听懂，请用 / 开头重新输入"。
 std::string msg_console_requires_slash();
 // `:` 输入以 `/` 开头但不是已识别的命令名时统一显示，见
-// docs/M3_PRD.md"触发入口"一节——不再像最初那样静默忽略。
+// docs/M3_PRD.md"触发入口"一节,不再像最初那样静默忽略。
 std::string msg_ai_unknown_command(const std::string& command);
 
 // `/help`：不带参数列出全部命令名，带参数(命令名不含前导 `/`)显示这个
@@ -198,17 +203,17 @@ std::string msg_help_overview();
 std::optional<std::string> msg_help_command(const std::string& command);
 std::string err_help_unknown_command(const std::string& command);
 
-// M3：`/dedup`、`/ai_eval` 的标签范围解析共用同一条"标签不存在"文案——
+// M3：`/dedup`、`/ai_eval` 的标签范围解析共用同一条"标签不存在"文案,
 // 两边的标签范围语法都是 `#标签名`，不需要各自维护一份几乎相同的文案。
 std::string err_console_tag_not_found(const std::string& tag_name);
-// 范围参数既不是 `*` 也不以 `#` 开头时统一提示——不静默把它当成裸标签
+// 范围参数既不是 `*` 也不以 `#` 开头时统一提示,不静默把它当成裸标签
 // 名解析，见 docs/M3_PRD.md"触发入口"一节。
 std::string err_console_invalid_scope();
 // F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
-// 示——控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
+// 示,控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
 std::string err_console_invalid_filter_criterion();
 // 拆成两行(跟 tag_menu_order_prompt/tag_menu_ordered_keys_help 同一个
-// 先例)——prompt_and_read_key 单行版本用 pad_to 截断不换行,英文原文加上
+// 先例),prompt_and_read_key 单行版本用 pad_to 截断不换行,英文原文加上
 // "(y/N)"提示很容易在正常终端宽度下被截断掉,拆成"说明"+"按键提示"两
 // 行更稳妥。
 std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count);
@@ -216,7 +221,7 @@ std::string msg_dedup_confirm_unevaluated_line2();
 // 反馈:退出时如果还有评估任务排队/处理中，队列里还没开始处理的部分
 // 会被直接丢弃(EvaluationWorker 析构只等当前正在处理的这一个，不会
 // 继续消费队列剩下的)，静默退出容易让用户以为提交的一批评估都在跑，
-// 其实中途被打断了一部分——加一次确认，给反悔机会。
+// 其实中途被打断了一部分,加一次确认，给反悔机会。
 std::string msg_quit_confirm_pending_line1(int pending_count);
 std::string msg_quit_confirm_pending_line2();
 // F-08：skipped_no_capture_time 是范围内因为没有拍摄时间(captured_at
@@ -235,11 +240,11 @@ std::string msg_ai_tasks_status(std::size_t queued, bool processing);
 
 // 还没评估过/评估失败时统一显示的占位。
 std::string evaluation_none_label();
-// W2026-07-21：AI 点评区块的标题行。刻意不叫"选片/Culling"——那会跟 agent
+// W2026-07-21：AI 点评区块的标题行。刻意不叫"选片/Culling",那会跟 agent
 // 的选片功能混淆。assessment 文字本身由 core 直接给，不经 i18n(是模型输
 // 出，不是 UI 文案)。
 std::string evaluation_comment_label();
-// 只有 unusable(有硬伤)时才显示的一行，在 assessment 之前加粗——可用时什
+// 只有 unusable(有硬伤)时才显示的一行，在 assessment 之前加粗,可用时什
 // 么都不显示。
 std::string evaluation_unusable_label();
 
@@ -275,7 +280,7 @@ std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags
 std::string tag_menu_actions_line();
 
 // Filter Menu
-// `e` 键的二级子菜单提示——始终弹出，filter_active 只决定要不要把
+// `e` 键的二级子菜单提示,始终弹出，filter_active 只决定要不要把
 // `f`(导出筛选结果)这一项拼进去，见 browse.cpp 顶层 `e` 键处理的说明。
 std::string msg_export_submenu_prompt(bool filter_active);
 std::string filter_menu_export_to_prompt();
