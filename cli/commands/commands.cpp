@@ -713,7 +713,7 @@ void print_scan_progress(int done, int total) {
 // 跟 print_scan_progress 是同一个 \r 覆盖写法，只是文案和触发场景不同
 // (一个在 new/rescan 生成预览缓存，一个在 export 真正导出)。
 void print_export_progress(int done, int total) {
-  std::printf("\r%s", pzt::cli::i18n::msg_export_raw_progress(done, total).c_str());
+  std::printf("\r%s", pzt::cli::i18n::msg_export_progress(done, total).c_str());
   std::fflush(stdout);
   if (done == total) std::printf("\n");
 }

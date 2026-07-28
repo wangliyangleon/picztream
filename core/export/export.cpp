@@ -142,14 +142,26 @@ WriteExportBatchResult write_export_batch(db::Database& db, const fs::path& root
   out.result.exported_count = 0;
   out.result.created_output_folder = false;
 
-  // M2：这批图片里有多少张 kind="raw"（不管有没有 recipe，两条 raw 分支
-  // 都要走 raw_decode_fn），作为进度回调的分母。纯 JPEG 批次 raw_total==0，
-  // on_progress 全程不会被调用。
-  int raw_total = 0;
-  for (const auto& img : images) {
-    if (img.kind == "raw") ++raw_total;
-  }
-  int raw_done = 0;
+  // T-6：分母是这一批的全部图片，不再是其中的 RAW 张数。原来用 raw_total
+  // 当分母、且只在 img.kind=="raw" 时回调，意味着纯 JPEG 批次全程一次进
+  // 度都不报：导 300 张 JPEG 在终端上完全静默，界面还停在上一帧，看起来
+  // 就是死机。T-1 加了"导出全部仍保留的图"之后，这恰好是最常走的那条路。
+  const int progress_total = static_cast<int>(images.size());
+  int progress_done = 0;
+  // 进度按整数百分比节流：一批几百张、每张都重画一次 banner 是几百次终端
+  // 写入，本身就会拖慢导出。节流后一次导出最多 101 次回调（0..100）；不
+  // 足 100 张时每张的百分比都不同，等价于每张都报，RAW 那种单张几秒的批
+  // 次不会因此丢掉逐张反馈。第一张和最后一张无条件报，让界面立刻有反应、
+  // 结束时停在满值。
+  int last_percent = -1;
+  auto report_progress = [&] {
+    if (!on_progress) return;
+    int percent = progress_total > 0 ? static_cast<int>(progress_done * 100LL / progress_total) : 100;
+    if (progress_done == 1 || progress_done == progress_total || percent != last_percent) {
+      last_percent = percent;
+      on_progress(progress_done, progress_total);
+    }
+  };
 
   // 目标文件夹无法创建/写入(权限不足、路径某一段已经是个普通文件、磁盘写
   // 满等)时,std::filesystem 的抛异常重载会往外抛 filesystem_error——不
@@ -166,6 +178,14 @@ WriteExportBatchResult write_export_batch(db::Database& db, const fs::path& root
     int index = 0;
     for (const auto& img : images) {
       ++index;
+      // 进度在这一张真正开始处理之前报，不是处理完之后：RAW 全量解码单张
+      // 就要几秒，完成后才报的话，批次里第一张在解码期间界面上什么都不显
+      // 示，看起来像卡住了（真机使用中被发现过）。计数包含随后可能被跳过
+      // 的图（源文件不存在等），因为分母是"这批有多少张"，不是"成功导出
+      // 了多少张"。
+      ++progress_done;
+      report_progress();
+
       fs::path source = root_path / img.file_path;
       if (!fs::exists(source)) {
         out.result.skipped.push_back(ExportSkipped{img.id, img.file_name, SkipReason::SourceMissing});
@@ -177,13 +197,6 @@ WriteExportBatchResult write_export_batch(db::Database& db, const fs::path& root
           is_ordered ? ordered_name(index, width, file_name_for_target) : file_name_for_target;
       fs::path target = resolve_collision(out_dir, base_name);
 
-      // 进度回调要在解码开始前触发，不是完成后——全量解码单张就要几秒，
-      // 完成后才报进度的话，批次里第一张(单张导出时是唯一一张)在解码期
-      // 间界面上什么都不显示，看起来像卡住了，真机使用中被发现过。
-      if (img.kind == "raw") {
-        ++raw_done;
-        if (on_progress) on_progress(raw_done, raw_total);
-      }
       auto skip_reason = write_one_export(db, img.id, img.kind, source, target, raw_decode_fn);
       if (skip_reason) {
         out.result.skipped.push_back(ExportSkipped{img.id, img.file_name, *skip_reason});

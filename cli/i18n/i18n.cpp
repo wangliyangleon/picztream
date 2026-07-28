@@ -227,11 +227,11 @@ std::string msg_raw_preview_progress(int done, int total) {
   }
 }
 
-std::string msg_export_raw_progress(int done, int total) {
+std::string msg_export_progress(int done, int total) {
   if (g_lang == Lang::zh) {
-    return "正在处理 RAW 图片 (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
+    return "正在导出 (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
   } else {
-    return "Processing RAW images (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
+    return "Exporting (" + std::to_string(done) + "/" + std::to_string(total) + ")...";
   }
 }
 

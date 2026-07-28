@@ -100,7 +100,7 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
 
   auto on_progress = [&](int done, int total) {
     move_cursor(banner_row, start_col + 1);
-    write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
+    write_stdout(pad_to(pzt::cli::i18n::msg_export_progress(done, total), content_cols));
   };
   auto result = pzt::core::export_image(image_id, resolved_path, on_progress);
   // F-25：单张 RAW 全量解码是秒级耗时，同样可能冻结主循环——见
@@ -135,7 +135,7 @@ std::string handle_export_filtered_flow(pzt::core::ProjectId project_id,
 
   auto on_progress = [&](int done, int total) {
     move_cursor(banner_row, start_col + 1);
-    write_stdout(pad_to(pzt::cli::i18n::msg_export_raw_progress(done, total), content_cols));
+    write_stdout(pad_to(pzt::cli::i18n::msg_export_progress(done, total), content_cols));
   };
   std::vector<pzt::core::ImageId> ids;
   ids.reserve(images.size());

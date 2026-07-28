@@ -554,7 +554,7 @@ TEST_CASE("export_tag skips a raw-kind image when raw_decode_fn fails, without a
   CHECK(fs::exists(out_dir / "img_001.jpg"));  // 另一张照常导出
 }
 
-TEST_CASE("export_tag's progress callback fires once per raw image with correct done/total") {
+TEST_CASE("export_tag's progress callback fires once per image with correct done/total") {
   auto fx = make_raw_fixture("export_raw_progress", 3);
   auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
   REQUIRE(tag.ok());
@@ -573,18 +573,47 @@ TEST_CASE("export_tag's progress callback fires once per raw image with correct 
   CHECK(calls[2] == std::make_pair(3, 3));
 }
 
-TEST_CASE("export_tag's progress callback never fires for a pure-jpeg batch") {
-  auto fx = make_fixture("export_jpeg_no_progress", 2);
+// T-6：这条以前断言的是"纯 JPEG 批次一次都不报进度"，那正是要修的 bug
+// 本身：分母原来取的是批次里的 RAW 张数，纯 JPEG 批次 raw_total==0，回调
+// 全程不触发，导 300 张 JPEG 在终端上完全静默。
+TEST_CASE("export_tag's progress callback fires for a pure-jpeg batch too") {
+  auto fx = make_fixture("export_jpeg_progress", 2);
   auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
   REQUIRE(tag.ok());
   for (auto id : fx.images) REQUIRE(add_tag(fx.db, id, tag.value()).ok());
 
-  int call_count = 0;
-  auto out_dir = fresh_output_dir("export_jpeg_no_progress");
+  std::vector<std::pair<int, int>> calls;
+  auto out_dir = fresh_output_dir("export_jpeg_progress");
   auto result = export_tag(fx.db, tag.value(), out_dir.string(),
-                            [&](int, int) { ++call_count; });
+                            [&](int done, int total) { calls.emplace_back(done, total); });
   REQUIRE(result.ok());
-  CHECK(call_count == 0);
+  REQUIRE(calls.size() == 2);
+  CHECK(calls[0] == std::make_pair(1, 2));
+  CHECK(calls[1] == std::make_pair(2, 2));
+}
+
+// T-6：按整数百分比节流。300 张时每张只占 0.33%，回调次数应该远少于张数，
+// 但首尾必须报到，且 done 单调递增、total 恒等于批次大小。不这样节流的话
+// 一次导出就是几百次 banner 重画，本身会拖慢导出。
+TEST_CASE("export_tag's progress callback is throttled by whole percent on large batches") {
+  auto fx = make_fixture("export_progress_throttle", 300);
+  auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
+  REQUIRE(tag.ok());
+  for (auto id : fx.images) REQUIRE(add_tag(fx.db, id, tag.value()).ok());
+
+  std::vector<std::pair<int, int>> calls;
+  auto out_dir = fresh_output_dir("export_progress_throttle");
+  auto result = export_tag(fx.db, tag.value(), out_dir.string(),
+                            [&](int done, int total) { calls.emplace_back(done, total); });
+  REQUIRE(result.ok());
+
+  REQUIRE(!calls.empty());
+  CHECK(calls.size() <= 101);          // 最多 0..100 这 101 个百分点
+  CHECK(calls.size() < 300);           // 确实节流了，不是每张都报
+  CHECK(calls.front().first == 1);     // 第一张无条件报，界面立刻有反应
+  CHECK(calls.back().first == 300);    // 最后一张无条件报，结束时停在满值
+  for (const auto& c : calls) CHECK(c.second == 300);
+  for (std::size_t i = 1; i < calls.size(); ++i) CHECK(calls[i].first > calls[i - 1].first);
 }
 
 // M2 收尾问题 2：export_image，单张导出，不需要标签。

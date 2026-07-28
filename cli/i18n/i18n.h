@@ -60,7 +60,9 @@ std::string err_new_no_images_raw_ignored(const std::string& folder_path);
 // 个不存在的"目录",容易被误解成程序坏了而不是自己打错了参数。
 std::string err_new_unknown_arg(const std::string& arg);
 std::string msg_raw_preview_progress(int done, int total);
-std::string msg_export_raw_progress(int done, int total);
+// T-6：分母是这一批的全部图片，不再只是其中的 RAW 张数，所以文案也不再
+// 提 RAW。core 侧按整数百分比节流，一次导出最多 101 次回调。
+std::string msg_export_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
 std::string msg_project_created_simple(const std::string& name);
 // `pzt new` 成功之后，交互终端下追问"要不要直接打开",见
