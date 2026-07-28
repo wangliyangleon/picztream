@@ -1155,6 +1155,12 @@ int cmd_open(const std::vector<std::string>& args) {
       // 现在也 poll,超时后只有终端尺寸相对上一帧变了才 break 去重画(整屏清
       // 除 + 图片重传由帧顶 size_changed 处理),尺寸没变就继续等,不无谓刷新。
       bool timed_out = false;
+      // T-3：认不出来的可打印键不再被完全静默地吃掉。原来的行为下,按一个
+      // 不支持的键(最典型的是 g,README 与 usage 长期写着筛选是 g,实际是
+      // f)得到的是零反馈,用户分不清"卡住了"还是"按错了"。二级菜单层早就
+      // 有"无效按键给一句提示"的约定(filter_menu.cpp、handle_r_key),只有
+      // 顶层没有。
+      char unknown_key = 0;
       while (true) {
         bool poll_active = debug_mode || evaluation_worker.has_pending();
         int poll_ms = poll_active ? 300 : 250;  // 纯浏览态 250ms 仅用于察觉 resize
@@ -1199,9 +1205,34 @@ int cmd_open(const std::vector<std::string>& args) {
             c == 'f' || c == 'r' || c == 'e' || c == ':') {
           break;
         }
+        if (c == 0x1B) {
+          // 方向键/功能键是 "\x1b[..." 这样的多字节序列,前缀跟裸 Esc 撞
+          // 车。照 cli/ui/ui.cpp::read_line_edit_step 的既有约定用 20ms
+          // 探测消歧:紧跟着还有字节就是转义序列,整段吞掉,免得按一次方向
+          // 键弹三条提示。裸 Esc 在顶层没有对应动作,静默,跟二级菜单里
+          // "Esc = 取消且不提示"的语义一致。
+          while (stdin_ready(20)) {
+            char discard = 0;
+            if (read(STDIN_FILENO, &discard, 1) <= 0) break;
+          }
+          continue;
+        }
+        if (c >= 0x20 && c < 0x7F) {
+          unknown_key = c;
+          break;
+        }
+        // 其它控制字符(Ctrl-x 之类)照旧静默吞掉:它们多半是终端或用户的
+        // 组合键,不是"按错了字母"这种值得提示的误操作。
       }
       if (timed_out) {
         suppress_latency_log = true;  // 没有按键,只是刷新画面(debug 面板或者 AI 新结果),不处理导航
+        continue;
+      }
+      if (unknown_key != 0) {
+        // 跟 timed_out 一样只重画、不导航,区别是带一句提示。这里确实按了
+        // 键,但没有产生任何图片切换,算不上一次 key-to-render,不记延迟。
+        suppress_latency_log = true;
+        status_override = pzt::cli::i18n::msg_unknown_key(unknown_key);
         continue;
       }
       suppress_latency_log = false;  // 这一轮确实读到了真实按键

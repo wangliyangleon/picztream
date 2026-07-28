@@ -80,7 +80,7 @@ std::string usage_main() {
            "  pzt new <project_name> [folder_path]\n"
            "  pzt list\n"
            "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
-           "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,e 导出当前图片,g 筛选,"
+           "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,e 导出,f 筛选,"
            "r 应用/清除/新建/删除风格,r v 临时预览原图,"
            "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
            "不显示也不产生这些日志)\n"
@@ -101,7 +101,7 @@ std::string usage_main() {
            "  pzt list\n"
            "  pzt open [project_name] [--debug]  (h/l Prev/Next image, "
            "j/k Next/Prev untagged image, space Tag image, x Toggle Reject, "
-           "e Export current image, g Filter, "
+           "e Export, f Filter, "
            "r Apply/Clear/Create/Delete recipe, r v Temporarily preview "
            "original, "
            "q Quit; --debug displays internal logs in an area below the image, "
@@ -1742,6 +1742,19 @@ std::string recipe_menu_apply_failed() {
     return " 应用失败,请重试 ";
   } else {
     return " Apply failed, please try again ";
+  }
+}
+
+// T-3：顶层浏览循环里按到不支持的键。跟二级菜单的 recipe_menu_invalid_key
+// 不同,这里带上按的是哪个键,并顺手指一下筛选是 f。`g` 是最可能被误按的
+// 那一个(README 与 usage 长期把筛选写成 g,实际是 f),给出正确的键比单说
+// 一句"无效按键"更有用。
+std::string msg_unknown_key(char key) {
+  std::string k(1, key);
+  if (g_lang == Lang::zh) {
+    return " 没有 " + k + " 这个键;筛选是 f,完整按键见 pzt open 的 usage ";
+  } else {
+    return " No such key: " + k + "; filter is f, see pzt open usage for all keys ";
   }
 }
 

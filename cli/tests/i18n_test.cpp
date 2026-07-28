@@ -292,6 +292,35 @@ TEST_CASE("err_internal_error includes the exception message and follows languag
 
 // F-03：评估失败提示——只验证文案包含图片 id 和一句能区分错误类型的原
 // 因，具体措辞不是接口契约。
+TEST_CASE("msg_unknown_key names the key pressed and points at the real filter key") {
+  g_lang = Lang::zh;
+  auto zh_text = msg_unknown_key('g');
+  CHECK(zh_text.find("g") != std::string::npos);
+  CHECK(zh_text.find("f") != std::string::npos);  // 指向真正的筛选键
+
+  g_lang = Lang::en;
+  auto en_text = msg_unknown_key('g');
+  CHECK(en_text.find("g") != std::string::npos);
+  CHECK(en_text != zh_text);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// usage 里的按键说明必须跟 browse.cpp 主循环实际接受的键一致。这条长期
+// 不一致(写 g、实际是 f)，是 T-3 的起因。
+TEST_CASE("usage_main advertises f as the filter key, not g") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto usage = usage_main();
+    bool advertises_f =
+        usage.find("f 筛选") != std::string::npos || usage.find("f Filter") != std::string::npos;
+    CHECK(advertises_f);
+    CHECK(usage.find("g 筛选") == std::string::npos);
+    CHECK(usage.find("g Filter") == std::string::npos);
+  }
+  g_lang = Lang::zh;  // 还原
+}
+
 TEST_CASE("err_db_schema_too_new carries both versions and follows language") {
   g_lang = Lang::zh;
   auto zh_text = err_db_schema_too_new(2, 1);

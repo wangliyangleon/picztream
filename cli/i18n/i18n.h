@@ -323,5 +323,8 @@ std::string recipe_menu_actions_line(bool has_recipe);
 std::string recipe_menu_clear_failed();
 std::string recipe_menu_apply_failed();
 std::string recipe_menu_invalid_key();
+// T-3：顶层浏览循环按到不支持的键时的提示,带上按的是哪个键。二级菜单层
+// 早有"无效按键给提示"的约定,只有顶层是完全静默的。
+std::string msg_unknown_key(char key);
 
 }  // namespace pzt::cli::i18n
