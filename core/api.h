@@ -10,6 +10,7 @@
 #include "core/browse/browse.h"
 #include "core/browse/prefetch.h"
 #include "core/curate/curate.h"
+#include "core/db/schema.h"
 #include "core/decode/decode.h"
 #include "core/dedup/dedup.h"
 #include "core/export/export.h"
@@ -89,6 +90,10 @@ using Language = ai::Language;
 // F-03：EvaluationWorker::take_last_failure() 把失败原因带出来给 cli
 // 展示，cli 层需要能叫出这个类型的名字。
 using EvaluationError = ai::EvaluationError;
+// T-7：库的 schema 版本比这个二进制新时开库会抛这个类型。cli 的顶层
+// main() 要能单独 catch 它、给出"请升级 pzt"而不是笼统的"内部错误",所以
+// 跟 EvaluationError 一样需要在门面上叫得出名字。
+using SchemaTooNewError = db::SchemaTooNewError;
 // W2026-07-21：eval 不再产跨图分数，是否可用直接读 unusable flag——CLI
 // 展示/筛选统一调这个函数，见 core/ai/evaluation.h 的说明。
 using ai::is_usable;

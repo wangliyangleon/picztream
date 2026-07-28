@@ -40,7 +40,17 @@ Database Database::open_at(const std::string& path) {
   // 并发写法,不需要额外的锁或队列。
   sqlite3_busy_timeout(db, 5000);
 
-  initialize_schema(db);
+  // initialize_schema 抛出时 db 还是个裸 handle——Database 的构造函数还没
+  // 跑,RAII 接管不了,直接抛就是永久泄漏。以前 initialize_schema 只在
+  // "不该发生"的场景抛(建表失败、库损坏),所以这个洞一直没被注意到;T-7
+  // 之后"库的 schema 版本比程序新"是一条常规路径(SchemaTooNewError),抛
+  // 出不再是意外,泄漏就得堵上。
+  try {
+    initialize_schema(db);
+  } catch (...) {
+    sqlite3_close(db);
+    throw;
+  }
   return Database(db, path);
 }
 
