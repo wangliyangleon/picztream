@@ -72,7 +72,7 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
 
     lock.lock();
     in_flight_.erase(req.image_id);
-    // F-03：记下这次是不是失败的，供 take_last_failure() 取用,之前失
+    // F-03：记下这次是不是失败的，供 take_last_failure() 取用——之前失
     // 败只打 stderr，不开 --debug 时用户完全看不到，见头文件里
     // LastFailure 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，
     // process_request 本身不碰这些受 mu_ 保护的状态。
@@ -139,7 +139,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
       evaluation_fn_(decoded.value(), req.extra_guidance, req.provider, req.language, req.local_config);
   if (!result.ok()) {
     // 失败(网络错误、解析失败等)不写库，也不清空这张图之前成功评估过的
-    // 记录,旧结果仍然是有效信息，一次失败的重新评估不该把之前成功的
+    // 记录——旧结果仍然是有效信息，一次失败的重新评估不该把之前成功的
     // 结果抹掉。见 docs/M3_Eng_Design.md"core/ai/evaluation_worker.h/.cpp"
     // 一节。
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld evaluation request failed\n",
@@ -148,7 +148,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   }
 
   const auto& r = result.value();
-  // result_json 存模型返回的原始形状(assessment/unusable)，不是拆开的列,
+  // result_json 存模型返回的原始形状(assessment/unusable)，不是拆开的列——
   // 以后再问模型要新的值,只用扩展 EvaluationResult + 这里的 json 字面量,
   // 不需要再来一次 core/db/schema.cpp 的破坏性表重建,见那边的注释。
   std::string result_json = nlohmann::json{{"assessment", r.assessment}, {"unusable", r.unusable}}.dump();
@@ -163,7 +163,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   sqlite3_bind_text(stmt.get(), 2, result_json.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 3, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 4, to_string(req.provider), -1, SQLITE_TRANSIENT);
-  // F-17：以前不检查这一步,AI 已经给出结果，但落库失败(磁盘满、库损
+  // F-17：以前不检查这一步——AI 已经给出结果，但落库失败(磁盘满、库损
   // 坏)时会静默发生，generation_ 照样 +1 触发一次什么都没变的空重绘，
   // 用户完全看不到发生了什么。这里不像 recipe.cpp 那些函数一样直接
   // throw：process_request 跑在后台 jthread 上，未捕获异常会
@@ -178,7 +178,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   // auto_reject：结果落库之后，模型直接给的 unusable 为真时打废片标签
   // (W2026-07-21：判据从原来的 passes_gate 三项阈值改成读 unusable flag)。
   // 只在 unusable 时打标签，不做反向摘除(见 core/settings/settings.h 里的
-  // 说明),这里用已经打开的 db 连接直接调 tagging:: 里的函数，不经过
+  // 说明)——这里用已经打开的 db 连接直接调 tagging:: 里的函数，不经过
   // core/api.h 门面(那边会各自开一条新连接，没必要)。req.auto_reject 是调
   // 用方（提交请求时）传进来的显式参数，process_request 本身不读 Settings。
   if (req.auto_reject && r.unusable) {
