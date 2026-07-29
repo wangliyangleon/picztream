@@ -778,3 +778,28 @@ TEST_CASE("cluster_and_choose: no cancel callback behaves exactly as before") {
   CHECK(fake_compare.calls == 3);
   CHECK(result.value().tagged_count == 3);  // 2 张簇留 1 摘 1，3 张簇留 1 摘 2
 }
+
+TEST_CASE("cluster_and_choose: cancelling is checked on singleton clusters too") {
+  // 5 张图,时间上互相隔开 -> 全是单图簇,一个 size>=2 的簇都没有。逐张解码
+  // 那个检查点整段不会跑到,所以簇开头必须也查一次;否则一长串单图簇期间
+  // 取消完全不生效,banner 上的进度还会一帧帧盖掉"正在取消…"。
+  auto fx = make_fixture("cancel_singletons", 5);
+  for (int i = 0; i < 5; ++i) set_captured_at(fx.db, fx.images[i], 1000 + i * 10000);
+  auto decoder = hash_map_decoder({{path_for(fx, 'a'), 0x0FULL},
+                                    {path_for(fx, 'b'), 0xF0ULL},
+                                    {path_for(fx, 'c'), 0x0F0FULL},
+                                    {path_for(fx, 'd'), 0xF0F0ULL},
+                                    {path_for(fx, 'e'), 0x0FF0ULL}});
+  FakeCompare fake_compare;
+
+  int progress_calls = 0;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare),
+      [&](int, int) { ++progress_calls; }, /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr,
+      /*on_cancel=*/[] { return true; });
+  REQUIRE(result.ok());
+  CHECK(result.value().cancelled);
+  // 第一个簇开头就查到了，一次进度都不该报出去——报了就会盖掉回显。
+  CHECK(progress_calls == 0);
+}

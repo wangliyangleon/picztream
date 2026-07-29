@@ -430,10 +430,17 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   // curl 或解码里，没人能替它重画，只能由信号处理函数自己 write() 出去，
   // 而处理函数里不能调 i18n、不能分配内存。光标定位序列也要自己拼——
   // move_cursor 是直接往 stdout 写的，拿不到字符串。
-  std::string cancel_echo = "\x1b[" + std::to_string(banner_row) + ";" +
-                             std::to_string(start_col + 1) + "H" +
-                             pad_to(pzt::cli::i18n::msg_dedup_cancelling(),
-                                    static_cast<std::size_t>(content_cols));
+  //
+  // 两行一起写:第一行换成"正在取消…"，第二行那句"Ctrl-C 取消"必须同时擦
+  // 掉——留着会读成"再按一次可以取消这次取消"。一次 write 写完两行，中间
+  // 不会被别的绘制插进来。
+  auto move_to = [&](int row) {
+    return "\x1b[" + std::to_string(row) + ";" + std::to_string(start_col + 1) + "H";
+  };
+  std::string cancel_echo =
+      move_to(banner_row) + pad_to(pzt::cli::i18n::msg_dedup_cancelling(),
+                                    static_cast<std::size_t>(content_cols)) +
+      move_to(banner_row + 1) + pad_to("", static_cast<std::size_t>(content_cols));
   pzt::cli::term::signal_restore::CancelScope cancel_scope(cancel_echo);
   auto on_cancel = [&] { return cancel_scope.cancelled(); };
   // 提示从这里就挂上，不是等闸门通过之后——分簇阶段同样可取消(不带

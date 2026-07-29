@@ -216,6 +216,11 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
   int done = 0;
 
   for (auto& cluster : clusters) {
+    // 每个候选簇开头查一次。下面那个逐张查的检查点只在 size>=2 的簇里,一
+    // 长串单图簇会整段跳过它——取消要拖到下一个多图簇才生效，期间
+    // on_progress 还在一帧帧往 banner 上写"分组中 x/y"，把用户刚按出来的
+    // "正在取消…"盖掉。
+    if (on_cancel && on_cancel()) return result;
     if (cluster.size() < 2) {
       ++done;
       if (on_progress) on_progress(done, total);
