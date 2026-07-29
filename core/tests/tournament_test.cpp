@@ -557,6 +557,38 @@ TEST_CASE("cluster_and_choose: on_ai_progress fires once per tournament cluster,
   CHECK(progress[1] == std::make_pair(2, 2));
 }
 
+TEST_CASE("cluster_and_choose: on_ai_progress reports a cluster before comparing it, not after") {
+  auto fx = make_two_cluster_fixture("ai_progress_order");
+  auto decoder = two_cluster_decoder(fx);
+
+  // 真机上第一次报进度出现在第一簇跑完之后，屏幕在此之前完全静止(只有一
+  // 簇时全程零反馈)——上面那个用例只看数值、看不出时序，照样通过。这里
+  // 把两种事件按发生顺序记进同一条时间线，钉住"报了才比"。
+  std::vector<std::string> timeline;
+  auto counting_compare = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
+                              const LocalModelConfig& cfg) {
+    timeline.push_back("compare");
+    FakeCompare inner;
+    return inner(a, b, p, cfg);
+  };
+
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, counting_compare, /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr,
+      [&](int done, int) { timeline.push_back("progress:" + std::to_string(done)); });
+  REQUIRE(result.ok());
+
+  // 时间线的第一个事件必须是进度而不是比较,否则用户在第一次网络往返期间
+  // 看到的还是静止画面。
+  REQUIRE_FALSE(timeline.empty());
+  CHECK(timeline.front() == "progress:1");
+  // 每个 progress:k 后面至少跟着一次 compare(每簇 size>=2,至少比一次)。
+  for (std::size_t i = 0; i + 1 < timeline.size(); ++i) {
+    if (timeline[i].rfind("progress:", 0) == 0) CHECK(timeline[i + 1] == "compare");
+  }
+}
+
 TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled") {
   auto fx = make_two_cluster_fixture("ai_progress_off");
   auto decoder = two_cluster_decoder(fx);

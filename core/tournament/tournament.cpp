@@ -139,6 +139,18 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   for (const auto& g : groups) {
     project::ImageId winner = g.keep_id;  // AI 关时的答案，AI 开且成功时会被覆盖
     if (ai_enabled) {
+      // 在这一簇开跑之前报，不是跑完之后——done 是"正在处理第几组"，不是
+      // "已完成几组"(文案"AI 比较中 k/N 组"按前者读)。报完成数的话，第一
+      // 簇跑完之前屏幕上一个字都不会变，而一簇就是 size-1 次串行网络调
+      // 用、每次受 60s 超时约束，用户看到的是纯静止画面；只有一簇时更是
+      // 全程零反馈、跑完直接结束。那正好废掉 PRD 给这个回调定的用途(见
+      // docs/history/Dedup_AI_Console_PRD.md 的验收场景"看着进度从 1/23
+      // 走到 23/23"，以及"一个异常大的簇"那条风险里"进度反馈能让用户知道
+      // 在动"）。
+      //
+      // 簇内逐次比较仍然没有进度(run_bracket 不接回调)，所以单个大簇期间
+      // 画面依旧不动——那是 PRD 那条风险里挂账的部分，不在这次修复范围。
+      if (on_ai_progress) on_ai_progress(++ai_done, static_cast<int>(groups.size()));
       auto ai_winner =
           run_bracket(db, root_path, g.image_ids, ai_provider, local_config, decode_fn, compare_fn);
       if (ai_winner) {
@@ -146,9 +158,6 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
       } else {
         ++ai_fallback_count;  // 退化：winner 维持 g.keep_id
       }
-      // 只在 AI 开时报进度：AI 关时这个循环是纯内存操作，瞬间跑完，没有
-      // 进度可言(本地分簇那一段的耗时由 on_progress 覆盖)。
-      if (on_ai_progress) on_ai_progress(++ai_done, static_cast<int>(groups.size()));
     }
     clusters.push_back(ClusterChoice{g.image_ids, winner});
   }
