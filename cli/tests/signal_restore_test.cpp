@@ -51,6 +51,12 @@ void reset_arming() {
   disarm_altscreen();
 }
 
+// doctest 自己给 SIGINT 装了处理函数(用来把信号报告成"test case
+// CRASHED"),会盖掉 install_handlers_once 装的那个。生产路径上没有这个竞
+// 争——只有我们装——所以这是纯粹的测试宿主适配:raise 之前把我们的处理函
+// 数显式装回去。
+void reinstall_our_sigint_handler() { std::signal(SIGINT, pzt_cli_term_on_fatal_signal); }
+
 }  // namespace
 
 TEST_CASE("restore_now writes the alt-screen exit sequence exactly once") {
@@ -116,4 +122,87 @@ TEST_CASE("termios arming is independent of alt-screen arming") {
   CHECK(p.drain().empty());
 
   reset_arming();
+}
+
+// T-9b：CancelScope。真机行为(按 Ctrl-C 之后 /dedup 停下来)只能人工验，
+// 这里覆盖状态机——作用域内外的 SIGINT 处置、粘性、回显字节。
+// 用 raise(SIGINT) 直接触发：作用域内的处理函数不再终止进程，可以安全地
+// 在测试进程里跑。
+
+TEST_CASE("CancelScope: SIGINT inside the scope sets the flag instead of killing the process") {
+  reset_arming();
+  Pipe p;
+
+  reinstall_our_sigint_handler();
+  CancelScope scope("cancelling", p.write_fd);
+  CHECK_FALSE(scope.cancelled());
+
+  std::raise(SIGINT);  // 作用域内不终止进程——能跑到下一行本身就是断言
+
+  CHECK(scope.cancelled());
+  CHECK(p.drain() == "cancelling");
+}
+
+TEST_CASE("CancelScope: the flag is sticky") {
+  reset_arming();
+  Pipe p;
+
+  reinstall_our_sigint_handler();
+  CancelScope scope("x", p.write_fd);
+  std::raise(SIGINT);
+  // core::dedup::CancelFn 要求粘性:内部在分簇每张图、AI 每次比较、两阶段
+  // 之间各查一次，中间任何一次翻回 false 都会让流程继续跑下去。
+  CHECK(scope.cancelled());
+  CHECK(scope.cancelled());
+  CHECK(scope.cancelled());
+}
+
+TEST_CASE("CancelScope: a fresh scope starts uncancelled") {
+  reset_arming();
+  Pipe p;
+
+  reinstall_our_sigint_handler();
+  {
+    CancelScope first("x", p.write_fd);
+    std::raise(SIGINT);
+    CHECK(first.cancelled());
+  }
+  // 上一次取消不该渗进下一条命令——否则用户取消过一次 /dedup 之后，再跑
+  // 一次会立刻自我取消。
+  CancelScope second("x", p.write_fd);
+  CHECK_FALSE(second.cancelled());
+}
+
+TEST_CASE("CancelScope: leaving the scope restores the terminating disposition") {
+  reset_arming();
+  Pipe p;
+  CHECK(detail::cancel_active == 0);
+  {
+    CancelScope scope("x", p.write_fd);
+    CHECK(detail::cancel_active == 1);
+  }
+
+  // 出了作用域,处理函数必须重新走终止那条路。装错或漏还原的话，Ctrl-C 在
+  // 浏览界面里既不取消(没有操作在跑)也不退出(处置被换掉了)，用户按了没反
+  // 应也退不出去——这是本条特性最容易翻车的地方。
+  //
+  // cancel_active 就是处理函数里那个分支条件本身(见
+  // pzt_cli_term_on_fatal_signal)，所以这一行断言的正是"下一次 SIGINT 会
+  // 走 restore_now + 重新 raise"。不能真的 raise 来验——那会按设计杀掉测
+  // 试进程。
+  CHECK(detail::cancel_active == 0);
+  // 回显缓冲区也清了：不清的话下一次强杀路径上会吐出一行上次的残留文案。
+  CHECK(detail::cancel_echo_len == 0);
+}
+
+TEST_CASE("CancelScope: an over-long echo line degrades to no echo rather than a truncated one") {
+  reset_arming();
+  Pipe p;
+
+  // 截断多字节字符会往终端上吐半个 UTF-8 序列，比不回显更糟。
+  reinstall_our_sigint_handler();
+  CancelScope scope(std::string(detail::kEchoCapacity + 1, 'x'), p.write_fd);
+  std::raise(SIGINT);
+  CHECK(scope.cancelled());  // 取消照常生效，只是没有回显
+  CHECK(p.drain().empty());
 }

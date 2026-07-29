@@ -1,7 +1,9 @@
 #pragma once
 
 #include <csignal>
+#include <cstddef>
 #include <initializer_list>
+#include <string>
 #include <termios.h>
 #include <unistd.h>
 
@@ -43,6 +45,20 @@ inline int altscreen_fd = -1;
 
 inline volatile sig_atomic_t handlers_installed = 0;
 
+// 取消作用域(见下面 CancelScope)。active 为真时 SIGINT 不再终止进程,只
+// 置位 requested 并把 echo 缓冲区原样吐到终端上。
+//
+// echo 必须是预先渲染好的字节:按下 Ctrl-C 的那一刻主线程正阻塞在 curl 或
+// 解码里,没有任何人能替它重画,只能由处理函数自己写。而处理函数里不能拼
+// i18n、不能分配内存、不能碰 std::string——所以整行(含光标定位转义序列)在
+// 进作用域时就拷进这个定长缓冲区。
+constexpr std::size_t kEchoCapacity = 4096;
+inline volatile sig_atomic_t cancel_active = 0;
+inline volatile sig_atomic_t cancel_requested = 0;
+inline char cancel_echo[kEchoCapacity] = {};
+inline std::size_t cancel_echo_len = 0;
+inline int cancel_echo_fd = -1;
+
 }  // namespace detail
 
 // 还原顺序跟 cmd_open 里的析构顺序一致:先把输入模式还原,再离开备用缓
@@ -65,6 +81,17 @@ inline void restore_now() {
 // extern "C" 是给 signal() 用的;名字带全前缀是因为 extern "C" 的链接名
 // 不受 namespace 约束,会占用全局 C 符号。
 extern "C" inline void pzt_cli_term_on_fatal_signal(int sig) {
+  // 取消作用域内的 SIGINT 不终止进程:置位 + 回显,然后原样返回,让主线程
+  // 在下一个检查点自己收手。只拦 SIGINT——SIGTERM/SIGHUP/SIGQUIT 不是
+  // "用户在 TUI 里按了 Ctrl-C",没有理由被降级成一次业务取消。
+  if (sig == SIGINT && detail::cancel_active) {
+    detail::cancel_requested = 1;
+    if (detail::cancel_echo_len > 0) {
+      ssize_t ignored = write(detail::cancel_echo_fd, detail::cancel_echo, detail::cancel_echo_len);
+      (void)ignored;
+    }
+    return;
+  }
   restore_now();
   std::signal(sig, SIG_DFL);
   std::raise(sig);
@@ -101,5 +128,46 @@ inline void arm_altscreen(int fd) {
 }
 
 inline void disarm_altscreen() { detail::altscreen_armed = 0; }
+
+// 一段"Ctrl-C 表示取消这次操作，而不是退出程序"的作用域。
+//
+// 用在 `/dedup` 这种阻塞几分钟的命令上：进作用域后 SIGINT 只置位标志并
+// 立刻回显一行提示，调用方在自己的检查点上读 cancelled() 决定收手；出作
+// 用域立刻恢复成 signal_restore 的默认语义(还原终端后重新 raise，即 T-9a
+// 的"干净退出 pzt")。
+//
+// **析构必须无条件跑到**，否则 Ctrl-C 会在浏览界面里彻底失效：既不取消
+// (没有操作在跑)也不退出(处置被换掉了)，用户按了没反应也退不出去。所以
+// 这是 RAII 而不是两个手动调用的函数。
+//
+// echo_line 是要在按下时吐出去的完整字节序列，含光标定位——调用方按自己
+// 的布局拼好(见 handle_dedup_command)。超过缓冲区容量时降级成不回显，
+// 而不是截断：截断多字节字符会在终端上吐出半个 UTF-8 序列。
+//
+// cancelled() 是粘性的，满足 core::dedup::CancelFn 的契约。
+class CancelScope {
+ public:
+  explicit CancelScope(const std::string& echo_line, int echo_fd = STDOUT_FILENO) {
+    install_handlers_once();
+    detail::cancel_echo_len = 0;
+    if (echo_line.size() <= detail::kEchoCapacity) {
+      for (std::size_t i = 0; i < echo_line.size(); ++i) detail::cancel_echo[i] = echo_line[i];
+      detail::cancel_echo_len = echo_line.size();
+    }
+    detail::cancel_echo_fd = echo_fd;
+    detail::cancel_requested = 0;
+    detail::cancel_active = 1;  // 最后置位:前面几个字段必须先写好
+  }
+
+  ~CancelScope() {
+    detail::cancel_active = 0;
+    detail::cancel_echo_len = 0;
+  }
+
+  CancelScope(const CancelScope&) = delete;
+  CancelScope& operator=(const CancelScope&) = delete;
+
+  bool cancelled() const { return detail::cancel_requested != 0; }
+};
 
 }  // namespace pzt::cli::term::signal_restore

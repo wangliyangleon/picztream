@@ -236,10 +236,21 @@ std::string msg_dedup_cluster_progress(int done, int total);
 // msg_dedup_ai_confirm_line1 报给用户的是同一个数。
 std::string msg_dedup_ai_progress(int group_done, int group_total, int comparison_done,
                                    int comparison_total);
-// AI 阶段进度的第二行:阻塞期间唯一还能用的操作。措辞要写清它退出的是整
-// 个 pzt open,不是只取消这一次 dedup——真正的"取消这次操作"还没有(提案
-// T-9b),把 Ctrl-C 简单叫成"取消"会让用户以为按下去还能回到浏览界面。
+// `/dedup` 阻塞期间挂在 banner 第二行的操作提示,整条命令期间都在(不只是
+// AI 段——分簇阶段同样可取消)。T-9b 之后 Ctrl-C 真的只取消这一次 dedup、
+// 不退出 pzt open,所以这里就写"取消";在那之前它是强杀,文案得额外说明会
+// 退出整个程序。
 std::string msg_dedup_ai_progress_hint();
+// 按下 Ctrl-C 的那一刻立刻回显的一行。**这行字由信号处理函数直接 write()
+// 出去**——按下时主线程正阻塞在网络请求或解码里,没人能替它重画。所以它
+// 必须在开跑前就渲染好(见 handle_dedup_command),处理函数里不能再调
+// i18n。取消最长要等当前这一次比较跑完,没有这行回显的话用户会以为没按
+// 上、反复按。
+std::string msg_dedup_cancelling();
+// 取消真正生效之后的结果行。跟"闸门被拒"分开报:那个是"没点头",这个是
+// "点了头又喊停"——后者已经花掉了时间和 token,用户需要知道这次是白跑
+// 的,而不是以为自己从来没启动过。
+std::string msg_dedup_cancelled();
 // `--ai` 真正开跑前的开销确认。拆成两行跟 msg_quit_confirm_pending_*
 // 同一个先例:prompt_and_read_key 单行版本用 pad_to 截断不换行,英文文案
 // 再加上按键提示很容易在正常终端宽度下被截掉,拆成"说明"+"按键提示"两

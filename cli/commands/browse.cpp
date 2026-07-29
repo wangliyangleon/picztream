@@ -335,6 +335,26 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     };
   }
 
+  // 取消作用域：这一整条命令期间 Ctrl-C 表示"取消这次去重"，出了作用域
+  // (不管从哪条路径出去)立刻恢复成 signal_restore 的默认语义，也就是
+  // T-9a 的"还原终端后干净退出 pzt"。析构漏跑的话 Ctrl-C 会在浏览界面里
+  // 彻底失效——既不取消也不退出，所以是 RAII。
+  //
+  // 回显那行字必须在这里就渲染好：按下 Ctrl-C 的那一刻主线程正阻塞在
+  // curl 或解码里，没人能替它重画，只能由信号处理函数自己 write() 出去，
+  // 而处理函数里不能调 i18n、不能分配内存。光标定位序列也要自己拼——
+  // move_cursor 是直接往 stdout 写的，拿不到字符串。
+  std::string cancel_echo = "\x1b[" + std::to_string(banner_row) + ";" +
+                             std::to_string(start_col + 1) + "H" +
+                             pad_to(pzt::cli::i18n::msg_dedup_cancelling(),
+                                    static_cast<std::size_t>(content_cols));
+  pzt::cli::term::signal_restore::CancelScope cancel_scope(cancel_echo);
+  auto on_cancel = [&] { return cancel_scope.cancelled(); };
+  // 提示从这里就挂上，不是等闸门通过之后——分簇阶段同样可取消(不带
+  // `--ai` 时那是唯一的阻塞段)，只在 AI 段提示的话用户不会知道前半段也能
+  // 停。闸门会临时用第二行问话，答完再把这行提示写回去。
+  draw_banner_line2(pzt::cli::i18n::msg_dedup_ai_progress_hint());
+
   // provider/local_config 直接取上面那份 settings，不再调
   // resolve_ai_provider()/resolve_local_model_config()——那两个 helper 各
   // 自会再 load_settings() 读一次盘，而我们手上这份就是这一次按键刚读
@@ -344,13 +364,17 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
       project_id, resolved.image_ids, settings.dedup_time_window_seconds, settings.dedup_hash_threshold,
       on_cluster_progress, ai_enabled, settings.ai_provider,
       pzt::core::LocalModelConfig{settings.ollama_base_url, settings.ollama_model},
-      std::move(on_ai_gate), on_ai_progress);
+      std::move(on_ai_gate), on_ai_progress, on_cancel);
   // F-25：这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
   // 缓冲区里——不清掉的话，接下来继续读键时会一次性回放，可能连按出
   // 误标签/误退出。见 docs/history/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
   // 条一直没收口的风险。开了 --ai 之后阻塞更久，这一步更要紧。
   flush_pending_input();
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
+  // 中途取消跟闸门被拒分开报:闸门被拒是"没点头"，静默返回就够了;取消是
+  // "点了头、跑了一阵又喊停"，已经花掉时间和 token，用户需要一句确认它真
+  // 的停了、而且没留下半截结果。
+  if (result.value().cancelled) return pzt::cli::i18n::msg_dedup_cancelled();
   // 闸门被拒 = 用户主动取消，静默返回,不报"找到 0 组"(那会读成"跑完了但
   // 什么都没找到"，跟实际发生的事完全不是一回事)。跟 read_text_line 按
   // Esc 取消同一个约定。

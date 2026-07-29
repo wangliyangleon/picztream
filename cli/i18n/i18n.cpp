@@ -1193,9 +1193,25 @@ std::string msg_dedup_ai_progress(int group_done, int group_total, int compariso
 
 std::string msg_dedup_ai_progress_hint() {
   if (g_lang == Lang::zh) {
-    return " " + menu_item("Ctrl-C", "中止(会退出 pzt)") + " ";
+    return " " + menu_item("Ctrl-C", "取消") + " ";
   } else {
-    return " " + menu_item("Ctrl-C", "Abort (quits pzt)") + " ";
+    return " " + menu_item("Ctrl-C", "Cancel") + " ";
+  }
+}
+
+std::string msg_dedup_cancelling() {
+  if (g_lang == Lang::zh) {
+    return " 正在取消，等当前这次比较结束… ";
+  } else {
+    return " Cancelling, waiting for the current comparison to finish... ";
+  }
+}
+
+std::string msg_dedup_cancelled() {
+  if (g_lang == Lang::zh) {
+    return " 已取消，没有写入任何标签 ";
+  } else {
+    return " Cancelled, no tags were written ";
   }
 }
 
