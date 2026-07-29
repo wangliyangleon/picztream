@@ -33,6 +33,8 @@ int main(int argc, char** argv) {
   // "不该发生"不等于"不会发生"。这里兜底捕获,保证任何逃逸的异常都能
   // 触发正常的栈回退,让 cmd_open 内层 AltScreen/CbreakMode 这些 RAII
   // 对象的析构函数真的执行,不会把用户终端留在无回显/备用屏的坏状态。
+  // 这里只覆盖异常路径;信号路径不做栈回退,由 cli/term/signal_restore.h
+  // 单独接管。
   try {
     if (subcommand == "new") return cmd_new(args);
     if (subcommand == "list") return cmd_list(args);
