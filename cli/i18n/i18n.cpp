@@ -1234,8 +1234,11 @@ std::string msg_quit_confirm_pending_line2() {
 std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time,
                               int ai_fallback_count) {
   // F-11：标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
-  // 示——用户按 g 9 只会看到空列表，反而更困惑。
-  std::string hint = tagged_count > 0 ? (g_lang == Lang::zh ? "，按 g 9 查看" : ", press g 9 to view") : "";
+  // 示——用户按 f 9 只会看到空列表，反而更困惑。
+  // 入口键是 f 不是 g:筛选入口早就从 g 改成了 f(筛选/Filter 首字母，见
+  // browse.cpp 里那个分支的说明)，这句提示当时漏改了，一直在教用户按一
+  // 个不存在的键。
+  std::string hint = tagged_count > 0 ? (g_lang == Lang::zh ? "，按 f 9 查看" : ", press f 9 to view") : "";
   // F-08：以前这批图片被静默排除在比对之外，分组结果不如预期时用户无
   // 从判断原因——只在真的有跳过时才提一句，不干扰最常见的"全部图片都
   // 有拍摄时间"路径。

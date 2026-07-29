@@ -63,24 +63,29 @@ TEST_CASE("i18n localized text strings") {
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例
 }
 
-// F-11：dedup 结果文案在实际标记到重复图片时带上"按 g 9 查看"入口提
+// F-11：dedup 结果文案在实际标记到重复图片时带上"按 f 9 查看"入口提
 // 示；标记数为 0 时不带（范围内没有新重复组，提示了也是空列表）。
+// 键名断言的是 f 不是 g:筛选入口从 g 改成 f 时这句文案漏改了，真机反馈
+// (2026-07-29)才发现，而这条用例当时还在断言旧键、跟着一起绿——所以现在
+// 连"不许再出现 g 9"一起断言,别再被同一个方式绕过去。
 TEST_CASE("msg_dedup_result includes entry hint only when images were tagged") {
   g_lang = Lang::zh;
   auto zh_tagged = msg_dedup_result(2, 4, 0, 0);
   CHECK(zh_tagged.find("2") != std::string::npos);
   CHECK(zh_tagged.find("4") != std::string::npos);
-  CHECK(zh_tagged.find("g 9") != std::string::npos);
+  CHECK(zh_tagged.find("f 9") != std::string::npos);
+  CHECK(zh_tagged.find("g 9") == std::string::npos);
 
   auto zh_empty = msg_dedup_result(0, 0, 0, 0);
-  CHECK(zh_empty.find("g 9") == std::string::npos);
+  CHECK(zh_empty.find("f 9") == std::string::npos);
 
   g_lang = Lang::en;
   auto en_tagged = msg_dedup_result(2, 4, 0, 0);
-  CHECK(en_tagged.find("g 9") != std::string::npos);
+  CHECK(en_tagged.find("f 9") != std::string::npos);
+  CHECK(en_tagged.find("g 9") == std::string::npos);
 
   auto en_empty = msg_dedup_result(0, 0, 0, 0);
-  CHECK(en_empty.find("g 9") == std::string::npos);
+  CHECK(en_empty.find("f 9") == std::string::npos);
 
   g_lang = Lang::zh;  // 还原
 }
