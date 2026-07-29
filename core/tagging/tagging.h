@@ -10,7 +10,7 @@
 #include "core/project/project.h"
 #include "core/result.h"
 
-// 标签模块。见 docs/M0_Eng_Design.md "core/tagging" 模块划分。这些函数接收
+// 标签模块。见 docs/history/M0_Eng_Design.md "core/tagging" 模块划分。这些函数接收
 // 一个已经打开的 Database&，跟 core/project 一样的模式；cli 实际使用的入口
 // 是 core/api.h 里的门面函数。
 namespace pzt::core::tagging {
@@ -131,7 +131,7 @@ constexpr const char* kRejectTagName = "废片";
 TagId ensure_reject_tag(db::Database& db, ProjectId project_id);
 
 // M3：近似重复检测(core/dedup)标记重复项用的系统标签，见
-// docs/M3_Dedup_Eng_Design.md"core/tagging：新增 ensure_duplicate_tag"一
+// docs/history/M3_Dedup_Eng_Design.md"core/tagging：新增 ensure_duplicate_tag"一
 // 节。跟 kRejectTagName 同一个惯例——中文，用户在 pzt open 里直接看到
 // 这个名字。
 constexpr const char* kDuplicateTagName = "重复";

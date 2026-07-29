@@ -1,10 +1,10 @@
 """一句话风格描述到内置 preset 的纯文本匹配，不看图，是目标三 `core::ai::style`
 （逐图 vision 挑风格）之外的新路径：用户描述想要的风格，只交给 LLM 做一次文本
-匹配，见 docs/W2026-07-15_AgentStyle_Eng_Design.md 的后续设计。
+匹配，见 docs/history/W2026-07-15_AgentStyle_Eng_Design.md 的后续设计。
 
 `_PRESET_DESCRIPTIONS` 是 core/ai/style.cpp::preset_descriptions() 的第三份手写
 副本（第一份是 core/recipe/recipe.cpp::builtin_presets() 的数值表，第二份是
-core/ai/style.cpp 自己的文字描述副本）——agent/ 按现有架构约束（docs/M4_Eng_Design.md
+core/ai/style.cpp 自己的文字描述副本）——agent/ 按现有架构约束（docs/history/M4_Eng_Design.md
 "agent -> cli -> core 单向依赖的唯一通道"）不能直接读 C++ 那份表，只能自己再抄
 一份，跟 core/ai/style.cpp 已经接受的漂移风险是同一个 tradeoff。
 """

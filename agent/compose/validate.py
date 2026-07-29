@@ -1,5 +1,5 @@
 """compose_plan/parse_adjustment 输出喂进驱动器之前的最后一道确定性护
-栏，见 docs/M4_Agent_Workflow_Design.md 五"这道校验挡住 LLM 输出污染
+栏，见 docs/history/M4_Agent_Workflow_Design.md 五"这道校验挡住 LLM 输出污染
 确定性驱动器"。纯逻辑，不调 LLM，是子增量 E 里测得最重的一块(docs
 M4_Eng_Design.md 第七节子增量 E 验证要求)。
 """

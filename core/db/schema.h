@@ -4,7 +4,7 @@
 
 #include <stdexcept>
 
-// Schema for the global PZT metadata database. See docs/M0_Eng_Design.md
+// Schema for the global PZT metadata database. See docs/history/M0_Eng_Design.md
 // "数据库 Schema 设计" for the authoritative design and rationale.
 namespace pzt::core::db {
 

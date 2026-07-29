@@ -4,7 +4,7 @@
 
 #include "core/api.h"
 
-// `r` 前缀键的风格(recipe)菜单交互。见 docs/M1_Eng_Design.md increment 6。
+// `r` 前缀键的风格(recipe)菜单交互。见 docs/history/M1_Eng_Design.md increment 6。
 namespace pzt::cli::menu {
 
 // `r` 键的入口。选中即应用/清除，不需要额外确认，参照标签系统的交互

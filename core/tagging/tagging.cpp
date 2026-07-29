@@ -65,7 +65,7 @@ std::int64_t tagged_count(sqlite3* conn, TagId tag_id) {
 }
 
 // 有序标签按 position 升序，无序标签按 tagged_at 升序 - 跟导出模块的排序
-// 规则保持一致（见 docs/M0_Eng_Design.md 导出小节）。
+// 规则保持一致（见 docs/history/M0_Eng_Design.md 导出小节）。
 std::vector<TaggedImageRef> ordered_entries(sqlite3* conn, TagId tag_id, bool is_ordered) {
   const char* order_by = is_ordered ? "it.position ASC" : "it.tagged_at ASC";
   std::string sql = std::string("SELECT i.id, i.file_name FROM image_tags it "

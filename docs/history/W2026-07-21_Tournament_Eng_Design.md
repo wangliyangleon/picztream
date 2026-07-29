@@ -1,10 +1,10 @@
 # PicZTream (PZT) 工程设计文档（W2026-07-21 目标二：dedup 两类 + curate 两模式 + 全局 AI 开关）
 
-> **已归档(2026-07-24)**：目标二（Commit 1-5）与目标三补充设计（文内"目标三补充设计"一节，Commit 6-9）均已完成，落地与本文档一致。真机反馈之后又触发了一次超出本文档范围的架构调整——选片确认闸门从 Deliver 前挪到 Style 前、Deliver 不再挂闸门，详见 `docs/W2026-07-21_PRD.md` 归档说明。本周开发目标全貌见 `docs/W2026-07-21_PRD.md`。
+> **已归档(2026-07-24)**：目标二（Commit 1-5）与目标三补充设计（文内"目标三补充设计"一节，Commit 6-9）均已完成，落地与本文档一致。真机反馈之后又触发了一次超出本文档范围的架构调整——选片确认闸门从 Deliver 前挪到 Style 前、Deliver 不再挂闸门，详见 `docs/history/W2026-07-21_PRD.md` 归档说明。本周开发目标全貌见 `docs/history/W2026-07-21_PRD.md`。
 
 ## 背景
 
-本文档是 `docs/W2026-07-21_PRD.md` 两阶段方案的第二份 Eng Design，覆盖目标二（接线）。目标一（地基）已完成并归档为 `docs/W2026-07-21_Eval_Eng_Design.md`：eval 跟比较解耦、dedup/curate 降级到"非 AI 基线"、建好 pairwise 视觉比较能力（`core/ai/compare.h` + `pzt compare`）。
+本文档是 `docs/history/W2026-07-21_PRD.md` 两阶段方案的第二份 Eng Design，覆盖目标二（接线）。目标一（地基）已完成并归档为 `docs/history/W2026-07-21_Eval_Eng_Design.md`：eval 跟比较解耦、dedup/curate 降级到"非 AI 基线"、建好 pairwise 视觉比较能力（`core/ai/compare.h` + `pzt compare`）。
 
 目标二要把 AI 锦标赛接上 dedup/curate，并用一个全局开关控制走不走 AI。
 
@@ -158,7 +158,7 @@ JSON 输出：`cmd_dedup` 现有输出（`groups`/`tagged`/`skipped_no_capture_t
 
 ## 背景
 
-`docs/W2026-07-21_PRD.md` 目标三已拍板：Dedup/Curate 两步各自要不要跑由这次意图判断（三分支：没提去重→直接 Curate；提去重没数量→先 Dedup 再追问；提去重带数量→跳过独立 Dedup 直接 Curate(N)），外加"没提 AI 就提醒+给快捷按钮"。手动选片已移出范围，留给未来单独立项。上面"非目标"一节曾把"Dedup 做成可跳过的 stage"列为延后项，这一节就是把它做完。
+`docs/history/W2026-07-21_PRD.md` 目标三已拍板：Dedup/Curate 两步各自要不要跑由这次意图判断（三分支：没提去重→直接 Curate；提去重没数量→先 Dedup 再追问；提去重带数量→跳过独立 Dedup 直接 Curate(N)），外加"没提 AI 就提醒+给快捷按钮"。手动选片已移出范围，留给未来单独立项。上面"非目标"一节曾把"Dedup 做成可跳过的 stage"列为延后项，这一节就是把它做完。
 
 规划阶段通读了 orchestrator（`agent/orchestrator/types.py`/`driver.py`）、`agent/stages/curate.py`/`deliver.py`、`agent/compose/plan_composer.py`/`validate.py`、`agent/session/consumer.py`/`worker.py`，以及本文档决策一二涉及的 core `curate.cpp`，过程中发现两个原计划之外、必须处理的架构缺口（决策二、决策三），已经想清楚最小修法。
 

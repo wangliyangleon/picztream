@@ -2,9 +2,9 @@
 """一次性批处理 runner：丢一个文件夹进去，固定 Plan 跑完
 Ingest -> Dedup -> Curate -> Deliver，产出写到另一个文件夹。子增量 D
 范围：不含 LLM/意图解析/对话式微调/闸门交互——全自动跑到底，见
-docs/M4_Eng_Design.md 第七节子增量 D、本计划 Context。W2026-07-21：
+docs/history/M4_Eng_Design.md 第七节子增量 D、本计划 Context。W2026-07-21：
 Evaluate stage 已删除，agent 不再整批跑评估，见
-docs/W2026-07-21_PRD.md 已拍板决策 4。
+docs/history/W2026-07-21_PRD.md 已拍板决策 4。
 """
 from __future__ import annotations
 

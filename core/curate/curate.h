@@ -8,7 +8,7 @@
 #include "core/project/project.h"
 #include "core/tagging/tagging.h"
 
-// 策展挑图算法。见 docs/M4_Eng_Design.md 第三节"Curate 算法设计"——从非
+// 策展挑图算法。见 docs/history/M4_Eng_Design.md 第三节"Curate 算法设计"——从非
 // 废片/非重复的候选图里挑 N 张兼顾多样性的代表作(W2026-07-21：候选不再
 // 依赖是否评估过，见 core/tournament 的说明)。这里只负责选择，不打标
 // 签、不导出（单一职责）；`pzt curate` 命令拿到结果后自己去调 add_tag

@@ -2,7 +2,7 @@
 
 ## 背景
 
-`docs/M1_PRD.md` 已经拍板了 M1 的产品决策（两层 recipe 模型：内置预设 + 用户在预设基础上调整细节保存的 version，软删除，`r` 前缀键，命令行只留 `list`/`rename`/`delete`），但按 `AGENTS.md` 的工程契约，具体的表结构、模块划分、接口签名要落到这份文档，PRD 本身明确把这些留给 Eng Design。implementation 应在本文档评审通过后再开始。
+`docs/history/M1_PRD.md` 已经拍板了 M1 的产品决策（两层 recipe 模型：内置预设 + 用户在预设基础上调整细节保存的 version，软删除，`r` 前缀键，命令行只留 `list`/`rename`/`delete`），但按 `AGENTS.md` 的工程契约，具体的表结构、模块划分、接口签名要落到这份文档，PRD 本身明确把这些留给 Eng Design。implementation 应在本文档评审通过后再开始。
 
 ## 色彩流水线性能验证结论
 
@@ -199,7 +199,7 @@ Result<void, EncodeError> encode_jpeg_file(const decode::DecodedImage& img, cons
 2. **version 的增删改 + 软删除**：`create_version`/`rename_version`/`delete_version`，`pzt recipe list` 补全 version 那一层的展示（含"已删除"标注），落地正式命令 `pzt recipe rename <preset>:<version_number> <new_name>` 和 `pzt recipe delete <preset>:<version_number>`（寻址语法在这一步定下来，取代 PRD 里的待确认状态：`<version_number>` 是"该预设下按 id 升序、排除已软删除的排位"，跟 `r` 菜单里看到的编号保持一致）。配一条临时调试命令 `pzt recipe create-debug <preset> [--highlights N] [--shadows N] [--wb-r N] [--wb-b N] [--name NAME]`，因为正式的创建入口 `r c` 要到 increment 6 才有，这一步需要一个非交互的方式先把 `create_version` 测起来
 3. **图片 ↔ recipe 关联**：`set_image_recipe`/`get_image_recipe`。配临时调试命令 `pzt recipe apply-debug <project_name> <image_relative_path> <preset>:<version_number>` 和 `pzt recipe clear-debug <project_name> <image_relative_path>`，验证多次独立进程重开后关联持久保留
 4. **`core/color` 渲染管线 + `core/decode` 补 JPEG 编码**：`apply_lut`/`apply_adjustments`（`thread_count` 参数，单线程/多线程共用一份实现）、`encode_jpeg_file`、`core::recipe::resolve_recipe`/`render` 把两者接起来。单元测试覆盖 LUT 三线性插值的已知输入输出、高光/暗光/白平衡的边界值裁剪、`thread_count>1` 时结果跟单线程一致（并行只影响速度不影响正确性）。配一条临时调试命令 `pzt color-debug <jpeg_path> <preset>:<version_number> <output.jpg>`，解码→渲染→编码写出一个可以直接用 Preview.app 肉眼查看的文件，用真实照片跑一遍确认颜色变化符合预期，同时记一下这条完整链路（不是探针里孤立的两个原语）的总耗时,跟 Phase 0 spike 的数字做个量级对照
-5. **预览接入 `pzt open` 现有渲染路径 + `r v` 查看切换**：在 `resize_rgba` 降采样之后、发给终端之前插入 `recipe::render(..., thread_count=1)` 这一步。顺带落地 `r` + `v`（临时切换当前图片是否应用风格，纯查看层面，不改 `recipe_id`，导航到其它图片后重置为默认展示风格化效果）——这是这一步唯一需要的 `r` 前缀键行为，不需要等 increment 6 的完整菜单：终端 cbreak 模式没有按键释放事件，"按住看原图"做不出来，退而求其次做成两次按键的切换键，见 `docs/M1_PRD.md`"应用与预览"一节的说明。信息栏"风格:"那一行的预设/version 名字在当前渲染的是风格化效果时加粗（ANSI `\x1b[1m`，包在 `pad_to` 算完宽度之后的结果外层，不能反过来，否则转义字节会被 `display_width` 当成可见字符算错宽度），切到原图预览时取消加粗。还没有完整的 `r` 菜单（应用/创建/删除留给 increment 6），先用 increment 3 的调试命令给某张图片手动设置一个 recipe，再 `pzt open` 该项目肉眼确认预览正确应用了风格、切换正确、加粗状态正确、`key-to-render` 延迟汇总仍在正常范围（对照 Phase 0 spike 的预期量级）
+5. **预览接入 `pzt open` 现有渲染路径 + `r v` 查看切换**：在 `resize_rgba` 降采样之后、发给终端之前插入 `recipe::render(..., thread_count=1)` 这一步。顺带落地 `r` + `v`（临时切换当前图片是否应用风格，纯查看层面，不改 `recipe_id`，导航到其它图片后重置为默认展示风格化效果）——这是这一步唯一需要的 `r` 前缀键行为，不需要等 increment 6 的完整菜单：终端 cbreak 模式没有按键释放事件，"按住看原图"做不出来，退而求其次做成两次按键的切换键，见 `docs/history/M1_PRD.md`"应用与预览"一节的说明。信息栏"风格:"那一行的预设/version 名字在当前渲染的是风格化效果时加粗（ANSI `\x1b[1m`，包在 `pad_to` 算完宽度之后的结果外层，不能反过来，否则转义字节会被 `display_width` 当成可见字符算错宽度），切到原图预览时取消加粗。还没有完整的 `r` 菜单（应用/创建/删除留给 increment 6），先用 increment 3 的调试命令给某张图片手动设置一个 recipe，再 `pzt open` 该项目肉眼确认预览正确应用了风格、切换正确、加粗状态正确、`key-to-render` 延迟汇总仍在正常范围（对照 Phase 0 spike 的预期量级）
 6. **`r` 前缀键完整交互**（已完成，对应 M1_PRD.md"应用与预览"一节）：统一的 `handle_r_key` 入口，一次性渲染出完整菜单行（`r:清除 v:预览原图 c:新建 d:删除` + 动态的预设 1-9 列表）再读一个字节分发，风格上对齐 `handle_space_key`。
    - **6.1 应用/清除（已完成）**：`r` + 预设数字进入第二层（`handle_pick_version_to_apply_prompt`，`0`=预设自身中性状态、`1-9`=该预设下未软删除的 version），`r` + `0`/`r` + `r` 走独立的快捷清除路径（直接 `set_image_recipe(image_id, std::nullopt)`，不经过预设列表）。应用/清除成功后静默（不返回状态文案），信息栏"风格:"那一行下一帧自然刷新，对齐 `handle_add_tag_result` 静默成功的既有做法
    - **6.2 创建（已完成）**：`r` + `c`——`handle_pick_preset_prompt`（三处需要"选预设"的地方共用的新函数，供应用/创建/删除三个流程复用）选基础预设，依次 `read_text_line` 读高光/暗光/白平衡红/蓝四个数值（留空或解析失败都当 0，不重试，风格对齐标签 cap 的宽松解析）+ 可选名称，调 `create_version`。创建之后**不会**自动应用到当前图片，对齐 `space c` 建标签不会自动打到当前图片这一既有约定
@@ -207,15 +207,15 @@ Result<void, EncodeError> encode_jpeg_file(const decode::DecodedImage& img, cons
    - **6.4 收尾（已完成）**：退休了这个里程碑过程中新增的全部临时调试命令（`pzt recipe create-debug`/`apply-debug`/`clear-debug`、`pzt color-debug`），连带清理了只被它们使用的 `resolve_recipe_target`；保留 M1_PRD.md 定的正式命令（`pzt recipe list`/`rename`/`delete`，以及它们仍然依赖的 `find_preset_by_name`/`parse_recipe_address`/`resolve_recipe_address`），照抄 M0 increment 6.4.7 的收尾模式。`pzt open` 的 usage 提示补上了 `r` 键的说明
    - **验证方式的局限（写在这里,不是遗漏）**：`r` 键的全部交互逻辑只能在真实终端里手动验证（cbreak 模式下的按键读取没有可行的自动化测试路径，跟 M0 阶段全键盘循环的既有结论一致），这次没有新增可自动化的单元测试——已确认的是构建干净、既有 121 个单元测试全部通过（这次改动不涉及任何 core 层逻辑变化，纯 cli 接线）、退休的调试命令确实返回"未知子命令"、保留的命令确实还能正常工作
 7. **导出烘焙（已完成）**：`export_tag` 内部按"这张图有没有应用 recipe"分两条路径——应用了的走解码→`recipe::render`（`hardware_concurrency()` 多线程）→`encode_jpeg_file`，替代直接拷贝/软链；没应用的完全不变。`--link` 对烘焙路径没有意义（输出本来就是新生成的文件），统一忽略 `link_mode` 落地成真实文件，混合导出时同一批图片里没应用的那些仍然正确遵守 `--link`（`--link` 本身 M2 阶段已移除，见"风险与待确认问题"末尾）。解码/渲染/编码任一步失败都复用现有的 `ExportSkipped` 跳过机制，不中断其余图片。`export_tag` 签名不变，`cli/main.cpp` 的 `cmd_export` 不需要任何改动。单元测试覆盖：应用了非恒等 recipe 的图片字节跟源文件不同、没应用的字节级逐字节相同（回归防线）、`--link` 混合场景两种图片各自的正确行为。真机验证：对 `Test` 项目里已经应用了 Warm/Origin 的真实照片跑一遍 `pzt export`，`shasum` 确认无风格图片字节不变，肉眼对比确认 Warm 图片体现了暖色效果
-8. **集成与验收（已完成）**：`docs/M1_PRD.md` 验收标准七条全部打勾，具体验证方式见该文档对应条目。补充验证了 PRD 没有明确写但实现时发现值得确认的一点——内置预设不能通过 `pzt recipe rename`/`delete`（不带冒号编号，含 `Origin:0` 这类边界地址）或交互式 `r d` 删除流程触及，两条路径结构上都够不到预设本身。真实终端（`RelWithDebInfo`）下反复切换两张分别应用了 Warm/Origin 的图片，`key-to-render` 稳定在 58-61ms，主观无延迟感知；Debug+ASan 构建下同样操作是 824-926ms，与已经确认过的 ASan 插桩开销膨胀比例一致，不是真实性能问题。M1 到此全部完成（increment 1-8）。
+8. **集成与验收（已完成）**：`docs/history/M1_PRD.md` 验收标准七条全部打勾，具体验证方式见该文档对应条目。补充验证了 PRD 没有明确写但实现时发现值得确认的一点——内置预设不能通过 `pzt recipe rename`/`delete`（不带冒号编号，含 `Origin:0` 这类边界地址）或交互式 `r d` 删除流程触及，两条路径结构上都够不到预设本身。真实终端（`RelWithDebInfo`）下反复切换两张分别应用了 Warm/Origin 的图片，`key-to-render` 稳定在 58-61ms，主观无延迟感知；Debug+ASan 构建下同样操作是 824-926ms，与已经确认过的 ASan 插桩开销膨胀比例一致，不是真实性能问题。M1 到此全部完成（increment 1-8）。
 
 ## 风险与待确认问题
 
-延续自 `docs/M1_PRD.md`，这次工程设计阶段能定的都定了（version 的命令行寻址语法见 increment 2），以下几条仍然留到实现或真机验证阶段：
+延续自 `docs/history/M1_PRD.md`，这次工程设计阶段能定的都定了（version 的命令行寻址语法见 increment 2），以下几条仍然留到实现或真机验证阶段：
 
 * **`recipe_versions` 参数的确切取值范围/裁剪规则**：高光/暗光/白平衡偏移目前只定了"是什么"，没定具体的数值范围和曲线形状（比如高光调整是线性增益还是某种 S 型曲线），increment 4 实现时需要定一个具体公式，先跑起来，后续可以调
 * **内置预设的具体名称/数量/色彩倾向**：increment 1 只需要 1-2 个能验证机制的占位预设，真正的调色设计工作可以在 increment 1 完成后随时补充，不阻塞后续 increment
 * **软删除 version 的清理时机**：M1_PRD.md 已经定为可选、不强制，这次不实现任何清理机制，如果后续发现孤儿 version 堆积成问题再补
 * **软删除没有对应的"恢复"操作**：跟 `archive` 没有 `unarchive` 是同一类悬而未决状态
 * **色彩管理（ICC）缺口维持 M0 假设**：不在 M1 处理，等真机测试发现明显偏色问题再评估
-* **`--link` 导出遇到应用了 recipe 的图片时退化成真实文件拷贝**：这是这次工程设计阶段发现的、`--link` 语义的一个自然限制（见"core/api 接口设计"里 `core/export/` 修改一节），已经决定接受这个限制，不需要额外设计（**M2 阶段追加**：这条限制后来发展成了移除整个 `--link` 功能的理由之一——M2 又给 RAW 图片加了一条同样"退化成真实文件"的路径之后，`--link` 能生效的场景只剩"纯 JPEG 且未应用风格"，用户确认想不出剩下的用途，整个删掉了，`export_tag` 现在没有 `link_mode` 参数，导出统一是复制，详见 `docs/M2_Eng_Design.md`）
+* **`--link` 导出遇到应用了 recipe 的图片时退化成真实文件拷贝**：这是这次工程设计阶段发现的、`--link` 语义的一个自然限制（见"core/api 接口设计"里 `core/export/` 修改一节），已经决定接受这个限制，不需要额外设计（**M2 阶段追加**：这条限制后来发展成了移除整个 `--link` 功能的理由之一——M2 又给 RAW 图片加了一条同样"退化成真实文件"的路径之后，`--link` 能生效的场景只剩"纯 JPEG 且未应用风格"，用户确认想不出剩下的用途，整个删掉了，`export_tag` 现在没有 `link_mode` 参数，导出统一是复制，详见 `docs/history/M2_Eng_Design.md`）

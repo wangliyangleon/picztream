@@ -1,5 +1,5 @@
 """SessionConsumer 消息流：入站分派、文本串行、关键词快路径、事件应用、
-闸门文案渲染（docs/W2026-07-15_AgentRuntime_Eng_Design.md 第七、八节，
+闸门文案渲染（docs/history/W2026-07-15_AgentRuntime_Eng_Design.md 第七、八节，
 文案逐字对齐旧 router）。全部单步 step() 驱动，jobs/events 队列手工搬运，
 不接真 worker。
 """

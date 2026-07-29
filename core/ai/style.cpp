@@ -7,7 +7,7 @@ namespace pzt::core::ai {
 namespace {
 
 // 9 个内置预设的一句话风格摘要，内容取自
-// docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第五节——写死在这里而不
+// docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md 第五节——写死在这里而不
 // 是给 core::recipe::PresetSummary 加 description 字段，因为这是"给 AI
 // 看的 prompt 内容"，跟"预设本身的数据模型"是不同性质的东西。这是跟
 // core/recipe/recipe.cpp::builtin_presets() 数值表的第二份手写副本，有

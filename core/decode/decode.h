@@ -7,7 +7,7 @@
 
 #include "core/result.h"
 
-// JPEG 解码模块。见 docs/M0_Eng_Design.md increment 6.1。复用
+// JPEG 解码模块。见 docs/history/M0_Eng_Design.md increment 6.1。复用
 // spikes/kitty_latency_probe/ 里已经验证过的 ImageIO/CoreGraphics 解码路径
 // (CGImageSourceCreateWithData -> CGImageSourceCreateImageAtIndex ->
 // CGBitmapContext device RGB -> CGContextDrawImage)。色彩管理沿用

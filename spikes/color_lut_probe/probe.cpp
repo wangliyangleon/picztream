@@ -3,7 +3,7 @@
 // per-channel multiply) and 3D LUT trilinear interpolation (the generic
 // mechanism behind real color-grading "looks") - at preview and full-sensor
 // resolutions, single-threaded vs jthread-parallelized. Answers the open
-// design question in docs/Roadmap.md's Milestone 1 description: is
+// design question in docs/history/Roadmap.md's Milestone 1 description: is
 // "downsampled sync preview + full-res async queue" actually justified by
 // the numbers, or is scalar/jthread already fast enough that the design can
 // be simpler? Not production code; see README.md and results.md.

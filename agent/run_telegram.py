@@ -2,7 +2,7 @@
 """Telegram 长驻会话 runner（W2026-07-15 目标五）：consumer/worker 双线程
 运行时。consumer（主线程）只做秒级消息反应/事件应用/timers；长活（LLM
 分类/编排、pzt drive）经两条 job 队列交给两条 worker 线程（classify lane
-+ drive lane）并发处理。见 docs/W2026-07-15_AgentRuntime_Eng_Design.md。
++ drive lane）并发处理。见 docs/history/W2026-07-15_AgentRuntime_Eng_Design.md。
 
 同一个 bot 同时只能跑一个入口（Telegram getUpdates 单消费者，双开会 409
 Conflict）。取代了早期的单线程同步主循环 + 旧 router.SessionRouter。

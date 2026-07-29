@@ -6,7 +6,7 @@
 
 #include "core/api.h"
 
-// `space` 键的标签菜单交互(加/摘/新建/删除标签)。见 docs/M0_Eng_Design.md
+// `space` 键的标签菜单交互(加/摘/新建/删除标签)。见 docs/history/M0_Eng_Design.md
 // increment 6.4.4。
 namespace pzt::cli::menu {
 

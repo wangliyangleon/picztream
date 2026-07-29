@@ -6,7 +6,7 @@
 #include <utility>
 #include <variant>
 
-// Project-wide error-handling convention (see docs/M0_Eng_Design.md 待确认问题):
+// Project-wide error-handling convention (see docs/history/M0_Eng_Design.md 待确认问题):
 // expected business outcomes (name taken, cap exceeded, project not found,
 // ...) go through Result<T, E>, not exceptions. Exceptions/assertions are
 // reserved for genuine programming errors (precondition violations).

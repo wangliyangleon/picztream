@@ -188,7 +188,7 @@ def test_deliver_resends_when_curate_selection_changes_after_adjustment(tmp_path
 def test_deliver_resends_when_style_changed_for_the_same_selection(tmp_path):
     # StyleApplyAll 只调颜色不改文件路径，同样的 selected 列表配合不同
     # 的风格必须被当成"不同的一次交付"，不能被去重标记误判成已经交付
-    # 过——见 docs/W2026-07-15_AgentStyle_Eng_Design.md 第七节。
+    # 过——见 docs/history/W2026-07-15_AgentStyle_Eng_Design.md 第七节。
     calls = []
 
     def fake_runner(argv):

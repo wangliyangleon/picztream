@@ -6,7 +6,7 @@
 
 #include "core/api.h"
 
-// `f` 前缀键的筛选菜单。见 docs/M0_Eng_Design.md increment 6.4.6/6.6。
+// `f` 前缀键的筛选菜单。见 docs/history/M0_Eng_Design.md increment 6.4.6/6.6。
 // 入口键最初是 `g`,后来改成 `f`(筛选/Filter 首字母);这一层的类型和函数
 // 早期跟着旧键名叫 GKey*/handle_g_key_prompt,2026-07-29 一并改齐,历史
 // 文档里出现的 `g + 数字` 说的都是今天的 `f + 数字`。

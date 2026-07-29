@@ -1,13 +1,13 @@
 # LibRaw 性能 Spike(M2 Phase 0)
 
-一次性验证探针,不是生产代码,回答 `docs/M2_PRD.md` 里没有实测数据支撑的几个问题:
+一次性验证探针,不是生产代码,回答 `docs/history/M2_PRD.md` 里没有实测数据支撑的几个问题:
 
 1. "内嵌预览提取不触发 LibRaw 全量解码"这个 culling 路径的核心假设,实测耗时是否真的落在 100ms 延迟预算内(沿用 M0/M1 已定的标准)?
 2. 内嵌预览的格式(`unpack_thumb`/`dcraw_make_mem_thumb` 返回的 `type`)实际是 JPEG 还是 BITMAP?决定预览提取要不要处理位图分支
 3. 富士 X-Trans 阵列的全量解码耗时,是否真的比徕卡拜耳阵列明显更慢,慢多少
 4. `pzt export` 遇到需要真正解码的 RAW 图片时,耗时量级是否需要加进度提示
 
-结论见 `results.md`,会在 `docs/M2_Eng_Design.md` 里被引用。
+结论见 `results.md`,会在 `docs/history/M2_Eng_Design.md` 里被引用。
 
 ## 构建与运行
 
@@ -34,14 +34,14 @@ clang++ -std=c++20 -O2 -fexperimental-library -o probe probe.cpp \
 | `DSCF5428.RAF` | 富士 X-T5 | RAF | X-Trans | ~87MB |
 | `DSCF5429.RAF` | 富士 X-T5 | RAF | X-Trans | ~87MB |
 
-用 `file` 命令确认过格式合法(徕卡 DNG 走 TIFF 容器 + JPEG 压缩、富士 RAF format version 0201)。这两台机身正好对应 `docs/Roadmap.md` 点名的两种去马赛克阵列类型,不需要额外找样本。
+用 `file` 命令确认过格式合法(徕卡 DNG 走 TIFF 容器 + JPEG 压缩、富士 RAF format version 0201)。这两台机身正好对应 `docs/history/Roadmap.md` 点名的两种去马赛克阵列类型,不需要额外找样本。
 
 ## 测的是什么
 
 对每个文件测两组操作,各重复 5 次取最快一次(跟 `color_lut_probe` 同样的方法论):
 
 - **内嵌预览提取**(culling 路径):`unpack_thumb()` + `dcraw_make_mem_thumb()`。每次都重新 `open_file`,避免前一次调用的内部状态影响计时。
-- **全量解码**(processing/导出路径):`unpack()` + `dcraw_process()` + `dcraw_make_mem_image()`,`output_bps=8, use_camera_wb=1, output_color=1`(sRGB)——对应 `docs/M2_Eng_Design.md` 已确认的"LibRaw 内部完成白平衡+去马赛克+色彩矩阵+gamma,直接吐 8-bit sRGB"这个输出格式决策。
+- **全量解码**(processing/导出路径):`unpack()` + `dcraw_process()` + `dcraw_make_mem_image()`,`output_bps=8, use_camera_wb=1, output_color=1`(sRGB)——对应 `docs/history/M2_Eng_Design.md` 已确认的"LibRaw 内部完成白平衡+去马赛克+色彩矩阵+gamma,直接吐 8-bit sRGB"这个输出格式决策。
 
 ## 已知局限
 

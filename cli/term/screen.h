@@ -4,7 +4,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-// 终端尺寸探测 + 备用屏幕缓冲区。见 docs/M0_Eng_Design.md increment 6.4.2。
+// 终端尺寸探测 + 备用屏幕缓冲区。见 docs/history/M0_Eng_Design.md increment 6.4.2。
 namespace pzt::cli::term {
 
 // 同时拿 cell 尺寸(行/列,布局用)和像素尺寸(ws_xpixel/ws_ypixel,算图片

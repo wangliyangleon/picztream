@@ -11,7 +11,7 @@
 // 通用层的第二个消费者(第一个是 core/ai/evaluation.h)。跟 evaluation.h 同
 // 一个模式，不共用同一个文件——evaluation.h 明确限定在曝光/构图/对焦三
 // 维打分的 schema 上，风格建议是完全不同的 schema。见
-// docs/W2026-07-15_AgentStyle_Eng_Design.md。
+// docs/history/W2026-07-15_AgentStyle_Eng_Design.md。
 namespace pzt::core::ai {
 
 enum class StyleError { MissingApiKey, NetworkError, HttpError, ParseError, Hallucinated };

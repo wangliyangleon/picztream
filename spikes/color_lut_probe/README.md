@@ -1,13 +1,13 @@
 # 色彩流水线性能 Spike(M1 Phase 0)
 
-一次性验证探针,不是生产代码,回答 `docs/Roadmap.md` Milestone 1 描述里两个没有实测数据支撑的设计假设:
+一次性验证探针,不是生产代码,回答 `docs/history/Roadmap.md` Milestone 1 描述里两个没有实测数据支撑的设计假设:
 
 1. "降采样同步预览" 的色彩处理是否真的能在按键触发的同步延迟预算内完成(沿用 M0 定的 100ms 目标)?
 2. "全分辨率处理走异步队列" 是否真的有必要,还是实测发现全分辨率也很快、这层设计复杂度是不必要的?
 
 顺带回答一个容易想当然的问题:Roadmap 提到 ARM NEON SIMD,但 3D LUT 三线性插值是"按像素颜色决定读哪里"的查表操作,NEON 没有好用的通用 gather 指令,不一定是 SIMD 的强项——这次验证同时测了 `std::jthread` 多线程是否已经够用,而不是假设"慢就上 NEON"。
 
-结论见 `results.md`,会在 `docs/M1_Eng_Design.md`(还没写)里被引用。
+结论见 `results.md`,会在 `docs/history/M1_Eng_Design.md`(还没写)里被引用。
 
 ## 构建与运行
 
@@ -17,7 +17,7 @@ clang++ -std=c++20 -O2 -fexperimental-library -o probe probe.cpp \
 ./probe <jpeg1> [jpeg2 ...]
 ```
 
-跟 `core/CMakeLists.txt` 的其它目标一样需要 `-fexperimental-library`(`std::jthread` 在这套 Apple Clang 工具链上的已知要求,见 `docs/M0_Eng_Design.md`)。
+跟 `core/CMakeLists.txt` 的其它目标一样需要 `-fexperimental-library`(`std::jthread` 在这套 Apple Clang 工具链上的已知要求,见 `docs/history/M0_Eng_Design.md`)。
 
 依赖 macOS 自带的 ImageIO/CoreGraphics 做 JPEG 解码,跟 `core/decode`、`kitty_latency_probe` 用的是同一条路径,这里独立抄一份而不是链接 `core` 静态库,保持这个 spike 完全自包含、跟 CMake 构建链无关(跟 `kitty_latency_probe` 同样的惯例)。
 

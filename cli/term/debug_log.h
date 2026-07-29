@@ -10,7 +10,7 @@
 #include <vector>
 
 // 把 stderr 重定向出去,不让 core 层(比如 PrefetchCache)的延迟日志原样跟
-// 图片画到同一个 pty 上,把画面弄乱。见 docs/M0_Eng_Design.md increment 6.4
+// 图片画到同一个 pty 上,把画面弄乱。见 docs/history/M0_Eng_Design.md increment 6.4
 // 的调试面板设计。
 namespace pzt::cli::term {
 

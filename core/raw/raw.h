@@ -8,7 +8,7 @@
 #include "core/decode/decode.h"
 #include "core/result.h"
 
-// LibRaw 封装模块。见 docs/M2_Eng_Design.md "core/api 接口设计"。纯 C++
+// LibRaw 封装模块。见 docs/history/M2_Eng_Design.md "core/api 接口设计"。纯 C++
 // 函数式接口(不是有状态类),风格上跟 core/decode 对齐("路径/字节进,像素
 // 出",同步调用,调用方决定要不要放到线程里跑)。不碰数据库、不知道
 // recipe/kind/配对是什么——那些是 core::project/core::export 的职责。跟

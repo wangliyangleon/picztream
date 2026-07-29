@@ -197,7 +197,7 @@ constexpr int kPresetLutSize = 17;
 
 // 9 个 City+Year 一级预设的数值表,数值是第一版工作假设,真机验证后按观
 // 感调整,不改变架构。完整设计依据见
-// docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第五节。键位=插入顺序,
+// docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md 第五节。键位=插入顺序,
 // 由 cli/menu/recipe_menu.cpp::presets_for_menu() 映射到键盘 1-9。
 const std::vector<BuiltinPreset>& builtin_presets() {
   static const std::vector<BuiltinPreset> kPresets = {

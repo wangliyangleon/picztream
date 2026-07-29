@@ -20,7 +20,7 @@
 #include "core/settings/settings.h"
 #include "core/tagging/tagging.h"
 
-// Facade `cli` calls into. See docs/M0_Eng_Design.md for the full interface
+// Facade `cli` calls into. See docs/history/M0_Eng_Design.md for the full interface
 // design; filled in module by module as core implementation progresses
 // (see 任务分解/increment 顺序 in that doc).
 namespace pzt::core {
@@ -79,7 +79,7 @@ using RecipeDescription = recipe::RecipeDescription;
 using RenderRecipeError = recipe::RenderRecipeError;
 
 // M3：`pzt open` 按 `:` 触发的选片辅助评估，见 core/ai/evaluation_worker.h。
-// 这次固定用一个供应商(docs/M3_PRD.md 明确不做多供应商切换 UI，具体固
+// 这次固定用一个供应商(docs/history/M3_PRD.md 明确不做多供应商切换 UI，具体固
 // 定哪一家是 cli/commands/browse.cpp 里的一行代码，不是这里的类型层面
 // 决策)，类型本身整个重导出,不单独摘出一个值。
 using EvaluationWorker = ai::EvaluationWorker;
@@ -140,7 +140,7 @@ Result<void, ProjectNotFoundError> delete_project(ProjectId id);
 std::optional<ImageInfo> get_image(ImageId image_id);
 
 // M4：把"项目内相对路径"翻译成 image_id——headless 命令按路径寻址图片
-// (路径对人和脚本都比内存里的 image_id 稳定),见 docs/M4_Eng_Design.md
+// (路径对人和脚本都比内存里的 image_id 稳定),见 docs/history/M4_Eng_Design.md
 // "headless 命令面设计"一节。底层 project::find_image_by_path 已经在
 // core/tests/project_test.cpp 里被当作测试 helper 广泛覆盖,这里只是转
 // 调一层开默认库的门面,零逻辑,不单独测(跟 get_image/evaluated_image_ids
@@ -167,7 +167,7 @@ Result<void, ReplaceTagError> replace_tag_entry(TagId tag_id, ImageId old_image,
 Result<void, DeleteTagError> delete_tag(TagId tag_id);
 TagId ensure_reject_tag(ProjectId project_id);
 
-// M3：近似重复检测，见 docs/M3_Dedup_Eng_Design.md"core/dedup：编排层"一
+// M3：近似重复检测，见 docs/history/M3_Dedup_Eng_Design.md"core/dedup：编排层"一
 // 节。project_id 只用来找 duplicate 标签所在的项目(标签按项目隔离)，
 // 不代表扫描范围——扫描范围是 image_ids，可以是整个项目也可以是一个子
 // 集(比如某个标签下的图片)，由调用方(`/dedup` 控制台命令的
@@ -187,7 +187,7 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     Provider provider = Provider::Local, const LocalModelConfig& local_config = LocalModelConfig{},
     dedup::AiGateFn on_ai_gate = nullptr, dedup::AiProgressFn on_ai_progress = nullptr);
 
-// M4：策展挑图，见 docs/M4_Eng_Design.md 第三节。跟上面的 dedup 门面同一
+// M4：策展挑图，见 docs/history/M4_Eng_Design.md 第三节。跟上面的 dedup 门面同一
 // 个模式：开默认库转调 curate::curate。门面刻意不叫 curate——
 // pzt::core::curate 已经是命名空间名，两者同名会冲突，跟 dedup 命名空间
 // 配 find_and_tag_duplicates 门面名是同一个理由。curate::curate 本身不

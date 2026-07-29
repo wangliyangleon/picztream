@@ -8,7 +8,7 @@ M0-M2（MVP / 风格化 / RAW）与 M3（选片辅助评分 + 近似重复检测
 
 本增量把 M4 的 **agent 编排骨架**落地，并交付**第一个完整最小可用闭环**：Telegram 收图 → 云端评估 → 去重 → 策展挑 N 张 → 把 keeper 发回。它复用 M3 的评估/去重和 M0 的项目/标签/导出，新增的表面集中在编排、策展、headless 命令面和 Telegram 接入。
 
-设计依据：`docs/M4_Agent_Workflow_Design.md`（工作流骨架 spec，权威）与 `docs/M4_Brainstorm.md`（广度参考：本地模型、用例、策展、产品岔路）。本 PRD 只写"本增量要交付的功能与可验收项"。
+设计依据：`docs/history/M4_Agent_Workflow_Design.md`（工作流骨架 spec，权威）与 `docs/history/M4_Brainstorm.md`（广度参考：本地模型、用例、策展、产品岔路）。本 PRD 只写"本增量要交付的功能与可验收项"。
 
 ## M4 增量一目标（本增量范围）
 
@@ -114,7 +114,7 @@ M0-M2（MVP / 风格化 / RAW）与 M3（选片辅助评分 + 近似重复检测
 
 ### TODO（规划中，本增量不做，后续增量接手）
 
-- **本地模型分层**（Tier 0 Apple Vision：水平角/显著性/分类/embedding/美学；Tier 1 Ollama 小 VLM 作为 `Provider::Local`）→ 压掉逐张云端评估成本、支持"照片不出机"。详见 `docs/M4_Brainstorm.md` 第五节。
+- **本地模型分层**（Tier 0 Apple Vision：水平角/显著性/分类/embedding/美学；Tier 1 Ollama 小 VLM 作为 `Provider::Local`）→ 压掉逐张云端评估成本、支持"照片不出机"。详见 `docs/history/M4_Brainstorm.md` 第五节。
 - **完整朋友圈形态**：`Style`（统一风格；若含裁切/水平矫正，需先给 recipe/渲染管线补几何变换能力，激活 M3 遗留缺口）+ `Caption`（多模态看图写中文社媒文案，云端或本地 Qwen）。
 - **多 Profile / 多目的地**：IG / 小红书等差异化 Profile（张数、裁切比例、文案语气/话题标签）。
 - **策展增强**：LLM 策展作为算法策展之上的可选增强。

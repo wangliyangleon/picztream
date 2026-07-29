@@ -4,7 +4,7 @@ compose/llm_client.py 的"typed error + 可注入 callable，默认走真实实
 transport/telegram.py::TelegramTransport 的活)，只是给 Task 2 一个小
 的、可 mock 的 async 接口，不用到处直接调 telegram.Bot。TelegramBotClient
 的正确性不进 pytest 快速套件(没有真 bot/没有对三方库内部做大量 mock
-就测不出什么)，由手动真机验证覆盖，见 docs/M4_Eng_Design.md 第五节。
+就测不出什么)，由手动真机验证覆盖，见 docs/history/M4_Eng_Design.md 第五节。
 """
 from __future__ import annotations
 

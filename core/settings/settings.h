@@ -8,7 +8,7 @@
 
 // 全局设置——静态、读一次的用户可配置行为(供应商、dedup 参数、批量操
 // 作默认排除策略、界面偏好)，跟 db::default_db_path() 是同一类"core 读
-// 自己的运行时配置"，不是业务数据。见 docs/Fix_It_Night_Review.md F-12
+// 自己的运行时配置"，不是业务数据。见 docs/history/Fix_It_Night_Review.md F-12
 // 一节的完整设计背景。作用域先只做全局(不建项目级覆盖)；运行时
 // `/setting` 开关不在这次范围，那是独立的未来任务(见同一节"未来任
 // 务")，这里只有一个程序启动/命令触发时读一次、不能中途改的静态配置。
@@ -20,7 +20,7 @@ struct Settings {
   ai::Provider ai_provider = ai::Provider::Local;
   // Provider::Local（Ollama）的连接信息——不是秘密，走 Settings 而不是
   // 环境变量，跟 curate_time_window_seconds 独立于 dedup_time_window_
-  // seconds 同一个"可调行为参数放这里"的先例（见 docs/M4_Eng_Design.md
+  // seconds 同一个"可调行为参数放这里"的先例（见 docs/history/M4_Eng_Design.md
   // 第三节）。
   std::string ollama_base_url = "http://localhost:11434";
   std::string ollama_model = "gemma4:e2b";
@@ -30,7 +30,7 @@ struct Settings {
   // 了 curate 顺带影响 dedup 标记"这种耦合）。候选集已经排除了"重复"标
   // 签图，用跟 dedup 相同的阈值重新分簇不会产生任何合并——默认值取
   // dedup 默认值(10s/5)的 2 倍，是留给真机效果调整的起点，不是精确调出
-  // 来的数字。见 docs/M4_Eng_Design.md 第三节。
+  // 来的数字。见 docs/history/M4_Eng_Design.md 第三节。
   int curate_time_window_seconds = 20;
   int curate_hash_threshold = 10;
   // F-26 的批量默认排除策略用的四个开关——true 表示"不排除"(把这类图

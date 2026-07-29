@@ -87,7 +87,7 @@ std::string build_instruction_text(const std::string& user_prompt,
 // 模型有时会把 JSON 包在 ```json ... ``` 这样的 markdown 代码块里，即使
 // 指令里明确要求不要——解析之前先剥掉首尾代码围栏，这是用自然语言而不是
 // 原生结构化输出这条路线下一个便宜但有效的缓解措施，见
-// docs/M3_Eng_Design.md"风险与待确认问题"一节。
+// docs/history/M3_Eng_Design.md"风险与待确认问题"一节。
 std::string strip_markdown_json_fence(const std::string& text) {
   auto not_space = [](unsigned char c) { return !std::isspace(c); };
   std::string t = text;

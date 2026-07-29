@@ -1,5 +1,5 @@
 """子进程调用 pzt 子命令的唯一入口——agent 不链接任何 C++，只经这层跟
-core 打交道。见 docs/M4_Eng_Design.md 一、二节"agent → cli → core 单向
+core 打交道。见 docs/history/M4_Eng_Design.md 一、二节"agent → cli → core 单向
 依赖的唯一通道"。
 """
 from __future__ import annotations

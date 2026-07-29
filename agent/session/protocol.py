@@ -1,4 +1,4 @@
-"""consumer <-> worker 的消息协议（docs/W2026-07-15_AgentRuntime_Eng_Design.md
+"""consumer <-> worker 的消息协议（docs/history/W2026-07-15_AgentRuntime_Eng_Design.md
 第三节）。全部是扁平 dataclass，不搞继承——Job 只有三种、字段各不相同，
 基类除了共享 generation 什么都省不下来，还会踩 dataclass 默认值排序的坑。
 

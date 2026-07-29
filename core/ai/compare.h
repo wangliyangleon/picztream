@@ -11,7 +11,7 @@
 // style.h)，跟它们同一个模式：新文件、新 schema、新结果结构体，调用同一个
 // request_json(这次走多图重载)。涉及质量比较的选择(dedup 保留哪张、curate
 // 选哪几张)走锦标赛，pairwise 是锦标赛的一场比较——bracket 编排在 agent，
-// 这一层只负责"发两张图、返回胜者"。见 docs/W2026-07-21_Eval_Eng_Design.md。
+// 这一层只负责"发两张图、返回胜者"。见 docs/history/W2026-07-21_Eval_Eng_Design.md。
 namespace pzt::core::ai {
 
 enum class CompareError { MissingApiKey, NetworkError, HttpError, ParseError, InvalidWinner };

@@ -2,7 +2,7 @@
 # M4 增量一子增量 A：headless 命令面的黑盒 smoke 测试。这些命令是给
 # agent/ 子进程调用用的，不像 pzt open 那样有 cbreak 交互循环挡在自动
 # 化测试路上——JSON 进出，纯文本 I/O，天然可以用普通 shell 脚本驱动，
-# 不需要 pty/expect。见 docs/M4_Eng_Design.md"测试策略落地"一节。
+# 不需要 pty/expect。见 docs/history/M4_Eng_Design.md"测试策略落地"一节。
 #
 # 隔离 XDG_CONFIG_HOME 到一个临时目录，不碰真实 ~/.config/pzt——跟项目
 # 里所有 pty 真机验证脚本同一个约定。PZT 环境变量指定要测的二进制，默
@@ -170,7 +170,7 @@ fi
 
 # F-26 默认排除：c.jpg 打上(已存在的系统)废片标签之后，即便显式点名
 # 也不会被导出，除非 Settings.export_reject 打开——跟交互侧 cmd_export
-# 同一份默认排除规则(见 docs/Fix_It_Night_Review.md F-26)，这里验证
+# 同一份默认排除规则(见 docs/history/Fix_It_Night_Review.md F-26)，这里验证
 # export-images 这条新命令也遵守它。
 "$PZT" tag apply smoke c.jpg 废片 --json >/dev/null
 out="$("$PZT" export-images smoke a.jpg c.jpg "$WORKDIR/out2" --json)"
@@ -207,7 +207,7 @@ assert_nonzero_exit_with_error "eval: unknown tag scope fails with JSON error" \
   "$PZT" eval smoke --scope '#不存在的标签' --provider gemini --json
 
 # --auto-reject 是 agent 侧的策略参数，显式传参、不读/改全局
-# Settings.auto_ai_reject(见 docs/M4_PRD.md P6 物理隔离)。这里跑一次
+# Settings.auto_ai_reject(见 docs/history/M4_PRD.md P6 物理隔离)。这里跑一次
 # 带 --auto-reject 的 eval，对比 Settings 落盘文件调用前后是否一字不
 # 差，锁住这条隔离性，不只靠代码审查。
 SETTINGS_FILE="$XDG_CONFIG_HOME/pzt/config.json"

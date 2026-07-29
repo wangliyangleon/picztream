@@ -20,7 +20,7 @@
 // 何晋级)是纯确定性算法，不含需要 agent 判断的业务逻辑，所以整个锦标赛
 // (分簇 + 场次推进 + 判定胜者)都收在这一层，一次调用做完——不是像 PRD
 // 最初设想那样把 bracket 推进摆到 agent(Python)侧。见
-// docs/W2026-07-21_Tournament_Eng_Design.md 决策一。
+// docs/history/W2026-07-21_Tournament_Eng_Design.md 决策一。
 namespace pzt::core::tournament {
 
 // 一个簇的选择结果。members 是簇内全部成员(含 winner)；size==1 是没有

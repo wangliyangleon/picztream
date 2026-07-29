@@ -3,7 +3,7 @@
 compose_plan 组成 Plan，跑到 AwaitingReview 之后支持对话式调整(留在
 Curate 参数上打转)，approve 才算结束。跟 run_watchfolder.py(子增量 D
 的固定 Plan、自动 approve)是两条并行入口，D 继续留作回归基线，见
-docs/M4_Eng_Design.md 第七节子增量 D/E。
+docs/history/M4_Eng_Design.md 第七节子增量 D/E。
 """
 from __future__ import annotations
 

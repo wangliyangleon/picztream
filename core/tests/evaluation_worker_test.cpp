@@ -206,7 +206,7 @@ TEST_CASE("a successful request leaves take_last_failure empty") {
 
 // auto_reject 现在是 request() 的显式参数，不再从 Settings.auto_ai_reject
 // 读取,process_request 不知道调用方是交互路径还是 agent，物理隔离见
-// docs/M4_PRD.md P6。W2026-07-21：判据从 passes_gate 三项阈值改成模型直接
+// docs/history/M4_PRD.md P6。W2026-07-21：判据从 passes_gate 三项阈值改成模型直接
 // 给的 unusable flag,unusable=true 且 auto_reject=true 时，落库之后自动
 // 给这张图打上"废片"系统标签。
 TEST_CASE("auto_reject tags an unusable evaluation with the reject tag when true") {
@@ -354,7 +354,7 @@ TEST_CASE("re-evaluating an image overwrites the previous result") {
 // 刚提交、worker 线程还没被调度醒来的极短窗口内，没法确定性地测,三个
 // 有意义、能稳定复现的状态是:全空闲、只有一个在处理(没有排队积压)、一
 // 个在处理+还有积压排队。用一个会阻塞在条件变量上的假 EvaluationFn 精
-// 确控制"正在处理中"这个状态持续多久，见 docs/M3_Eng_Design.md 任务 6
+// 确控制"正在处理中"这个状态持续多久，见 docs/history/M3_Eng_Design.md 任务 6
 // 的交叉检查说明。
 TEST_CASE("queue_status reflects idle, processing-alone, and processing-with-backlog") {
   auto db_path = fresh_db_path("evaluation_worker_queue_status");

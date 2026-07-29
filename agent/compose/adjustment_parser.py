@@ -1,4 +1,4 @@
-"""对话调整解析，见 docs/M4_Agent_Workflow_Design.md 六"调整模型"：一次
+"""对话调整解析，见 docs/history/M4_Agent_Workflow_Design.md 六"调整模型"：一次
 调整由 LLM 解析成结构化配置增量。子增量 E 范围只认 Curate 一个 Stage
 的三种调整("留 N 张"/"换标签"/"换掉第 N 张")。
 
@@ -10,7 +10,7 @@ LLM 只负责识别"用户想要哪种调整、给了什么值"这一步(有界�
 `classify_gate_reply` 是子增量 F1 真机验证后加的：Gate 阶段"这句话算
 同意/拒绝/调整"原本用固定关键词精确匹配，"挺好的，就这三张吧"这种自
 然口语因为不精确等于词表里任何一项，会被误当成一句解析不出来的调整。
-按 docs/M4_Agent_Workflow_Design.md 六原本的设计思路("明显的走廉价规
+按 docs/history/M4_Agent_Workflow_Design.md 六原本的设计思路("明显的走廉价规
 则短路，'是不是改动、改什么'交 LLM，跟调整解析同一个调用")，把同意/
 拒绝也并进这一次 LLM 调用里一起判断，不额外多花一次调用。`parse_adjustment`
 本身的行为/签名保持不变，两者共用下面的 `_decision_to_delta`。

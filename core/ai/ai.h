@@ -14,7 +14,7 @@
 // 通用层：发起一次带图片的 AI 请求，按调用方描述的形状要求 JSON，把解析
 // 出来的 JSON 原样交还。这一层不知道"score"是什么，也不假设、不校验结
 // 果里有什么字段——审美评分（core/ai/score.h，下一个 increment）是这一
-// 层的第一个消费者，不是这一层本身。见 docs/M3_Eng_Design.md"core/api
+// 层的第一个消费者，不是这一层本身。见 docs/history/M3_Eng_Design.md"core/api
 // 接口设计"一节。
 namespace pzt::core::ai {
 

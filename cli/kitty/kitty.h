@@ -5,12 +5,12 @@
 #include "core/decode/decode.h"
 #include "core/result.h"
 
-// Kitty 图形协议渲染组件。见 docs/M0_Eng_Design.md increment 6.2。复用
+// Kitty 图形协议渲染组件。见 docs/history/M0_Eng_Design.md increment 6.2。复用
 // spikes/kitty_latency_probe/ 里验证过的 t=t(临时文件)传输介质与 Tmux DCS
 // passthrough 包装,包成 cli 侧可复用的组件。
 //
 // 终端渲染细节(是否处于 Tmux、要不要包 passthrough、allow-passthrough 是
-// 否开启)只应该出现在这里,不能下沉进 core(见 docs/M0_Eng_Design.md
+// 否开启)只应该出现在这里,不能下沉进 core(见 docs/history/M0_Eng_Design.md
 // "对 core 设计的直接影响"一节)。
 //
 // 这一层只负责"已解码像素 -> 终端字节",不做 JPEG 解码(core/decode 的职

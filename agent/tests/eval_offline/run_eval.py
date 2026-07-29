@@ -5,7 +5,7 @@
 模式不会收集它，见 agent/pyproject.toml 的 [tool.pytest.ini_options])。
 真正的自动化回归覆盖是 tests/compose/test_plan_composer.py 和
 tests/compose/test_adjustment_parser.py 里注入假 http_post 的那些用
-例，这份脚本只管"prompt 有没有跑偏"，靠人读，见 docs/M4_Eng_Design.md
+例，这份脚本只管"prompt 有没有跑偏"，靠人读，见 docs/history/M4_Eng_Design.md
 第七节子增量 E 验证要求。
 
 用法：

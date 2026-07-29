@@ -6,7 +6,7 @@
 
 // 纯像素运算，不碰数据库，不知道 recipe/preset/version 是什么概念——风
 // 格上对齐 core/decode(字节/像素进，像素出，同步调用，调用方决定要不要
-// 丢进线程)。见 docs/M1_Eng_Design.md "core/color/" 一节。
+// 丢进线程)。见 docs/history/M1_Eng_Design.md "core/color/" 一节。
 //
 // 这里的三线性插值/白平衡算法照抄 spikes/color_lut_probe/probe.cpp 已经
 // 用 Phase 0 spike 验证过性能的写法，这次是把它提升成生产代码，不是重新

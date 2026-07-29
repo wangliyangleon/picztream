@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 // 不跑去马赛克。type 不是 LIBRAW_IMAGE_JPEG（极少数机型内嵌位图缩略图）时
 // 归为 DecodeFailed——spikes/libraw_probe 已经确认徕卡/富士两种测试机型
 // 都是 JPEG 类型，M2 不为位图分支投入实现，真机测试遇到例外再处理（见
-// docs/M2_Eng_Design.md"风险与待确认问题"）。
+// docs/history/M2_Eng_Design.md"风险与待确认问题"）。
 Result<std::vector<std::uint8_t>, RawError> extract_embedded_jpeg_bytes(const std::string& path) {
   if (!fs::exists(path)) {
     return Result<std::vector<std::uint8_t>, RawError>::Err(RawError::FileNotFound);

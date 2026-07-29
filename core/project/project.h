@@ -11,7 +11,7 @@
 #include "core/db/database.h"
 #include "core/result.h"
 
-// 项目导入模块。见 docs/M0_Eng_Design.md "core/project" 模块划分与
+// 项目导入模块。见 docs/history/M0_Eng_Design.md "core/project" 模块划分与
 // core/api 接口设计。这些函数接收一个已经打开的 Database&，方便单元测试
 // 指向临时测试库而不碰真实的 ~/.config/pzt/pzt.db；cli 实际使用的入口是
 // core/api.h 里委托到这里、内部自己打开默认库的门面函数。
@@ -101,7 +101,7 @@ struct ImageInfo {
   std::string kind;                              // "jpeg" | "raw"
   std::optional<std::string> preview_cache_path;  // kind="raw" 且缓存已生成时有值(绝对路径)
   std::optional<std::int64_t> captured_at;        // 拍摄时间(Unix 秒数)，提取失败/没有这个信息时为空
-  // M3 选片辅助评估（曝光/构图/对焦），见 docs/M3_Eng_Design.md"数据库
+  // M3 选片辅助评估（曝光/构图/对焦），见 docs/history/M3_Eng_Design.md"数据库
   // Schema 设计"一节——存在 image_evaluations 表（一对一，LEFT JOIN 进
   // 这次查询），不是这张表自己的列。要么整个有值（评估过）要么整个是
   // nullopt（没评估过/评估失败），不是"部分字段有值部分没有"的语义。

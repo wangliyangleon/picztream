@@ -21,7 +21,7 @@ namespace {
 // NULL,不需要 Origin 本身占一个键位。过滤之后剩下的 9 个 City+Year 预
 // 设按创建顺序(id 升序)映射到键 1-9,数量和顺序由
 // core/recipe/recipe.cpp::ensure_default_presets 里的表决定,见
-// docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
+// docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md。
 std::vector<pzt::core::PresetSummary> presets_for_menu() {
   auto presets = pzt::core::list_presets();
   std::vector<pzt::core::PresetSummary> numbered;

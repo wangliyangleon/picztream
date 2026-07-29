@@ -1,4 +1,4 @@
-"""PztClient 可取消调用路径（docs/W2026-07-15_AgentRuntime_Eng_Design.md
+"""PztClient 可取消调用路径（docs/history/W2026-07-15_AgentRuntime_Eng_Design.md
 第六节）：worker 把 DriveJob 的 cancel_event 挂到自己 client 实例上，
 call() 感知置位后 terminate 子进程、宽限后 kill、抛 PztCancelledError。
 PztCancelledError 故意不是 PztCommandError 的子类——stages 的

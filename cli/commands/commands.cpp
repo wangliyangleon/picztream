@@ -65,7 +65,7 @@ std::optional<pzt::core::ProjectId> resolve_project(const std::string& cmd,
 // M4：headless 命令(`pzt images`/`eval`/`dedup`/`tag apply`/
 // `export-images`)统一的 JSON 输出约定——成功一个 JSON 对象打到 stdout
 // (换行结尾)，失败非零退出 + stderr 一行 JSON 错误对象，见
-// docs/M4_Eng_Design.md"headless 命令面设计"一节。这些命令是给
+// docs/history/M4_Eng_Design.md"headless 命令面设计"一节。这些命令是给
 // agent/ 子进程调用用的，不面向人读，跟其它 cmd_* 现有的 i18n 人读文
 // 案是两套并行的输出风格，互不影响。
 void emit_json(const nlohmann::json& j) {
@@ -142,7 +142,7 @@ ScopeResult resolve_scope(pzt::core::ProjectId project_id, const std::string& sc
 // M4：批量去重，走 Settings 的 dedup_time_window_seconds/
 // dedup_hash_threshold(跟交互路径的 /dedup 同一份配置来源)——这个命
 // 令本身不接受内联参数覆盖阈值，想调参改 config.json，跟交互侧的既有
-// 约定一致(见 docs/Fix_It_Night_Review.md F-08)。
+// 约定一致(见 docs/history/Fix_It_Night_Review.md F-08)。
 //
 // W2026-07-21 目标二：新增可选 --ai --provider <gemini|claude|local>——
 // 不带 --ai 时调用路径、参数、JSON 输出逐字节不变(ai_fallback_count 这
@@ -234,7 +234,7 @@ const char* skip_reason_str(pzt::core::SkipReason reason) {
 // M4：按路径导出一批图片(不是按标签查——那是 cmd_export 的事)，供
 // agent 的 Deliver Stage 用。默认排除废片/重复(Settings.export_reject/
 // export_dup)，跟交互侧 cmd_export/handle_export_filtered_flow 同一份
-// 规则来源(见 docs/Fix_It_Night_Review.md F-26)。
+// 规则来源(见 docs/history/Fix_It_Night_Review.md F-26)。
 int cmd_export_images(const std::vector<std::string>& args) {
   bool json = false;
   std::vector<std::string> positional;
@@ -307,7 +307,7 @@ const char* evaluation_error_str(pzt::core::EvaluationError error) {
 // M4：同步批量评估，供 agent 的 Evaluate Stage 用——headless 批处理场景
 // 没有交互式重绘循环持续 poll，这里直接忙等到全部提交的请求都落地再
 // 一次性输出，不像交互路径那样异步返回。auto_reject 是显式参数(A6)，
-// 不读/改 Settings.auto_ai_reject，见 docs/M4_PRD.md P6"物理隔离"。
+// 不读/改 Settings.auto_ai_reject，见 docs/history/M4_PRD.md P6"物理隔离"。
 //
 // 收尾用 queue_status() 判断"是否全部处理完"，不能靠
 // consume_new_result() 的世代号计数——世代号只回答"有没有新结果"，不
@@ -453,11 +453,11 @@ int cmd_eval(const std::vector<std::string>& args) {
   return 0;
 }
 
-// M4：策展挑图，见 docs/M4_Eng_Design.md 第三节。--tag 是候选范围限定
+// M4：策展挑图，见 docs/history/M4_Eng_Design.md 第三节。--tag 是候选范围限定
 // (可选，缺省整个项目)，跟 --apply-tag(落到入选图上的标签，可选，默
 // 认"精选")是两个独立的标签概念，不要混淆——前者是"从哪些图里选"，后
 // 者是"选完打什么标记"。--apply-tag 走跟 tag_apply 完全一致的惰性建普
-// 通标签路径，不是系统标签，重复运行不清历史标记(见 docs/M4_Eng_Design.md
+// 通标签路径，不是系统标签，重复运行不清历史标记(见 docs/history/M4_Eng_Design.md
 // 第三节 Context 里的拍板：用户想用"朋友圈"/"ins"这类自定义名字，不该
 // 被强绑成固定系统标签)。
 //
@@ -586,7 +586,7 @@ const char* compare_error_str(pzt::core::ai::CompareError error) {
 // 目标二 agent 侧的锦标赛会逐对调用这个命令；本身只负责一场比较，不做
 // bracket 编排。winner 回的是胜者的原始路径(winner=0→pathA、1→pathB)，
 // agent 侧直接拿到胜者路径，不用自己映射 a/b。见
-// docs/W2026-07-21_Eval_Eng_Design.md。
+// docs/history/W2026-07-21_Eval_Eng_Design.md。
 int cmd_compare(const std::vector<std::string>& args) {
   bool json = false;
   std::string provider_str;
@@ -1015,7 +1015,7 @@ int tag_apply(const std::vector<std::string>& args) {
 // M4：headless verb——把某个标签从项目里当前打了它的所有图上摘掉(整
 // 个项目范围，没有 --scope 参数；curate 的 --apply-tag 想要"这次是全新
 // 一批"语义时，agent 自己先调这个命令清一遍再重新 curate，见
-// docs/M4_Eng_Design.md 第三节)。标签本身不存在(从来没打过)是幂等成
+// docs/history/M4_Eng_Design.md 第三节)。标签本身不存在(从来没打过)是幂等成
 // 功，cleared:0，不当错误处理——跟 remove_tag 自己"图片本来就没这个标
 // 签，删除也算成功"是同一个幂等哲学，调用方不需要先查标签存不存在再
 // 决定要不要清。
@@ -1298,7 +1298,7 @@ const char* style_error_str(pzt::core::ai::StyleError error) {
 // headless：LLM 看图从 9 个预设(排除 Origin)里选一个合适的风格，只
 // 读，不改库——目标三 Style Stage 的"suggest"半步，"apply"半步是下面
 // 的 recipe_apply，两者拆开是为了给未来"用户点名风格"的手动路径留一
-// 个直接调 apply 的口子。见 docs/W2026-07-15_AgentStyle_Eng_Design.md。
+// 个直接调 apply 的口子。见 docs/history/W2026-07-15_AgentStyle_Eng_Design.md。
 int recipe_suggest(const std::vector<std::string>& args) {
   bool json = false;
   std::string provider_str;

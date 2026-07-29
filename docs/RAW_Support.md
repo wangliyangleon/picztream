@@ -1,6 +1,6 @@
 # RAW 支持：当前基线与已知风险
 
-这不是某个里程碑的 PRD/Eng Design，是一份跨里程碑的活文档，记录 RAW 支持**当前**的功能边界和已知风险，随实现演进更新。RAW 支持是怎么一步步做出来的（LibRaw 选型、双层解码管线、色彩基线决策）见 `docs/M2_PRD.md`/`docs/M2_Eng_Design.md`，那两份文档不再重复维护这里的内容。
+这不是某个里程碑的 PRD/Eng Design，是一份跨里程碑的活文档，记录 RAW 支持**当前**的功能边界和已知风险，随实现演进更新。RAW 支持是怎么一步步做出来的（LibRaw 选型、双层解码管线、色彩基线决策）见 `docs/history/M2_PRD.md`/`docs/history/M2_Eng_Design.md`，那两份文档不再重复维护这里的内容。
 
 ## 当前基线：默认关闭的 opt-in 功能
 

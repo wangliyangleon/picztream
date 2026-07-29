@@ -1,17 +1,17 @@
 # PicZTream (PZT) 目标一工程设计：本地模型支持（Provider::Local / Ollama）
 
-> **已归档(2026-07-19)**：目标一「本地模型支持」已完成，落地与本文档一致。真机基准（第十节）后默认模型定为 `gemma4:e2b`、`Provider::Local` 统一走 JSON-Schema 约束 + `temperature:0` 解码；超时参数化按第三节的决定顺延、仍复用 60s 硬编码超时。本周开发目标全貌见 `docs/W2026-07-15_PRD.md`。
+> **已归档(2026-07-19)**：目标一「本地模型支持」已完成，落地与本文档一致。真机基准（第十节）后默认模型定为 `gemma4:e2b`、`Provider::Local` 统一走 JSON-Schema 约束 + `temperature:0` 解码；超时参数化按第三节的决定顺延、仍复用 60s 硬编码超时。本周开发目标全貌见 `docs/history/W2026-07-15_PRD.md`。
 
 ## 背景
 
-产品需求见 `docs/W2026-07-15_PRD.md` 目标一：云端评估（Claude/Gemini）依赖用户自己的 API key 额度，本地开发/测试常被限流卡住，需要一条不依赖外部配额的本地评估路径。本文档只回答"具体怎么落地"，不重复 PRD 已经拍板的范围/非目标/验收标准。
+产品需求见 `docs/history/W2026-07-15_PRD.md` 目标一：云端评估（Claude/Gemini）依赖用户自己的 API key 额度，本地开发/测试常被限流卡住，需要一条不依赖外部配额的本地评估路径。本文档只回答"具体怎么落地"，不重复 PRD 已经拍板的范围/非目标/验收标准。
 
 ## 一、现有代码基础（全部可直接复用/扩展，不推倒重来）
 
 - **`core::ai::request_json`**（`core/ai/ai.h:56-60`，实现在 `ai.cpp:292-358`）：唯一的"发一次带图片的 AI 请求、按调用方描述的形状要 JSON"入口，当前只认 `Provider::Claude`/`Provider::Gemini` 两路分支。`HttpPostFn` 注入缝已经存在（`ai.h:44-46`），单测不需要真的连网络。
 - **`core::ai::request_evaluation`**（`evaluation.cpp:160-164`，内部 `detail::request_evaluation_impl`）：完全 provider 无感知——只是拼好 `user_prompt`/`schema_instruction` 调 `request_json`，再用同一套 `parse_dimension`/`parse_exposure_fix`/`parse_composition_fix` 解析结果。**这意味着 `Provider::Local` 一旦让 `request_json` 吐出跟 Claude/Gemini 同形状的 JSON，评估解析逻辑一行都不用改**——PRD 里"对现有异步评估队列/DB/去重逻辑零改动"的说法在这里被验证成立。
 - **`core::ai::EvaluationWorker`**（`evaluation_worker.h`）：后台 `jthread` 队列，`EvaluationFn` 类型别名（`h:27-28`）是测试注入假函数的口子；`PZT_FAKE_EVAL` 环境变量（`commands.cpp:349-372`）是给 agent watch-folder 端到端测试用的"完全跳过真 AI 调用"逃生舱——这解决的是不同的问题（测试时不想花钱/被限流），跟 `Provider::Local`（测试时想要真实但免费的评估）是互补关系，不是重叠或替代。
-- **`core::settings::Settings`**（`settings.h:17-49`）：已经是"可调行为参数放这里、调用方读一次显式传参"的既定模式（`curate_time_window_seconds` 独立于 `dedup_time_window_seconds` 就是这个模式的先例，见 `docs/M4_Eng_Design.md` 第三节）。
+- **`core::settings::Settings`**（`settings.h:17-49`）：已经是"可调行为参数放这里、调用方读一次显式传参"的既定模式（`curate_time_window_seconds` 独立于 `dedup_time_window_seconds` 就是这个模式的先例，见 `docs/history/M4_Eng_Design.md` 第三节）。
 - **`cli/commands/commands.cpp:cmd_eval`**（`291-380` 附近）与 **`cli/commands/browse.cpp:resolve_ai_provider`**（`57-67`）：两处现有的 provider 字符串解析入口，分别对应 headless 命令和交互式 TUI。
 
 ## 二、Ollama API 调研结论（WebFetch 核实，`/api/chat`）

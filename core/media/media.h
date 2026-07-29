@@ -13,7 +13,7 @@ namespace pzt::core::media {
 // 各自复制了一份，"加新 RAW 格式时多处漂移"是真实陷阱（见 Fix-it F-16）；这里
 // 收成单一来源，各调用方转调。
 
-// M2：目前只认徕卡 DNG / 富士 RAF（docs/M2_PRD.md 明确的范围）。扩展名集合是
+// M2：目前只认徕卡 DNG / 富士 RAF（docs/history/M2_PRD.md 明确的范围）。扩展名集合是
 // 单一扩展点，给"以后加 CR2/CR3/NEF/ARW"留好，不需要在多处改判断逻辑。判断大
 // 小写不敏感。
 bool is_raw_path(const std::string& path);

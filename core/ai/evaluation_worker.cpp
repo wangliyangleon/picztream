@@ -140,7 +140,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   if (!result.ok()) {
     // 失败(网络错误、解析失败等)不写库，也不清空这张图之前成功评估过的
     // 记录——旧结果仍然是有效信息，一次失败的重新评估不该把之前成功的
-    // 结果抹掉。见 docs/M3_Eng_Design.md"core/ai/evaluation_worker.h/.cpp"
+    // 结果抹掉。见 docs/history/M3_Eng_Design.md"core/ai/evaluation_worker.h/.cpp"
     // 一节。
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld evaluation request failed\n",
                  static_cast<long long>(req.image_id));

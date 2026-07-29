@@ -9,7 +9,7 @@
 #include "core/result.h"
 #include "core/tagging/tagging.h"
 
-// 浏览与过滤模块。见 docs/M0_Eng_Design.md "core/browse" 模块划分。
+// 浏览与过滤模块。见 docs/history/M0_Eng_Design.md "core/browse" 模块划分。
 //
 // "当前浏览到哪张图"不是这个模块的状态——真正的全键盘循环（increment 6）
 // 是单次进程运行内的内存状态，调用方（cli，最终是交互循环）自己持有

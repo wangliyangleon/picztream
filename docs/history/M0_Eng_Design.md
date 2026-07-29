@@ -2,7 +2,7 @@
 
 ## 背景
 
-`docs/M0_PRD.md` 明确把 SQLite 表结构留待"下一步单独设计"；`AGENTS.md` 的工程契约要求具体的模块划分、schema 与 tradeoff 必须先落到对应里程碑的 eng design 文档,不允许 agent 在没有文档的情况下臆测细节自行实现。本文档就是 M0 缺失的那一份 eng design,implementation 应在本文档评审通过后再开始。
+`docs/history/M0_PRD.md` 明确把 SQLite 表结构留待"下一步单独设计"；`AGENTS.md` 的工程契约要求具体的模块划分、schema 与 tradeoff 必须先落到对应里程碑的 eng design 文档,不允许 agent 在没有文档的情况下臆测细节自行实现。本文档就是 M0 缺失的那一份 eng design,implementation 应在本文档评审通过后再开始。
 
 ## 渲染延迟验证结论
 
@@ -141,7 +141,7 @@ ExportResult export_tag(TagId tag_id, string output_folder,
 
 对应 cli 子命令新增一个可选 flag:`pzt export <project_name> <tag_name> <output_folder> [--link]`,默认复制、`--link` 时软链(复制更安全,导出后与原项目文件夹解耦,更贴近"方便后续手动发布"这个用户故事)。
 
-**后续状态(M2 阶段追加)**:上面这套 `LinkMode`/`--link` 设计在 M2 阶段被整个移除了。M1 给应用了 recipe 的图片加上"解码烘焙"路径、M2 又给 RAW 图片加上"全量解码"路径之后,这两类导出的输出本来就是新生成的文件,`link_mode` 早就被忽略、强制落地成真实文件——`--link` 实际还能生效的场景缩小到只剩"纯 JPEG 且未应用风格"这一种。用户(这个工具唯一的目标用户)确认想不出这个功能剩下的用途,决定整个删掉。`export_tag` 现在没有 `link_mode` 参数,导出统一是复制,`pzt export` 也不再接受 `--link`(传了会被静默当成未识别的多余参数忽略,不报错)。这连带解决了下面"待确认问题"里那条 rescan 重复扫描 bug 的 symlink 那一半。详见 `docs/M2_Eng_Design.md` 对应记录。
+**后续状态(M2 阶段追加)**:上面这套 `LinkMode`/`--link` 设计在 M2 阶段被整个移除了。M1 给应用了 recipe 的图片加上"解码烘焙"路径、M2 又给 RAW 图片加上"全量解码"路径之后,这两类导出的输出本来就是新生成的文件,`link_mode` 早就被忽略、强制落地成真实文件——`--link` 实际还能生效的场景缩小到只剩"纯 JPEG 且未应用风格"这一种。用户(这个工具唯一的目标用户)确认想不出这个功能剩下的用途,决定整个删掉。`export_tag` 现在没有 `link_mode` 参数,导出统一是复制,`pzt export` 也不再接受 `--link`(传了会被静默当成未识别的多余参数忽略,不报错)。这连带解决了下面"待确认问题"里那条 rescan 重复扫描 bug 的 symlink 那一半。详见 `docs/history/M2_Eng_Design.md` 对应记录。
 
 ## 模块划分与并发模型
 
@@ -155,7 +155,7 @@ ExportResult export_tag(TagId tag_id, string output_folder,
 
 预取/缓存用 `std::jthread` 驱动的环形缓冲区实现,围绕当前浏览索引前后各 N 张,后台线程负责"读文件字节 + JPEG 解码到像素"这一整条链路(呼应上面渲染延迟验证结论的第 2 条);缓冲区大小 N 待后续用真实素材测出合理默认值,不在本文档里预设具体数字。延迟敏感路径(浏览导航、预取)按 AGENTS.md 要求配套延迟日志,不能只靠单元测试。
 
-**工具链前提(脚手架阶段已确认)**:本机 Apple Clang 17.0.0 / libc++ 的 `std::jthread`、`std::stop_token` 并非默认可用——头文件物理存在但被 `#if _LIBCPP_STD_VER >= 20 && !defined(_LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN)` 挡住,因为 Apple 认为这部分实现还没到 ABI 稳定,需要显式加编译期 `-fexperimental-library` 才能解锁(链接期同样要加,否则找不到对应符号)。这不是 AGENTS.md 要重新评估"是否用 jthread"的理由——`-fexperimental-library` 已经在根 `CMakeLists.txt` 里全局加上(不止 Debug 构建,Release 也需要,因为 `core/browse` 的预取线程是正式功能代码,不是调试设施),`docs/M0_PRD.md`/`AGENTS.md` 的 jthread 约束原样成立,只是多了这一条构建前提,写在这里防止以后有人看到一个"莫名其妙报缺 symbol"的构建错误却不知道原因。
+**工具链前提(脚手架阶段已确认)**:本机 Apple Clang 17.0.0 / libc++ 的 `std::jthread`、`std::stop_token` 并非默认可用——头文件物理存在但被 `#if _LIBCPP_STD_VER >= 20 && !defined(_LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN)` 挡住,因为 Apple 认为这部分实现还没到 ABI 稳定,需要显式加编译期 `-fexperimental-library` 才能解锁(链接期同样要加,否则找不到对应符号)。这不是 AGENTS.md 要重新评估"是否用 jthread"的理由——`-fexperimental-library` 已经在根 `CMakeLists.txt` 里全局加上(不止 Debug 构建,Release 也需要,因为 `core/browse` 的预取线程是正式功能代码,不是调试设施),`docs/history/M0_PRD.md`/`AGENTS.md` 的 jthread 约束原样成立,只是多了这一条构建前提,写在这里防止以后有人看到一个"莫名其妙报缺 symbol"的构建错误却不知道原因。
 
 ## 技术选型
 

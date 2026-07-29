@@ -1,10 +1,10 @@
 # PicZTream (PZT) 工程设计文档（W2026-07-21 目标一：eval 解耦 + core pairwise 地基）
 
-> **已归档(2026-07-24)**：目标一「eval 解耦 + core pairwise 地基」已完成，落地与本文档一致。`overall_score`/`passes_gate` 已全面移除（除解释性注释），`unusable` flag 落在 `core/ai/evaluation.h`/`compare.cpp`/`evaluation_worker.cpp`，`pzt open` 信息栏与 `pzt compare` 均已接上。本周开发目标全貌见 `docs/W2026-07-21_PRD.md`。
+> **已归档(2026-07-24)**：目标一「eval 解耦 + core pairwise 地基」已完成，落地与本文档一致。`overall_score`/`passes_gate` 已全面移除（除解释性注释），`unusable` flag 落在 `core/ai/evaluation.h`/`compare.cpp`/`evaluation_worker.cpp`，`pzt open` 信息栏与 `pzt compare` 均已接上。本周开发目标全貌见 `docs/history/W2026-07-21_PRD.md`。
 
 ## 背景
 
-本文档是 `docs/W2026-07-21_PRD.md` 两阶段方案的第一份 Eng Design，覆盖目标一（地基）。目标二（dedup 两类 / curate 两模式 / 全局 AI 开关 / agent 锦标赛编排）另出 `W2026-07-21_Tournament_Eng_Design.md`，不在本文范围。
+本文档是 `docs/history/W2026-07-21_PRD.md` 两阶段方案的第一份 Eng Design，覆盖目标一（地基）。目标二（dedup 两类 / curate 两模式 / 全局 AI 开关 / agent 锦标赛编排）另出 `W2026-07-21_Tournament_Eng_Design.md`，不在本文范围。
 
 PRD 的总纲：**AI eval = 客观评价当前单张照片**（产文字描述 + 硬伤 flag，不再产任何跨图可比分数）；**涉及比较的选择 = 锦标赛**（两两会话内视觉比较，不是单张打分再横向比）。本阶段把地基铺好：
 

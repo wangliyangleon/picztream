@@ -51,7 +51,7 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
 }
 
 // F-10：AI 供应商固定写死 Gemini 只是因为开发时手头只有 Gemini 的
-// key，不是经过设计的选择(docs/M3_PRD.md"风险与待确认问题"一节的
+// key，不是经过设计的选择(docs/history/M3_PRD.md"风险与待确认问题"一节的
 // TODO 原话)。2026-07-22：去掉 PZT_AI_PROVIDER 环境变量覆盖——跟 lang
 // 同样的理由(见 init_lang 的注释)，只留 F-12 的 Settings.ai_provider
 // (config.json)一个来源，config 没写就用 Settings 自己的默认值 Local，
@@ -345,7 +345,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 }
 
 // `/ai_eval * | #标签名 [额外指引]`——批量提交，见
-// docs/M3_PRD.md"批量评估与任务状态"一节。已经评估过的直接跳过，不重
+// docs/history/M3_PRD.md"批量评估与任务状态"一节。已经评估过的直接跳过，不重
 // 新评估（哪怕这次带了不同的额外指引）；单张重新评估只能走
 // `/ai_eval [额外指引]`(当前图片)那条路径，逐张手动做。提交立即返回，
 // 不等这一批全部完成——`request()` 本身的去重(`in_flight_`)保证批量提
@@ -511,7 +511,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     }
     // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——供
     // 应商见 resolve_ai_provider()(F-10:读 config.json 的 ai_provider，
-    // 默认 Local)。交互式切换 UI 本来就是 docs/M3_PRD.md 明确留到以后
+    // 默认 Local)。交互式切换 UI 本来就是 docs/history/M3_PRD.md 明确留到以后
     // 的开放问题,这次不做。
     bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest,
                                                pzt::core::load_settings().auto_ai_reject,

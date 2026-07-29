@@ -12,7 +12,7 @@
 #include "core/tagging/tagging.h"
 
 // 导出模块。完整设计(行为流程、文件命名规则、冲突消歧规则)见
-// docs/M0_Eng_Design.md "导出" 小节。命名空间叫 exporting 而不是 export，
+// docs/history/M0_Eng_Design.md "导出" 小节。命名空间叫 exporting 而不是 export，
 // 因为 export 是 C++ 关键字。
 namespace pzt::core::exporting {
 

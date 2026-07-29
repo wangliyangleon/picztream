@@ -5,7 +5,7 @@
 1. Kitty 图像协议能否直接接收原始 JPEG 字节（绕过任何解码）？
 2. 在 Ghostty + Tmux 窗格环境下，把一张全分辨率 JPEG 渲染出来的实际延迟是多少，相对 100ms 目标处于什么水平？
 
-结论见 `results.md`，会被引用进 `docs/M0_Eng_Design.md` 的"渲染延迟验证结论"一节。
+结论见 `results.md`，会被引用进 `docs/history/M0_Eng_Design.md` 的"渲染延迟验证结论"一节。
 
 ## 构建与运行
 

@@ -8,7 +8,8 @@
 
 // 选片辅助评估——core::ai::request_json 通用层的消费者。曝光、构图、对焦
 // 三个技术维度各自打分，不涉及色彩、情绪表达这类风格判断，见
-// docs/M3_PRD.md/M3_Eng_Design.md。取代了 M3 增量一最初那版"审美评分"
+// docs/history/M3_PRD.md 与 docs/history/M3_Eng_Design.md。取代了 M3 增
+// 量一最初那版"审美评分"
 // （core/ai/score.h，已删除）。
 namespace pzt::core::ai {
 

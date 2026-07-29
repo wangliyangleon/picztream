@@ -6,7 +6,7 @@ find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
 
 # M2: core/raw 对 LibRaw 的封装。Homebrew 的 libraw.pc 只声明了 lcms2 依赖，
 # 没有把它内部用的 OpenMP(libomp,keg-only,不在默认头文件搜索路径)的 include
-# 路径带出来，见 docs/M2_Eng_Design.md"技术选型"一节——spikes/libraw_probe
+# 路径带出来，见 docs/history/M2_Eng_Design.md"技术选型"一节——spikes/libraw_probe
 # 已经踩过这个坑，这里手动补上，不能假设 pkg-config 的输出已经完整。
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LibRaw REQUIRED IMPORTED_TARGET libraw)
@@ -19,7 +19,7 @@ target_link_libraries(PkgConfig::LibRaw INTERFACE ${LIBOMP_LIBRARY})
 # 的那份（Homebrew 只是给它包了一层合成的 pkg-config 文件，不是一个真的
 # keg），实测直接可用，不需要像上面 libomp 那样手动补 include/lib 路径。
 # nlohmann_json 走 Homebrew 的 CMake config package（`brew install
-# nlohmann-json`）。见 docs/M3_Eng_Design.md"技术选型"一节。
+# nlohmann-json`）。见 docs/history/M3_Eng_Design.md"技术选型"一节。
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 find_package(nlohmann_json REQUIRED)
 

@@ -426,7 +426,7 @@ TEST_CASE("ensure_reject_tag is scoped to its own project") {
   CHECK(list_tags(fx.db, other_project.value()).size() == 1);
 }
 
-// M3：core/dedup 用的重复标记系统标签，见 docs/M3_Dedup_Eng_Design.md。
+// M3：core/dedup 用的重复标记系统标签，见 docs/history/M3_Dedup_Eng_Design.md。
 // 跟 ensure_reject_tag 是同一套逻辑，测试也照抄同一套。
 TEST_CASE("ensure_duplicate_tag creates a conformant system tag when none exists") {
   auto fx = make_fixture("ensure_duplicate_fresh", 1);

@@ -15,7 +15,7 @@
 #include "core/decode/decode.h"
 #include "core/result.h"
 
-// 预取/缓存环形缓冲区。见 docs/M0_Eng_Design.md increment 6.3。围绕当前浏览
+// 预取/缓存环形缓冲区。见 docs/history/M0_Eng_Design.md increment 6.3。围绕当前浏览
 // 位置前后各 window 张，用 std::jthread 驱动的后台线程负责"读文件字节 +
 // JPEG 解码到像素"这一整条链路(呼应渲染延迟验证结论第 2 条:解码必须发生
 // 在异步预取阶段，不能算进按键触发的同步延迟预算)。这里只负责调度(什么

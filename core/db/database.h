@@ -5,7 +5,7 @@
 #include <string>
 
 // Thin RAII wrapper around the connection to PZT's global metadata database.
-// See docs/M0_Eng_Design.md 待确认问题 for why this is a single global DB
+// See docs/history/M0_Eng_Design.md 待确认问题 for why this is a single global DB
 // (~/.config/pzt/pzt.db) rather than one file per project folder: list/open/
 // archive/delete all operate by project name across the whole installation,
 // independent of cwd.

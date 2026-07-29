@@ -4,7 +4,7 @@
 
 这是 M4 **agent 编排骨架的设计规格（design spec）**，2026-07-13 经过一轮结构化 brainstorm 产出。它只回答一件事：**agent 的工作流（编排）长什么样**——有哪些抽象、状态怎么流转、人在哪几处介入、失败/离线怎么恢复、对话怎么驱动状态、怎么测。
 
-**范围边界（重要）**：本 spec **只管工作流**。M4 的其它维度——**本地模型分层设计（Tier 0/1/2）、用例探索、"挑 N 张"的策展算法、与 M3 遗留的交叉、尚未拍板的产品岔路（"照片不出机"硬约束、风格是否含几何变换、其它 IM 接入）**——留在 `docs/M4_Brainstorm.md`，本文不重复。后续的 M4 PRD 会把两份综合成"以功能和 actionable item 为主"的需求文档。
+**范围边界（重要）**：本 spec **只管工作流**。M4 的其它维度——**本地模型分层设计（Tier 0/1/2）、用例探索、"挑 N 张"的策展算法、与 M3 遗留的交叉、尚未拍板的产品岔路（"照片不出机"硬约束、风格是否含几何变换、其它 IM 接入）**——留在 `docs/history/M4_Brainstorm.md`，本文不重复。后续的 M4 PRD 会把两份综合成"以功能和 actionable item 为主"的需求文档。
 
 本 spec 是设计骨架，不是最终 Eng Design；具体 schema、模块划分、命令签名留给对应 Eng Design。
 
@@ -173,9 +173,9 @@ agent/ (Python 编排进程)
 
 本工作流骨架依赖几处"别处的能力"，不在本 spec 内解决，需 PRD/Eng Design 处理：
 
-- **`Curate` 的多样性策展算法**：全新能力（嵌入聚类/时间铺开/约束优化），设计见 `docs/M4_Brainstorm.md` 第六节。
+- **`Curate` 的多样性策展算法**：全新能力（嵌入聚类/时间铺开/约束优化），设计见 `docs/history/M4_Brainstorm.md` 第六节。
 - **`Style` 若含几何变换（裁切/水平矫正）**：会激活 M3 遗留的 recipe 几何变换缺口（`VersionParams` 目前只有色调/白平衡），是可能的前置依赖。
-- **`Provider::Local`（core/ai）**：让 `pzt eval --provider local` 走本地 Ollama，本地模型分层设计见 `docs/M4_Brainstorm.md` 第五节。
+- **`Provider::Local`（core/ai）**：让 `pzt eval --provider local` 走本地 Ollama，本地模型分层设计见 `docs/history/M4_Brainstorm.md` 第五节。
 - **headless 命令面**：给现有 `core/api` 补一批非交互 `pzt` 子命令（形态 B 的边界）。
 - **agent 侧 Run/Plan 状态存储**：agent 自有持久化，独立于 core schema。
-- **传输接入**：v1 已定 = Telegram 官方 Bot API（见 `docs/M4_PRD.md`）；WhatsApp 等其它 IM 作为后续可插拔适配器。控制/像素同通道、文件 vs 照片的思路沿用。
+- **传输接入**：v1 已定 = Telegram 官方 Bot API（见 `docs/history/M4_PRD.md`）；WhatsApp 等其它 IM 作为后续可插拔适配器。控制/像素同通道、文件 vs 照片的思路沿用。

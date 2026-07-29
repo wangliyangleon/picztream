@@ -2,7 +2,7 @@
 
 ## 背景
 
-产品需求见 `docs/M4_PRD.md`（增量一：Telegram 收图 → 云端评估 → 去重 → 策展挑 N 张 → 发回 keeper）；编排骨架的设计语义见 `docs/M4_Agent_Workflow_Design.md`（Stage/Plan/Run、确定性驱动器、闸门、状态机、错误恢复、测试哲学）。**本工程设计不重复那两份的内容**，只回答"这套东西具体怎么落地"：模块与文件结构、跨语言边界、headless 命令契约、`Curate` 新算法、`agent/` 的接口签名、构建集成，以及一份**按依赖排序、每步可独立验证的子增量分解**。
+产品需求见 `docs/history/M4_PRD.md`（增量一：Telegram 收图 → 云端评估 → 去重 → 策展挑 N 张 → 发回 keeper）；编排骨架的设计语义见 `docs/history/M4_Agent_Workflow_Design.md`（Stage/Plan/Run、确定性驱动器、闸门、状态机、错误恢复、测试哲学）。**本工程设计不重复那两份的内容**，只回答"这套东西具体怎么落地"：模块与文件结构、跨语言边界、headless 命令契约、`Curate` 新算法、`agent/` 的接口签名、构建集成，以及一份**按依赖排序、每步可独立验证的子增量分解**。
 
 关键工程前提（已在 spec 拍板）：形态 B——`agent/` 是独立 Python 进程，经一组 headless `pzt` 子命令（JSON 进出、子进程调用）驱动 C++ 的 `core`；`core` 对编排/策略/LLM 三重无感知；传输 v1 = Telegram 官方 Bot API。
 

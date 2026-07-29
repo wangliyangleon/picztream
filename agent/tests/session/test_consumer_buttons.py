@@ -1,6 +1,6 @@
 """inline 按钮（callback_query）路径：所有 yes/no 确认点都挂按钮，点击
 经 kind="callback" 的 InboundMessage 回到 consumer，映射到跟打字关键词
-一致的处理（docs/W2026-07-15_AgentRuntime_Eng_Design.md 真机反馈调整）。
+一致的处理（docs/history/W2026-07-15_AgentRuntime_Eng_Design.md 真机反馈调整）。
 校验点：按钮附在哪些确认上、点击语义、run_id 防误触、降级到纯文本。
 """
 from __future__ import annotations

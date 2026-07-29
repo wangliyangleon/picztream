@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_image_tags_tag_id ON image_tags(tag_id);
 // M1: 两层 recipe 模型（预设/version）用同一张自引用表表达，parent_id 为
 // NULL 的行是预设（is_system 恒为 1，base_lut/base_lut_size 有意义），非
 // NULL 的行是某个预设下用户保存的 version（highlights/shadows/wb_shift_*
-// 有意义，deleted_at 是软删除标记）。见 docs/M1_Eng_Design.md "数据库
+// 有意义，deleted_at 是软删除标记）。见 docs/history/M1_Eng_Design.md "数据库
 // Schema 设计"。
 constexpr const char* kCreateRecipes = R"sql(
 CREATE TABLE IF NOT EXISTS recipes (
@@ -100,7 +100,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_preset_name ON recipes(name) WHERE
 )sql";
 
 // M3 增量一修订版：选片辅助评估（曝光/构图/对焦），见
-// docs/M3_Eng_Design.md"数据库 Schema 设计"一节。跟 images 表分开建一张
+// docs/history/M3_Eng_Design.md"数据库 Schema 设计"一节。跟 images 表分开建一张
 // 表而不是继续加列——上一版只有 4 列时挤在 images 上还说得过去，这次三
 // 个维度各自的分数/原因/修正建议加起来十几列，继续堆在 images 上会把
 // "文件本身的元数据"和"AI 评估结果"这两个不同职责混在一起。image_id 直
@@ -234,7 +234,7 @@ void migrate_v0_to_v1(sqlite3* conn) {
     exec(conn, kCreateImageEvaluations);
     ensure_column(conn, "images", "recipe_id",
                   "recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL");
-    // M2: 图片来源类型 + RAW 预览缓存路径。见 docs/M2_Eng_Design.md"数据库
+    // M2: 图片来源类型 + RAW 预览缓存路径。见 docs/history/M2_Eng_Design.md"数据库
     // Schema 设计"。默认值 'jpeg' 让 M0/M1 时代建的旧库迁移时所有已有行行为
     // 不变，不需要区分新装/升级用户。kind 只有 'jpeg'/'raw' 两态——同名 JPEG
     // 存在时直接忽略，不做配对。
@@ -267,10 +267,10 @@ void migrate_v0_to_v1(sqlite3* conn) {
     // 目标二：预设级烘焙好的颗粒强度(0..1)，跟 base_lut/base_lut_size 一样
     // 是"预设的底子"，version 不能覆盖。默认值 0 让旧库迁移时所有已有预设
     // (包括即将被清理的占位 Warm)行为不变，见
-    // docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
+    // docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md。
     ensure_column(conn, "recipes", "grain_amount", "grain_amount REAL NOT NULL DEFAULT 0");
     // 目标二第二刀：用户自建 version 新增的四个可调旋钮，见
-    // docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第八节。默认值 0 让旧
+    // docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md 第八节。默认值 0 让旧
     // 库里已有的 version 行(比如"亮一点"、"test1")迁移后这四个新旋钮自动
     // 落在中性状态，不影响现有效果。
     ensure_column(conn, "recipes", "contrast", "contrast REAL NOT NULL DEFAULT 0");

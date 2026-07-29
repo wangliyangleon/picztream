@@ -1,5 +1,5 @@
 """SessionConsumer 的两个 timer（idle 提醒/收图播报）与启动恢复三分支
-（docs/W2026-07-15_AgentRuntime_Eng_Design.md 第七节第 6、7 条）。时间
+（docs/history/W2026-07-15_AgentRuntime_Eng_Design.md 第七节第 6、7 条）。时间
 全部走注入的 FakeClock。
 """
 from __future__ import annotations

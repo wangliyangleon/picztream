@@ -46,7 +46,7 @@ class DeliverStage:
         # 片永远发不出去。加了 Style/StyleApplyAll 之后同理：selected
         # 路径列表不变、只是单独调整了风格，也必须触发重新交付，否则
         # 新风格永远到不了交付文件，见
-        # docs/W2026-07-15_AgentStyle_Eng_Design.md 第七节。哈希只用来
+        # docs/history/W2026-07-15_AgentStyle_Eng_Design.md 第七节。哈希只用来
         # 让文件名短且确定，不要求防碰撞级别的强度。
         style_sig = "|".join(f"{p}={applied_styles.get(p, '')}" for p in selected)
         digest = hashlib.sha256((("|".join(selected)) + "||" + style_sig).encode("utf-8")).hexdigest()[:16]

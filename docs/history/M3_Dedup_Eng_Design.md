@@ -2,13 +2,13 @@
 
 ## 背景
 
-`docs/M3_Dedup_PRD.md` 定的产品行为：按"拍摄时间聚类 + 感知哈希比较"两步找出近似重复的照片组，每组自动选一张保留、其余打上系统标签。这是纯本地算法，不涉及云端 AI，架构上跟选片辅助评估（`core/ai/`）完全独立。
+`docs/history/M3_Dedup_PRD.md` 定的产品行为：按"拍摄时间聚类 + 感知哈希比较"两步找出近似重复的照片组，每组自动选一张保留、其余打上系统标签。这是纯本地算法，不涉及云端 AI，架构上跟选片辅助评估（`core/ai/`）完全独立。
 
 唯一入口是 `pzt open` 控制台命令 `/dedup *`/`/dedup #标签名`（阻塞式，不做独立的顶层 CLI 命令）。即便只有一个调用方，这个命令本身就有两种范围模式——`*`（整个项目）和 `#标签名`（子集）——所以 `core::dedup`/`core::find_and_tag_duplicates` 这一层仍然不能只认"项目"这个范围概念，要能接受一份**调用方已经解析好的图片列表**：`*` 和 `#标签名` 只是产生这份列表的两种不同方式，算法层不需要、也不应该知道范围是怎么来的。
 
 ## 现有代码基础
 
-* **`docs/M3_Eng_Design.md` 的 `handle_ai_console_command`/`handle_ai_eval_command`**：`/dedup` 分支照抄 `/ai_eval` 分支的形状——`:` 输入以 `/` 开头时解析出命令名和剩余参数，`*` 或 `#标签名` 两种范围解析方式（`list_images`/`find_tag_by_name`+`filter_by_tag`）完全复用，不重新实现一遍范围解析逻辑。CLI 层的命令分发本身不写单元测试（跟现有命令处理函数一致），只测它调用的 `core::` 函数。
+* **`docs/history/M3_Eng_Design.md` 的 `handle_ai_console_command`/`handle_ai_eval_command`**：`/dedup` 分支照抄 `/ai_eval` 分支的形状——`:` 输入以 `/` 开头时解析出命令名和剩余参数，`*` 或 `#标签名` 两种范围解析方式（`list_images`/`find_tag_by_name`+`filter_by_tag`）完全复用，不重新实现一遍范围解析逻辑。CLI 层的命令分发本身不写单元测试（跟现有命令处理函数一致），只测它调用的 `core::` 函数。
 * **`cli/menu/tag_menu.cpp` 里已有的 `prompt_and_read_key`**：`/dedup` 触发时"N 张照片还没评估，是否继续？(y/N)"这个单键确认直接复用这个原语，不新增输入机制。
 * **`core/tagging/tagging.h` 的 `ensure_reject_tag`**：幂等地"查不到就创建"一个系统标签（`is_system=1`），"废片"标签是先例。这次的 duplicate 标签照抄同样的模式，新增一个平行的 `ensure_duplicate_tag`。
 * **`core/decode/decode.h` 的 `resize_rgba`**：感知哈希需要的降采样可以复用这个，不用重新写一遍缩放逻辑；灰度转换（RGB→亮度）目前没有现成的工具函数，这次在 `core/dedup/` 内部写一个，不上升成 `core/decode` 的通用能力（只有这一个消费者，不提前抽象）。
@@ -129,8 +129,8 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
 内部执行顺序：
 
 1. `project::open_project(db, project_id)` 拿 `root_path`，项目不存在直接返回 `ProjectNotFoundError`。
-2. 遍历 `image_ids`，统计有多少张 `evaluation` 是 `nullopt`，记进 `unevaluated_image_count`（这一步只统计、不阻塞、不代为触发评估——`docs/M3_Dedup_PRD.md`"非目标"一节明确规定）。
-3. **清空旧标记**：`ensure_duplicate_tag` 拿到 `duplicate` 系统标签，只把 `image_ids` 这个范围内的图片摘掉这个标签——**不是清空整个项目**，范围外的图片（比如全项目扫描之后又单独对某个标签跑了一次）不受影响，见 `docs/M3_Dedup_PRD.md`"重新运行"一节。第一次运行时这批图片可能都还没有标签，这一步对没打过标签的图片是空操作(`remove_tag` 本身幂等)，不需要特殊分支。
+2. 遍历 `image_ids`，统计有多少张 `evaluation` 是 `nullopt`，记进 `unevaluated_image_count`（这一步只统计、不阻塞、不代为触发评估——`docs/history/M3_Dedup_PRD.md`"非目标"一节明确规定）。
+3. **清空旧标记**：`ensure_duplicate_tag` 拿到 `duplicate` 系统标签，只把 `image_ids` 这个范围内的图片摘掉这个标签——**不是清空整个项目**，范围外的图片（比如全项目扫描之后又单独对某个标签跑了一次）不受影响，见 `docs/history/M3_Dedup_PRD.md`"重新运行"一节。第一次运行时这批图片可能都还没有标签，这一步对没打过标签的图片是空操作(`remove_tag` 本身幂等)，不需要特殊分支。
 4. 调 `find_duplicates(db, root_path, image_ids, ...)` 拿到分组结果。
 5. 对每个组里除 `keep_id` 之外的每张图调 `tagging::add_tag`，累加 `tagged_count`。
 
@@ -140,7 +140,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
 
 ## CLI 接线
 
-**这一节经历了两轮修正**：第一轮实现时发现原设计假设的 `handle_ai_console_command` 分发器根本不存在（`/ai_eval`/`/tasks` 那一轮只是文档定稿，没有排进实现任务），改成由 dedup 增量从零建了这个分发器，当时只认 `dedup` 一个命令。第二轮（`/ai_eval`/`/tasks` 真正实现，见 `docs/M3_Eng_Design.md`"CLI 接线"一节）里，控制台整体改成强制要求 `/` 前缀、`/ai_eval` 一条命令名身兼"批量"和"当前图片"两种用法、标签范围语法从裸标签名改成 `#标签名`——`/dedup` 的范围解析(`resolve_console_scope`)、分发器签名（多了 `EvaluationWorker&`/`current_image_id` 两个参数）都跟着变了。这里不重复贴一遍分发器和 `resolve_console_scope` 的代码，完整版本见 `docs/M3_Eng_Design.md`"CLI 接线"一节，这里只列 `handle_dedup_command` 本身：
+**这一节经历了两轮修正**：第一轮实现时发现原设计假设的 `handle_ai_console_command` 分发器根本不存在（`/ai_eval`/`/tasks` 那一轮只是文档定稿，没有排进实现任务），改成由 dedup 增量从零建了这个分发器，当时只认 `dedup` 一个命令。第二轮（`/ai_eval`/`/tasks` 真正实现，见 `docs/history/M3_Eng_Design.md`"CLI 接线"一节）里，控制台整体改成强制要求 `/` 前缀、`/ai_eval` 一条命令名身兼"批量"和"当前图片"两种用法、标签范围语法从裸标签名改成 `#标签名`——`/dedup` 的范围解析(`resolve_console_scope`)、分发器签名（多了 `EvaluationWorker&`/`current_image_id` 两个参数）都跟着变了。这里不重复贴一遍分发器和 `resolve_console_scope` 的代码，完整版本见 `docs/history/M3_Eng_Design.md`"CLI 接线"一节，这里只列 `handle_dedup_command` 本身：
 
 ```cpp
 std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& scope,
@@ -167,16 +167,16 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 
   // 阻塞:接下来这一步(find_and_tag_duplicates 内部的 find_duplicates)
   // 可能跑几秒到几十秒,期间 pzt open 冻结,不接受任何输入——这是刻意的
-  // 简化,见 docs/M3_Dedup_PRD.md"非目标"一节。
+  // 简化,见 docs/history/M3_Dedup_PRD.md"非目标"一节。
   auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids, /*on_progress=*/nullptr);
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
   return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count);
 }
 ```
 
-**这里没有传 `on_progress` 回调**——`/dedup` 是阻塞 `pzt open` 主循环的，主循环本身在这段时间内没有机会重绘（跟其它所有 `handle_*` 子流程一样，读键循环阻塞期间画面不会更新，见 `docs/M3_Eng_Design.md`"CLI 接线"一节里 `space`/`g`/`r` 这些子菜单的既有说明），传一个进度回调也没地方画，不如不传，省一次白跑的开销。真机验收阶段如果发现"用户等太久以为卡死"是个真问题，再考虑要不要在这个阻塞期间画点什么。
+**这里没有传 `on_progress` 回调**——`/dedup` 是阻塞 `pzt open` 主循环的，主循环本身在这段时间内没有机会重绘（跟其它所有 `handle_*` 子流程一样，读键循环阻塞期间画面不会更新，见 `docs/history/M3_Eng_Design.md`"CLI 接线"一节里 `space`/`g`/`r` 这些子菜单的既有说明），传一个进度回调也没地方画，不如不传，省一次白跑的开销。真机验收阶段如果发现"用户等太久以为卡死"是个真问题，再考虑要不要在这个阻塞期间画点什么。
 
-**真机验证**（pty 驱动 `pzt open`，两张字节完全相同的合成 JPEG、`captured_at` 相差 2 秒、都没跑过评估）：`/dedup *` 正确显示两行 y/N 确认且都在终端宽度内完整可读；按其它键（用 `n` 验证）取消、不产生任何标签改动；按 `y` 确认后正确显示"Found 1 duplicate group(s), tagged 1 image(s)"，且数据库里确认是拍摄时间更早的那张被打上"重复"标签（两张都没评估，退化成按 `captured_at` 最新保留）；`/dedup #不存在的标签` 正确显示"Tag 'xxx' not found"；`/dedup 不带井号的标签名` 正确显示"Scope must be * or #tag"，不静默当成标签名解析。这一轮改成强制 `/` 前缀之后又补跑了一遍：空输入/非 `/` 开头输入不再误触发评估、`/ai_eval #标签名` 和 `/dedup #标签名` 用的是同一套范围解析（`resolve_console_scope`），行为一致，见 `docs/M3_Eng_Design.md`"CLI 接线"一节的真机验证记录。
+**真机验证**（pty 驱动 `pzt open`，两张字节完全相同的合成 JPEG、`captured_at` 相差 2 秒、都没跑过评估）：`/dedup *` 正确显示两行 y/N 确认且都在终端宽度内完整可读；按其它键（用 `n` 验证）取消、不产生任何标签改动；按 `y` 确认后正确显示"Found 1 duplicate group(s), tagged 1 image(s)"，且数据库里确认是拍摄时间更早的那张被打上"重复"标签（两张都没评估，退化成按 `captured_at` 最新保留）；`/dedup #不存在的标签` 正确显示"Tag 'xxx' not found"；`/dedup 不带井号的标签名` 正确显示"Scope must be * or #tag"，不静默当成标签名解析。这一轮改成强制 `/` 前缀之后又补跑了一遍：空输入/非 `/` 开头输入不再误触发评估、`/ai_eval #标签名` 和 `/dedup #标签名` 用的是同一套范围解析（`resolve_console_scope`），行为一致，见 `docs/history/M3_Eng_Design.md`"CLI 接线"一节的真机验证记录。
 
 ## 任务分解
 
@@ -187,7 +187,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 
 ## 风险与待确认问题
 
-延续自 `docs/M3_Dedup_PRD.md`（相似度阈值、时间聚类窗口怎么定，都没有真实数据验证过，这次凭经验起步）：
+延续自 `docs/history/M3_Dedup_PRD.md`（相似度阈值、时间聚类窗口怎么定，都没有真实数据验证过，这次凭经验起步）：
 
 * **"重复组"不持久化的取舍**：这次没有单独存一张"重复组"表，组内关系跑完 `/dedup` 之后就不再记录（只留下一批共享 duplicate 标签的图片，具体谁跟谁是一组、组内谁是谁的重复品，如果不重新跑一遍算法就查不出来了）。如果以后发现"能看到具体分组"这件事对用户有价值（比如想知道某张照片具体是哪几张的重复），需要补一张 `duplicate_groups`/`image_duplicate_group` 关联表，这次先不加，避免为一个还没验证过的需求预先设计存储层
 * **簇内 O(k²) 比对的性能**：候选簇如果异常大（比如一次导入了几百张连拍），簇内两两比较仍然是平方级——这次没有实测过真实连拍量级下这一步的耗时，真机验收阶段需要留意

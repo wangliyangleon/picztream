@@ -12,10 +12,11 @@
 #include "core/project/project.h"
 #include "core/result.h"
 
-// 近似重复检测——纯本地算法，不涉及云端 AI，见 docs/M3_Dedup_PRD.md/
-// M3_Dedup_Eng_Design.md。这一层只管"给一批图片找重复组"，不碰标签/数据
+// 近似重复检测——纯本地算法，不涉及云端 AI，见 docs/history/M3_Dedup_PRD.md
+// 与 docs/history/M3_Dedup_Eng_Design.md。这一层只管"给一批图片找重复
+// 组"，不碰标签/数据
 // 库写入（core::tagging::ensure_duplicate_tag + core::find_and_tag_duplicates
-// 门面负责落库，见 docs/M3_Dedup_Eng_Design.md"core/api 接口设计"一节）。
+// 门面负责落库，见 docs/history/M3_Dedup_Eng_Design.md"core/api 接口设计"一节）。
 namespace pzt::core::dedup {
 
 using ImageHash = std::uint64_t;

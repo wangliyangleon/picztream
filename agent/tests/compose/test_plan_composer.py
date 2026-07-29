@@ -111,7 +111,7 @@ def test_compose_plan_uses_meta_provider_for_its_own_llm_call(monkeypatch):
 
 def test_compose_plan_defaults_meta_provider_to_local(monkeypatch):
     # quota 考虑：意图解析这一步默认打本地 Ollama，不打云端 API，见
-    # docs/W2026-07-15_AgentStyle_Eng_Design.md。不传 meta_provider 时应
+    # docs/history/W2026-07-15_AgentStyle_Eng_Design.md。不传 meta_provider 时应
     # 该命中 compose/llm_client.py 的 local 分支，不需要任何 API key。
     captured = {}
 

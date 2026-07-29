@@ -1,5 +1,5 @@
 """agent 自己的 Run 持久化：每个 run_id 一个 JSON 文件，绝不进 core 的
-pzt.db（core 对编排概念无感知，见 docs/M4_Agent_Workflow_Design.md 第七节）。
+pzt.db（core 对编排概念无感知，见 docs/history/M4_Agent_Workflow_Design.md 第七节）。
 """
 from __future__ import annotations
 

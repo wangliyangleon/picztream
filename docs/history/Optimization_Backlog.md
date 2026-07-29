@@ -56,7 +56,7 @@ M1 收尾、M2（LibRaw 接入）开始前做的一次全面 review，记录发�
 
 ### 交互菜单函数缺少自动化测试
 
-`r`/`g`/`space` 这些 `handle_*` 函数目前只能靠真机手动验证。这在 `docs/M1_Eng_Design.md` increment 6 里已经明确记录为已知局限，不是这次新发现。
+`r`/`g`/`space` 这些 `handle_*` 函数目前只能靠真机手动验证。这在 `docs/history/M1_Eng_Design.md` increment 6 里已经明确记录为已知局限，不是这次新发现。
 
 ### M2 前瞻：`core::color`/`core::decode` 的解耦现状
 

@@ -11,7 +11,7 @@
 #include "core/project/project.h"
 #include "core/result.h"
 
-// Recipe（色彩配方）模块。见 docs/M1_Eng_Design.md "core/recipe/" 一节。两
+// Recipe（色彩配方）模块。见 docs/history/M1_Eng_Design.md "core/recipe/" 一节。两
 // 层模型（内置预设 / 用户在预设基础上保存的 version）用同一张自引用的
 // `recipes` 表表达，这个模块提供的类型和函数对两层一视同仁，区分靠
 // `parent_id` 是否为空。
@@ -52,7 +52,7 @@ std::vector<VersionSummary> list_versions(db::Database& db, RecipeId preset_id);
 // 在)，调用多次只有第一次真正插入/删除。内置预设是"Origin"(没有
 // base_lut，只承载亮度/白平衡这类细节调整，不代表任何"风格")加 9 个
 // "城市+年份"命名的调过色的预设(6 彩色 + 3 黑白)，完整数值表见
-// docs/W2026-07-15_RecipeExpansion_Eng_Design.md。
+// docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md。
 //
 // "Origin" 固定用 id=0 播种(照抄"废片"系统标签固定占 0 号位的先例)，其
 // 它 9 个预设照常让 SQLite 自动分配 id，按插入顺序对应
@@ -66,7 +66,7 @@ void ensure_default_presets(db::Database& db);
 
 // increment 2:version 的增删改。高光/暗光/白平衡红蓝偏移是最早落地的最
 // 小集合；目标二第二刀追加了对比度/饱和度/黑色/白色四个旋钮(见
-// docs/W2026-07-15_RecipeExpansion_Eng_Design.md 第八节)，新字段追加在
+// docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md 第八节)，新字段追加在
 // 结构体末尾，不打乱前四个字段的声明顺序——现存代码里有位置初始化
 // (`VersionParams{a,b,c,d}`)依赖这个顺序不变。以后再加旋钮，继续走跟
 // `images.recipe_id` 一样的 ensure_column 迁移机制加新列，不需要现在改
@@ -101,7 +101,7 @@ Result<void, RecipeOpError> rename_version(db::Database& db, RecipeId version_id
                                             const std::string& new_name);
 
 // 软删除:设置 deleted_at，不影响已经引用这个 version 的图片渲染，只是从
-// "应用/创建"的可选列表里隐藏。见 docs/M1_PRD.md 里软删除的完整语义说明。
+// "应用/创建"的可选列表里隐藏。见 docs/history/M1_PRD.md 里软删除的完整语义说明。
 Result<void, RecipeOpError> delete_version(db::Database& db, RecipeId version_id);
 
 // increment 3:图片 ↔ recipe 关联。
@@ -187,7 +187,7 @@ struct GradeParams {
 };
 
 // 对每个网格点依次做 白平衡 -> 整体明暗 -> 对比度 -> 饱和度 四步,公式见
-// docs/W2026-07-15_RecipeExpansion_Eng_Design.md。saturation=-100 时四步
+// docs/history/W2026-07-15_RecipeExpansion_Eng_Design.md。saturation=-100 时四步
 // 结束后三通道必然相等(collapse 到 luma),黑白预设直接复用这同一个函数,
 // 不需要单独的黑白代码路径。
 std::vector<float> make_graded_lut(int n, const GradeParams& params);

@@ -176,7 +176,7 @@ std::string export_current_skipped(const std::string& file_name, pzt::core::Skip
 
 // M3：`:` 键触发的控制台。placeholder 按了冒号之后立刻显示，用户一开始
 // 输入就整个让位给输入内容(见 read_text_line_with_placeholder)。控制台
-// 现在要求所有输入必须以 `/` 开头(见 docs/M3_PRD.md"触发入口"一
+// 现在要求所有输入必须以 `/` 开头(见 docs/history/M3_PRD.md"触发入口"一
 // 节),placeholder 直接把这几个命令列出来，不是笼统的"输入额外指引"。
 std::string msg_ai_prompt_placeholder();
 // 命名刻意不提具体能力,以后加别的能力会复用同一条"处理中"/"已提交"反
@@ -195,7 +195,7 @@ std::string msg_ai_evaluation_failed(pzt::core::ImageId image_id, pzt::core::Eva
 // "取消"，这条不算取消，是"没听懂，请用 / 开头重新输入"。
 std::string msg_console_requires_slash();
 // `:` 输入以 `/` 开头但不是已识别的命令名时统一显示，见
-// docs/M3_PRD.md"触发入口"一节,不再像最初那样静默忽略。
+// docs/history/M3_PRD.md"触发入口"一节,不再像最初那样静默忽略。
 std::string msg_ai_unknown_command(const std::string& command);
 
 // `/help`：不带参数列出全部命令名，带参数(命令名不含前导 `/`)显示这个
@@ -209,7 +209,7 @@ std::string err_help_unknown_command(const std::string& command);
 // 两边的标签范围语法都是 `#标签名`，不需要各自维护一份几乎相同的文案。
 std::string err_console_tag_not_found(const std::string& tag_name);
 // 范围参数既不是 `*` 也不以 `#` 开头时统一提示,不静默把它当成裸标签
-// 名解析，见 docs/M3_PRD.md"触发入口"一节。
+// 名解析，见 docs/history/M3_PRD.md"触发入口"一节。
 std::string err_console_invalid_scope();
 // F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
 // 示,控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
@@ -244,7 +244,7 @@ std::string msg_dedup_ai_confirm_line2();
 std::string err_dedup_bad_args();
 
 // M3：`/ai_eval * | #标签名 [额外指引]` 批量提交，见
-// docs/M3_Eng_Design.md"`/` 命令解析"一节。count 为 0 时文案要能自然表
+// docs/history/M3_Eng_Design.md"`/` 命令解析"一节。count 为 0 时文案要能自然表
 // 达"没有需要处理的"(比如"所有图片都已评估过")，不是"提交了 0 张"这种
 // 生硬的说法。
 std::string msg_ai_eval_submitted(int count);
