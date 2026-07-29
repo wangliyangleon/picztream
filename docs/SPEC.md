@@ -78,14 +78,23 @@ PZT 对外有两个界面：面向人的 `pzt` CLI 命令，以及面向 agent �
 
 ### 3.2 Headless 命令面（面向 agent，`--json`）
 
-供 agent 层通过子进程驱动的原子命令，每个都输出结构化 JSON：`new --json`（导入）、`eval`（异步 AI 评分）、`dedup`（近似重复检测）、`curate`（多样性选片）、`recipe suggest`（看图选风格）、`recipe apply`（应用风格，`set_image_recipe` 的薄壳）、`tag apply`/`tag clear`（打标签/清标签）、`export-images`（导出选中图为字节）。
+供 agent 层通过子进程驱动的原子命令，每个都输出结构化 JSON：`new --json`（导入）、`eval`（异步 AI 评分）、`dedup`（近似重复检测）、`curate`（多样性选片）、`compare`（两图比较）、`recipe suggest`（看图选风格）、`recipe apply`（应用风格，`set_image_recipe` 的薄壳）、`tag apply`/`tag clear`（打标签/清标签）、`export-images`（导出选中图为字节）。
 
 契约：每个 headless 命令是一次提交、一次收尾的原子调用，不做流式输出；agent 侧把它当作确定性的子进程边界来编排。命令的具体参数与输出 schema 见对应周/里程碑的 Eng Design。
+
+**两个命令面的划分规则**：一个能力落在哪一面，由**决策归谁**决定，不由它实现在哪里决定。同一个 `core` 能力可以两面都接，也可以只接一面。
+
+- **进 3.1（面向人）**：人要逐张判断、要能回退、结果落在标签这类持久状态上的能力。
+- **只留 3.2（agent 独占）**：一次性产出一组最终结果、且依赖对话闸门与"作废重跑换图"来兜底的能力。
+
+已按此规则拍板的一处不对称：`dedup`（含 `--ai` 的 AI 锦标赛）两面都接，`curate` 只留在 headless、**不进 `pzt open` 控制台**。理由有三：锦标赛的实现是 `cluster_and_choose` 一个入口，dedup 与 curate 共用同一套分簇、`CompareFn` 与 bracket 推进，人工路径经 `/dedup --ai` 已足以验证锦标赛本身（这正是 §1 那条"自动化必须先被人工使用验证"所要求的）；curate 相对 dedup 只多出"凑够 N 张"的采样层，那不是需要人工验证的选片智能；而该采样目前不可复现（`std::mt19937` + `random_device`，见提案 T-26），agent 侧有闸门与 `exclude` 换图兜着，TUI 侧没有对应机制，接进去等于把不可复现暴露在最没有兜底的地方。
+
+headless 命令不进 `usage_main()`，也不对人承诺可发现性。**当前有两个历史残留不满足上述规则**：`eval` 与 `compare` 已无任何消费者（`Evaluate` Stage 在 W2026-07-21 目标三被删，锦标赛改为进程内直调 `ai::request_comparison`），它们是遗留而非本规则的反例，去留见 `docs/proposal-2026-07-25.md` 的 T-22。
 
 ### 3.3 Agent 编排层（Python）
 
 - **入口**：`run_telegram.py`（常驻 Telegram 会话，用户实际使用的主入口）、`run_intent.py`（本地命令行意图驱动，开发测试用）、`run_watchfolder.py`（全自动固定 Plan、无对话，回归基线）。
-- **Stage 库**：`Ingest` / `Evaluate` / `Dedup` / `Curate` / `Style` / `StyleApplyAll` / `Deliver`。"加一个能力 = 加一个 Stage"。
+- **Stage 库**：`Ingest` / `Dedup` / `Curate` / `Style` / `StyleApplyAll` / `Deliver`（六个；`Evaluate` 在 W2026-07-21 目标三随 eval 解耦被删除）。"加一个能力 = 加一个 Stage"。
 - **编排模型**：一个确定性的 `Driver` 按 Plan 顺序推进 Stage，零 LLM 决策；`Plan` 由一次 LLM 调用从用户意图组装，再经一道确定性校验才喂给 Driver。
 - **人在环**：Stage 可挂闸门（`off`/`courtesy`/`required`），闸门在对应 Stage 运行前触发，把结果推给用户复核；用户的对话调整被解析成结构化配置增量，只作废并重跑受影响的子图，不重跑上游。
 - **provider**：视觉与语言推理的 provider 均可插拔（`local`/`gemini`/`claude`），默认 `local`（Ollama），以不受云端配额限制地做本地开发与运行。
