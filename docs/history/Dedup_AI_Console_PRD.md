@@ -1,8 +1,15 @@
 # PZT 产品需求文档：`/dedup` 控制台的 AI 锦标赛入口
 
+> **归档说明（2026-07-29 收口）**：本文档描述的能力已全部实现并通过真机验收，落地形态与文档一致，没有偏离。归档于此备查，不需要每个 session 加载。
+>
 > 来源：2026-07-28 真机使用反馈——"控制台里的 dedup 是只能通过时间去重么？没法触发 AI 锦标赛对比？"
-> 状态：**已实现（2026-07-29）**，自动化验收全绿；下面验收标准里带 `真机` 标注的几条需要有连拍素材的真实项目才能确认，尚未勾。
-> 实现落在三个提交：`6f9e3bd`（删过时确认）、`a1c7c02`（core 闸门 + 进度回调 + 单测）、`667ecb5`（cli 接线 + i18n）。
+>
+> 实现落在五个提交：
+> - `6f9e3bd` 删掉过时的"未评估"确认
+> - `a1c7c02` core 的开跑闸门 + AI 阶段进度回调 + 单测
+> - `667ecb5` cli 接线 `/dedup <范围> --ai` + i18n
+> - `cd78fba` 结果文案里的入口提示 `g 9` 改成 `f 9`（真机验收顺带发现的旧 bug，跟本 PRD 无关但同一批修掉）
+> - `f5ef510` 筛选相关的 `GKey*`/`handle_g_key_prompt`/`g 层` 命名统一改成 `f`（同上，旧键名遗留）
 
 ## 背景与问题陈述
 
@@ -80,12 +87,12 @@
 ## 验收标准
 
 * [x] `/dedup *` 不再出现"N 张照片还没评估"的确认，直接开跑（代码路径已删除，`msg_dedup_confirm_unevaluated_*` 不复存在）
-* [ ] `真机` `/dedup *` 分簇期间状态栏能看到进度在走
+* [x] `真机` `/dedup *` 分簇期间状态栏能看到进度在走
 * [x] `/dedup * --ai` 分簇跑完后弹确认，M 等于各簇 (成员数-1) 之和（`tournament_test.cpp` 的 `on_ai_gate sees the exact group and comparison counts`：两簇 2+3 成员，断言 M==3 且真实发出的比较次数也是 3）
-* [ ] `真机` 确认时按 `y` 继续，状态栏出现"第 k / 共 N 组"并递增到跑完（回调次数与计数已由 `on_ai_progress fires once per tournament cluster` 覆盖，banner 渲染本身要真机看）
+* [x] `真机` 确认时按 `y` 继续，状态栏出现"第 k / 共 N 组"并递增到跑完（回调次数与计数已由 `on_ai_progress fires once per tournament cluster` 覆盖，banner 渲染本身已真机确认）
 * [x] 确认时按其它键静默取消，重复标签与执行前完全一致（`on_ai_gate returning false writes absolutely nothing`：预置一个"重复"标签，跑完后它仍在、其余图片一个没被打上，证明是在"先清后打"那段之前就返回了）
-* [ ] `真机` `--ai` 选出的 winner 与不带 `--ai` 的 keep_id 在至少一组连拍上给出不同结果 —— **这条是整个增量唯一无法用自动化替代的验收**：接线若在某处把 `ai_enabled` 丢了，全部单测与 smoke 仍会绿
-* [ ] `真机` provider 配成不可达地址时每组退化，摘要出现退化簇数（退化逻辑本身由 `a failed comparison degrades just that cluster to keep_id` 覆盖，文案由 `msg_dedup_result mentions ai fallback count only when nonzero` 覆盖，端到端要真机看）
+* [x] `真机` `--ai` 选出的 winner 与不带 `--ai` 的 keep_id 在至少一组连拍上给出不同结果 —— **这条是整个增量唯一无法用自动化替代的验收**：接线若在某处把 `ai_enabled` 丢了，全部单测与 smoke 仍会绿
+* [x] `真机` provider 配成不可达地址时每组退化，摘要出现退化簇数（退化逻辑本身由 `a failed comparison degrades just that cluster to keep_id` 覆盖，文案由 `msg_dedup_result mentions ai fallback count only when nonzero` 覆盖，端到端已真机确认）
 * [x] 范围内一组重复都没有时，`--ai` 不弹确认、不发起任何请求（`on_ai_gate is never consulted when there is nothing to compare`）
 * [x] `/dedup #"带空格的标签" --ai` 解析正确（对着真实的 `take_scope_token` 跑过 11 组输入的解析探针）
 * [x] `/dedup * --bogus`、`/dedup * --ai 多余内容` 报明确用法错误，不静默（同上；`--AI` 大小写不同也归入用法错误）

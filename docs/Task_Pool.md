@@ -34,6 +34,13 @@
 | Apple Vision 聚类评估 | 评估 `VNGenerateImageFeaturePrintRequest` 语义聚类相对现有 dHash+时间窗口的优劣,决定要不要替换 dedup/curate 的分簇底层 | L | **先出 Eng Design(含新依赖评估)**。来源:`docs/history/W2026-07-21_PRD.md` 拍板——锦标赛改造复用现有 dHash,Apple Vision 语义聚类(更懂"同一场景"而非仅"近乎相同")单列于此。需新增 Vision.framework + ObjC++ 桥接;先在真实素材上比 featureprint 距离 vs dHash 汉明距离的分簇质量,把收益写成数字再决定是否切换。 |
 | 锦标赛双输判定 | pairwise 比较(`core::ai::request_comparison`)允许返回"双输"(两张都有硬伤/不可用),不再强制二选一;锦标赛簇选 winner 时如果判成双输,两张都不进 keep 候选,簇的 winner 可以为空 | L | **先出 Eng Design**。来源:目标三真机验证期间(2026-07-23)提出,打算给 agent 选图场景用。现有 `ComparisonResult.winner` 是 `int`(0/1,"必须二选一,禁止平局",见 `core/ai/compare.h:17-28`),`tournament::ClusterChoice.winner` 是必填 `project::ImageId`(`core/tournament/tournament.h:31`)——两处都要放松成"可能没有 winner"。下游 dedup(这一簇是不是全打"重复"?)、curate(这一簇直接不贡献候选?)、agent 选图各自怎么处理"这一簇没人入选"需要先想清楚,且要跟目标一已有的 eval `unusable` 硬伤判据对齐,不能让 pairwise 判定和 eval 判定用两套不一致的"硬伤"定义。 |
 | F-46b | Kitty `t=s` 共享内存介质验证 | S | 无(可选优化,需真机验证收益) | M0 起挂账的可选传输优化,收益需在真机量过再决定是否切换。 |
+| 锦标赛比较并发化 | `core::tournament::run_bracket` 现在是纯串行:同一轮内的若干场比较其实互不依赖(A vs B 和 C vs D 谁先跑都一样)，可以并发发请求，把一簇的耗时从 O(成员数) 压到 O(log 成员数) 个网络往返 | M | **触发:真实使用中觉得 `/dedup --ai` 或 agent 侧锦标赛慢到难以忍受。** 2026-07-29 真机验收时的量级尚可接受，所以没做。做之前要先定并发度上限(本地 Ollama 和云端 provider 能扛的并发差很多，打太狠会适得其反)、`ai_fallback_count` 的语义在部分失败时怎么算、以及 `on_ai_progress` 的回调在并发下还要不要保证 done 单调递增(现在的 cli 渲染假设它递增)。来源:`docs/history/Dedup_AI_Console_PRD.md` 风险一节。 |
+
+## 可直接开工(无外部依赖) - 补录
+
+| 编号 | 一句话 | Size | 依赖/触发前提 | 备注 |
+|---|---|---|---|---|
+| 代码注释里的 docs 路径失效 | 代码注释引用的 `docs/M0_Eng_Design.md`、`docs/M3_Dedup_PRD.md`、`docs/W2026-07-21_*.md` 等 **20 个路径都已失效**——这些文档早就归档进了 `docs/history/`，注释没跟着改。涉及约 85 个文件 | S | 无 | 纯机械替换 `docs/X.md` → `docs/history/X.md`(仅当 `docs/history/X.md` 确实存在时)，做完用一个脚本遍历所有被引用路径确认都能解析。**注意 `docs/M3_PRD.md/M3_Eng_Design.md` 是个写坏的路径**(本意是两份文档)，机械替换救不了它，得手改。AGENTS.md 让 agent"倒查某个能力当初怎么设计的"时就是顺着这些注释找过去的，链接是死的会直接把人引到不存在的文件。2026-07-29 归档 `Dedup_AI_Console_PRD.md` 时发现,当时只修了 `cli/commands/browse.cpp` 自己那几处。 |
 
 ## 留观察,暂不列为活儿
 

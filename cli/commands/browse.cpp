@@ -248,7 +248,7 @@ void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::Ta
 }
 
 // `/dedup <范围> [--ai]`，近似重复检测唯一的触发入口，见
-// docs/M3_Dedup_Eng_Design.md"控制台命令"一节与 docs/Dedup_AI_Console_PRD.md。
+// docs/history/M3_Dedup_Eng_Design.md"控制台命令"一节与 docs/history/Dedup_AI_Console_PRD.md。
 // 范围写法(`*` / `#标签名` / `#"带空格的标签名"`)由 take_scope_token 切
 // 出来，跟 `/ai_eval` 分离"范围"和"额外指引"用的是同一个原语，引号处理
 // 不需要在这里重新实现一遍。范围后面除了 `--ai` 不接受任何东西——认不出
@@ -256,7 +256,7 @@ void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::Ta
 //
 // 整个过程是阻塞的:不开 --ai 时是本地分组，几秒到几十秒;开了 --ai 之后
 // 每簇还要发 N-1 次网络比较，量级拉到分钟级。刻意不做成异步(见
-// docs/M3_Dedup_PRD.md 与 docs/Dedup_AI_Console_PRD.md 两处"非目标")，
+// docs/history/M3_Dedup_PRD.md 与 docs/history/Dedup_AI_Console_PRD.md 两处"非目标")，
 // 但两段都接了进度回调在状态栏原地重画——早年那句"主循环没有机会重绘，
 // 传了也没地方画"其实不成立，handle_export_current_flow 早就在用
 // move_cursor + pad_to + write_stdout 这套写法了。
@@ -331,7 +331,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
       std::move(on_ai_gate), on_ai_progress);
   // F-25：这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
   // 缓冲区里——不清掉的话，接下来继续读键时会一次性回放，可能连按出
-  // 误标签/误退出。见 docs/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
+  // 误标签/误退出。见 docs/history/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
   // 条一直没收口的风险。开了 --ai 之后阻塞更久，这一步更要紧。
   flush_pending_input();
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
