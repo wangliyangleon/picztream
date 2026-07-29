@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -247,6 +248,80 @@ void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::Ta
             ids.end());
 }
 
+// --debug 面板的绘制。抽成函数是因为有两个调用方:主循环每帧画一次(正常
+// 路径)，以及下面 LiveDebugPanel 在阻塞命令期间从后台线程画。每条原始日
+// 志先按显示宽度换行展开，再对展开后的结果取最后 rows 行——一条长日志
+// (比如完整的 AI 请求/响应)会占多行显示，不是硬截断成一行看不全。
+void draw_debug_panel(const std::vector<std::string>& lines, int top_row, int start_col,
+                      int content_cols, int rows) {
+  std::vector<std::string> display_rows;
+  for (const auto& line : lines) {
+    auto wrapped = wrap_text(line, static_cast<std::size_t>(content_cols));
+    display_rows.insert(display_rows.end(), wrapped.begin(), wrapped.end());
+  }
+  std::size_t begin = display_rows.size() > static_cast<std::size_t>(rows)
+                          ? display_rows.size() - static_cast<std::size_t>(rows)
+                          : 0;
+  for (int i = 0; i < rows; ++i) {
+    move_cursor(top_row + i, start_col + 1);
+    std::size_t idx = begin + static_cast<std::size_t>(i);
+    write_stdout(pad_to(idx < display_rows.size() ? display_rows[idx] : "", content_cols));
+  }
+}
+
+// 把 debug 面板的几何信息带进阻塞命令里。log==nullptr 表示没开 --debug,
+// 这条路径上什么都不做。
+struct LiveDebugContext {
+  pzt::cli::term::DebugLogRedirect* log = nullptr;
+  int top_row = 0;
+  int rows = 0;
+};
+
+// 阻塞命令期间让 debug 面板保持实时刷新。
+//
+// 平时 debug 面板靠主循环每帧重画,但 `/dedup` 是同步阻塞的——主循环停在
+// 那儿,日志早就进了环形缓冲区却没人画,用户要等整条命令跑完才一次性看到
+// 几十条。AI 比较尤其难受:prompt 是在 http_post **之前**打的(见
+// core/ai/ai.cpp),本来正好可以让人看着"这一次在比哪两张",结果要等响应
+// 回来之后才显示。
+//
+// 做法是在这段时间里把重画挂到 DebugLogRedirect 的读线程上:有新日志进来
+// 就立刻画一次。出作用域摘掉——常挂着的话，主循环画整帧时(含 Kitty 图片
+// 传输那种大块转义序列)会跟它抢 stdout，插进去半行就能把图片写坏。
+//
+// with_lock 是给同一段时间里主线程自己的绘制用的(进度条那两行)。两个写
+// 终端的线程必须串起来,否则一条 move_cursor 和另一条的内容会交错。
+class LiveDebugPanel {
+ public:
+  LiveDebugPanel(const LiveDebugContext& ctx, int start_col, int content_cols) : log_(ctx.log) {
+    if (!log_) return;
+    log_->set_on_lines_appended([this, ctx, start_col, content_cols](
+                                      const std::vector<std::string>& lines) {
+      std::lock_guard<std::mutex> lock(mu_);
+      draw_debug_panel(lines, ctx.top_row, start_col, content_cols, ctx.rows);
+    });
+  }
+
+  ~LiveDebugPanel() {
+    // set_on_lines_appended(nullptr) 会等正在跑的那一次回调返回,所以这一
+    // 行之后 mu_ 和 this 都不会再被读线程碰——不然就是 use-after-free。
+    if (log_) log_->set_on_lines_appended(nullptr);
+  }
+
+  LiveDebugPanel(const LiveDebugPanel&) = delete;
+  LiveDebugPanel& operator=(const LiveDebugPanel&) = delete;
+
+  template <typename Fn>
+  void with_lock(Fn&& fn) {
+    std::lock_guard<std::mutex> lock(mu_);
+    fn();
+  }
+
+ private:
+  pzt::cli::term::DebugLogRedirect* log_;
+  std::mutex mu_;
+};
+
 // `/dedup <范围> [--ai]`，近似重复检测唯一的触发入口，见
 // docs/history/M3_Dedup_Eng_Design.md"控制台命令"一节与 docs/history/Dedup_AI_Console_PRD.md。
 // 范围写法(`*` / `#标签名` / `#"带空格的标签名"`)由 take_scope_token 切
@@ -274,7 +349,8 @@ void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::Ta
 // 置上的确认是另一回事:只在 --ai 时问，问的是"要不要为此发 M 次请求"，
 // 而且是在本地分组跑完、拿到精确开销之后才问的。
 std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& rest,
-                                  int banner_row, int start_col, int content_cols) {
+                                  int banner_row, int start_col, int content_cols,
+                                  const LiveDebugContext& debug_ctx) {
   auto [scope, tail] = pzt::cli::text::take_scope_token(rest);
   bool ai_enabled = false;
   if (tail == "--ai") {
@@ -296,15 +372,23 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 
   // 两段进度共用 banner 同一行,后写的覆盖先写的:分组跑完之后 AI 那段接
   // 着往同一个位置写,不会堆出两行。
+  // --debug 时让 debug 面板在这条命令阻塞期间保持实时刷新,见 LiveDebugPanel
+  // 的说明。下面所有往终端写的动作都走 live.with_lock，跟后台读线程的重画
+  // 串起来。
+  LiveDebugPanel live(debug_ctx, start_col, content_cols);
   auto draw_banner = [&](const std::string& text) {
-    move_cursor(banner_row, start_col + 1);
-    write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
+    live.with_lock([&] {
+      move_cursor(banner_row, start_col + 1);
+      write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
+    });
   };
   // banner 第二行:平时留空(见 cmd_open 里 kBannerRows 那段说明),AI 阶段
   // 借它挂一行操作提示。
   auto draw_banner_line2 = [&](const std::string& text) {
-    move_cursor(banner_row + 1, start_col + 1);
-    write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
+    live.with_lock([&] {
+      move_cursor(banner_row + 1, start_col + 1);
+      write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
+    });
   };
   auto on_cluster_progress = [&](int done, int total) {
     draw_banner(pzt::cli::i18n::msg_dedup_cluster_progress(done, total));
@@ -319,6 +403,8 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   pzt::core::dedup::AiGateFn on_ai_gate = nullptr;
   if (ai_enabled) {
     on_ai_gate = [&](int group_count, int comparison_count) {
+      // 闸门要读键,不能整段持锁(会把后台重画卡到用户按键为止)。只锁住
+      // 画提示这一下,读键本身在锁外。
       char c = prompt_and_read_key_2line(
           pzt::cli::i18n::msg_dedup_ai_confirm_line1(group_count, comparison_count),
           pzt::cli::i18n::msg_dedup_ai_confirm_line2(), banner_row, start_col, content_cols);
@@ -503,7 +589,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
                                                 pzt::core::ProjectId project_id,
                                                 pzt::core::ImageId current_image_id,
                                                 const std::string& input, int banner_row, int start_col,
-                                                int content_cols) {
+                                                int content_cols, const LiveDebugContext& debug_ctx) {
   auto [command, rest] = split_console_command(input);
   if (command == "help") {
     if (rest.empty()) {
@@ -516,7 +602,8 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     return ConsoleCommandResult{*detail};
   }
   if (command == "dedup") {
-    return ConsoleCommandResult{handle_dedup_command(project_id, rest, banner_row, start_col, content_cols)};
+    return ConsoleCommandResult{
+        handle_dedup_command(project_id, rest, banner_row, start_col, content_cols, debug_ctx)};
   }
   if (command == "tasks") {
     return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};
@@ -582,7 +669,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
 ConsoleCommandResult handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
                                             pzt::core::ProjectId project_id,
                                             pzt::core::ImageId image_id, int banner_row, int start_col,
-                                            int content_cols) {
+                                            int content_cols, const LiveDebugContext& debug_ctx) {
   auto input = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
                                                  banner_row, start_col, content_cols);
   if (!input) return ConsoleCommandResult{};  // Esc,静默取消
@@ -590,7 +677,7 @@ ConsoleCommandResult handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluati
     return ConsoleCommandResult{pzt::cli::i18n::msg_console_requires_slash()};
   }
   return handle_ai_console_command(evaluation_worker, project_id, image_id, *input, banner_row,
-                                    start_col, content_cols);
+                                    start_col, content_cols, debug_ctx);
 }
 
 // space/x/g/r/e 这几个键要阻塞读一整套 banner 交互(prompt_and_read_key/
@@ -1086,21 +1173,7 @@ int cmd_open(const std::vector<std::string>& args) {
       // 一条长日志(比如完整的 AI 请求/响应)会占多行显示,不是硬截断成
       // 一行看不全。
       if (debug_mode) {
-        auto lines = debug_log.snapshot();
-        std::vector<std::string> display_rows;
-        for (const auto& line : lines) {
-          auto wrapped = wrap_text(line, static_cast<std::size_t>(content_cols));
-          display_rows.insert(display_rows.end(), wrapped.begin(), wrapped.end());
-        }
-        std::size_t begin =
-            display_rows.size() > static_cast<std::size_t>(kDebugRows)
-                ? display_rows.size() - static_cast<std::size_t>(kDebugRows)
-                : 0;
-        for (int i = 0; i < kDebugRows; ++i) {
-          move_cursor(debug_top_row + i, start_col + 1);
-          std::size_t idx = begin + static_cast<std::size_t>(i);
-          write_stdout(pad_to(idx < display_rows.size() ? display_rows[idx] : "", content_cols));
-        }
+        draw_debug_panel(debug_log.snapshot(), debug_top_row, start_col, content_cols, kDebugRows);
       }
 
       // Banner:固定在图片/信息栏下方最后两行,边框内全宽。顶层按键提示大
@@ -1549,8 +1622,16 @@ int cmd_open(const std::vector<std::string>& args) {
         // std::string 升级成 ConsoleCommandResult 之后在这里执行。
         if (current_ref) {
           highlight_active_menu_key(':', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
+          // 只有开了 --debug 才把面板交给阻塞命令做实时刷新;不开时
+          // log=nullptr，LiveDebugPanel 整个是 no-op。
+          LiveDebugContext debug_ctx;
+          if (debug_mode) {
+            debug_ctx.log = &debug_log;
+            debug_ctx.top_row = debug_top_row;
+            debug_ctx.rows = kDebugRows;
+          }
           auto console_result = handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id,
-                                                        banner_row, start_col, content_cols);
+                                                        banner_row, start_col, content_cols, debug_ctx);
           status_override = console_result.status;
           if (console_result.action == ConsoleCommandResult::FilterAction::Clear) {
             // 没有活跃二级筛选时是静默 no-op,跟 f+f 空筛选同一个约定。

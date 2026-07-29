@@ -1,4 +1,5 @@
 add_executable(cli_tests
+  debug_log_test.cpp
   i18n_test.cpp
   kitty_test.cpp
   signal_restore_test.cpp

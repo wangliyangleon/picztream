@@ -2,6 +2,7 @@
 
 #include <deque>
 #include <fcntl.h>
+#include <functional>
 #include <mutex>
 #include <stop_token>
 #include <string>
@@ -59,6 +60,30 @@ class DebugLogRedirect {
     return std::vector<std::string>(lines_.begin(), lines_.end());
   }
 
+  // 收到新日志时回调一次(在后台读线程上跑,读完一整块 read() 里的所有整行
+  // 之后调一次,不是每行一次)，参数是回调那一刻的完整快照。
+  //
+  // 存在的理由只有一个:主循环阻塞在一条同步命令里(`/dedup` 那种)的时候，
+  // 没有人再重画 debug 面板——日志明明已经进了环形缓冲区，用户却要等命令
+  // 整个跑完才一次性看到。平时不需要这个回调，主循环每帧自己画。
+  //
+  // **注册期间调用方要自己保证不会跟主线程同时往终端写。** 主循环画整
+  // 帧时会往 stdout 吐 Kitty 图片传输那种大块转义序列，插进去半行 debug
+  // 面板会直接把图片写坏。所以这是一个用完就摘的东西(见 browse.cpp 的
+  // LiveDebugPanel)，不是一直挂着的。
+  //
+  // 传 nullptr 摘掉时**会等正在跑的那一次回调返回**(靠 cb_mu_)，所以调用
+  // 方摘完就可以安全销毁回调捕获的东西。少了这个保证就是 use-after-free:
+  // 读线程可能已经把回调拷出来、正要调用，而注册方那边析构已经返回了。
+  //
+  // 快照当参数传、而不是让回调自己调 snapshot()，是为了让上面那个"等一
+  // 次"能成立:回调在 cb_mu_ 下跑，snapshot() 拿的是 mu_，两把锁分开才不
+  // 会自己锁死自己。
+  void set_on_lines_appended(std::function<void(const std::vector<std::string>&)> fn) {
+    std::lock_guard<std::mutex> lock(cb_mu_);
+    on_lines_appended_ = std::move(fn);
+  }
+
  private:
   void reader_loop(std::stop_token stop) {
     std::string buf;
@@ -68,10 +93,18 @@ class DebugLogRedirect {
       if (n <= 0) break;  // EOF(管道写端已关闭)或出错,退出
       buf.append(chunk, static_cast<std::size_t>(n));
       std::size_t pos;
+      bool appended = false;
       while ((pos = buf.find('\n')) != std::string::npos) {
         push_line(buf.substr(0, pos));
         buf.erase(0, pos + 1);
+        appended = true;
       }
+      if (!appended) continue;
+      // 先在 mu_ 下取快照,再在 cb_mu_ 下调回调——整个调用都在 cb_mu_ 里,
+      // 摘回调的一方才能靠这把锁等到它跑完(见 set_on_lines_appended)。
+      auto lines = snapshot();
+      std::lock_guard<std::mutex> lock(cb_mu_);
+      if (on_lines_appended_) on_lines_appended_(lines);
     }
   }
 
@@ -85,8 +118,10 @@ class DebugLogRedirect {
   std::size_t max_lines_;
   int saved_stderr_ = -1;
   int read_fd_ = -1;
-  mutable std::mutex mu_;
+  mutable std::mutex mu_;          // 只护 lines_
   std::deque<std::string> lines_;
+  mutable std::mutex cb_mu_;       // 只护回调本身,且回调整个调用都在它下面
+  std::function<void(const std::vector<std::string>&)> on_lines_appended_;
   std::jthread reader_;
 };
 
