@@ -49,6 +49,10 @@ struct ChooseSummary {
   // tagged_count 为 0，且**一个标签都没写过**，调用方应该按"这次什么都
   // 没发生"处理，而不是把空 clusters 当成"一组重复都没有"的结论。
   bool ai_declined = false;
+  // CancelFn 返回了 true。跟 ai_declined 一样：clusters 为空、
+  // tagged_count 为 0、一个标签都没写过。两者分开报是因为对用户的含义不
+  // 同——一个是"没点头"，一个是"点了头又喊停"。
+  bool cancelled = false;
 };
 
 // AI 锦标赛真正开跑前的闸门，在本地分簇跑完、任何一次 request_comparison
@@ -86,6 +90,11 @@ using AiGateFn = dedup::AiGateFn;
 using AiProgress = dedup::AiProgress;
 using AiProgressFn = dedup::AiProgressFn;
 
+// 中途取消(语义见 dedup.h 的 CancelFn，必须粘性)。查三处：本地分簇的每
+// 张图、AI 的每次比较、两个阶段之间。查到 true 就返回 cancelled=true 的
+// 空结果，一个标签都不写——写库统一在最后一步，所以这里不需要回滚。
+using CancelFn = dedup::CancelFn;
+
 // image_ids 是调用方已经解析好的范围(整个项目还是某个标签的子集)。
 // time_window_seconds/hash_threshold 直接传给 dedup::find_duplicates，
 // dedup 用细参数(挑近乎同一张)，curate 用粗参数(挑同一场景)。
@@ -109,7 +118,7 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider = ai::Provider::Local,
     const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
     dedup::DedupProgressFn on_progress = nullptr, AiGateFn on_ai_gate = nullptr,
-    AiProgressFn on_ai_progress = nullptr);
+    AiProgressFn on_ai_progress = nullptr, CancelFn on_cancel = nullptr);
 
 // 仅供单元测试使用——decode_fn/compare_fn 都可注入，不需要真的解码 JPEG
 // 或真的连网络就能验证分簇后处理、锦标赛推进、AI 失败退化这些逻辑。跟
@@ -128,7 +137,7 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
     dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn,
     dedup::DedupProgressFn on_progress = nullptr, AiGateFn on_ai_gate = nullptr,
-    AiProgressFn on_ai_progress = nullptr);
+    AiProgressFn on_ai_progress = nullptr, CancelFn on_cancel = nullptr);
 
 }  // namespace detail
 

@@ -664,3 +664,117 @@ TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled")
   // AI 关时那个循环是纯内存操作、瞬间跑完，报进度只会让 banner 闪一下。
   CHECK(calls == 0);
 }
+
+// T-9b：中途取消。PRD 见 docs/Dedup_Cancel_PRD.md。三条不变量：取消是零
+// 写入、在下一次比较边界生效(不打断当前这次)、跟"闸门被拒"和"AI 失败退
+// 化"三者互相分得开。
+
+TEST_CASE("cluster_and_choose: cancelling at the first comparison writes no tags") {
+  auto fx = make_two_cluster_fixture("cancel_no_writes");
+  auto decoder = two_cluster_decoder(fx);
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+
+  int comparisons = 0;
+  detail::CompareFn counting = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
+                                    const LocalModelConfig& cfg) {
+    ++comparisons;
+    FakeCompare inner;
+    return inner(a, b, p, cfg);
+  };
+
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, counting, /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr, /*on_cancel=*/[] { return true; });
+  REQUIRE(result.ok());
+
+  CHECK(result.value().cancelled);
+  CHECK_FALSE(result.value().ai_declined);  // 跟"没点头"分得开
+  CHECK(result.value().clusters.empty());
+  CHECK(result.value().tagged_count == 0);
+  CHECK(comparisons == 0);  // 第一次比较都没发出去
+  // 零写入是这条特性的核心承诺：数据库里一个"重复"标签都不该有。
+  for (auto id : fx.images) CHECK_FALSE(has_duplicate_tag(fx.db, id, duplicate_tag_id));
+}
+
+TEST_CASE("cluster_and_choose: cancel takes effect at the next comparison boundary") {
+  auto fx = make_two_cluster_fixture("cancel_boundary");
+  auto decoder = two_cluster_decoder(fx);
+
+  // 第一次比较跑完之后才按下取消——当前这次不该被打断(它已经在飞了)，但
+  // 下一次不该再发出去。簇是 2 张 + 3 张 = 3 次比较，取消后只应发生 1 次。
+  int comparisons = 0;
+  bool cancel_flag = false;
+  detail::CompareFn counting = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
+                                    const LocalModelConfig& cfg) {
+    ++comparisons;
+    cancel_flag = true;  // 模拟"这次比较进行期间用户按了 Ctrl-C"
+    FakeCompare inner;
+    return inner(a, b, p, cfg);
+  };
+
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, counting, /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr,
+      /*on_cancel=*/[&] { return cancel_flag; });
+  REQUIRE(result.ok());
+
+  CHECK(result.value().cancelled);
+  CHECK(comparisons == 1);  // 飞着的那次跑完了，后面两次没发
+  CHECK(result.value().tagged_count == 0);
+}
+
+TEST_CASE("cluster_and_choose: a cancelled run is not counted as an AI fallback") {
+  auto fx = make_two_cluster_fixture("cancel_not_fallback");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr, /*on_cancel=*/[] { return true; });
+  REQUIRE(result.ok());
+  // run_bracket 用同一个 nullopt 表达"取消"和"AI 失败"。判断顺序反了的话
+  // 取消会被记成一次失败退化，用户拿到的摘要就成了"某簇比较失败"。
+  CHECK(result.value().cancelled);
+  CHECK(result.value().ai_fallback_count == 0);
+}
+
+TEST_CASE("cluster_and_choose: cancelling during clustering stops before the gate is asked") {
+  auto fx = make_two_cluster_fixture("cancel_clustering");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  // 不带 --ai 时这是唯一的取消出口；带 --ai 时它还要保证闸门根本不会弹出
+  // 来——分簇期间就喊停了，再问"要不要发 41 次请求"是荒谬的。
+  bool gate_asked = false;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      [&](int, int) {
+        gate_asked = true;
+        return true;
+      },
+      /*on_ai_progress=*/nullptr, /*on_cancel=*/[] { return true; });
+  REQUIRE(result.ok());
+  CHECK(result.value().cancelled);
+  CHECK_FALSE(gate_asked);
+  CHECK(fake_compare.calls == 0);
+}
+
+TEST_CASE("cluster_and_choose: no cancel callback behaves exactly as before") {
+  auto fx = make_two_cluster_fixture("cancel_absent");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare));
+  REQUIRE(result.ok());
+  // 默认 nullptr：headless 的 cmd_dedup 和全部既有调用点走的就是这条路，
+  // 加了取消参数之后行为必须逐字节不变。
+  CHECK_FALSE(result.value().cancelled);
+  CHECK(fake_compare.calls == 3);
+  CHECK(result.value().tagged_count == 3);  // 2 张簇留 1 摘 1，3 张簇留 1 摘 2
+}

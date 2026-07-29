@@ -174,7 +174,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, DedupProgressFn on_progress, bool ai_enabled,
     ai::Provider provider, const ai::LocalModelConfig& local_config, AiGateFn on_ai_gate,
-    AiProgressFn on_ai_progress) {
+    AiProgressFn on_ai_progress, CancelFn on_cancel) {
   // W2026-07-21 目标二：排废片、清旧重复标记、分组、给每组除 winner 外的
   // 成员打标签，整个委托给 tournament::cluster_and_choose
   // (exclude_tag_names={"废片"}、apply_dup_tag=true)。ai_enabled=false 时
@@ -183,7 +183,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   auto result = tournament::cluster_and_choose(
       db, project_id, image_ids, time_window_seconds, hash_threshold, {tagging::kRejectTagName},
       /*apply_dup_tag=*/true, ai_enabled, provider, local_config, std::move(on_progress),
-      std::move(on_ai_gate), std::move(on_ai_progress));
+      std::move(on_ai_gate), std::move(on_ai_progress), std::move(on_cancel));
   if (!result.ok()) {
     return Result<DedupSummary, project::ProjectNotFoundError>::Err(result.error());
   }
@@ -198,7 +198,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   // 销之后没让跑"，这两种情况的 group_count 都是 0。
   return Result<DedupSummary, project::ProjectNotFoundError>::Ok(
       DedupSummary{group_count, summary.tagged_count, summary.skipped_no_capture_time,
-                   summary.ai_fallback_count, summary.ai_declined});
+                   summary.ai_fallback_count, summary.ai_declined, summary.cancelled});
 }
 
 namespace detail {
@@ -207,7 +207,7 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
                                                   const std::vector<project::ImageId>& image_ids,
                                                   int time_window_seconds, int hash_threshold,
                                                   DedupProgressFn on_progress,
-                                                  PreviewDecodeFn decode_fn) {
+                                                  PreviewDecodeFn decode_fn, CancelFn on_cancel) {
   auto metas = load_metas(db, image_ids);
   auto clusters = cluster_by_time(metas, time_window_seconds);
 
@@ -225,6 +225,12 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
     std::vector<ImageHash> hashes(cluster.size());
     std::vector<bool> valid(cluster.size(), true);
     for (std::size_t i = 0; i < cluster.size(); ++i) {
+      // 取消检查放在解码之前、逐张查:单张解码是毫秒到几十毫秒级，所以这
+      // 个粒度在观感上等同于立刻停。直接返回手上已有的结果，调用方会自己
+      // 再查一次 on_cancel 来区分"取消了"和"没找到重复"(CancelFn 是粘性
+      // 的，所以那一次查一定还是 true)。这里不需要清理任何东西——写库统
+      // 一在 cluster_and_choose 的最后一步，此刻一个标签都还没写。
+      if (on_cancel && on_cancel()) return result;
       std::string path = media::resolve_preview_path(root_path, cluster[i].file_path,
                                                       cluster[i].kind, cluster[i].preview_cache_path);
       auto decoded = decode_fn(path);

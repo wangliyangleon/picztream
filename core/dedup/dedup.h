@@ -62,6 +62,21 @@ struct AiProgress {
 
 using AiProgressFn = std::function<void(const AiProgress&)>;
 
+// 中途取消。返回 true = 用户要求停下，调用方应该尽快收手。
+//
+// **必须是粘性的**：一旦返回过 true 就要一直返回 true。内部在好几个地方
+// 各查一次(分簇的每张图、AI 的每次比较、两个阶段之间)，中间任何一次翻回
+// false 都会让流程继续跑下去，语义就散了。cli 那边的实现是读一个信号处
+// 理函数置位的标志位，天然满足。
+//
+// 检查点都在"下一件耗时的事开始之前"，所以取消不会打断正在进行的解码或
+// 网络请求——最坏要等当前这一次跑完。这是 docs/Dedup_Cancel_PRD.md 拍板
+// 接受的延迟，不是遗漏。
+//
+// 取消一定是零写入：查到 true 的时候一个标签都还没写(写库统一在最后一
+// 步)，所以直接返回就行，不需要任何回滚。
+using CancelFn = std::function<bool()>;
+
 // 在给定的一批图片里找重复组(只包含真正找到重复的组，落单的图片不会出
 // 现在返回值里)。image_ids 是调用方已经解析好的范围——"整个项目"还是
 // "带某个标签"由调用方决定(core::list_images/core::filter_by_tag)，这
@@ -120,6 +135,11 @@ struct DedupSummary {
   // "跑完了但一组重复都没有"必须区分开，两者的 group_count 都是 0。见
   // core::tournament::ChooseSummary 同名字段。
   bool ai_declined = false;
+  // 用户中途按了取消。跟 ai_declined 一样是"这次什么都没做"，但两者要分
+  // 开报：ai_declined 是"看过开销之后没点头"(一次比较都没发)，cancelled
+  // 是"点头之后跑到一半喊停"(已经花了时间和 token)。见
+  // core::tournament::ChooseSummary 同名字段。
+  bool cancelled = false;
 };
 
 // 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签。W2026-07-21
@@ -153,7 +173,8 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     int time_window_seconds = 10, int hash_threshold = 5, DedupProgressFn on_progress = nullptr,
     bool ai_enabled = false, ai::Provider provider = ai::Provider::Local,
     const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
-    AiGateFn on_ai_gate = nullptr, AiProgressFn on_ai_progress = nullptr);
+    AiGateFn on_ai_gate = nullptr, AiProgressFn on_ai_progress = nullptr,
+    CancelFn on_cancel = nullptr);
 
 // 仅供单元测试使用——decode_fn 可注入，不需要真的解码 JPEG 文件就能验证
 // 时间聚类、hamming 距离分组、keep_id 选择这些逻辑，规避真实 JPEG 有损
@@ -169,7 +190,8 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
                                                   const std::vector<project::ImageId>& image_ids,
                                                   int time_window_seconds, int hash_threshold,
                                                   DedupProgressFn on_progress,
-                                                  PreviewDecodeFn decode_fn);
+                                                  PreviewDecodeFn decode_fn,
+                                                  CancelFn on_cancel = nullptr);
 
 }  // namespace detail
 

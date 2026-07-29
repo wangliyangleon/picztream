@@ -38,7 +38,13 @@ std::optional<decode::DecodedImage> decode_member(db::Database& db, const std::s
 // 次比较(1-based)。簇内比较是串行网络调用、每次可能几十秒，没有这个钩子
 // 的话调用方最细只能报到簇粒度，大簇期间画面完全静止。轮空不算一次比
 // 较——它不发请求，报了会让计数虚高、对不上 AiGateFn 给用户看的总数。
-using ComparisonStartFn = std::function<void(int index_in_cluster)>;
+//
+// 返回 false = 别比了，直接收手(返回 nullopt)。这是取消唯一能插进来的地
+// 方：比较边界。用返回值而不是再加一个 CancelFn 参数，是因为"在每次比较
+// 之前"这个时机两者完全一样，多一个参数只会多一处要保持同步的调用点。
+// 调用方靠自己那份 CancelFn(粘性的)区分收到的 nullopt 是"取消"还是"AI 失
+// 败要退化"——run_bracket 自己不需要知道这个区别。
+using ComparisonStartFn = std::function<bool(int index_in_cluster)>;
 
 std::optional<project::ImageId> run_bracket(db::Database& db, const std::string& root_path,
                                              const std::vector<project::ImageId>& members,
@@ -65,7 +71,7 @@ std::optional<project::ImageId> run_bracket(db::Database& db, const std::string&
     next_round.reserve((round.size() + 1) / 2);
     for (std::size_t i = 0; i < round.size(); i += 2) {
       if (i + 1 < round.size()) {
-        if (on_comparison_start) on_comparison_start(++comparisons_done);
+        if (on_comparison_start && !on_comparison_start(++comparisons_done)) return std::nullopt;
         auto result = compare_fn(round[i].image, round[i + 1].image, provider, local_config);
         if (!result.ok()) return std::nullopt;
         std::size_t winner_idx = result.value().winner == 0 ? i : i + 1;
@@ -88,7 +94,7 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
     dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, dedup::DedupProgressFn on_progress,
-    AiGateFn on_ai_gate, AiProgressFn on_ai_progress) {
+    AiGateFn on_ai_gate, AiProgressFn on_ai_progress, CancelFn on_cancel) {
   auto project_summary = project::open_project(db, project_id);
   if (!project_summary.ok()) {
     return Result<ChooseSummary, project::ProjectNotFoundError>::Err(project_summary.error());
@@ -118,8 +124,23 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
       static_cast<int>(candidates.size()) -
       static_cast<int>(dedup::images_with_capture_time(db, candidates).size());
 
+  // 取消结果的构造只有这一处：clusters 空、tagged_count 0，跟 ai_declined
+  // 的空结果同形，区别只在哪个 flag 为真。
+  auto cancelled_summary = [&] {
+    ChooseSummary cancelled{};
+    cancelled.tagged_count = 0;
+    cancelled.skipped_no_capture_time = skipped_no_capture_time;
+    cancelled.ai_fallback_count = 0;
+    cancelled.cancelled = true;
+    return Result<ChooseSummary, project::ProjectNotFoundError>::Ok(std::move(cancelled));
+  };
+
   auto groups = dedup::detail::find_duplicates_impl(db, root_path, candidates, time_window_seconds,
-                                                      hash_threshold, on_progress, decode_fn);
+                                                      hash_threshold, on_progress, decode_fn, on_cancel);
+  // 分簇阶段被取消时 find_duplicates_impl 提前返回手上那点结果,它没法用
+  // 返回值表达"我是被取消的"(返回类型就是一个 vector)。CancelFn 粘性,所
+  // 以在这里再查一次就能区分——不带 --ai 时这是唯一的取消出口。
+  if (on_cancel && on_cancel()) return cancelled_summary();
 
   std::unordered_set<project::ImageId> grouped_ids;
   for (const auto& g : groups) grouped_ids.insert(g.image_ids.begin(), g.image_ids.end());
@@ -161,17 +182,29 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
       // 簇中途失败、剩下的比较没发生时，进入下一簇会自动补齐，计数不会掉
       // 队到一个永远够不着总数的位置。
       ComparisonStartFn on_comparison_start = nullptr;
-      if (on_ai_progress) {
+      if (on_ai_progress || on_cancel) {
         on_comparison_start = [&](int index_in_cluster) {
-          on_ai_progress(AiProgress{ai_done, static_cast<int>(groups.size()),
-                                     comparisons_before_this_cluster + index_in_cluster,
-                                     comparison_total});
+          // 先查取消再报进度:取消之后这次比较不会发生,报一个"正在比较第 N
+          // 次"只会让最后停住的那一帧多走一格、对不上实际发生的事。
+          if (on_cancel && on_cancel()) return false;
+          if (on_ai_progress) {
+            on_ai_progress(AiProgress{ai_done, static_cast<int>(groups.size()),
+                                       comparisons_before_this_cluster + index_in_cluster,
+                                       comparison_total});
+          }
+          return true;
         };
       }
       auto ai_winner = run_bracket(db, root_path, g.image_ids, ai_provider, local_config, decode_fn,
                                     compare_fn, on_comparison_start);
       if (ai_winner) {
         winner = *ai_winner;
+      } else if (on_cancel && on_cancel()) {
+        // run_bracket 用同一个 nullopt 表达"取消"和"AI 失败"。粘性的
+        // CancelFn 让这里能分开:是取消就整条收手(零写入),不是就按既有语
+        // 义退化成 keep_id、继续跑下一簇。顺序不能反——先判退化的话，取消
+        // 会被记成一次 AI 失败，用户拿到的摘要就成了"某簇比较失败"。
+        return cancelled_summary();
       } else {
         ++ai_fallback_count;  // 退化：winner 维持 g.keep_id
       }
@@ -217,12 +250,13 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::DedupProgressFn on_progress, AiGateFn on_ai_gate, AiProgressFn on_ai_progress) {
+    dedup::DedupProgressFn on_progress, AiGateFn on_ai_gate, AiProgressFn on_ai_progress,
+    CancelFn on_cancel) {
   return detail::cluster_and_choose_impl(db, project_id, image_ids, time_window_seconds, hash_threshold,
                                           exclude_tag_names, apply_dup_tag, ai_enabled, ai_provider,
                                           local_config, media::decode_preview_file, ai::request_comparison,
                                           std::move(on_progress), std::move(on_ai_gate),
-                                          std::move(on_ai_progress));
+                                          std::move(on_ai_progress), std::move(on_cancel));
 }
 
 }  // namespace pzt::core::tournament
