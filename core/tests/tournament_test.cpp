@@ -665,7 +665,7 @@ TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled")
   CHECK(calls == 0);
 }
 
-// T-9b：中途取消。PRD 见 docs/Dedup_Cancel_PRD.md。三条不变量：取消是零
+// T-9b：中途取消。PRD 见 docs/history/Dedup_Cancel_PRD.md。三条不变量：取消是零
 // 写入、在下一次比较边界生效(不打断当前这次)、跟"闸门被拒"和"AI 失败退
 // 化"三者互相分得开。
 

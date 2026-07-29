@@ -70,7 +70,7 @@ using AiProgressFn = std::function<void(const AiProgress&)>;
 // 理函数置位的标志位，天然满足。
 //
 // 检查点都在"下一件耗时的事开始之前"，所以取消不会打断正在进行的解码或
-// 网络请求——最坏要等当前这一次跑完。这是 docs/Dedup_Cancel_PRD.md 拍板
+// 网络请求——最坏要等当前这一次跑完。这是 docs/history/Dedup_Cancel_PRD.md 拍板
 // 接受的延迟，不是遗漏。
 //
 // 取消一定是零写入：查到 true 的时候一个标签都还没写(写库统一在最后一
