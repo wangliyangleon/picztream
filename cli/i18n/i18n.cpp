@@ -1170,23 +1170,6 @@ std::string msg_ai_tasks_status(std::size_t queued, bool processing) {
   }
 }
 
-std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count) {
-  if (g_lang == Lang::zh) {
-    return " " + std::to_string(unevaluated_count) + " 张照片还没评估，保留判断会退化成按拍摄时间选 ";
-  } else {
-    return " " + std::to_string(unevaluated_count) +
-           " image(s) not evaluated, keep-selection falls back to capture time ";
-  }
-}
-
-std::string msg_dedup_confirm_unevaluated_line2() {
-  if (g_lang == Lang::zh) {
-    return " " + menu_item("y", "继续") + " / " + menu_item("其它键", "取消") + " ";
-  } else {
-    return " " + menu_item("y", "Continue") + " / " + menu_item("other keys", "Cancel") + " ";
-  }
-}
-
 std::string msg_quit_confirm_pending_line1(int pending_count) {
   if (g_lang == Lang::zh) {
     return " " + std::to_string(pending_count) + " 个评估任务尚未完成，退出会丢失排队中还没开始的部分 ";

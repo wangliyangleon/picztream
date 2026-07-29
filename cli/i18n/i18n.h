@@ -214,12 +214,6 @@ std::string err_console_invalid_scope();
 // F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
 // 示,控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
 std::string err_console_invalid_filter_criterion();
-// 拆成两行(跟 tag_menu_order_prompt/tag_menu_ordered_keys_help 同一个
-// 先例),prompt_and_read_key 单行版本用 pad_to 截断不换行,英文原文加上
-// "(y/N)"提示很容易在正常终端宽度下被截断掉,拆成"说明"+"按键提示"两
-// 行更稳妥。
-std::string msg_dedup_confirm_unevaluated_line1(int unevaluated_count);
-std::string msg_dedup_confirm_unevaluated_line2();
 // 反馈:退出时如果还有评估任务排队/处理中，队列里还没开始处理的部分
 // 会被直接丢弃(EvaluationWorker 析构只等当前正在处理的这一个，不会
 // 继续消费队列剩下的)，静默退出容易让用户以为提交的一批评估都在跑，

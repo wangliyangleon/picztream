@@ -245,17 +245,20 @@ void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::Ta
             ids.end());
 }
 
-// `/dedup * | #标签名`——近似重复检测唯一的触发入口，见
-// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。范围内有图片还没跑过选
-// 片辅助评估时先问一句 y/N——不代为触发评估，只是提醒"这次的保留判断可
-// 能会退化成按拍摄时间选"；按其它任何键(含 Esc)都算取消，跟
-// tag_menu.cpp 里"是否有序"那个 y/N 确认同一个约定。真正比对这一步是
-// 阻塞的:find_and_tag_duplicates 内部可能跑几秒到几十秒，这段时间
-// pzt open 冻结、不接受任何输入——刻意的简化，见
-// docs/M3_Dedup_PRD.md"非目标"一节，不传 on_progress 是因为这段时间主
-// 循环没有机会重绘，传了也没地方画。
-std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& scope,
-                                  int banner_row, int start_col, int content_cols) {
+// `/dedup * | #标签名`，近似重复检测唯一的触发入口，见
+// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。真正比对这一步是阻塞
+// 的:find_and_tag_duplicates 内部可能跑几秒到几十秒，这段时间 pzt open
+// 冻结、不接受任何输入，刻意的简化，见 docs/M3_Dedup_PRD.md"非目标"一
+// 节，不传 on_progress 是因为这段时间主循环没有机会重绘，传了也没地方
+// 画。
+//
+// M3 时期这里还有一道"N 张照片还没评估，保留判断会退化成按拍摄时间选"
+// 的 y/N 确认，W2026-07-21 目标二之后删掉了:那一轮改造把 keep_id 的选
+// 择从"比评估分数"改成了"留 captured_at 最新"这个不依赖任何评估结果的
+// 确定性基线(见 core/dedup/dedup.h 的说明)，同一轮里 overall_score/
+// passes_gate 也已从下游移除。不开 AI 时本来就恒定按拍摄时间选，不存在
+// "退化"这回事，那句提示只会误导用户先去跑一遍用不上的评估。
+std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& scope) {
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
 
@@ -265,19 +268,6 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   if (!settings.dedup_reject) {
     exclude_scope_by_tag(resolved,
                           pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
-  }
-
-  // F-07：以前逐张 get_image() 判断评估状态，大项目按一次键就是几百到
-  // 几千次数据库往返。改成一条批量查询，只统计数量。
-  auto evaluated = pzt::core::evaluated_image_ids(resolved.image_ids);
-  int unevaluated = static_cast<int>(resolved.image_ids.size()) - static_cast<int>(evaluated.size());
-  if (unevaluated > 0) {
-    // 拆两行,跟 tag_menu.cpp 里"是否有序"那个确认同一个先例——见
-    // msg_dedup_confirm_unevaluated_line1/2 的说明。
-    char c = prompt_and_read_key_2line(pzt::cli::i18n::msg_dedup_confirm_unevaluated_line1(unevaluated),
-                                        pzt::cli::i18n::msg_dedup_confirm_unevaluated_line2(),
-                                        banner_row, start_col, content_cols);
-    if (c != 'y' && c != 'Y') return "";  // 取消,静默
   }
 
   auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids,
@@ -425,7 +415,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     return ConsoleCommandResult{*detail};
   }
   if (command == "dedup") {
-    return ConsoleCommandResult{handle_dedup_command(project_id, rest, banner_row, start_col, content_cols)};
+    return ConsoleCommandResult{handle_dedup_command(project_id, rest)};
   }
   if (command == "tasks") {
     return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};
