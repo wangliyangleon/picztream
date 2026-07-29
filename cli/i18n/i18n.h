@@ -231,7 +231,15 @@ std::string err_dedup_failed();
 // 后还有 AI 逐组比较(网络,分钟级)。两段分别计数、total 对不上,所以是
 // 两个文案而不是一个,见 core/tournament/tournament.h 的 AiProgressFn。
 std::string msg_dedup_cluster_progress(int done, int total);
-std::string msg_dedup_ai_progress(int done, int total);
+// AI 那段带两级计数:只报组号的话,单个大簇期间(一簇就是 size-1 次串行网
+// 络调用)画面会静止几分钟,见 AiProgressFn 的说明。比较次数的分母跟
+// msg_dedup_ai_confirm_line1 报给用户的是同一个数。
+std::string msg_dedup_ai_progress(int group_done, int group_total, int comparison_done,
+                                   int comparison_total);
+// AI 阶段进度的第二行:阻塞期间唯一还能用的操作。措辞要写清它退出的是整
+// 个 pzt open,不是只取消这一次 dedup——真正的"取消这次操作"还没有(提案
+// T-9b),把 Ctrl-C 简单叫成"取消"会让用户以为按下去还能回到浏览界面。
+std::string msg_dedup_ai_progress_hint();
 // `--ai` 真正开跑前的开销确认。拆成两行跟 msg_quit_confirm_pending_*
 // 同一个先例:prompt_and_read_key 单行版本用 pad_to 截断不换行,英文文案
 // 再加上按键提示很容易在正常终端宽度下被截掉,拆成"说明"+"按键提示"两

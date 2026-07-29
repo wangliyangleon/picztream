@@ -300,11 +300,18 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
   };
+  // banner 第二行:平时留空(见 cmd_open 里 kBannerRows 那段说明),AI 阶段
+  // 借它挂一行操作提示。
+  auto draw_banner_line2 = [&](const std::string& text) {
+    move_cursor(banner_row + 1, start_col + 1);
+    write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
+  };
   auto on_cluster_progress = [&](int done, int total) {
     draw_banner(pzt::cli::i18n::msg_dedup_cluster_progress(done, total));
   };
-  auto on_ai_progress = [&](int done, int total) {
-    draw_banner(pzt::cli::i18n::msg_dedup_ai_progress(done, total));
+  auto on_ai_progress = [&](const pzt::core::dedup::AiProgress& p) {
+    draw_banner(pzt::cli::i18n::msg_dedup_ai_progress(p.group_done, p.group_total, p.comparison_done,
+                                                        p.comparison_total));
   };
   // 闸门:core 只负责报出精确开销并等一个 bool，"怎么问"是 cli 的事。
   // 按 y 以外任意键(含 Esc)= 整条命令中止，core 那边保证这种情况下一个
@@ -315,19 +322,16 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
       char c = prompt_and_read_key_2line(
           pzt::cli::i18n::msg_dedup_ai_confirm_line1(group_count, comparison_count),
           pzt::cli::i18n::msg_dedup_ai_confirm_line2(), banner_row, start_col, content_cols);
-      // 自己把第二行擦掉。space/f/r 那几个二级菜单不需要这一步,是因为它
-      // 们返回主循环后立刻整屏重绘;闸门返回后直接进了 core 的阻塞调用,
-      // 主循环要等整个 dedup 跑完才有机会重画。不擦的话"按 y 继续,其它
-      // 键取消"会一直挂在进度下面,读起来像还在等按键。
+      // 自己重写第二行。space/f/r 那几个二级菜单不需要这一步,是因为它们
+      // 返回主循环后立刻整屏重绘;闸门返回后直接进了 core 的阻塞调用,主
+      // 循环要等整个 dedup 跑完才有机会重画。不重写的话"按 y 继续,其它键
+      // 取消"会一直挂在进度下面,读起来像还在等按键。
       //
-      // 这一行之后就空着:等簇内逐次比较的进度补上之后(见
-      // cluster_and_choose_impl 里 on_ai_progress 那段注释),这里适合改成
-      // 提示按 Ctrl-C 取消。今天还不能这么写——Ctrl-C 是杀掉整个 pzt
-      // open(终端会被干净还原,见 cli/term/signal_restore.h),不是取消这
-      // 一次 dedup,叫它"取消"是误导。
-      move_cursor(banner_row + 1, start_col + 1);
-      write_stdout(pad_to("", static_cast<std::size_t>(content_cols)));
-      return c == 'y' || c == 'Y';
+      // 同意就换成操作提示,拒绝就擦干净——拒绝时整条命令立刻返回主循环,
+      // 留着提示会闪一下再被整屏重绘冲掉。
+      bool accepted = (c == 'y' || c == 'Y');
+      draw_banner_line2(accepted ? pzt::cli::i18n::msg_dedup_ai_progress_hint() : "");
+      return accepted;
     };
   }
 

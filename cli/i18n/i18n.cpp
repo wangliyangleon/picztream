@@ -1180,11 +1180,22 @@ std::string msg_dedup_cluster_progress(int done, int total) {
   }
 }
 
-std::string msg_dedup_ai_progress(int done, int total) {
+std::string msg_dedup_ai_progress(int group_done, int group_total, int comparison_done,
+                                   int comparison_total) {
   if (g_lang == Lang::zh) {
-    return " AI 比较中 " + std::to_string(done) + "/" + std::to_string(total) + " 组 ";
+    return " AI 比较中 " + std::to_string(group_done) + "/" + std::to_string(group_total) + " 组，第 " +
+           std::to_string(comparison_done) + "/" + std::to_string(comparison_total) + " 次比较 ";
   } else {
-    return " AI comparing " + std::to_string(done) + "/" + std::to_string(total) + " group(s) ";
+    return " AI comparing group " + std::to_string(group_done) + "/" + std::to_string(group_total) +
+           ", comparison " + std::to_string(comparison_done) + "/" + std::to_string(comparison_total) + " ";
+  }
+}
+
+std::string msg_dedup_ai_progress_hint() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("Ctrl-C", "中止(会退出 pzt)") + " ";
+  } else {
+    return " " + menu_item("Ctrl-C", "Abort (quits pzt)") + " ";
   }
 }
 

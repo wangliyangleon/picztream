@@ -48,7 +48,19 @@ using DedupProgressFn = std::function<void(int done, int total)>;
 // 会成环；tournament.h 那边用 `using AiGateFn = dedup::AiGateFn;` 把它们
 // 引进自己的命名空间，两边始终是同一个类型。
 using AiGateFn = std::function<bool(int group_count, int comparison_count)>;
-using AiProgressFn = std::function<void(int done, int total)>;
+
+// AI 阶段的进度快照。两级计数一起给，是因为只报簇号不够用：一簇就是
+// members.size()-1 次串行网络调用，单个大簇期间"第 1/1 组"会一动不动挂
+// 几分钟。comparison_* 用的正是 AiGateFn 报给用户的那个总数，所以进度条
+// 走的刻度跟用户点头时看到的开销是同一把尺子。
+struct AiProgress {
+  int group_done = 0;          // 正在处理第几组(1-based)
+  int group_total = 0;         // 要跑锦标赛的簇总数
+  int comparison_done = 0;     // 正在发起第几次比较(1-based，跨簇累计)
+  int comparison_total = 0;    // 所有簇的比较次数之和，同 AiGateFn 的 comparison_count
+};
+
+using AiProgressFn = std::function<void(const AiProgress&)>;
 
 // 在给定的一批图片里找重复组(只包含真正找到重复的组，落单的图片不会出
 // 现在返回值里)。image_ids 是调用方已经解析好的范围——"整个项目"还是

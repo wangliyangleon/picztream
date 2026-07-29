@@ -538,23 +538,81 @@ TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when there is nothi
   CHECK(fake_compare.calls == 0);
 }
 
-TEST_CASE("cluster_and_choose: on_ai_progress fires once per tournament cluster, counting up to total") {
+TEST_CASE("cluster_and_choose: on_ai_progress fires once per comparison with both counters") {
   auto fx = make_two_cluster_fixture("ai_progress");
   auto decoder = two_cluster_decoder(fx);
   FakeCompare fake_compare;
 
-  std::vector<std::pair<int, int>> progress;
+  std::vector<AiProgress> progress;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      /*on_ai_gate=*/nullptr,
-      [&](int done, int total) { progress.emplace_back(done, total); });
+      /*on_ai_gate=*/nullptr, [&](const AiProgress& p) { progress.push_back(p); });
   REQUIRE(result.ok());
-  // 两个簇 -> 两次回调，done 从 1 递增到 total，total 始终是簇总数。单例
-  // 不发起比较，也就不该产生进度事件。
-  REQUIRE(progress.size() == 2);
-  CHECK(progress[0] == std::make_pair(1, 2));
-  CHECK(progress[1] == std::make_pair(2, 2));
+  // 簇是 2 张 + 3 张 -> 1 + 2 = 3 次比较，每次比较一个事件(不是每簇一
+  // 个)。单例不发起比较，也就不该产生进度事件。
+  REQUIRE(progress.size() == 3);
+  CHECK(progress[0].group_done == 1);
+  CHECK(progress[0].comparison_done == 1);
+  CHECK(progress[1].group_done == 2);
+  CHECK(progress[1].comparison_done == 2);
+  CHECK(progress[2].group_done == 2);
+  CHECK(progress[2].comparison_done == 3);
+  // 两个总数全程不变，且比较次数的总数跟 on_ai_gate 报给用户的是同一个
+  // 数(见上面那个 gate 用例断言的 3)——用户点头时看到的开销和进度条走的
+  // 刻度必须是同一把尺子。
+  for (const auto& p : progress) {
+    CHECK(p.group_total == 2);
+    CHECK(p.comparison_total == 3);
+  }
+}
+
+TEST_CASE("cluster_and_choose: comparison counter catches up past a cluster that failed early") {
+  // 三个簇:3 张 + 2 张 + 2 张 -> 2 + 1 + 1 = 4 次比较。让第一次比较就失
+  // 败,第一簇剩下的那次比较就不会发生;如果计数只数"实际发起的比较",后
+  // 面两簇会一路少 1,最后停在 3/4 这个永远够不着的数上。进入下一簇时按
+  // "跨过的簇应有的次数"补齐,才能正好走到 4/4。
+  auto fx = make_fixture("ai_progress_catchup", 7);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+  set_captured_at(fx.db, fx.images[2], 1004);
+  set_captured_at(fx.db, fx.images[3], 5000);
+  set_captured_at(fx.db, fx.images[4], 5002);
+  set_captured_at(fx.db, fx.images[5], 9000);
+  set_captured_at(fx.db, fx.images[6], 9002);
+  auto decoder = hash_map_decoder({{path_for(fx, 'a'), 0x0F0F0F0F0F0F0F0FULL},
+                                    {path_for(fx, 'b'), 0x0F0F0F0F0F0F0F0FULL},
+                                    {path_for(fx, 'c'), 0x0F0F0F0F0F0F0F0FULL},
+                                    {path_for(fx, 'd'), 0xF0F0F0F0F0F0F0F0ULL},
+                                    {path_for(fx, 'e'), 0xF0F0F0F0F0F0F0F0ULL},
+                                    {path_for(fx, 'f'), 0x00FF00FF00FF00FFULL},
+                                    {path_for(fx, 'g'), 0x00FF00FF00FF00FFULL}});
+
+  int calls = 0;
+  detail::CompareFn fail_first = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
+                                      const LocalModelConfig& cfg) {
+    if (++calls == 1) {
+      return Result<ComparisonResult, CompareError>::Err(CompareError::NetworkError);
+    }
+    FakeCompare inner;
+    return inner(a, b, p, cfg);
+  };
+
+  std::vector<AiProgress> progress;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, fail_first, /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr, [&](const AiProgress& p) { progress.push_back(p); });
+  REQUIRE(result.ok());
+  CHECK(result.value().ai_fallback_count == 1);  // 第一簇退化,另外两簇正常
+
+  // 实际只发起了 3 次比较(第一簇的第 2 次被跳过),但计数是 1、3、4——
+  // 跳过的那次让位置空出来,最后一次正好落在总数上。
+  REQUIRE(progress.size() == 3);
+  CHECK(progress[0].comparison_done == 1);
+  CHECK(progress[1].comparison_done == 3);
+  CHECK(progress[2].comparison_done == 4);
+  CHECK(progress.back().comparison_done == progress.back().comparison_total);
 }
 
 TEST_CASE("cluster_and_choose: on_ai_progress reports a cluster before comparing it, not after") {
@@ -576,16 +634,19 @@ TEST_CASE("cluster_and_choose: on_ai_progress reports a cluster before comparing
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
       Provider::Local, LocalModelConfig{}, decoder, counting_compare, /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr,
-      [&](int done, int) { timeline.push_back("progress:" + std::to_string(done)); });
+      [&](const AiProgress& p) {
+        timeline.push_back("progress:" + std::to_string(p.comparison_done));
+      });
   REQUIRE(result.ok());
 
   // 时间线的第一个事件必须是进度而不是比较,否则用户在第一次网络往返期间
   // 看到的还是静止画面。
   REQUIRE_FALSE(timeline.empty());
   CHECK(timeline.front() == "progress:1");
-  // 每个 progress:k 后面至少跟着一次 compare(每簇 size>=2,至少比一次)。
-  for (std::size_t i = 0; i + 1 < timeline.size(); ++i) {
-    if (timeline[i].rfind("progress:", 0) == 0) CHECK(timeline[i + 1] == "compare");
+  // 严格交替:每次比较之前恰好报一次进度。报完成数(或每簇只报一次)都会
+  // 让某个 compare 前面没有对应的 progress。
+  for (std::size_t i = 0; i < timeline.size(); ++i) {
+    CHECK(timeline[i].rfind(i % 2 == 0 ? "progress:" : "compare", 0) == 0);
   }
 }
 
@@ -598,7 +659,7 @@ TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled")
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      /*on_ai_gate=*/nullptr, [&](int, int) { ++calls; });
+      /*on_ai_gate=*/nullptr, [&](const AiProgress&) { ++calls; });
   REQUIRE(result.ok());
   // AI 关时那个循环是纯内存操作、瞬间跑完，报进度只会让 banner 闪一下。
   CHECK(calls == 0);

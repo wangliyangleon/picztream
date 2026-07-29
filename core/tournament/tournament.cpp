@@ -33,11 +33,19 @@ std::optional<decode::DecodedImage> decode_member(db::Database& db, const std::s
 // 较、奇数个时最后一个轮空直接晋级，直到只剩一个。任意一步解码失败或
 // compare_fn 返回 Err 都视为"这一簇 AI 失败"，返回 nullopt 让调用方退化
 // 成 keep_id，不中断其它簇。N 个成员恰好 N-1 次比较，不管轮空怎么分布。
+//
+// on_comparison_start 在每次 compare_fn 之前调一次，参数是这一簇内的第几
+// 次比较(1-based)。簇内比较是串行网络调用、每次可能几十秒，没有这个钩子
+// 的话调用方最细只能报到簇粒度，大簇期间画面完全静止。轮空不算一次比
+// 较——它不发请求，报了会让计数虚高、对不上 AiGateFn 给用户看的总数。
+using ComparisonStartFn = std::function<void(int index_in_cluster)>;
+
 std::optional<project::ImageId> run_bracket(db::Database& db, const std::string& root_path,
                                              const std::vector<project::ImageId>& members,
                                              ai::Provider provider, const ai::LocalModelConfig& local_config,
                                              const dedup::detail::PreviewDecodeFn& decode_fn,
-                                             const detail::CompareFn& compare_fn) {
+                                             const detail::CompareFn& compare_fn,
+                                             const ComparisonStartFn& on_comparison_start = nullptr) {
   struct Contestant {
     project::ImageId id;
     decode::DecodedImage image;
@@ -51,11 +59,13 @@ std::optional<project::ImageId> run_bracket(db::Database& db, const std::string&
     round.push_back(Contestant{id, std::move(*img)});
   }
 
+  int comparisons_done = 0;
   while (round.size() > 1) {
     std::vector<Contestant> next_round;
     next_round.reserve((round.size() + 1) / 2);
     for (std::size_t i = 0; i < round.size(); i += 2) {
       if (i + 1 < round.size()) {
+        if (on_comparison_start) on_comparison_start(++comparisons_done);
         auto result = compare_fn(round[i].image, round[i + 1].image, provider, local_config);
         if (!result.ok()) return std::nullopt;
         std::size_t winner_idx = result.value().winner == 0 ? i : i + 1;
@@ -114,14 +124,18 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   std::unordered_set<project::ImageId> grouped_ids;
   for (const auto& g : groups) grouped_ids.insert(g.image_ids.begin(), g.image_ids.end());
 
+  // 单淘汰赛 N 个成员恰好 N-1 场，所以这是精确值不是估算：闸门拿它问用户
+  // "要不要为此发这么多次请求"，进度也拿它当分母——两处必须是同一个数，
+  // 否则用户点头时看到的开销和进度条走的刻度对不上。
+  int comparison_total = 0;
+  for (const auto& g : groups) comparison_total += static_cast<int>(g.image_ids.size()) - 1;
+
   // 开跑闸门：本地分簇已经跑完(便宜、无副作用)，但一次 request_comparison
   // 都还没发、一个标签都还没写，所以这里是唯一一个"能报出精确开销、且拒绝
   // 之后系统状态跟没执行过完全一样"的位置。放在下面写库那一段之前直接
   // return，取消的原子性就不需要任何回滚逻辑来保证。
   if (ai_enabled && on_ai_gate && !groups.empty()) {
-    int comparison_count = 0;
-    for (const auto& g : groups) comparison_count += static_cast<int>(g.image_ids.size()) - 1;
-    if (!on_ai_gate(static_cast<int>(groups.size()), comparison_count)) {
+    if (!on_ai_gate(static_cast<int>(groups.size()), comparison_total)) {
       ChooseSummary declined{};
       declined.tagged_count = 0;
       declined.skipped_no_capture_time = skipped_no_capture_time;
@@ -136,28 +150,32 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   int ai_fallback_count = 0;
 
   int ai_done = 0;
+  int comparisons_before_this_cluster = 0;
   for (const auto& g : groups) {
     project::ImageId winner = g.keep_id;  // AI 关时的答案，AI 开且成功时会被覆盖
     if (ai_enabled) {
-      // 在这一簇开跑之前报，不是跑完之后——done 是"正在处理第几组"，不是
-      // "已完成几组"(文案"AI 比较中 k/N 组"按前者读)。报完成数的话，第一
-      // 簇跑完之前屏幕上一个字都不会变，而一簇就是 size-1 次串行网络调
-      // 用、每次受 60s 超时约束，用户看到的是纯静止画面；只有一簇时更是
-      // 全程零反馈、跑完直接结束。那正好废掉 PRD 给这个回调定的用途(见
-      // docs/history/Dedup_AI_Console_PRD.md 的验收场景"看着进度从 1/23
-      // 走到 23/23"，以及"一个异常大的簇"那条风险里"进度反馈能让用户知道
-      // 在动"）。
-      //
-      // 簇内逐次比较仍然没有进度(run_bracket 不接回调)，所以单个大簇期间
-      // 画面依旧不动——那是 PRD 那条风险里挂账的部分，不在这次修复范围。
-      if (on_ai_progress) on_ai_progress(++ai_done, static_cast<int>(groups.size()));
-      auto ai_winner =
-          run_bracket(db, root_path, g.image_ids, ai_provider, local_config, decode_fn, compare_fn);
+      ++ai_done;
+      // 每次比较发起**之前**报一次(不是之后，也不是每簇一次)——理由见
+      // tournament.h 上 AiProgressFn 的说明，两点都是真机上踩出来的。
+      // comparison_done 用 comparisons_before_this_cluster 做基数，所以某
+      // 簇中途失败、剩下的比较没发生时，进入下一簇会自动补齐，计数不会掉
+      // 队到一个永远够不着总数的位置。
+      ComparisonStartFn on_comparison_start = nullptr;
+      if (on_ai_progress) {
+        on_comparison_start = [&](int index_in_cluster) {
+          on_ai_progress(AiProgress{ai_done, static_cast<int>(groups.size()),
+                                     comparisons_before_this_cluster + index_in_cluster,
+                                     comparison_total});
+        };
+      }
+      auto ai_winner = run_bracket(db, root_path, g.image_ids, ai_provider, local_config, decode_fn,
+                                    compare_fn, on_comparison_start);
       if (ai_winner) {
         winner = *ai_winner;
       } else {
         ++ai_fallback_count;  // 退化：winner 维持 g.keep_id
       }
+      comparisons_before_this_cluster += static_cast<int>(g.image_ids.size()) - 1;
     }
     clusters.push_back(ClusterChoice{g.image_ids, winner});
   }
