@@ -127,10 +127,12 @@ TagId ensure_reject_tag(ProjectId project_id) {
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds,
     int hash_threshold, dedup::DedupProgressFn on_progress, bool ai_enabled, Provider provider,
-    const LocalModelConfig& local_config) {
+    const LocalModelConfig& local_config, dedup::AiGateFn on_ai_gate,
+    dedup::AiProgressFn on_ai_progress) {
   db::Database db = db::Database::open_default();
   return dedup::find_and_tag_duplicates(db, project_id, image_ids, time_window_seconds, hash_threshold,
-                                         std::move(on_progress), ai_enabled, provider, local_config);
+                                         std::move(on_progress), ai_enabled, provider, local_config,
+                                         std::move(on_ai_gate), std::move(on_ai_progress));
 }
 
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,

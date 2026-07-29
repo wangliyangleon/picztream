@@ -44,7 +44,35 @@ struct ChooseSummary {
   // ai_enabled=true 时，因为某次 request_comparison 调用失败而整簇退化
   // 成"选 captured_at 最新"的簇数；ai_enabled=false 时恒为 0。
   int ai_fallback_count;
+  // on_ai_gate 返回 false(调用方看过真实开销之后不跑了)。只可能在
+  // ai_enabled=true 且传了 on_ai_gate 时为真。为真时 clusters 为空、
+  // tagged_count 为 0，且**一个标签都没写过**，调用方应该按"这次什么都
+  // 没发生"处理，而不是把空 clusters 当成"一组重复都没有"的结论。
+  bool ai_declined = false;
 };
+
+// AI 锦标赛真正开跑前的闸门，在本地分簇跑完、任何一次 request_comparison
+// 发出之前调用一次。group_count 是 size>=2 的簇数，comparison_count 是这
+// 些簇的 (members.size()-1) 之和——单淘汰赛 N 个成员恰好 N-1 场(见
+// run_bracket 的说明)，所以这是精确开销而不是估算，调用方可以拿它直接问
+// 用户"要不要为此发这么多次请求"。
+//
+// 返回 false = 不跑：不发起任何比较、不写任何标签，直接返回
+// ai_declined=true 的空结果。nullptr(默认)= 无条件继续，等价于加这个参数
+// 之前的行为，所以 curate 和全部既有调用点不受影响。
+//
+// 只在 ai_enabled=true 且确实存在 size>=2 的簇时才会被调用——没有任何可
+// 比较的簇时问了也没有意义(开销恒为 0)，直接当同意处理。
+//
+// 类型本身定义在 core/dedup/dedup.h(那边有说明为什么不能反过来)，这里
+// 引进本命名空间；这两行是同一个类型的两个名字，不是两套东西。
+using AiGateFn = dedup::AiGateFn;
+
+// 每跑完一簇锦标赛回调一次，done 是已完成簇数、total 是要跑锦标赛的簇总
+// 数。签名跟 dedup::DedupProgressFn 一样但数的东西不同——那个数的是本地
+// 分簇阶段的候选簇(包括最后没成簇的)，这个数的是真的发起了 AI 比较的簇，
+// 两者的 total 一般对不上，别把同一个 lambda 同时传给两边。
+using AiProgressFn = dedup::AiProgressFn;
 
 // image_ids 是调用方已经解析好的范围(整个项目还是某个标签的子集)。
 // time_window_seconds/hash_threshold 直接传给 dedup::find_duplicates，
@@ -61,12 +89,15 @@ struct ChooseSummary {
 // (不论是否成簇)回调一次——直接转给内部的 find_duplicates_impl，不是新
 // 概念。Commit 2 补上这个参数：find_and_tag_duplicates 今天的公开签名带
 // 这个回调，改調 cluster_and_choose 时不能悄悄把它吞掉。
+// on_ai_gate/on_ai_progress 见上面各自的说明，都默认 nullptr(不闸不报进
+// 度)，所以加这两个参数不改变任何既有调用点的行为。
 Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider = ai::Provider::Local,
     const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
-    dedup::DedupProgressFn on_progress = nullptr);
+    dedup::DedupProgressFn on_progress = nullptr, AiGateFn on_ai_gate = nullptr,
+    AiProgressFn on_ai_progress = nullptr);
 
 // 仅供单元测试使用——decode_fn/compare_fn 都可注入，不需要真的解码 JPEG
 // 或真的连网络就能验证分簇后处理、锦标赛推进、AI 失败退化这些逻辑。跟
@@ -84,7 +115,8 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
     dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn,
-    dedup::DedupProgressFn on_progress = nullptr);
+    dedup::DedupProgressFn on_progress = nullptr, AiGateFn on_ai_gate = nullptr,
+    AiProgressFn on_ai_progress = nullptr);
 
 }  // namespace detail
 

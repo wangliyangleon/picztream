@@ -4,6 +4,8 @@
 #include <fstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "core/tournament/tournament.h"
 #include "core/db/database.h"
@@ -381,4 +383,191 @@ TEST_CASE("cluster_and_choose: unknown project_id returns ProjectNotFoundError w
   REQUIRE(!result.ok());
   CHECK(result.error() == pzt::core::project::ProjectNotFoundError::NotFound);
   CHECK(fake_compare.calls == 0);
+}
+
+// ---------------------------------------------------------------------------
+// on_ai_gate / on_ai_progress。闸门存在的意义是"用户看过真实开销之后还能
+// 反悔"，所以这一组用例的重点不是返回值好不好看，而是**拒绝之后数据库真
+// 的一点没动**——只断言 tagged_count==0 是不够的，那个字段在很多别的情况
+// 下也是 0。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 两个簇的 fixture：a,b 一簇(时间挨着、哈希相同)，c,d,e 另一簇(跟前两张
+// 隔了很久，自成一簇)。锦标赛比较次数 = (2-1) + (3-1) = 3。
+Fixture make_two_cluster_fixture(const std::string& tag) {
+  auto fx = make_fixture(tag, 5);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+  set_captured_at(fx.db, fx.images[2], 5000);
+  set_captured_at(fx.db, fx.images[3], 5002);
+  set_captured_at(fx.db, fx.images[4], 5004);
+  return fx;
+}
+
+dedup::detail::PreviewDecodeFn two_cluster_decoder(const Fixture& fx) {
+  // 簇内哈希相同(距离 0，必然聚在一起)，两簇之间的哈希差别再大也无所谓，
+  // 它们本来就被时间窗隔开了。
+  return hash_map_decoder({{path_for(fx, 'a'), 0x0F0F0F0F0F0F0F0FULL},
+                            {path_for(fx, 'b'), 0x0F0F0F0F0F0F0F0FULL},
+                            {path_for(fx, 'c'), 0xF0F0F0F0F0F0F0F0ULL},
+                            {path_for(fx, 'd'), 0xF0F0F0F0F0F0F0F0ULL},
+                            {path_for(fx, 'e'), 0xF0F0F0F0F0F0F0F0ULL}});
+}
+
+}  // namespace
+
+TEST_CASE("cluster_and_choose: on_ai_gate sees the exact group and comparison counts") {
+  auto fx = make_two_cluster_fixture("gate_counts");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  int seen_groups = -1;
+  int seen_comparisons = -1;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      [&](int groups, int comparisons) {
+        seen_groups = groups;
+        seen_comparisons = comparisons;
+        return true;
+      });
+  REQUIRE(result.ok());
+  CHECK(seen_groups == 2);
+  // (2-1) + (3-1)：单淘汰赛 N 个成员恰好 N-1 场，所以这是精确开销而不是
+  // 估算——闸门报给用户的数字必须跟真实发出的请求数对得上。
+  CHECK(seen_comparisons == 3);
+  CHECK(fake_compare.calls == 3);
+}
+
+TEST_CASE("cluster_and_choose: on_ai_gate returning false writes absolutely nothing") {
+  auto fx = make_two_cluster_fixture("gate_declined");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  // 先人为给一张图打上"重复"标签。正常跑一遍的第一步是"先摘光本次范围内
+  // 的旧标记再重新打"，所以这个标签如果还在，就证明我们在写库那一段之前
+  // 就返回了，而不是"清完了但没重新打"。
+  auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[0], duplicate_tag_id).ok());
+
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      [](int, int) { return false; });
+
+  REQUIRE(result.ok());
+  CHECK(result.value().ai_declined);
+  CHECK(result.value().clusters.empty());
+  CHECK(result.value().tagged_count == 0);
+  CHECK(result.value().ai_fallback_count == 0);
+  CHECK(fake_compare.calls == 0);  // 一次请求都没发出去
+  // 数据库状态跟没执行过完全一样：预置的标签还在，其它图片没被顺手打上。
+  CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[2], duplicate_tag_id));
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[3], duplicate_tag_id));
+  CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[4], duplicate_tag_id));
+}
+
+TEST_CASE("cluster_and_choose: on_ai_gate returning true is indistinguishable from passing no gate") {
+  auto run = [](const std::string& tag, AiGateFn gate) {
+    auto fx = make_two_cluster_fixture(tag);
+    auto decoder = two_cluster_decoder(fx);
+    FakeCompare fake_compare;
+    auto result = detail::cluster_and_choose_impl(
+        fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+        Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+        std::move(gate));
+    REQUIRE(result.ok());
+    return std::make_pair(result.value(), fake_compare.calls);
+  };
+
+  auto [with_gate, with_gate_calls] = run("gate_true", [](int, int) { return true; });
+  auto [no_gate, no_gate_calls] = run("gate_absent", nullptr);
+
+  CHECK(with_gate.clusters.size() == no_gate.clusters.size());
+  CHECK(with_gate.tagged_count == no_gate.tagged_count);
+  CHECK(with_gate.skipped_no_capture_time == no_gate.skipped_no_capture_time);
+  CHECK(with_gate.ai_fallback_count == no_gate.ai_fallback_count);
+  CHECK(with_gate.ai_declined == no_gate.ai_declined);
+  CHECK_FALSE(with_gate.ai_declined);
+  CHECK(with_gate_calls == no_gate_calls);
+}
+
+TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when ai is disabled") {
+  auto fx = make_two_cluster_fixture("gate_ai_off");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  bool gate_called = false;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      [&](int, int) {
+        gate_called = true;
+        return false;  // 万一被调用了，返回 false 会让结果明显不对，不会被蒙混过去
+      });
+  REQUIRE(result.ok());
+  CHECK_FALSE(gate_called);  // AI 关时没有任何开销可确认，不该打扰调用方
+  CHECK_FALSE(result.value().ai_declined);
+  CHECK(result.value().clusters.size() == 2);
+  CHECK(fake_compare.calls == 0);
+}
+
+TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when there is nothing to compare") {
+  // 两张图时间上隔得很远，各自成单例，一个 size>=2 的簇都没有。
+  auto fx = make_fixture("gate_no_groups", 2);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 9000);
+  auto decoder = hash_map_decoder({{path_for(fx, 'a'), 0}, {path_for(fx, 'b'), 1}});
+  FakeCompare fake_compare;
+
+  bool gate_called = false;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      [&](int, int) {
+        gate_called = true;
+        return false;
+      });
+  REQUIRE(result.ok());
+  CHECK_FALSE(gate_called);  // 开销恒为 0，问了也没意义
+  CHECK_FALSE(result.value().ai_declined);
+  CHECK(fake_compare.calls == 0);
+}
+
+TEST_CASE("cluster_and_choose: on_ai_progress fires once per tournament cluster, counting up to total") {
+  auto fx = make_two_cluster_fixture("ai_progress");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  std::vector<std::pair<int, int>> progress;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr,
+      [&](int done, int total) { progress.emplace_back(done, total); });
+  REQUIRE(result.ok());
+  // 两个簇 -> 两次回调，done 从 1 递增到 total，total 始终是簇总数。单例
+  // 不发起比较，也就不该产生进度事件。
+  REQUIRE(progress.size() == 2);
+  CHECK(progress[0] == std::make_pair(1, 2));
+  CHECK(progress[1] == std::make_pair(2, 2));
+}
+
+TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled") {
+  auto fx = make_two_cluster_fixture("ai_progress_off");
+  auto decoder = two_cluster_decoder(fx);
+  FakeCompare fake_compare;
+
+  int calls = 0;
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
+      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      /*on_ai_gate=*/nullptr, [&](int, int) { ++calls; });
+  REQUIRE(result.ok());
+  // AI 关时那个循环是纯内存操作、瞬间跑完，报进度只会让 banner 闪一下。
+  CHECK(calls == 0);
 }

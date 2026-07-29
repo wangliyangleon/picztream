@@ -173,7 +173,8 @@ std::vector<DuplicateGroup> find_duplicates(db::Database& db, const std::string&
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, DedupProgressFn on_progress, bool ai_enabled,
-    ai::Provider provider, const ai::LocalModelConfig& local_config) {
+    ai::Provider provider, const ai::LocalModelConfig& local_config, AiGateFn on_ai_gate,
+    AiProgressFn on_ai_progress) {
   // W2026-07-21 目标二：排废片、清旧重复标记、分组、给每组除 winner 外的
   // 成员打标签，整个委托给 tournament::cluster_and_choose
   // (exclude_tag_names={"废片"}、apply_dup_tag=true)。ai_enabled=false 时
@@ -181,7 +182,8 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   // 字节一致；ai_enabled=true 时才走锦标赛。
   auto result = tournament::cluster_and_choose(
       db, project_id, image_ids, time_window_seconds, hash_threshold, {tagging::kRejectTagName},
-      /*apply_dup_tag=*/true, ai_enabled, provider, local_config, std::move(on_progress));
+      /*apply_dup_tag=*/true, ai_enabled, provider, local_config, std::move(on_progress),
+      std::move(on_ai_gate), std::move(on_ai_progress));
   if (!result.ok()) {
     return Result<DedupSummary, project::ProjectNotFoundError>::Err(result.error());
   }
@@ -191,9 +193,12 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
   for (const auto& c : summary.clusters) {
     if (c.members.size() >= 2) ++group_count;
   }
+  // 闸门拒绝时 clusters 为空，group_count 自然是 0——但 ai_declined 必须
+  // 一路透传上去，调用方要靠它区分"跑完了，一组重复都没有"和"用户看过开
+  // 销之后没让跑"，这两种情况的 group_count 都是 0。
   return Result<DedupSummary, project::ProjectNotFoundError>::Ok(
       DedupSummary{group_count, summary.tagged_count, summary.skipped_no_capture_time,
-                   summary.ai_fallback_count});
+                   summary.ai_fallback_count, summary.ai_declined});
 }
 
 namespace detail {

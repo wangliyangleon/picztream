@@ -77,7 +77,8 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, dedup::DedupProgressFn on_progress) {
+    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, dedup::DedupProgressFn on_progress,
+    AiGateFn on_ai_gate, AiProgressFn on_ai_progress) {
   auto project_summary = project::open_project(db, project_id);
   if (!project_summary.ok()) {
     return Result<ChooseSummary, project::ProjectNotFoundError>::Err(project_summary.error());
@@ -113,10 +114,28 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   std::unordered_set<project::ImageId> grouped_ids;
   for (const auto& g : groups) grouped_ids.insert(g.image_ids.begin(), g.image_ids.end());
 
+  // 开跑闸门：本地分簇已经跑完(便宜、无副作用)，但一次 request_comparison
+  // 都还没发、一个标签都还没写，所以这里是唯一一个"能报出精确开销、且拒绝
+  // 之后系统状态跟没执行过完全一样"的位置。放在下面写库那一段之前直接
+  // return，取消的原子性就不需要任何回滚逻辑来保证。
+  if (ai_enabled && on_ai_gate && !groups.empty()) {
+    int comparison_count = 0;
+    for (const auto& g : groups) comparison_count += static_cast<int>(g.image_ids.size()) - 1;
+    if (!on_ai_gate(static_cast<int>(groups.size()), comparison_count)) {
+      ChooseSummary declined{};
+      declined.tagged_count = 0;
+      declined.skipped_no_capture_time = skipped_no_capture_time;
+      declined.ai_fallback_count = 0;
+      declined.ai_declined = true;
+      return Result<ChooseSummary, project::ProjectNotFoundError>::Ok(std::move(declined));
+    }
+  }
+
   std::vector<ClusterChoice> clusters;
   clusters.reserve(groups.size() + candidates.size());
   int ai_fallback_count = 0;
 
+  int ai_done = 0;
   for (const auto& g : groups) {
     project::ImageId winner = g.keep_id;  // AI 关时的答案，AI 开且成功时会被覆盖
     if (ai_enabled) {
@@ -127,6 +146,9 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
       } else {
         ++ai_fallback_count;  // 退化：winner 维持 g.keep_id
       }
+      // 只在 AI 开时报进度：AI 关时这个循环是纯内存操作，瞬间跑完，没有
+      // 进度可言(本地分簇那一段的耗时由 on_progress 覆盖)。
+      if (on_ai_progress) on_ai_progress(++ai_done, static_cast<int>(groups.size()));
     }
     clusters.push_back(ClusterChoice{g.image_ids, winner});
   }
@@ -168,11 +190,12 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::DedupProgressFn on_progress) {
+    dedup::DedupProgressFn on_progress, AiGateFn on_ai_gate, AiProgressFn on_ai_progress) {
   return detail::cluster_and_choose_impl(db, project_id, image_ids, time_window_seconds, hash_threshold,
                                           exclude_tag_names, apply_dup_tag, ai_enabled, ai_provider,
                                           local_config, media::decode_preview_file, ai::request_comparison,
-                                          std::move(on_progress));
+                                          std::move(on_progress), std::move(on_ai_gate),
+                                          std::move(on_ai_progress));
 }
 
 }  // namespace pzt::core::tournament

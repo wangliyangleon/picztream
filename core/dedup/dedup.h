@@ -39,6 +39,16 @@ struct DuplicateGroup {
 
 using DedupProgressFn = std::function<void(int done, int total)>;
 
+// AI 锦标赛的开跑闸门与进度回调。**语义以 core/tournament/tournament.h
+// 上 AiGateFn/AiProgressFn 那两段说明为准**——那边才是真正实现和调用它
+// 们的地方，这里只是 find_and_tag_duplicates 要在签名里透传，所以类型得
+// 先有个定义。定义放在这个头文件而不是 tournament.h，是因为 tournament.h
+// 已经 include 了本文件(它复用 find_duplicates 的分簇算法)，反向 include
+// 会成环；tournament.h 那边用 `using AiGateFn = dedup::AiGateFn;` 把它们
+// 引进自己的命名空间，两边始终是同一个类型。
+using AiGateFn = std::function<bool(int group_count, int comparison_count)>;
+using AiProgressFn = std::function<void(int done, int total)>;
+
 // 在给定的一批图片里找重复组(只包含真正找到重复的组，落单的图片不会出
 // 现在返回值里)。image_ids 是调用方已经解析好的范围——"整个项目"还是
 // "带某个标签"由调用方决定(core::list_images/core::filter_by_tag)，这
@@ -93,6 +103,10 @@ struct DedupSummary {
   // 退化成"选 captured_at 最新"的簇数；ai_enabled=false 时恒为 0。见
   // core::tournament::ChooseSummary 同名字段。
   int ai_fallback_count;
+  // on_ai_gate 返回 false，这次什么都没做:没发过比较、没写过标签。跟
+  // "跑完了但一组重复都没有"必须区分开，两者的 group_count 都是 0。见
+  // core::tournament::ChooseSummary 同名字段。
+  bool ai_declined = false;
 };
 
 // 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签。W2026-07-21
@@ -116,11 +130,17 @@ struct DedupSummary {
 // ai_enabled=false，保证现有调用点(cmd_dedup、`/dedup` 控制台命令、全部
 // 现有测试)零改动。ai_enabled=true 时簇内改走单淘汰锦标赛选 winner，见
 // core::tournament::cluster_and_choose 的说明。
+//
+// on_ai_gate/on_ai_progress：原样转给 cluster_and_choose，语义见
+// core::tournament::AiGateFn/AiProgressFn。都默认 nullptr，所以
+// headless 的 cmd_dedup 那条路径不受影响；交互侧的 `/dedup --ai` 靠
+// on_ai_gate 在真正花钱之前问一句、靠 on_ai_progress 在阻塞期间报进度。
 Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds = 10, int hash_threshold = 5, DedupProgressFn on_progress = nullptr,
     bool ai_enabled = false, ai::Provider provider = ai::Provider::Local,
-    const ai::LocalModelConfig& local_config = ai::LocalModelConfig{});
+    const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
+    AiGateFn on_ai_gate = nullptr, AiProgressFn on_ai_progress = nullptr);
 
 // 仅供单元测试使用——decode_fn 可注入，不需要真的解码 JPEG 文件就能验证
 // 时间聚类、hamming 距离分组、keep_id 选择这些逻辑，规避真实 JPEG 有损

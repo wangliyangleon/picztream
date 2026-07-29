@@ -179,11 +179,13 @@ using DedupSummary = dedup::DedupSummary;
 // handle_dedup_command 显式传 Settings.dedup_time_window_seconds/
 // dedup_hash_threshold。ai_enabled/provider/local_config(W2026-07-21 目
 // 标二新增)透传给 core::dedup::find_and_tag_duplicates，默认值保证现有
-// 调用点零改动。
+// 调用点零改动。on_ai_gate/on_ai_progress 同理，语义见
+// core/tournament/tournament.h。
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds = 10,
     int hash_threshold = 5, dedup::DedupProgressFn on_progress = nullptr, bool ai_enabled = false,
-    Provider provider = Provider::Local, const LocalModelConfig& local_config = LocalModelConfig{});
+    Provider provider = Provider::Local, const LocalModelConfig& local_config = LocalModelConfig{},
+    dedup::AiGateFn on_ai_gate = nullptr, dedup::AiProgressFn on_ai_progress = nullptr);
 
 // M4：策展挑图，见 docs/M4_Eng_Design.md 第三节。跟上面的 dedup 门面同一
 // 个模式：开默认库转调 curate::curate。门面刻意不叫 curate——
