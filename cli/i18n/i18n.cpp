@@ -978,10 +978,10 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
 std::string msg_ai_prompt_placeholder() {
   if (g_lang == Lang::zh) {
     return "命令必须以 / 开头: /ai_eval [指引] | /ai_eval * | /ai_eval #标签 | /tasks | /dedup * | /dedup "
-           "#标签 | /filter <条件> | /filter clear | /help";
+           "#标签 [--ai] | /filter <条件> | /filter clear | /help";
   } else {
     return "Commands must start with /: /ai_eval [note] | /ai_eval * | /ai_eval #tag | /tasks | /dedup * "
-           "| /dedup #tag | /filter <criterion> | /filter clear | /help";
+           "| /dedup #tag [--ai] | /filter <criterion> | /filter clear | /help";
   }
 }
 
@@ -1070,7 +1070,8 @@ std::optional<std::string> msg_help_command(const std::string &command) {
       return " /ai_eval [指引] 评估当前图片；/ai_eval * [指引] 评估全部；/ai_eval #标签 [指引] 评估该标签范围 ";
     }
     if (command == "dedup") {
-      return " /dedup * 或 /dedup #标签：在范围内查找近似重复，非保留项打上\"重复\"标签 ";
+      return " /dedup * 或 /dedup #标签：在范围内查找近似重复，非保留项打上\"重复\"标签；加 --ai "
+             "改用 AI 逐组比较挑保留项(会先报开销并等确认) ";
     }
     if (command == "tasks") {
       return " /tasks：查看评估队列排队中/处理中的数量 ";
@@ -1088,7 +1089,8 @@ std::optional<std::string> msg_help_command(const std::string &command) {
              "/ai_eval #tag [note] a tag's scope ";
     }
     if (command == "dedup") {
-      return " /dedup * or /dedup #tag: find near-duplicates in scope, tag non-keep members Duplicate ";
+      return " /dedup * or /dedup #tag: find near-duplicates in scope, tag non-keep members Duplicate; "
+             "add --ai to pick keepers by AI comparison (asks first, showing the cost) ";
     }
     if (command == "tasks") {
       return " /tasks: shows how many evaluations are queued/processing ";
@@ -1170,6 +1172,48 @@ std::string msg_ai_tasks_status(std::size_t queued, bool processing) {
   }
 }
 
+std::string msg_dedup_cluster_progress(int done, int total) {
+  if (g_lang == Lang::zh) {
+    return " 分组中 " + std::to_string(done) + "/" + std::to_string(total) + " ";
+  } else {
+    return " Clustering " + std::to_string(done) + "/" + std::to_string(total) + " ";
+  }
+}
+
+std::string msg_dedup_ai_progress(int done, int total) {
+  if (g_lang == Lang::zh) {
+    return " AI 比较中 " + std::to_string(done) + "/" + std::to_string(total) + " 组 ";
+  } else {
+    return " AI comparing " + std::to_string(done) + "/" + std::to_string(total) + " group(s) ";
+  }
+}
+
+std::string msg_dedup_ai_confirm_line1(int group_count, int comparison_count) {
+  if (g_lang == Lang::zh) {
+    return " 找到 " + std::to_string(group_count) + " 组，将发起 " + std::to_string(comparison_count) +
+           " 次 AI 比较 ";
+  } else {
+    return " Found " + std::to_string(group_count) + " group(s), will make " +
+           std::to_string(comparison_count) + " AI comparison(s) ";
+  }
+}
+
+std::string msg_dedup_ai_confirm_line2() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("y", "继续") + " / " + menu_item("其它键", "取消") + " ";
+  } else {
+    return " " + menu_item("y", "Continue") + " / " + menu_item("other keys", "Cancel") + " ";
+  }
+}
+
+std::string err_dedup_bad_args() {
+  if (g_lang == Lang::zh) {
+    return " 用法: /dedup <范围> [--ai]，范围是 * 或 #标签名 ";
+  } else {
+    return " Usage: /dedup <scope> [--ai], where scope is * or #tag ";
+  }
+}
+
 std::string msg_quit_confirm_pending_line1(int pending_count) {
   if (g_lang == Lang::zh) {
     return " " + std::to_string(pending_count) + " 个评估任务尚未完成，退出会丢失排队中还没开始的部分 ";
@@ -1187,7 +1231,8 @@ std::string msg_quit_confirm_pending_line2() {
   }
 }
 
-std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time) {
+std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time,
+                              int ai_fallback_count) {
   // F-11：标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
   // 示——用户按 g 9 只会看到空列表，反而更困惑。
   std::string hint = tagged_count > 0 ? (g_lang == Lang::zh ? "，按 g 9 查看" : ", press g 9 to view") : "";
@@ -1200,12 +1245,26 @@ std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_c
                  ? "，" + std::to_string(skipped_no_capture_time) + " 张因无拍摄时间未参与比对"
                  : ", " + std::to_string(skipped_no_capture_time) + " image(s) skipped (no capture time)")
           : "";
+  // 跟 skipped_note 同一个"只在非零时才拼进去"的处理:不开 --ai 时这个
+  // 数恒为 0，最常见的路径不该因此多出一段永远是"0 组"的噪音。有退化说
+  // 明这一次的部分结果其实是按拍摄时间选的，用户有权知道。
+  // 措辞刻意避开"拍摄时间"/"capture time"这几个字:上面的 skipped_note
+  // 已经占用了它们，两段提示可能同时出现在一行里，用同一个词会让人分不
+  // 清说的是哪一件事。"保留最新的一张"描述的是同一个 keep_id 规则，只是
+  // 换了个不会撞车的说法。
+  std::string fallback_note =
+      ai_fallback_count > 0
+          ? (g_lang == Lang::zh
+                 ? "，" + std::to_string(ai_fallback_count) + " 组 AI 比较失败已保留最新的一张"
+                 : ", " + std::to_string(ai_fallback_count) +
+                       " group(s) kept the newest shot (AI comparison failed)")
+          : "";
   if (g_lang == Lang::zh) {
     return " 找到 " + std::to_string(group_count) + " 组重复，标记了 " + std::to_string(tagged_count) +
-           " 张" + skipped_note + hint + " ";
+           " 张" + skipped_note + fallback_note + hint + " ";
   } else {
     return " Found " + std::to_string(group_count) + " duplicate group(s), tagged " +
-           std::to_string(tagged_count) + " image(s)" + skipped_note + hint + " ";
+           std::to_string(tagged_count) + " image(s)" + skipped_note + fallback_note + hint + " ";
   }
 }
 

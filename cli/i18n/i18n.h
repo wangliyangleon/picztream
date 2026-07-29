@@ -222,8 +222,26 @@ std::string msg_quit_confirm_pending_line1(int pending_count);
 std::string msg_quit_confirm_pending_line2();
 // F-08：skipped_no_capture_time 是范围内因为没有拍摄时间(captured_at
 // 为 NULL)完全没参与比较的图片数,>0 时带一句提示,不静默排除。
-std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time);
+// ai_fallback_count 同理:>0 时说明这次有几组的保留项其实是 AI 比较失败
+// 后按拍摄时间兜底选的,不开 --ai 时恒为 0、不出现在文案里。
+std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time,
+                              int ai_fallback_count);
 std::string err_dedup_failed();
+// `/dedup` 阻塞期间的两段进度:先是本地分组(纯 CPU,秒级),开了 --ai 之
+// 后还有 AI 逐组比较(网络,分钟级)。两段分别计数、total 对不上,所以是
+// 两个文案而不是一个,见 core/tournament/tournament.h 的 AiProgressFn。
+std::string msg_dedup_cluster_progress(int done, int total);
+std::string msg_dedup_ai_progress(int done, int total);
+// `--ai` 真正开跑前的开销确认。拆成两行跟 msg_quit_confirm_pending_*
+// 同一个先例:prompt_and_read_key 单行版本用 pad_to 截断不换行,英文文案
+// 再加上按键提示很容易在正常终端宽度下被截掉,拆成"说明"+"按键提示"两
+// 行更稳妥。comparison_count 是精确值不是估算,见 AiGateFn 的说明。
+std::string msg_dedup_ai_confirm_line1(int group_count, int comparison_count);
+std::string msg_dedup_ai_confirm_line2();
+// `/dedup` 范围之后跟了除 `--ai` 以外的东西。控制台一贯"显式标记，不
+// 猜"的风格,不把认不出来的 token 当标签名吞掉,跟
+// err_console_invalid_filter_criterion 同一个理由。
+std::string err_dedup_bad_args();
 
 // M3：`/ai_eval * | #标签名 [额外指引]` 批量提交，见
 // docs/M3_Eng_Design.md"`/` 命令解析"一节。count 为 0 时文案要能自然表

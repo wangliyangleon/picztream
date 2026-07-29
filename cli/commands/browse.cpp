@@ -245,20 +245,42 @@ void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::Ta
             ids.end());
 }
 
-// `/dedup * | #标签名`，近似重复检测唯一的触发入口，见
-// docs/M3_Dedup_Eng_Design.md"控制台命令"一节。真正比对这一步是阻塞
-// 的:find_and_tag_duplicates 内部可能跑几秒到几十秒，这段时间 pzt open
-// 冻结、不接受任何输入，刻意的简化，见 docs/M3_Dedup_PRD.md"非目标"一
-// 节，不传 on_progress 是因为这段时间主循环没有机会重绘，传了也没地方
-// 画。
+// `/dedup <范围> [--ai]`，近似重复检测唯一的触发入口，见
+// docs/M3_Dedup_Eng_Design.md"控制台命令"一节与 docs/Dedup_AI_Console_PRD.md。
+// 范围写法(`*` / `#标签名` / `#"带空格的标签名"`)由 take_scope_token 切
+// 出来，跟 `/ai_eval` 分离"范围"和"额外指引"用的是同一个原语，引号处理
+// 不需要在这里重新实现一遍。范围后面除了 `--ai` 不接受任何东西——认不出
+// 来的 token 报用法错误，不当成标签名吞掉，控制台一贯"显式标记，不猜"。
+//
+// 整个过程是阻塞的:不开 --ai 时是本地分组，几秒到几十秒;开了 --ai 之后
+// 每簇还要发 N-1 次网络比较，量级拉到分钟级。刻意不做成异步(见
+// docs/M3_Dedup_PRD.md 与 docs/Dedup_AI_Console_PRD.md 两处"非目标")，
+// 但两段都接了进度回调在状态栏原地重画——早年那句"主循环没有机会重绘，
+// 传了也没地方画"其实不成立，handle_export_current_flow 早就在用
+// move_cursor + pad_to + write_stdout 这套写法了。
+//
+// provider 只读 Settings.ai_provider，控制台不暴露内联的 provider 参
+// 数:交互侧从来不在命令行里选模型(`/ai_eval` 同样如此)，要换 provider
+// 改 config.json，跟时间窗/哈希阈值走 Settings 是同一个约定(F-08)。
 //
 // M3 时期这里还有一道"N 张照片还没评估，保留判断会退化成按拍摄时间选"
 // 的 y/N 确认，W2026-07-21 目标二之后删掉了:那一轮改造把 keep_id 的选
 // 择从"比评估分数"改成了"留 captured_at 最新"这个不依赖任何评估结果的
 // 确定性基线(见 core/dedup/dedup.h 的说明)，同一轮里 overall_score/
 // passes_gate 也已从下游移除。不开 AI 时本来就恒定按拍摄时间选，不存在
-// "退化"这回事，那句提示只会误导用户先去跑一遍用不上的评估。
-std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& scope) {
+// "退化"这回事，那句提示只会误导用户先去跑一遍用不上的评估。现在这个位
+// 置上的确认是另一回事:只在 --ai 时问，问的是"要不要为此发 M 次请求"，
+// 而且是在本地分组跑完、拿到精确开销之后才问的。
+std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& rest,
+                                  int banner_row, int start_col, int content_cols) {
+  auto [scope, tail] = pzt::cli::text::take_scope_token(rest);
+  bool ai_enabled = false;
+  if (tail == "--ai") {
+    ai_enabled = true;
+  } else if (!tail.empty()) {
+    return pzt::cli::i18n::err_dedup_bad_args();
+  }
+
   auto resolved = resolve_console_scope(project_id, scope);
   if (!resolved.error_message.empty()) return resolved.error_message;
 
@@ -270,17 +292,54 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
                           pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
   }
 
-  auto result = pzt::core::find_and_tag_duplicates(project_id, resolved.image_ids,
-                                                     settings.dedup_time_window_seconds,
-                                                     settings.dedup_hash_threshold, /*on_progress=*/nullptr);
+  // 两段进度共用 banner 同一行,后写的覆盖先写的:分组跑完之后 AI 那段接
+  // 着往同一个位置写,不会堆出两行。
+  auto draw_banner = [&](const std::string& text) {
+    move_cursor(banner_row, start_col + 1);
+    write_stdout(pad_to(text, static_cast<std::size_t>(content_cols)));
+  };
+  auto on_cluster_progress = [&](int done, int total) {
+    draw_banner(pzt::cli::i18n::msg_dedup_cluster_progress(done, total));
+  };
+  auto on_ai_progress = [&](int done, int total) {
+    draw_banner(pzt::cli::i18n::msg_dedup_ai_progress(done, total));
+  };
+  // 闸门:core 只负责报出精确开销并等一个 bool，"怎么问"是 cli 的事。
+  // 按 y 以外任意键(含 Esc)= 整条命令中止，core 那边保证这种情况下一个
+  // 标签都不会写，所以这里不需要任何回滚。
+  pzt::core::dedup::AiGateFn on_ai_gate = nullptr;
+  if (ai_enabled) {
+    on_ai_gate = [&](int group_count, int comparison_count) {
+      char c = prompt_and_read_key_2line(
+          pzt::cli::i18n::msg_dedup_ai_confirm_line1(group_count, comparison_count),
+          pzt::cli::i18n::msg_dedup_ai_confirm_line2(), banner_row, start_col, content_cols);
+      return c == 'y' || c == 'Y';
+    };
+  }
+
+  // provider/local_config 直接取上面那份 settings，不再调
+  // resolve_ai_provider()/resolve_local_model_config()——那两个 helper 各
+  // 自会再 load_settings() 读一次盘，而我们手上这份就是这一次按键刚读
+  // 的，"现读不缓存"的语义一样满足，不必为此多读两遍。on_ai_progress 无
+  // 条件传：core 只在 ai_enabled 时才会调它(见 cluster_and_choose_impl)。
+  auto result = pzt::core::find_and_tag_duplicates(
+      project_id, resolved.image_ids, settings.dedup_time_window_seconds, settings.dedup_hash_threshold,
+      on_cluster_progress, ai_enabled, settings.ai_provider,
+      pzt::core::LocalModelConfig{settings.ollama_base_url, settings.ollama_model},
+      std::move(on_ai_gate), on_ai_progress);
   // F-25：这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
   // 缓冲区里——不清掉的话，接下来继续读键时会一次性回放，可能连按出
   // 误标签/误退出。见 docs/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
-  // 条一直没收口的风险。
+  // 条一直没收口的风险。开了 --ai 之后阻塞更久，这一步更要紧。
   flush_pending_input();
   if (!result.ok()) return pzt::cli::i18n::err_dedup_failed();
+  // 闸门被拒 = 用户主动取消，静默返回,不报"找到 0 组"(那会读成"跑完了但
+  // 什么都没找到"，跟实际发生的事完全不是一回事)。跟 read_text_line 按
+  // Esc 取消同一个约定。
+  if (result.value().ai_declined) return "";
   return pzt::cli::i18n::msg_dedup_result(result.value().group_count, result.value().tagged_count,
-                                           result.value().skipped_no_capture_time);
+                                           result.value().skipped_no_capture_time,
+                                           result.value().ai_fallback_count);
 }
 
 // `/ai_eval * | #标签名 [额外指引]`——批量提交，见
@@ -415,7 +474,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     return ConsoleCommandResult{*detail};
   }
   if (command == "dedup") {
-    return ConsoleCommandResult{handle_dedup_command(project_id, rest)};
+    return ConsoleCommandResult{handle_dedup_command(project_id, rest, banner_row, start_col, content_cols)};
   }
   if (command == "tasks") {
     return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};

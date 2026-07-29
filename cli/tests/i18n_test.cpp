@@ -67,19 +67,19 @@ TEST_CASE("i18n localized text strings") {
 // 示；标记数为 0 时不带（范围内没有新重复组，提示了也是空列表）。
 TEST_CASE("msg_dedup_result includes entry hint only when images were tagged") {
   g_lang = Lang::zh;
-  auto zh_tagged = msg_dedup_result(2, 4, 0);
+  auto zh_tagged = msg_dedup_result(2, 4, 0, 0);
   CHECK(zh_tagged.find("2") != std::string::npos);
   CHECK(zh_tagged.find("4") != std::string::npos);
   CHECK(zh_tagged.find("g 9") != std::string::npos);
 
-  auto zh_empty = msg_dedup_result(0, 0, 0);
+  auto zh_empty = msg_dedup_result(0, 0, 0, 0);
   CHECK(zh_empty.find("g 9") == std::string::npos);
 
   g_lang = Lang::en;
-  auto en_tagged = msg_dedup_result(2, 4, 0);
+  auto en_tagged = msg_dedup_result(2, 4, 0, 0);
   CHECK(en_tagged.find("g 9") != std::string::npos);
 
-  auto en_empty = msg_dedup_result(0, 0, 0);
+  auto en_empty = msg_dedup_result(0, 0, 0, 0);
   CHECK(en_empty.find("g 9") == std::string::npos);
 
   g_lang = Lang::zh;  // 还原
@@ -89,19 +89,58 @@ TEST_CASE("msg_dedup_result includes entry hint only when images were tagged") {
 // 没有跳过的常见路径不受影响,不多带一句空话。
 TEST_CASE("msg_dedup_result mentions skipped-no-capture-time count only when nonzero") {
   g_lang = Lang::zh;
-  auto zh_skipped = msg_dedup_result(1, 2, 3);
+  auto zh_skipped = msg_dedup_result(1, 2, 3, 0);
   CHECK(zh_skipped.find("3") != std::string::npos);
   CHECK(zh_skipped.find("拍摄时间") != std::string::npos);
 
-  auto zh_none = msg_dedup_result(1, 2, 0);
+  auto zh_none = msg_dedup_result(1, 2, 0, 0);
   CHECK(zh_none.find("拍摄时间") == std::string::npos);
 
   g_lang = Lang::en;
-  auto en_skipped = msg_dedup_result(1, 2, 3);
+  auto en_skipped = msg_dedup_result(1, 2, 3, 0);
   CHECK(en_skipped.find("capture time") != std::string::npos);
 
-  auto en_none = msg_dedup_result(1, 2, 0);
+  auto en_none = msg_dedup_result(1, 2, 0, 0);
   CHECK(en_none.find("capture time") == std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// W2026-07-21 目标二 + `/dedup --ai`：某几组因为 AI 比较失败而退化成"保
+// 留最新的一张"时带一句说明,不开 --ai 的常见路径(恒为 0)不受影响。
+TEST_CASE("msg_dedup_result mentions ai fallback count only when nonzero") {
+  g_lang = Lang::zh;
+  auto zh_fallback = msg_dedup_result(4, 8, 0, 2);
+  CHECK(zh_fallback.find("2 组 AI 比较失败") != std::string::npos);
+
+  auto zh_none = msg_dedup_result(4, 8, 0, 0);
+  CHECK(zh_none.find("AI") == std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_fallback = msg_dedup_result(4, 8, 0, 2);
+  CHECK(en_fallback.find("AI comparison failed") != std::string::npos);
+
+  auto en_none = msg_dedup_result(4, 8, 0, 0);
+  CHECK(en_none.find("AI") == std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// 跳过计数和 AI 退化计数可能同时出现在同一行里,两段提示都不能借用对方
+// 的关键词,否则用户分不清哪个数字说的是哪件事。
+TEST_CASE("msg_dedup_result keeps the skipped and ai-fallback notes distinguishable") {
+  g_lang = Lang::zh;
+  auto zh_both = msg_dedup_result(4, 8, 3, 2);
+  CHECK(zh_both.find("3 张因无拍摄时间") != std::string::npos);
+  CHECK(zh_both.find("2 组 AI 比较失败") != std::string::npos);
+  // AI 退化那句不许再提"拍摄时间",不然一行里出现两次、指代不清。
+  CHECK(zh_both.find("拍摄时间") == zh_both.rfind("拍摄时间"));
+
+  g_lang = Lang::en;
+  auto en_both = msg_dedup_result(4, 8, 3, 2);
+  CHECK(en_both.find("no capture time") != std::string::npos);
+  CHECK(en_both.find("AI comparison failed") != std::string::npos);
+  CHECK(en_both.find("capture time") == en_both.rfind("capture time"));
 
   g_lang = Lang::zh;  // 还原
 }
