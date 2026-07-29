@@ -21,7 +21,7 @@ namespace pzt::cli::menu {
 // 变成 f+f——这个函数本身处理的是"进了菜单之后按的第二个键"，所以这
 // 里判断的是 `c == 'f'`，不是顶层入口键（那是 cmd_open 里 `c == 'f'`
 // 才会调用到这个函数）。
-GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
+FKeyDecision handle_f_key_prompt(pzt::core::TagId reject_tag_id,
                                   std::optional<pzt::core::TagId> duplicate_tag_id,
                                   const std::vector<pzt::core::TagSummary>& tags, int banner_row,
                                   int start_col, int content_cols) {
@@ -30,22 +30,22 @@ GKeyDecision handle_g_key_prompt(pzt::core::TagId reject_tag_id,
   char c = prompt_and_read_key_2line(
       pzt::cli::i18n::filter_menu_options_line(tags, duplicate_tag_id.has_value()),
       pzt::cli::i18n::filter_menu_actions_line(), banner_row, start_col, content_cols);
-  if (c == 'f') return {GKeyAction::ClearFilter, {}, "", ""};
+  if (c == 'f') return {FKeyAction::ClearFilter, {}, "", ""};
   if (c == '0') {
-    return {GKeyAction::ApplyFilter, reject_tag_id, pzt::cli::i18n::reject_tag_label(), ""};
+    return {FKeyAction::ApplyFilter, reject_tag_id, pzt::cli::i18n::reject_tag_label(), ""};
   }
   // F-01：`9:重复` 跟 `0:废片` 对称，只在 duplicate_tag_id 有值时才响应。
   if (c == '9' && duplicate_tag_id) {
-    return {GKeyAction::ApplyFilter, *duplicate_tag_id, pzt::cli::i18n::duplicate_tag_label(), ""};
+    return {FKeyAction::ApplyFilter, *duplicate_tag_id, pzt::cli::i18n::duplicate_tag_label(), ""};
   }
   if (c >= '1' && c <= static_cast<char>('0' + tags.size())) {
     const auto& t = tags[static_cast<std::size_t>(c - '1')];
-    return {GKeyAction::ApplyFilter, t.id, t.name, ""};
+    return {FKeyAction::ApplyFilter, t.id, t.name, ""};
   }
-  if (c == 0x1B) return {GKeyAction::Cancel, {}, "", ""};  // Esc,静默
+  if (c == 0x1B) return {FKeyAction::Cancel, {}, "", ""};  // Esc,静默
   // 不是 Esc,也不对应任何选项——跟 handle_r_key 一致,给一句反馈而不是
   // 完全没反应(真机反馈:直接退回一级菜单,分不清是没按对还是没反应)。
-  return {GKeyAction::Cancel, {}, "", pzt::cli::i18n::recipe_menu_invalid_key()};
+  return {FKeyAction::Cancel, {}, "", pzt::cli::i18n::recipe_menu_invalid_key()};
 }
 
 }  // namespace pzt::cli::menu

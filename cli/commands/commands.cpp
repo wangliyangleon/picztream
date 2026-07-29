@@ -233,8 +233,8 @@ const char* skip_reason_str(pzt::core::SkipReason reason) {
 
 // M4：按路径导出一批图片(不是按标签查——那是 cmd_export 的事)，供
 // agent 的 Deliver Stage 用。默认排除废片/重复(Settings.export_reject/
-// export_dup)，跟交互侧 cmd_export/handle_g_export_flow 同一份规则来
-// 源(见 docs/Fix_It_Night_Review.md F-26)。
+// export_dup)，跟交互侧 cmd_export/handle_export_filtered_flow 同一份
+// 规则来源(见 docs/Fix_It_Night_Review.md F-26)。
 int cmd_export_images(const std::vector<std::string>& args) {
   bool json = false;
   std::vector<std::string> positional;

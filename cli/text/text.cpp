@@ -144,12 +144,13 @@ std::string format_size(std::int64_t bytes) {
 }
 
 // increment 6.6:导出路径展开 `~`/`~/...`。标准子命令的路径参数从 argv 来,
-// shell 早就在我们看到之前展开过 `~`(除非用户自己加引号);但 `g e` 走的
-// 是 read_text_line 直接读键盘字节,完全绕过 shell,不会有人替我们展开——
-// 真机验证发现不展开的话 `~` 会被字面创建成一个真的叫 `~` 的目录,"导出成
-// 功"但成功到了一个用户没想到的地方。两个入口(cmd_export 和
-// handle_g_export_flow)统一走这个函数,行为保持一致。只处理 `~` 和
-// `~/...` 这两种形式,不处理 `~user`——M0 单用户场景不需要。
+// shell 早就在我们看到之前展开过 `~`(除非用户自己加引号);但应用内导出走
+// 的是 read_text_line 直接读键盘字节,完全绕过 shell,不会有人替我们展开
+// ——真机验证发现不展开的话 `~` 会被字面创建成一个真的叫 `~` 的目录,"导
+// 出成功"但成功到了一个用户没想到的地方。命令行入口(cmd_export)和应用内
+// 入口(browse.cpp 的 handle_export_current_flow/handle_export_filtered_flow,
+// 当年是 `g e`)统一走这个函数,行为保持一致。只处理 `~` 和 `~/...` 这两
+// 种形式,不处理 `~user`——M0 单用户场景不需要。
 std::string expand_home_path(const std::string& path) {
   if (path != "~" && path.rfind("~/", 0) != 0) return path;
   const char* home = std::getenv("HOME");

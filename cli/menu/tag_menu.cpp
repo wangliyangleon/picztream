@@ -164,7 +164,7 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // 已有标签的数字悄悄错位。不改 `list_tags` 本身,这里对结果客户端重排序。
 // increment 6.4.5:系统标签("废片")固定占硬编码的 `0`,不参与这个动态序
 // 列,先过滤掉。F-01:动态标签只截断到 8 个(不是 9)——数字 `9` 现在固
-// 定留给"重复"系统标签(见 handle_space_key/handle_g_key_prompt 里
+// 定留给"重复"系统标签(见 handle_space_key/handle_f_key_prompt 里
 // duplicate_tag_id 参数的用法),动态列表不能再占用它。
 std::vector<pzt::core::TagSummary> tags_for_menu(pzt::core::ProjectId project_id) {
   auto tags = pzt::core::list_tags(project_id);

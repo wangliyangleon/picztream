@@ -95,7 +95,7 @@ enum class ExportImagesError {
 
 // cli 层"导出当前 active filter 范围"用的入口(见 core/api.h 的说
 // 明)——跟 export_tag 不同，这批图片不是靠单一 tag_id 查出来的，是调
-// 用方(cmd_open)已经解析好的一批 image_id(g 层筛选 ∘ 控制台二级筛选
+// 用方(cmd_open)已经解析好的一批 image_id(f 层筛选 ∘ 控制台二级筛选
 // 叠加之后的结果)。命名规则跟单张导出一样直接用原文件名，没有"有序
 // 编号"这个概念——这批图片不对应任何一个标签的 position。include_
 // reject/include_dup 的语义跟 export_tag 一样，但"目标本身就是废片/

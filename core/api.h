@@ -225,13 +225,13 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 // 入点，cli 不需要覆盖真实的 raw::decode_full。
 //
 // F-26：include_reject/include_dup 默认 false(排除废片/重复)，调用方
-// (cmd_export、handle_g_export_flow)传入 Settings.export_reject/
-// export_dup，语义见 core/export/export.h 的说明。
+// (cmd_export、cli 应用内的 handle_export_filtered_flow)传入
+// Settings.export_reject/export_dup，语义见 core/export/export.h 的说明。
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
                                                  ExportProgressFn on_progress = nullptr,
                                                  bool include_reject = false, bool include_dup = false);
 
-// 导出 cmd_open 里"当前 active filter 范围"这批图片(g 层筛选 ∘ 控制台
+// 导出 cmd_open 里"当前 active filter 范围"这批图片(f 层筛选 ∘ 控制台
 // 二级筛选叠加之后的结果)，不是按标签查——见 core/export/export.h 的
 // export_images 说明。include_reject/include_dup 的"目标本身就是废
 // 片/重复"例外由调用方(cmd_open)折算好再传进来。

@@ -84,9 +84,11 @@ std::string tag_token(const pzt::core::TagSummary& t) {
   return "#" + name;
 }
 
-// 顶层 `e` 键:直接导出当前正在看的这一张,不需要先建标签。流程照抄
-// filter_menu.cpp 里 handle_g_export_flow 的结构(读路径 -> 校验空 ->
-// expand_home_path -> 调导出 -> 拼状态文案),但进度回调不能用 cmd_export
+// 顶层 `e` 键:直接导出当前正在看的这一张,不需要先建标签。流程沿用当年
+// filter_menu.cpp 里 `g e` 导出那一套结构(读路径 -> 校验空 ->
+// expand_home_path -> 调导出 -> 拼状态文案),那个函数随 `g e` 入口一起退
+// 休了,同样的结构现在由这个函数和下面的 handle_export_filtered_flow 各
+// 持一份,但进度回调不能用 cmd_export
 // 那套 \r 覆写 stdout 的写法——这里在 AltScreen 里跑固定坐标布局,直接写
 // stdout 会破坏画面,得跟 banner 其它内容一样走 move_cursor + pad_to +
 // write_stdout。
@@ -118,10 +120,10 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
   return pzt::cli::i18n::export_current_success(r.output_path, r.created_output_folder);
 }
 
-// 点 2：`e` 二级菜单里的 `f`——导出当前 active filter 范围(g 层 ∘ 二级
+// 点 2：`e` 二级菜单里的 `f`——导出当前 active filter 范围(f 层 ∘ 二级
 // 筛选叠加之后 cmd_open 手上的 images，不是某个具体标签)。include_
 // reject/include_dup 由调用方(cmd_open)算好传进来——"当前筛选本身就
-// 是废片/重复"这个对称例外只有调用方知道(既可能来自 g 层标签、也可
+// 是废片/重复"这个对称例外只有调用方知道(既可能来自 f 层标签、也可
 // 能来自控制台二级筛选criterion)，这个函数不重新判断。
 std::string handle_export_filtered_flow(pzt::core::ProjectId project_id,
                                          const std::vector<pzt::core::ImageRef>& images,
@@ -382,8 +384,8 @@ std::string handle_tasks_command(pzt::core::EvaluationWorker& evaluation_worker)
   return pzt::cli::i18n::msg_ai_tasks_status(status.queued, status.processing);
 }
 
-// F-09：控制台 `/filter <criterion>` 二级筛选——在当前 g 筛选结果之上
-// (没有 g 筛选时就是全项目)再筛一层，不是 g 菜单的第三种选项，可以
+// F-09：控制台 `/filter <criterion>` 二级筛选——在当前 f 筛选结果之上
+// (没有 f 筛选时就是全项目)再筛一层，不是 f 菜单的第三种选项，可以
 // 跟 g 标签筛选同时生效。词汇表(拍板已定):未评估/评估不达标/废片/重
 // 复，不做 `/sort`/`/reject_failed` 这类原方案里被否掉的其它变体。
 enum class ConsoleFilterCriterion { Unevaluated, Fail, Reject, Dup };
@@ -415,8 +417,8 @@ const char* console_filter_criterion_keyword(ConsoleFilterCriterion criterion) {
 }
 
 // `/filter` 真正的筛选计算——只在 cmd_open 收到 Apply 意图之后才调用
-// (跟 g 键"handle_g_key_prompt 只返回意图，cmd_open 自己算"同一个既
-// 有模式)，base 是当前 g 层的结果(cmd_open 的 g_filtered_images)。
+// (跟 f 键"handle_f_key_prompt 只返回意图，cmd_open 自己算"同一个既
+// 有模式)，base 是当前 f 层的结果(cmd_open 的 f_filtered_images)。
 // reject/dup 复用 F-26 的 images_with_tag(一条查询)；unevaluated/fail
 // 逐张 get_image() 判断——已知 N+1，量级跟 handle_ai_eval_command 现
 // 有实现一致，这轮不顺带优化(那是 F-07 的范围)。
@@ -606,11 +608,11 @@ int cmd_open(const std::vector<std::string>& args) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_project_no_images(project.name).c_str());
     return 1;
   }
-  // F-09：g 层筛选结果的影子副本——`images` 本身继续驱动导航/渲染/
-  // prefetch 不变,`g_filtered_images` 只在 g 切换筛选时同步更新,供
+  // F-09：f 层筛选结果的影子副本——`images` 本身继续驱动导航/渲染/
+  // prefetch 不变,`f_filtered_images` 只在 f 切换筛选时同步更新,供
   // `/filter` 在它之上再筛一层、`/filter clear` 时还原用,见下面 `g`
   // 键处理和 `:` 键处理的说明。
-  auto g_filtered_images = images;
+  auto f_filtered_images = images;
 
   // increment 6.4.5:废片系统标签正常应该在 pzt new 时就建好了,这里不是
   // 为了处理迁移——只是同一个幂等、廉价的 find-or-create,顺带兜住"项目
@@ -737,11 +739,11 @@ int cmd_open(const std::vector<std::string>& args) {
     // debug 面板看起来像是在不停后台重复干活。
     bool suppress_latency_log = false;
 
-    // increment 6.4.6:当前是否在 g + 数字切出来的筛选视图里,以及筛选到
+    // increment 6.4.6:当前是否在 f + 数字切出来的筛选视图里,以及筛选到
     // 了哪个标签——跟 current_id 一样是这个函数作用域内的纯局部状态。
     std::optional<pzt::core::TagId> active_filter_tag_id;
     std::string active_filter_tag_name;
-    // F-09：控制台二级筛选是否生效,以及是哪个条件——切 g 筛选(应用或
+    // F-09：控制台二级筛选是否生效,以及是哪个条件——切 f 筛选(应用或
     // 清除)会自动清空这个状态,见 `g` 键处理的说明。
     std::optional<ConsoleFilterCriterion> active_console_filter;
 
@@ -1380,10 +1382,10 @@ int cmd_open(const std::vector<std::string>& args) {
         auto duplicate_tag_id =
             pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
         auto decision =
-            handle_g_key_prompt(reject_tag_id, duplicate_tag_id, tags, banner_row, start_col, content_cols);
+            handle_f_key_prompt(reject_tag_id, duplicate_tag_id, tags, banner_row, start_col, content_cols);
 
-        if (decision.action == GKeyAction::ApplyFilter) {
-          // 真机测试反馈 g + 数字筛选有明显卡顿,查出来是 image_tags 按
+        if (decision.action == FKeyAction::ApplyFilter) {
+          // 真机测试反馈 f + 数字筛选有明显卡顿,查出来是 image_tags 按
           // tag_id 过滤没有索引可用(见 core/db/schema.cpp 的说明,已经
           // 补上索引)——这里打一下查询本身的耗时,debug 面板能直接看到
           // 这一步占了多少,跟后面"切到新图片要重新解码"那部分区分开。
@@ -1407,13 +1409,13 @@ int cmd_open(const std::vector<std::string>& args) {
             current_id = new_current;
             active_filter_tag_id = decision.tag_id;
             active_filter_tag_name = decision.tag_name;
-            // F-09：切到新的 g 筛选,二级筛选跟着自动清空(已跟用户确
-            // 认),g_filtered_images 同步成这次的结果,供 /filter 在它
+            // F-09：切到新的 f 筛选,二级筛选跟着自动清空(已跟用户确
+            // 认),f_filtered_images 同步成这次的结果,供 /filter 在它
             // 之上再筛。
-            g_filtered_images = images;
+            f_filtered_images = images;
             active_console_filter.reset();
           }
-        } else if (decision.action == GKeyAction::ClearFilter) {
+        } else if (decision.action == FKeyAction::ClearFilter) {
           if (active_filter_tag_id) {
             auto full = pzt::core::list_images(*id);
             pzt::core::ImageId new_current = resolve_current_after_switch(full, current_id);
@@ -1421,16 +1423,16 @@ int cmd_open(const std::vector<std::string>& args) {
             current_id = new_current;
             active_filter_tag_id.reset();
             active_filter_tag_name.clear();
-            // F-09：同上,清除 g 筛选也要清空二级筛选、同步 g_filtered_images。
-            g_filtered_images = images;
+            // F-09：同上,清除 f 筛选也要清空二级筛选、同步 f_filtered_images。
+            f_filtered_images = images;
             active_console_filter.reset();
           }
           // 不在筛选中时 f+f 是空操作:不查库、不提示,静默——避免每次误
           // 按 f+f 在未筛选状态下也触发一次不必要的 list_images 查询。
-        } else if (decision.action == GKeyAction::Cancel) {
+        } else if (decision.action == FKeyAction::Cancel) {
           // decision.status 在 Esc 时是空字符串(静默),按了个不认识的
           // 键时带一句"无效按键"提示——跟 r 键的 handle_r_key 保持一致,
-          // 见 handle_g_key_prompt 的说明。
+          // 见 handle_f_key_prompt 的说明。
           status_override = decision.status;
         }
       } else if (c == 'r') {
@@ -1479,7 +1481,7 @@ int cmd_open(const std::vector<std::string>& args) {
           } else if (sub == 'f' && filter_active) {
             // 目标本身就是废片/重复时不排除——跟 /ai_eval、/dedup、
             // pzt export 的对称例外规则一致，只是这里"目标"可能来自
-            // g 层标签，也可能来自控制台二级筛选 criterion。
+            // f 层标签，也可能来自控制台二级筛选 criterion。
             auto duplicate_tag_id =
                 pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
             bool target_is_reject =
@@ -1513,13 +1515,13 @@ int cmd_open(const std::vector<std::string>& args) {
           if (console_result.action == ConsoleCommandResult::FilterAction::Clear) {
             // 没有活跃二级筛选时是静默 no-op,跟 f+f 空筛选同一个约定。
             if (active_console_filter) {
-              current_id = resolve_current_after_switch(g_filtered_images, current_id);
-              images = g_filtered_images;
+              current_id = resolve_current_after_switch(f_filtered_images, current_id);
+              images = f_filtered_images;
               active_console_filter.reset();
             }
           } else if (console_result.action == ConsoleCommandResult::FilterAction::Apply) {
             auto filtered =
-                apply_console_filter(*id, g_filtered_images, reject_tag_id, console_result.criterion);
+                apply_console_filter(*id, f_filtered_images, reject_tag_id, console_result.criterion);
             if (filtered.empty()) {
               status_override = pzt::cli::i18n::msg_console_filter_no_images();  // images/current_id 不变
             } else {

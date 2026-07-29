@@ -259,7 +259,7 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   return Result<ExportResult, ExportTagError>::Ok(std::move(batch.result));
 }
 
-// 二级筛选/g 层筛选导出的目标不是一个单一标签，而是调用方(cmd_open)
+// 二级筛选/f 层筛选导出的目标不是一个单一标签，而是调用方(cmd_open)
 // 手上已经解析好的一批 image_id——"是否要包含废片/重复"这个判断(目
 // 标本身就是废片/重复标签、或者 Settings 里显式打开了 include)已经
 // 由调用方折算成 include_reject/include_dup 两个布尔值，这里不重新

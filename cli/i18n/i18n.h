@@ -141,7 +141,7 @@ std::vector<MenuLine> menu_lines();
 // 二行会一直空着,不好看。
 std::string nav_bar_line1();
 std::string nav_bar_line2();
-// g 层标签筛选/控制台二级筛选各自可能生效，也可能同时生效,统一拼成
+// f 层标签筛选/控制台二级筛选各自可能生效，也可能同时生效,统一拼成
 // "TagName | criterion" 这种不带标签前缀的紧凑写法，都不生效时返回空
 // 串。console_criterion_keyword 是 "unevaluated"/"fail"/"reject"/"dup"
 // 之一(跟解析 `/filter <criterion>` 用的是同一套关键字)，这个函数不

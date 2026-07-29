@@ -789,7 +789,7 @@ std::string nav_bar_line2() {
 
 // 反馈:"筛选: X  二级筛选: Y" 这两段标签+前缀太长，`[N/Total]` 后面经
 // 常被截断看不全。改成不带标签、用 " | " 隔开的紧凑写法(比如
-// "Food | fail")——g 层标签名和二级筛选条件各自可能单独出现，也可能
+// "Food | fail")——f 层标签名和二级筛选条件各自可能单独出现，也可能
 // 同时出现，用同一个函数统一拼，不在 browse.cpp 里各自处理拼接逻辑。
 std::string info_active_filters_label(const std::optional<std::string> &tag_name,
                                        const std::optional<std::string> &console_criterion_keyword) {
