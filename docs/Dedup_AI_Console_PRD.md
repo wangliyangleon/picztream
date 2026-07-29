@@ -1,7 +1,8 @@
 # PZT 产品需求文档：`/dedup` 控制台的 AI 锦标赛入口
 
 > 来源：2026-07-28 真机使用反馈——"控制台里的 dedup 是只能通过时间去重么？没法触发 AI 锦标赛对比？"
-> 状态：待实现。这份 PRD 只锁定产品行为，实现细节（core 签名、回调形状）在 plan 里。
+> 状态：**已实现（2026-07-29）**，自动化验收全绿；下面验收标准里带 `真机` 标注的几条需要有连拍素材的真实项目才能确认，尚未勾。
+> 实现落在三个提交：`6f9e3bd`（删过时确认）、`a1c7c02`（core 闸门 + 进度回调 + 单测）、`667ecb5`（cli 接线 + i18n）。
 
 ## 背景与问题陈述
 
@@ -43,7 +44,9 @@
 * 用户在 `pzt open` 里翻一批连拍，觉得留最新那张选得不好（连拍里最后一张常常是收手时糊掉的那张），按 `:` 输入 `/dedup * --ai`，看到"找到 23 组，将发起 41 次 AI 比较，继续？"，按 `y`，看着进度从 1/23 走到 23/23，跑完 `g 9` 去核对结果
 * 用户手滑打了 `/dedup * --ai` 但其实只想快速跑一遍时间去重，看到确认提示按了个别的键，命令静默取消，`g 9` 确认标签一个都没动
 * 用户跑 `/dedup *`（不带 `--ai`），跟以前完全一样，只是不再被问"87 张照片还没评估"，而且分簇期间能看到进度在走
-* 本地 Ollama 没起来，用户跑 `/dedup * --ai`，每组比较都失败，结果摘要告诉他"23 组 AI 比较失败已按拍摄时间选"——标签仍然正常落库，不是一场白跑
+* 本地 Ollama 没起来，用户跑 `/dedup * --ai`，每组比较都失败，结果摘要告诉他"23 组 AI 比较失败已保留最新的一张"——标签仍然正常落库，不是一场白跑
+
+> 实现期的一处措辞调整：这句原本写的是"已按拍摄时间选"，但"拍摄时间"这四个字已经被同一行里的"N 张因无拍摄时间未参与比对"占用，两段提示可能同时出现，撞词会让人分不清哪个数字说的是哪件事。改成"保留最新的一张"，描述的是同一个 keep_id 规则（`captured_at` 最新），英文侧同理由 `fell back to capture time` 改成 `kept the newest shot`。`i18n_test.cpp` 有一条用例专门盯住这两段不许再借用对方的关键词。
 
 ## 功能需求
 
@@ -76,19 +79,26 @@
 
 ## 验收标准
 
-* [ ] `/dedup *` 不再出现"N 张照片还没评估"的确认，直接开跑
-* [ ] `/dedup *` 分簇期间状态栏能看到进度在走
-* [ ] `/dedup * --ai` 分簇跑完后出现"找到 N 组，将发起 M 次 AI 比较，继续？"，M 等于各簇 (成员数-1) 之和
-* [ ] 确认时按 `y` 继续，状态栏出现"第 k / 共 N 组"并递增到跑完
-* [ ] 确认时按其它键（含 Esc）静默取消，`g 9` 核对**重复标签与执行前完全一致**
-* [ ] `--ai` 选出的 winner 与不带 `--ai` 的 keep_id 在至少一组连拍上给出不同结果（证明 AI 真的参与了决策，不是走了个过场）
-* [ ] provider 配成不可达地址时，每组退化成按时间选，摘要里出现退化簇数，标签仍正常落库
-* [ ] 范围内一组重复都没有时，`--ai` 不弹确认、不发起任何请求，直接出结果
-* [ ] `/dedup #"带空格的标签" --ai` 解析正确
-* [ ] `/dedup * --bogus`、`/dedup * --ai 多余内容` 报明确用法错误，不静默
-* [ ] `/help dedup` 文案含 `--ai`
-* [ ] headless `pzt dedup ... --json`（带与不带 `--ai`）的输出与退出码不变，`cli/tests/headless_smoke.sh` 全绿
-* [ ] curate 相关测试全绿（`cluster_and_choose` 的另一个调用方未受影响）
+* [x] `/dedup *` 不再出现"N 张照片还没评估"的确认，直接开跑（代码路径已删除，`msg_dedup_confirm_unevaluated_*` 不复存在）
+* [ ] `真机` `/dedup *` 分簇期间状态栏能看到进度在走
+* [x] `/dedup * --ai` 分簇跑完后弹确认，M 等于各簇 (成员数-1) 之和（`tournament_test.cpp` 的 `on_ai_gate sees the exact group and comparison counts`：两簇 2+3 成员，断言 M==3 且真实发出的比较次数也是 3）
+* [ ] `真机` 确认时按 `y` 继续，状态栏出现"第 k / 共 N 组"并递增到跑完（回调次数与计数已由 `on_ai_progress fires once per tournament cluster` 覆盖，banner 渲染本身要真机看）
+* [x] 确认时按其它键静默取消，重复标签与执行前完全一致（`on_ai_gate returning false writes absolutely nothing`：预置一个"重复"标签，跑完后它仍在、其余图片一个没被打上，证明是在"先清后打"那段之前就返回了）
+* [ ] `真机` `--ai` 选出的 winner 与不带 `--ai` 的 keep_id 在至少一组连拍上给出不同结果 —— **这条是整个增量唯一无法用自动化替代的验收**：接线若在某处把 `ai_enabled` 丢了，全部单测与 smoke 仍会绿
+* [ ] `真机` provider 配成不可达地址时每组退化，摘要出现退化簇数（退化逻辑本身由 `a failed comparison degrades just that cluster to keep_id` 覆盖，文案由 `msg_dedup_result mentions ai fallback count only when nonzero` 覆盖，端到端要真机看）
+* [x] 范围内一组重复都没有时，`--ai` 不弹确认、不发起任何请求（`on_ai_gate is never consulted when there is nothing to compare`）
+* [x] `/dedup #"带空格的标签" --ai` 解析正确（对着真实的 `take_scope_token` 跑过 11 组输入的解析探针）
+* [x] `/dedup * --bogus`、`/dedup * --ai 多余内容` 报明确用法错误，不静默（同上；`--AI` 大小写不同也归入用法错误）
+* [x] `/help dedup` 文案含 `--ai`（zh/en 双语均已更新）
+* [x] headless `pzt dedup ... --json` 输出与退出码不变，`headless_smoke.sh` 63 条全绿且脚本未被改动
+* [x] curate 相关测试全绿（`cluster_and_choose` 新增参数全部默认 `nullptr`，`curate.cpp` 零改动）
+
+## 实现记录（收口时补）
+
+* **回调类型定义放在 `core/dedup/dedup.h` 而不是 `tournament.h`**：`tournament.h` 已经 include 了 `dedup.h`（它复用 `find_duplicates` 的分簇算法），而 `dedup::find_and_tag_duplicates` 要在签名里透传这两个类型，反向 include 会成环。定义放低层的 `dedup.h`，`tournament.h` 用 `using AiGateFn = dedup::AiGateFn;` 引进自己的命名空间——一个类型两个名字，语义文档挂在 `tournament.h` 那边（真正实现和调用它的地方）。
+* **闸门的落点决定了"取消 = 零写入"不需要回滚逻辑**：放在本地分簇之后（这时才有精确开销）、`apply_dup_tag` 那段"先清后打"之前（这时数据库还没被碰过）。这是唯一同时满足两个条件的位置。
+* **控制台不再额外读配置**：`handle_dedup_command` 本来就为时间窗/阈值 `load_settings()` 过一次，provider 与 Ollama 连接信息直接取那一份，不调 `resolve_ai_provider()`/`resolve_local_model_config()`（那两个各自会再读一次盘）。"现读不缓存"的语义一样满足。
+* **`/dedup` 的参数解析没有单元测试**：`browse.cpp` 不在 `cli_tests` 的链接范围内（只链 `cli_kitty`/`cli_text`/`cli_i18n`），这次没有为它新建 lib。解析本身只是 `take_scope_token` 之上的三个分支，那个原语有 `text_test.cpp` 覆盖；实现时另外用一个一次性探针对着真实的 `take_scope_token` 跑了 11 组输入确认分支行为，探针没有留在仓库里。
 
 ## 风险与待确认问题
 
