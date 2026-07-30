@@ -29,7 +29,9 @@ from compose.adjustment_parser import (
     classify_style_gate_reply,
     refine_plan_confirmation,
 )
+from compose.llm_client import effective_ollama_model, ollama_base_url
 from compose.plan_composer import compose_plan
+from compose.preflight import check_meta_provider_key, check_ollama
 from orchestrator.driver import Driver
 from pzt_client import PztClient
 from session.consumer import BOT_COMMANDS, SessionConsumer
@@ -60,6 +62,37 @@ _CONFIG_HINTS = {
 }
 
 
+def resolve_meta_provider() -> str:
+    """语言推理 provider,一处读一处校验。main() 与 build_runtime() 都从这里
+    取:(c-2) 的 key 预检要在 main() 里就知道 provider 是谁,而 build_runtime
+    仍然依赖它抛 ValueError(tests/session 里有用例锁着这个行为),所以校验留
+    在这里、翻译成人话留给 main()。"""
+    provider = os.environ.get("PZT_AGENT_META_PROVIDER", "local")
+    if provider not in ("local", "gemini", "claude"):
+        raise ValueError(f"PZT_AGENT_META_PROVIDER 非法：{provider!r}（可选 local/gemini/claude）")
+    return provider
+
+
+def preflight_warnings(provider: str, http_get: Any = None) -> list:
+    """启动前扫一眼环境,返回发现的问题(人话)。**只报告,不抛也不退出**
+    (PRD 决策 2)：常驻会话不该因为一个稍后可能被起来的服务而拒绝拉起,用户
+    完全可能先起 agent 再起 Ollama。
+
+    最后那个兜底的 except 是这条契约的实现:预检本身出任何意外都不许把启动
+    带下水 - 它只是"顺带看一眼",没有任何理由比"agent 能不能起来"更重要。"""
+    try:
+        if provider == "local":
+            finding = check_ollama(ollama_base_url(), effective_ollama_model(), http_get=http_get)
+        else:
+            # 云端 provider 不碰 Ollama:这条路径根本不会用到它,探它只会在
+            # 没装 Ollama 的机器上报一个与本次运行无关的问题。
+            finding = check_meta_provider_key(provider)
+    except Exception as e:  # noqa: BLE001 - 见 docstring
+        _log.debug(f"[preflight] 预检自身出错，已忽略：{e!r}")
+        return []
+    return [finding[1]] if finding else []
+
+
 def config_error_hint(error: TelegramConfigError) -> str:
     """把类型化的凭证配置错误翻成一句指名环境变量的人话。未知 code 回落到
     原始 message,不返回空提示 - 那等于回到"失败不告知原因"这个缺陷本身。"""
@@ -74,9 +107,7 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
     # 语言推理 provider 一处读、一处注入（AG-13）：各 classify/compose 函数
     # 签名层本就有 meta_provider 参数，但 worker 位置调用不传、全吃 local。
     # 这里经 PZT_AGENT_META_PROVIDER 读一次、partial 绑好，worker 零改动。
-    meta_provider = os.environ.get("PZT_AGENT_META_PROVIDER", "local")
-    if meta_provider not in ("local", "gemini", "claude"):
-        raise ValueError(f"PZT_AGENT_META_PROVIDER 非法：{meta_provider!r}（可选 local/gemini/claude）")
+    meta_provider = resolve_meta_provider()
 
     def _bind(fn: Any) -> Any:
         return functools.partial(fn, meta_provider=meta_provider)
@@ -156,9 +187,21 @@ def main() -> None:
     try:
         token = token_from_env()
         chat_id = chat_id_from_env()
+        meta_provider = resolve_meta_provider()
     except TelegramConfigError as e:
         _log.error(config_error_hint(e))
         raise SystemExit(2)
+    except ValueError as e:
+        # PZT_AGENT_META_PROVIDER 非法。跟缺凭证同一种失败(启动前提不对),
+        # 走同一条出口,不再裸抛到 console_script 变成 traceback。
+        _log.error(str(e))
+        raise SystemExit(2)
+
+    # 环境预检只告警,不拦启动(PRD 决策 2)。放在这里是因为再往下就要连真网
+    # 络了,而这几句提示的价值全在"提前":以前用户要把照片传完、意图打完,才
+    # 在编排失败时收到一句"AI 服务好像连不上",还不告诉他该去做什么。
+    for hint in preflight_warnings(meta_provider):
+        _log.warning(hint)
     transport = TelegramTransport(token=token, chat_id=chat_id,
                                    download_dir=state_dir / "telegram-inbox")
     consumer, worker = build_runtime(
