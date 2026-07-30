@@ -40,6 +40,21 @@ using namespace pzt::cli::menu;
 namespace pzt::cli::commands {
 namespace {
 
+// T-10：一次性的会话提示("你的终端可能不显示图片"、"这张渲染失败了")。
+// 跟 status_override 是平行的两套,notice 不置 showing_status、不拼"按任
+// 意键继续"、不吃按键。
+//
+// 不复用 status_override 有两个原因,第二个是硬的:
+// 1. 它会把下一次按键整个吃掉当"消除提示"用(见 showing_status 的注释),而
+//    notice 是"顺带告诉你一声",不该打断选片;
+// 2. 渲染失败不是一次性事件 - 终端不对时它每帧都会复发。每帧置
+//    status_override 会让每次按键都只用于消除提示、然后重画又失败又置上,
+//    用户永远无法导航,那比原来的缺陷更糟。
+struct SessionNotice {
+  std::string banner;  // banner 第二行画一帧,必须塞得进 content_cols(见 i18n)
+  std::string detail;  // 退出、终端还原之后再打一遍的完整版;空则不打
+};
+
 // 切换浏览池子(应用筛选/清除筛选)后 current_id 该是谁:能留在原地就留在
 // 原地(原来那张图还在新池子里),留不住就退回列表头。两个方向复用同一条
 // 规则,不为"进筛选"和"出筛选"分别定义两套语义。
@@ -765,6 +780,26 @@ int cmd_open(const std::vector<std::string>& args) {
     return 1;
   }
 
+  // T-10：本次会话攒下的一次性提示。banner 版一帧一条、显示过就出队;
+  // detail 版在退出、终端还原之后统一再打一遍。
+  //
+  // 为什么退出后还要再打一遍:banner 那一条按第一个键就没了,容易错过;而
+  // 且真正要用户照着做的内容(装 Ghostty、怎么关掉这句)有 160+ 列,塞不进
+  // banner 的 54 列(A.2)。退出后打在真实终端上没有这个限制,能自然折行。
+  // 落点必须在下面那个 block 结束之后 - DebugLogRedirect 活着的时候 stderr
+  // 是被吞掉的(不管开没开 --debug),那正是 err_open_render_failed 这两条文
+  // 案一直没人看得见的原因(B.1)。
+  std::vector<SessionNotice> notices;
+  std::size_t next_notice_to_show = 0;
+
+  // T-10 (a)：终端不在 Kitty 协议白名单里就说一声,但不拦人 - 判定是按环境
+  // 变量猜的(见 kitty::kitty_support_likely),猜错了拦人代价太大。用户确信
+  // 自己的终端没问题时可以用 warn_unsupported_terminal 关掉。
+  if (!mode.kitty_support_likely && settings.warn_unsupported_terminal) {
+    notices.push_back({pzt::cli::i18n::warn_terminal_banner(),
+                        pzt::cli::i18n::warn_terminal_detail()});
+  }
+
   const int kDebugRows = 8;
   std::size_t frame = 0;
   const int kImageId = 1;
@@ -1195,15 +1230,25 @@ int cmd_open(const std::vector<std::string>& args) {
         // 默认提示的视觉留白风格一致,现在这条只是延续同样的拼接方式),
         // 直接拼接"  按任意键继续"会在两者之间留出一大段空白,看起来像隔
         // 得很远——先去掉消息自己的尾随空格,用逗号衔接而不是额外的空格。
-        // 状态提示本身就是单行,第二行照样清空,不跟着凑一行内容。
         std::string trimmed = status_override;
         while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
         write_stdout(pad_to(pzt::cli::i18n::msg_press_any_key_to_continue(trimmed), content_cols));
-        move_cursor(banner_row + 1, start_col + 1);
-        write_stdout(pad_to("", content_cols));
       } else {
         write_stdout(pad_to(pzt::cli::i18n::nav_bar_line1(), content_cols));
-        move_cursor(banner_row + 1, start_col + 1);
+      }
+      // 第二行:有没显示过的 session notice 就先让给它,一帧一条,显示过即
+      // 出队(T-10)。notice 刻意不走 status_override:那条路会置
+      // showing_status,把下一次按键整个吃掉当"消除提示"用,而 notice 是
+      // "顺带告诉你一声",不该打断选片。B.1 的渲染失败提示更要紧 - 那个每
+      // 帧都会复发,走 status_override 会让每次按键都只用于消除提示,用户
+      // 永远无法导航。没有 notice 时:有状态提示则留空(状态提示本身是单
+      // 行),否则回到常驻的导航第二行。
+      move_cursor(banner_row + 1, start_col + 1);
+      if (next_notice_to_show < notices.size()) {
+        write_stdout(pad_to(notices[next_notice_to_show++].banner, content_cols));
+      } else if (showing_status) {
+        write_stdout(pad_to("", content_cols));
+      } else {
         write_stdout(pad_to(pzt::cli::i18n::nav_bar_line2(), content_cols));
       }
       status_override.clear();  // 只显示这一帧,不管接下来按了什么键都恢复正常提示
@@ -1687,6 +1732,16 @@ int cmd_open(const std::vector<std::string>& args) {
     std::fprintf(stderr, "[pzt open] key-to-render summary: n=%zu avg=%.2fms p95=%.2fms max=%.2fms\n",
                  latency_count, latency_sum_ms / static_cast<double>(latency_count),
                  latency_samples[p95_index], latency_max_ms);
+  }
+
+  // T-10：把本次会话攒下的提示再打一遍。这里已经出了上面那个 block,
+  // DebugLogRedirect 析构过了、stderr 换回真实终端,写出去才真的看得见。放
+  // 在退出文案之前:这是用户离开这个界面时最后读到的东西,比延迟汇总更该
+  // 靠近视线落点。
+  for (const auto& notice : notices) {
+    if (!notice.detail.empty()) {
+      std::fprintf(stderr, "%s\n", notice.detail.c_str());
+    }
   }
 
   std::fprintf(stderr, "%s", pzt::cli::i18n::msg_browse_exited().c_str());
