@@ -124,6 +124,12 @@ std::string err_recipe_unknown_subcommand(const std::string& verb);
 std::string err_open_project_not_found();
 std::string err_open_project_no_images(const std::string& name);
 std::string err_open_tmux_passthrough();
+// 终端可能不讲 Kitty 图像协议时的提示(T-10 (a))。不拦人,两条都不带结尾
+// 换行。banner 版必须能塞进 content_cols(80 列终端上只有 54 列,超了会被
+// pad_to 静默截断),所以只说结论;要用户照着做的那部分在 detail 版里,由
+// 退出后打在真实终端上的那一次承载。
+std::string warn_terminal_banner();
+std::string warn_terminal_detail();
 
 // 右侧菜单区(下半 block)逐行显示的顶层按键提示，一行一条,只收会派生二
 // 级菜单的键(' '/'x'/'f'/'e'/'r'，跟按键本身一致)，不派生二级菜单的

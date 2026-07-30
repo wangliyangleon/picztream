@@ -46,6 +46,12 @@ struct Settings {
   // unusable 时打标签，反过来(重新评估后可用了)不会自动摘掉——摘除已
   // 有标签是更容易造成意外的操作，这次不做。
   bool auto_ai_reject = false;
+  // T-10 (a)：终端不在 Kitty 协议白名单里时,`pzt open` 提示一句。判定是按
+  // 环境变量猜的(见 cli/kitty/kitty.h::kitty_support_likely),必然有假阴
+  // 性 - Ghostty 起的 tmux server 换终端 attach 之后信号就是 stale 的。这
+  // 个开关是给那些用户的逃生口,设成 false 就不再提示。默认 true:静默失效
+  // 比一行多余的提示更糟。
+  bool warn_unsupported_terminal = true;
   // nullopt = 配置文件里没写这个字段，cli::i18n::init_lang() 据此继续
   // 往下走系统 LANG 环境变量那一级——不能给一个"zh"之类的默认值，那样
   // 会没法区分"用户明确配置成中文"和"压根没配置"，导致系统 LANG 检测

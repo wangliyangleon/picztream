@@ -3,6 +3,7 @@
 #include <string>
 
 #include "cli/i18n/i18n.h"
+#include "cli/text/text.h"
 
 using namespace pzt::cli::i18n;
 
@@ -61,6 +62,54 @@ TEST_CASE("i18n localized text strings") {
   CHECK(info_tags_label() == "Tags:");
 
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例
+}
+
+// T-10 (a)：终端可能不支持 Kitty 图像协议时的提示,分 banner 版与详情版。
+// 分两条不是啰嗦:banner 那一行的可用宽度是 content_cols = 终端宽 *
+// ui_width_ratio(默认 0.7) - 2,80 列终端上只有 54 列,而 pad_to 会静默
+// truncate。完整文案(含关掉提示的办法)有 160+ 列,塞进 banner 只会被截成
+// 半句,恰好把最该看到的那半句截掉。
+TEST_CASE("terminal warning banner line fits the narrowest common terminal") {
+  // 80 列终端 -> content_cols 54。留两列余量,并且这条断言的意义就是"以后
+  // 谁想给这句话加内容,先过这一关"。
+  const std::size_t kNarrowestBanner = 52;
+
+  g_lang = Lang::zh;
+  std::string zh = warn_terminal_banner();
+  CHECK(pzt::cli::text::display_width(zh) <= kNarrowestBanner);
+  // PRD 决策 4：判定是白名单猜的,措辞必须是"可能",不能断言用户的终端不行。
+  CHECK(zh.find("可能") != std::string::npos);
+  // banner 是单行,自带换行会把边框顶乱。
+  CHECK(zh.find('\n') == std::string::npos);
+
+  g_lang = Lang::en;
+  std::string en = warn_terminal_banner();
+  CHECK(pzt::cli::text::display_width(en) <= kNarrowestBanner);
+  CHECK(en.find("may not") != std::string::npos);
+  CHECK(en.find('\n') == std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+TEST_CASE("terminal warning detail names the fix and points at the off switch") {
+  g_lang = Lang::zh;
+  std::string zh = warn_terminal_detail();
+  // 必须指名修复动作,否则这句话只是"出事了"而不解决任何问题。
+  CHECK(zh.find("Ghostty") != std::string::npos);
+  CHECK(zh.find("可能") != std::string::npos);
+  // 白名单必然有假阴性,逃生口要写在提示里,否则对这些用户就是永久噪音。
+  CHECK(zh.find("warn_unsupported_terminal") != std::string::npos);
+  // 详情版打在真实终端上,换行由调用方补,文案自己不带。
+  CHECK(zh.back() != '\n');
+
+  g_lang = Lang::en;
+  std::string en = warn_terminal_detail();
+  CHECK(en.find("Ghostty") != std::string::npos);
+  CHECK(en.find("may not") != std::string::npos);
+  CHECK(en.find("warn_unsupported_terminal") != std::string::npos);
+  CHECK(en.back() != '\n');
+
+  g_lang = Lang::zh;  // 还原
 }
 
 // F-11：dedup 结果文案在实际标记到重复图片时带上"按 f 9 查看"入口提

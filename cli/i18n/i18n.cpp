@@ -735,6 +735,38 @@ std::string err_open_tmux_passthrough() {
   }
 }
 
+// T-10 (a)：白名单没命中时的提示,分 banner 版与详情版。跟上面那条
+// passthrough 的区别是它不拦人:那条能查到 tmux 的真实设置、确定 passthrough
+// 是关的,这条只是按环境变量猜,猜错了拦人代价太大。措辞相应地是"可能",
+// 不是"不支持"。
+//
+// 为什么分两条:banner 那一行的可用宽度是 content_cols(= 终端宽 *
+// ui_width_ratio - 2),80 列终端上只有 54 列,而 pad_to 超宽会静默 truncate。
+// 完整文案有 160+ 列,塞进 banner 会被截成半句,而且截掉的恰好是最后那句
+// "怎么关掉" - 假阴性用户最需要的那半句。所以 banner 只说结论,详情留给
+// 退出后打在真实终端上的那一次(那里能自然折行,不受 54 列限制)。
+// 两条都不带结尾换行,换行由调用方按自己的场景补。
+std::string warn_terminal_banner() {
+  if (g_lang == Lang::zh) {
+    return "提示: 当前终端可能不支持 Kitty 图像协议";
+  } else {
+    return "Note: terminal may not support Kitty graphics";
+  }
+}
+
+std::string warn_terminal_detail() {
+  if (g_lang == Lang::zh) {
+    return "提示: 当前终端可能不支持 Kitty 图像协议,图片区会是空白的。"
+           "建议改用 Ghostty。如果确定你的终端没问题,把 config.json 的 "
+           "warn_unsupported_terminal 设成 false 可以关掉这句。";
+  } else {
+    return "Note: this terminal may not support the Kitty graphics protocol; "
+           "the image area will stay blank. Ghostty is recommended. If you are "
+           "sure your terminal is fine, set warn_unsupported_terminal to false "
+           "in config.json to silence this.";
+  }
+}
+
 // h/l、j/k、q 不在这里——它们是不会派生二级菜单的一次性动作(导航/退
 // 出),挪到底部导航栏常驻显示(见 nav_bar_text),右侧这个 block 只保留
 // "按下去会打开二级菜单"的那几个键,逻辑上更一致。

@@ -76,6 +76,7 @@ Settings load(const std::string& path) {
   assign_if_present(j, "export_reject", settings.export_reject);
   assign_if_present(j, "export_dup", settings.export_dup);
   assign_if_present(j, "auto_ai_reject", settings.auto_ai_reject);
+  assign_if_present(j, "warn_unsupported_terminal", settings.warn_unsupported_terminal);
   if (j.contains("lang") && j["lang"].is_string()) {
     settings.lang = j["lang"].get<std::string>();
   }
