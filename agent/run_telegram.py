@@ -43,9 +43,27 @@ from stages.style_apply_all import StyleApplyAllStage
 from store.run_store import RunStore
 from log_setup import configure_logging
 from transport.telegram import TelegramTransport
-from transport.telegram_client import chat_id_from_env, token_from_env
+from transport.telegram_client import TelegramConfigError, chat_id_from_env, token_from_env
 
 _log = logging.getLogger("pzt.agent.runner")
+
+# 启动期凭证缺失时给的人话（T-10 (b)）。token_from_env/chat_id_from_env 抛
+# 的本来就是带 code 的 TelegramConfigError，缺的只是调用方把它翻译出来：
+# 以前 main() 裸调用这两个函数，类型化错误直接以 traceback 形式糊在屏幕
+# 上。每条都指名到具体环境变量，两条之间必须可区分 - 缺 chat id 时提 token
+# 会把人指向错误的方向。
+_CONFIG_HINTS = {
+    "missing_token": "缺少环境变量 TELEGRAM_BOT_TOKEN，连不上 Telegram。"
+                     "找 @BotFather 拿到 bot token，export 上再启动。",
+    "missing_chat_id": "缺少环境变量 TELEGRAM_CHAT_ID，不知道该把消息发给谁。"
+                       "填上你自己的 chat id 再启动。",
+}
+
+
+def config_error_hint(error: TelegramConfigError) -> str:
+    """把类型化的凭证配置错误翻成一句指名环境变量的人话。未知 code 回落到
+    原始 message,不返回空提示 - 那等于回到"失败不告知原因"这个缺陷本身。"""
+    return _CONFIG_HINTS.get(error.code, f"Telegram 配置不完整：{error.message}")
 
 
 def build_runtime(state_dir: Path, transport: Any, chat_id: str,
@@ -132,8 +150,15 @@ def main() -> None:
 
     state_dir = Path(args.state_dir) if args.state_dir else Path.home() / ".pzt-agent"
     configure_logging(state_dir)  # 带时间戳、落盘 state_dir/agent.log + console（AG-21）
-    token = token_from_env()
-    chat_id = chat_id_from_env()
+    # 凭证在构造 TelegramTransport 之前查，缺了就地退出：这一步之后就要连
+    # 真网络了，带着半份配置往下走只会在更深的地方以更难读的形式炸。退出码
+    # 2 跟 argparse 的用法错误对齐 - 都是"启动前提不对"，不是运行期故障。
+    try:
+        token = token_from_env()
+        chat_id = chat_id_from_env()
+    except TelegramConfigError as e:
+        _log.error(config_error_hint(e))
+        raise SystemExit(2)
     transport = TelegramTransport(token=token, chat_id=chat_id,
                                    download_dir=state_dir / "telegram-inbox")
     consumer, worker = build_runtime(
