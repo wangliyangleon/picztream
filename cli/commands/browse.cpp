@@ -55,6 +55,13 @@ struct SessionNotice {
   std::string detail;  // 退出、终端还原之后再打一遍的完整版;空则不打
 };
 
+// 有些文案原本是 fprintf 到 stderr 的,自带结尾换行。进 banner 之前必须去
+// 掉:一个裸换行写进那一行会把边框顶乱。文案本身不动(B.1 只改投递路径)。
+std::string without_trailing_newline(std::string s) {
+  while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+  return s;
+}
+
 // 切换浏览池子(应用筛选/清除筛选)后 current_id 该是谁:能留在原地就留在
 // 原地(原来那张图还在新池子里),留不住就退回列表头。两个方向复用同一条
 // 规则,不为"进筛选"和"出筛选"分别定义两套语义。
@@ -791,6 +798,9 @@ int cmd_open(const std::vector<std::string>& args) {
   // 案一直没人看得见的原因(B.1)。
   std::vector<SessionNotice> notices;
   std::size_t next_notice_to_show = 0;
+  // B.1：渲染/解码失败每种一次会话只报一次,见入队处的理由。
+  bool render_failure_reported = false;
+  bool decode_failure_reported = false;
 
   // T-10 (a)：终端不在 Kitty 协议白名单里就说一声,但不拦人 - 判定是按环境
   // 变量猜的(见 kitty::kitty_support_likely),猜错了拦人代价太大。用户确信
@@ -1327,11 +1337,23 @@ int cmd_open(const std::vector<std::string>& args) {
               std::to_string(getpid()) + "_" + std::to_string(frame++));
           auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
               STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
-          if (!rendered.ok()) {
-            std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_render_failed().c_str());
+          if (!rendered.ok() && !render_failure_reported) {
+            // B.1：以前这里是 fprintf 到 stderr,而 DebugLogRedirect 默认把
+            // stderr 整个丢掉,这条文案在默认路径上永远看不见。改走 notice
+            // 通道。
+            //
+            // 一次会话只报一次:渲染失败不是一次性事件,终端不对时每换一张
+            // 图就会再失败一次,不设闸门就是每帧刷屏。而且 notice 是在这一
+            // 帧的 banner 画完之后才入队的(banner 先画、图片后画),所以它显
+            // 示在下一帧;真的是最后一帧才失败的话,退出后那次重打兜底。
+            render_failure_reported = true;
+            std::string text = without_trailing_newline(pzt::cli::i18n::err_open_render_failed());
+            notices.push_back({text, text});
           }
-        } else {
-          std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_decode_failed().c_str());
+        } else if (!decode_failure_reported) {
+          decode_failure_reported = true;
+          std::string text = without_trailing_newline(pzt::cli::i18n::err_open_decode_failed());
+          notices.push_back({text, text});
         }
         last_rendered_id = current_id;
         style_toggled = false;
