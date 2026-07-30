@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "core/decode/decode.h"
 #include "core/result.h"
@@ -41,11 +44,33 @@ std::string base64_encode(const unsigned char* data, std::size_t len);
 // 会话。
 bool parse_allow_passthrough(const std::string& trimmed_output);
 
+// 环境变量的取值函数。抽成参数注入(而不是函数内部直接 getenv)是为了让
+// kitty_support_likely 能在单测里构造任意环境组合,不用 setenv/unsetenv 污
+// 染进程真实环境,跟 parse_allow_passthrough 抽成纯函数是同一个动机。
+// 返回 nullopt 表示该变量未设置。
+using EnvLookupFn = std::function<std::optional<std::string>(std::string_view)>;
+
+// 白名单判定:当前终端是不是"很可能"讲 Kitty 图像协议。
+//
+// 为什么是白名单而不是主动查询:协议本身有 `a=q` 查询,但那要求在 raw 模式
+// 下带超时读 stdin,跟全键盘主循环抢同一个 fd,且与 render_rgba_via_tmpfile
+// 里 `q=2`("终端永远不要回发响应")的约定直接冲突 - 而那条约定是为修一次
+// 真实死循环立的。所以这里只按环境变量猜,判定结果只用来决定"要不要提示
+// 一句",不用来拦人(见 docs/Env_Preflight_PRD.md 决策一)。
+//
+// inside_tmux 显式传入而不是内部再探一次:调用方已经算过,且单测要能独立
+// 构造 tmux 内/外两种情形。tmux 内 TERM/TERM_PROGRAM 只反映 tmux 自己,这
+// 个函数会跳过它们,只认 GHOSTTY_*/KITTY_WINDOW_ID。
+bool kitty_support_likely(const EnvLookupFn& lookup, bool inside_tmux);
+
 // 启动时探测一次的运行环境。独立 Ghostty 窗口(不在 Tmux 内)下
 // passthrough_ok 恒为 true——不需要 passthrough 包装,也就无所谓这个开关。
 struct TerminalMode {
   bool inside_tmux = false;
   bool passthrough_ok = true;
+  // 白名单命中为 true。默认 true(不提示)是刻意的:非交互调用方(pzt render)
+  // 和单测不该因为压根没探测就收到提示,跟 passthrough_ok 默认 true 同理。
+  bool kitty_support_likely = true;
 };
 
 // 实际调用 `tmux show-options` 查询当前 allow-passthrough 设置(仅在

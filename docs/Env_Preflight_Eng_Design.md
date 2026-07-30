@@ -150,7 +150,7 @@ def check_meta_provider_key(provider) -> Optional[Tuple[str, str]]
 
 它不在 PRD 的目标列表里（PRD 的 (b) 只写了 Telegram 凭证）。但决策八已经要碰这段代码，顺手把它接进 C.1 那个既有的 except 分支只是几行。
 
-**建议纳入**，但这是对 PRD 范围的偏离，按仓库规矩不自行决定，等你拍。不纳入的话我在实现时原样留着。
+**已拍板：纳入**（2026-07-30）。在 D 段随决策八一起做：`resolve_meta_provider()` 抽出来之后，非法值改成走 C.1 那条既有的 except 分支，同样是一句人话 + 退出码 2，不再裸抛 `ValueError`。
 
 ## 十一、文件改动清单
 

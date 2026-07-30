@@ -71,7 +71,48 @@ std::string trim(const std::string& s) {
   return s.substr(begin, end - begin + 1);
 }
 
+// 设了但为空一律当成没设:空值不该比未设置更宽松。
+bool env_present(const EnvLookupFn& lookup, std::string_view name) {
+  auto value = lookup(name);
+  return value.has_value() && !value->empty();
+}
+
+bool env_equals(const EnvLookupFn& lookup, std::string_view name, std::string_view expected) {
+  auto value = lookup(name);
+  return value.has_value() && *value == expected;
+}
+
+// TERM 按前缀比:带后缀的 terminfo 变体(xterm-ghostty-256color 之类)仍是
+// 同一个终端。
+bool env_starts_with(const EnvLookupFn& lookup, std::string_view name, std::string_view prefix) {
+  auto value = lookup(name);
+  return value.has_value() && value->rfind(prefix, 0) == 0;
+}
+
 }  // namespace
+
+bool kitty_support_likely(const EnvLookupFn& lookup, bool inside_tmux) {
+  // 这两类由终端自己注入进环境,是 tmux 内唯一活得下来的信号,所以不管在不
+  // 在 tmux 里都先看它们。
+  if (env_present(lookup, "KITTY_WINDOW_ID")) return true;         // kitty 本尊
+  if (env_present(lookup, "GHOSTTY_RESOURCES_DIR")) return true;   // Ghostty shell integration
+  if (env_present(lookup, "GHOSTTY_BIN_DIR")) return true;
+
+  // tmux 内 TERM/TERM_PROGRAM 的值只可能来自 tmux 自己(实测 pane 里分别是
+  // screen-256color 和 tmux,Ghostty 的身份被整个擦掉),看它们只会稳定误
+  // 判,直接跳过。代价是:从 Ghostty 起的 server 后来换终端 attach 时,
+  // GHOSTTY_* 是 stale 的会假阳性 - 但假阳性最坏只是退回"不提示"的现状,
+  // 而看 TERM 会在正常使用下稳定假阴性,两者不对称(见 PRD 风险 1、2)。
+  if (inside_tmux) return false;
+
+  if (env_equals(lookup, "TERM_PROGRAM", "ghostty")) return true;
+  if (env_starts_with(lookup, "TERM", "xterm-ghostty")) return true;
+  if (env_starts_with(lookup, "TERM", "xterm-kitty")) return true;
+  // WezTerm 等"部分支持"的终端刻意不收:本项目从未在它们上面实测过 t=t 与
+  // q=2 的行为,收进来等于承诺一个没验证的环境,比漏判更糟。漏判的代价只是
+  // 一行可以关掉的提示。
+  return false;
+}
 
 namespace {
 
@@ -95,6 +136,13 @@ pzt::core::Result<void, RenderError> send_sequence(int fd, const TerminalMode& m
 TerminalMode detect_terminal_mode() {
   TerminalMode mode;
   mode.inside_tmux = is_inside_tmux();
+  mode.kitty_support_likely = kitty_support_likely(
+      [](std::string_view name) -> std::optional<std::string> {
+        const char* value = std::getenv(std::string(name).c_str());
+        if (value == nullptr) return std::nullopt;
+        return std::string(value);
+      },
+      mode.inside_tmux);
   if (!mode.inside_tmux) return mode;
 
   std::string output;

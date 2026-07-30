@@ -5,7 +5,10 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <fcntl.h>
@@ -15,6 +18,7 @@
 
 using pzt::cli::kitty::base64_encode;
 using pzt::cli::kitty::fit_within;
+using pzt::cli::kitty::kitty_support_likely;
 using pzt::cli::kitty::parse_allow_passthrough;
 using pzt::cli::kitty::RenderError;
 using pzt::cli::kitty::render_rgba_via_tmpfile;
@@ -87,6 +91,89 @@ TEST_CASE("parse_allow_passthrough only accepts the literal 'on'") {
   CHECK(parse_allow_passthrough("off") == false);
   CHECK(parse_allow_passthrough("") == false);
   CHECK(parse_allow_passthrough("On") == false);  // tmux 输出恒为小写,大小写不同即视为异常
+}
+
+namespace {
+// 环境变量替身:一张 name->value 的表,不碰进程真实环境(不 setenv/unsetenv,
+// 测试之间零串扰)。这正是 kitty_support_likely 把 env 做成注入参数的目的。
+pzt::cli::kitty::EnvLookupFn env_with(std::map<std::string, std::string> vars) {
+  return [vars](std::string_view name) -> std::optional<std::string> {
+    auto it = vars.find(std::string(name));
+    if (it == vars.end()) return std::nullopt;
+    return it->second;
+  };
+}
+}  // namespace
+
+TEST_CASE("kitty_support_likely accepts Ghostty outside tmux by TERM_PROGRAM or TERM") {
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "ghostty"},
+                                        {"TERM", "xterm-ghostty"}}),
+                              /*inside_tmux=*/false) == true);
+  // 只有其中一个也够:任一条命中即命中,不做优先级。
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "ghostty"}}), false) == true);
+  CHECK(kitty_support_likely(env_with({{"TERM", "xterm-ghostty"}}), false) == true);
+}
+
+TEST_CASE("kitty_support_likely accepts kitty itself outside tmux") {
+  CHECK(kitty_support_likely(env_with({{"TERM", "xterm-kitty"}}), false) == true);
+  CHECK(kitty_support_likely(env_with({{"KITTY_WINDOW_ID", "1"}}), false) == true);
+}
+
+TEST_CASE("kitty_support_likely matches TERM by prefix, not exact equality") {
+  // terminfo 名字带后缀的变体(xterm-ghostty-256color 之类)仍是同一个终端。
+  CHECK(kitty_support_likely(env_with({{"TERM", "xterm-ghostty-256color"}}), false) == true);
+  CHECK(kitty_support_likely(env_with({{"TERM", "xterm-kitty-direct"}}), false) == true);
+}
+
+TEST_CASE("kitty_support_likely rejects a terminal outside the whitelist") {
+  // iTerm2:write() 会成功、终端把 APC 序列丢掉,正是本增量要救的静默失效场景。
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "iTerm.app"},
+                                        {"TERM", "xterm-256color"}}),
+                              false) == false);
+  // Terminal.app
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "Apple_Terminal"},
+                                        {"TERM", "xterm-256color"}}),
+                              false) == false);
+  // 什么都没有的裸环境(cron/CI/裸 TTY)。
+  CHECK(kitty_support_likely(env_with({}), false) == false);
+}
+
+TEST_CASE("kitty_support_likely treats an empty env var as absent") {
+  // TERM_PROGRAM= (设了但为空)不该被当成命中,否则空值反而比没设更宽松。
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", ""}, {"TERM", ""}}), false) == false);
+  CHECK(kitty_support_likely(env_with({{"GHOSTTY_BIN_DIR", ""}}), true) == false);
+}
+
+TEST_CASE("kitty_support_likely inside tmux relies on GHOSTTY_* only") {
+  // 实测本机 pane 内的真实取值:Ghostty 的身份被 tmux 擦掉了(TERM_PROGRAM
+  // 变成 tmux、TERM 变成 screen-256color),唯一残留的信号是 GHOSTTY_*。
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "tmux"},
+                                        {"TERM", "screen-256color"},
+                                        {"GHOSTTY_BIN_DIR", "/Applications/Ghostty.app/Contents/MacOS"}}),
+                              /*inside_tmux=*/true) == true);
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "tmux"},
+                                        {"GHOSTTY_RESOURCES_DIR", "/Applications/Ghostty.app/..."}}),
+                              true) == true);
+  CHECK(kitty_support_likely(env_with({{"KITTY_WINDOW_ID", "1"}}), true) == true);
+}
+
+TEST_CASE("kitty_support_likely inside tmux ignores TERM and TERM_PROGRAM entirely") {
+  // 这条锁住决策二:tmux 内这两个变量的值只可能来自 tmux 自己,看它们会稳
+  // 定误判。即便 TERM_PROGRAM 恰好是 ghostty(比如用户手动 export 过),没有
+  // GHOSTTY_* 就仍然判不命中 - 依据必须是那条真正残留下来的信号。
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "ghostty"},
+                                        {"TERM", "xterm-ghostty"}}),
+                              /*inside_tmux=*/true) == false);
+  CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "tmux"},
+                                        {"TERM", "screen-256color"}}),
+                              true) == false);
+}
+
+TEST_CASE("TerminalMode defaults to not warning") {
+  // 默认 true(静默)是刻意的:非交互调用方(pzt render)和单测不该因为没探测
+  // 就收到提示。跟 passthrough_ok 默认 true 是同一个语义。
+  TerminalMode mode;
+  CHECK(mode.kitty_support_likely == true);
 }
 
 TEST_CASE("render_rgba_via_tmpfile refuses to send when in tmux without passthrough") {
