@@ -740,30 +740,34 @@ std::string err_open_tmux_passthrough() {
 // 是关的,这条只是按环境变量猜,猜错了拦人代价太大。措辞相应地是"可能",
 // 不是"不支持"。
 //
-// 为什么分两条:banner 那一行的可用宽度是 content_cols(= 终端宽 *
-// ui_width_ratio - 2),80 列终端上只有 54 列,而 pad_to 超宽会静默 truncate。
-// 完整文案有 160+ 列,塞进 banner 会被截成半句,而且截掉的恰好是最后那句
-// "怎么关掉" - 假阴性用户最需要的那半句。所以 banner 只说结论,详情留给
-// 退出后打在真实终端上的那一次(那里能自然折行,不受 54 列限制)。
-// 两条都不带结尾换行,换行由调用方按自己的场景补。
-std::string warn_terminal_banner() {
-  if (g_lang == Lang::zh) {
-    return "提示: 当前终端可能不支持 Kitty 图像协议";
-  } else {
-    return "Note: terminal may not support Kitty graphics";
-  }
-}
-
+// 这条只在进备用屏幕之前打一次,不进 banner。原来还有一个 banner 短版,
+// 2026-07-30 真机验收(Terminal.app)证明那条路送不到人眼前,已删:banner 是
+// 画在图片序列**之前**的,而不认识 Kitty 协议的终端会把紧随其后的 APC 序
+// 列整段当普通文本打出来,几百字节 base64 一换行就把画面顶上去,刚画好的
+// banner 连同边框一起被滚掉。也就是说,恰恰在这条提示最该出现的终端里,
+// banner 是最不可能被看见的地方。
+//
+// 文案里说"乱码或空白"而不是只说"空白":Ghostty 关掉 tmux passthrough 时
+// 是空白,Terminal.app 则是满屏乱码,后者才是真机上实际撞到的样子。
+// 不带结尾换行,换行由调用方补。
 std::string warn_terminal_detail() {
   if (g_lang == Lang::zh) {
-    return "提示: 当前终端可能不支持 Kitty 图像协议,图片区会是空白的。"
+    return "提示: 当前终端可能不支持 Kitty 图像协议,图片区可能是乱码或空白。"
            "建议改用 Ghostty。如果确定你的终端没问题,把 config.json 的 "
            "warn_unsupported_terminal 设成 false 可以关掉这句。";
   } else {
     return "Note: this terminal may not support the Kitty graphics protocol; "
-           "the image area will stay blank. Ghostty is recommended. If you are "
-           "sure your terminal is fine, set warn_unsupported_terminal to false "
-           "in config.json to silence this.";
+           "the image area may show garbage or stay blank. Ghostty is "
+           "recommended. If you are sure your terminal is fine, set "
+           "warn_unsupported_terminal to false in config.json to silence this.";
+  }
+}
+
+std::string msg_press_any_key_or_ctrl_c() {
+  if (g_lang == Lang::zh) {
+    return "按任意键继续,或 Ctrl-C 退出";
+  } else {
+    return "Press any key to continue, or Ctrl-C to quit";
   }
 }
 

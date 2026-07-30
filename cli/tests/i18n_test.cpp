@@ -64,29 +64,26 @@ TEST_CASE("i18n localized text strings") {
   g_lang = Lang::zh;  // 还原成默认值,不泄漏状态给其它测试用例
 }
 
-// T-10 (a)：终端可能不支持 Kitty 图像协议时的提示,分 banner 版与详情版。
-// 分两条不是啰嗦:banner 那一行的可用宽度是 content_cols = 终端宽 *
-// ui_width_ratio(默认 0.7) - 2,80 列终端上只有 54 列,而 pad_to 会静默
-// truncate。完整文案(含关掉提示的办法)有 160+ 列,塞进 banner 只会被截成
-// 半句,恰好把最该看到的那半句截掉。
-TEST_CASE("terminal warning banner line fits the narrowest common terminal") {
-  // 80 列终端 -> content_cols 54。留两列余量,并且这条断言的意义就是"以后
-  // 谁想给这句话加内容,先过这一关"。
+// 走 banner 的文案必须塞得进 content_cols = 终端宽 * ui_width_ratio(默认
+// 0.7) - 2,80 列终端上只有 54 列,而 pad_to 超宽是静默 truncate。终端提示
+// 那条原本也有个 banner 短版,真机验收之后改成进备用屏幕之前打(见
+// warn_terminal_detail 的注释),现在还走 banner 的就是 B.1 这两条。
+TEST_CASE("messages that go through the banner fit the narrowest common terminal") {
+  // 80 列终端 -> content_cols 54。留两列余量,这条断言的意义是"以后谁想给
+  // 这两句加内容,先过这一关"。
   const std::size_t kNarrowestBanner = 52;
+  auto banner_width = [](std::string s) {
+    // 这两条自带结尾换行(原本是 fprintf 用的),browse.cpp 进 banner 前会剥
+    // 掉,这里按剥掉之后的宽度量。
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    return pzt::cli::text::display_width(s);
+  };
 
-  g_lang = Lang::zh;
-  std::string zh = warn_terminal_banner();
-  CHECK(pzt::cli::text::display_width(zh) <= kNarrowestBanner);
-  // PRD 决策 4：判定是白名单猜的,措辞必须是"可能",不能断言用户的终端不行。
-  CHECK(zh.find("可能") != std::string::npos);
-  // banner 是单行,自带换行会把边框顶乱。
-  CHECK(zh.find('\n') == std::string::npos);
-
-  g_lang = Lang::en;
-  std::string en = warn_terminal_banner();
-  CHECK(pzt::cli::text::display_width(en) <= kNarrowestBanner);
-  CHECK(en.find("may not") != std::string::npos);
-  CHECK(en.find('\n') == std::string::npos);
+  for (Lang lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK(banner_width(err_open_render_failed()) <= kNarrowestBanner);
+    CHECK(banner_width(err_open_decode_failed()) <= kNarrowestBanner);
+  }
 
   g_lang = Lang::zh;  // 还原
 }
@@ -99,6 +96,9 @@ TEST_CASE("terminal warning detail names the fix and points at the off switch") 
   CHECK(zh.find("可能") != std::string::npos);
   // 白名单必然有假阴性,逃生口要写在提示里,否则对这些用户就是永久噪音。
   CHECK(zh.find("warn_unsupported_terminal") != std::string::npos);
+  // 2026-07-30 真机验收:Terminal.app 下图片区是满屏乱码,不是空白(它把
+  // APC 序列当普通文本打出来了)。原文案只说"空白",在真机上是错的。
+  CHECK(zh.find("乱码") != std::string::npos);
   // 详情版打在真实终端上,换行由调用方补,文案自己不带。
   CHECK(zh.back() != '\n');
 
@@ -107,6 +107,7 @@ TEST_CASE("terminal warning detail names the fix and points at the off switch") 
   CHECK(en.find("Ghostty") != std::string::npos);
   CHECK(en.find("may not") != std::string::npos);
   CHECK(en.find("warn_unsupported_terminal") != std::string::npos);
+  CHECK(en.find("garbage") != std::string::npos);
   CHECK(en.back() != '\n');
 
   g_lang = Lang::zh;  // 还原

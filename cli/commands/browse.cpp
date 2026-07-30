@@ -802,12 +802,26 @@ int cmd_open(const std::vector<std::string>& args) {
   bool render_failure_reported = false;
   bool decode_failure_reported = false;
 
-  // T-10 (a)：终端不在 Kitty 协议白名单里就说一声,但不拦人 - 判定是按环境
-  // 变量猜的(见 kitty::kitty_support_likely),猜错了拦人代价太大。用户确信
-  // 自己的终端没问题时可以用 warn_unsupported_terminal 关掉。
+  // T-10 (a)：终端不在 Kitty 协议白名单里,进备用屏幕之前先说一声,等一次
+  // 按键再进去。
+  //
+  // 这里等按键是 2026-07-30 真机验收(Terminal.app)之后改的,原来是画进
+  // banner、不拦人。那条路送不到人眼前:banner 画在图片序列之前,而不认识
+  // Kitty 协议的终端会把紧随其后的 APC 序列整段当普通文本打出来,几百字节
+  // base64 一换行就把画面顶上去,banner 连同边框一起被滚掉。恰恰在这条提示
+  // 最该出现的终端里,banner 是最不可能被看见的位置。
+  //
+  // 仍然不阻止进入:按任意键就继续,判定毕竟只是按环境变量猜的。确信自己终
+  // 端没问题的用户把 warn_unsupported_terminal 设成 false,提示和这道等待
+  // 一起消失。Ctrl-C 在这里是干净退出(ISIG 保留,终端还原走 T-9a 那条信号
+  // 路径)。
   if (!mode.kitty_support_likely && settings.warn_unsupported_terminal) {
-    notices.push_back({pzt::cli::i18n::warn_terminal_banner(),
-                        pzt::cli::i18n::warn_terminal_detail()});
+    std::fprintf(stderr, "%s\n\n%s\n", pzt::cli::i18n::warn_terminal_detail().c_str(),
+                 pzt::cli::i18n::msg_press_any_key_or_ctrl_c().c_str());
+    // 只为读这一个键临时切 cbreak;AltScreen 还没构造,这句提示留在主屏幕
+    // 缓冲区里,退出备用屏幕之后用户还能再看到它,不需要另外重打一遍。
+    pzt::cli::term::CbreakMode gate_cbreak;
+    (void)pzt::cli::ui::read_one_byte();
   }
 
   const int kDebugRows = 8;
