@@ -24,6 +24,20 @@ _OLLAMA_BASE_URL = "http://localhost:11434"
 _OLLAMA_MODEL = "gemma4:e2b"
 
 
+def ollama_base_url() -> str:
+    """本地 Ollama 的地址。抽成函数是给 preflight 用的:预检和真实调用必须
+    看同一个地址,各读一份常量迟早会分叉。"""
+    return _OLLAMA_BASE_URL
+
+
+def effective_ollama_model() -> str:
+    """这次真正会发给 Ollama 的模型名。模型名可经 PZT_AGENT_OLLAMA_MODEL 覆
+    盖(AG-13),所以"有效模型名"不等于 _OLLAMA_MODEL 常量 - 预检只看常量的话,
+    用户覆盖过模型名时会报一个他根本没在用的模型。request_json 与 preflight
+    都从这里取。"""
+    return os.environ.get("PZT_AGENT_OLLAMA_MODEL", _OLLAMA_MODEL)
+
+
 class LlmRequestError(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -153,7 +167,7 @@ def request_json(user_prompt: str, schema_instruction: str, provider: str,
         headers = {"content-type": "application/json"}
         request_body = json.dumps({
             # 本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，不必改代码（AG-13）。
-            "model": os.environ.get("PZT_AGENT_OLLAMA_MODEL", _OLLAMA_MODEL),
+            "model": effective_ollama_model(),
             "format": "json",
             "stream": False,
             "messages": [{"role": "user", "content": instruction_text}],
