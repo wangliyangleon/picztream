@@ -44,6 +44,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    StageProgress,
     StageStarted,
 )
 from session.view import STAGE_PROGRESS_MESSAGES, SessionView, view_from_run
@@ -140,6 +141,12 @@ class SessionConsumer:
         self._cancel_confirm_pending: bool = False
         # 进度消息原地编辑的 (message_id, last_text) 槽（AG-16.3）。
         self._collecting_progress: Optional[tuple] = None
+        # 运行期进度（T-8）用的第二个槽 + 上次真的发出去的时刻。两者都在
+        # StageStarted 时清零：每个 stage 一条自己的进度消息，且第一条不
+        # 等节流窗口。都是纯内存态，不落盘 —— DriveJob 期间 run 的所有权
+        # 在 worker 手上，consumer 写不了 run.last_progress_notified_at。
+        self._stage_progress: Optional[tuple] = None
+        self._stage_progress_notified_at: Optional[float] = None
         # 去重追问打字给了数量后，等用户确认才真正执行——纯内存态、不落
         # 盘，跟 _cancel_confirm_pending 同一个先例（真机反馈，见目标三）。
         self._curate_narrow_pending: Optional[dict] = None
@@ -579,6 +586,8 @@ class SessionConsumer:
             self._on_compose_failed(event)
         elif isinstance(event, StageStarted):
             self._on_stage_started(event)
+        elif isinstance(event, StageProgress):
+            self._on_stage_progress(event)
         elif isinstance(event, GateReached):
             self._on_gate_reached(event)
         elif isinstance(event, RunFinished):
@@ -865,9 +874,27 @@ class SessionConsumer:
     def _on_stage_started(self, event: StageStarted) -> None:
         self.view.current_stage = event.stage
         self.view.stage_progress = None
+        # 换一个 stage 就换一条进度消息（AG-16.3 的进度是原地编辑的）：不
+        # 换槽的话 Curate 的进度会去改写 Dedup 那条，用户往回翻看到的历史
+        # 是错的。时间戳一起清零，下一个 stage 的第一条立刻发得出去。
+        self._stage_progress = None
+        self._stage_progress_notified_at = None
         message = STAGE_PROGRESS_MESSAGES.get(event.stage)
         if message:
             self._send(message)
+
+    def _on_stage_progress(self, event: StageProgress) -> None:
+        """T-8：运行期进度。view 每条都刷新（用户主动问"到哪了"要拿到最
+        新的），往 Telegram 发则按 progress_interval_seconds 节流 —— 一个
+        20 张的簇是 19 次比较，每次发一条会被限流。决策二：core/cli 侧不
+        节流，谁播报谁节流。"""
+        self.view.stage_progress = (event.done, event.total)
+        now = self.now_fn()
+        last = self._stage_progress_notified_at
+        if last is not None and now - last < self.progress_interval_seconds:
+            return
+        self._send_progress(self.view.describe(), "_stage_progress")
+        self._stage_progress_notified_at = now
 
     def _on_gate_reached(self, event: GateReached) -> None:
         self.active_drive_job = None

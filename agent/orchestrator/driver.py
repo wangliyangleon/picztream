@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from .stage import Stage, StageContext
+from typing import Callable, Optional
+
+from .stage import Stage, StageContext, _noop_progress
 from .types import (
     GateState,
     Plan,
@@ -21,6 +23,11 @@ class Driver:
     def __init__(self, stages: dict[str, Stage], store) -> None:
         self.stages = stages
         self.store = store
+        # 布防点：worker 在执行 DriveJob 期间挂上、结束时摘掉，跟
+        # PztClient.cancel_event 同一个套路 —— 挂在实例上而不是 advance()
+        # 的参数，stages 内部的 ctx.on_progress 才能零改动吃到上报能力。
+        # Driver 不关心进度送去哪，只负责绑上 stage 名再交给 StageContext。
+        self.progress_sink: Optional[Callable[[str, int, int], None]] = None
 
     def advance(self, run: RunState) -> RunState:
         if run.status in (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED):
@@ -155,6 +162,14 @@ class Driver:
             return spec
         return None
 
+    def _progress_for(self, stage_name: str):
+        """每次 _run_stage 现绑，不在 Driver 上缓存 —— 同一个 sink 服务整
+        条 Plan，缓存住的话第二个 stage 的进度会顶着第一个的名字上报。"""
+        sink = self.progress_sink
+        if sink is None:
+            return _noop_progress
+        return lambda done, total: sink(stage_name, done, total)
+
     def _spec_by_name(self, run: RunState, name: str) -> StageSpec:
         for spec in run.plan.stages:
             if spec.name == name:
@@ -164,7 +179,8 @@ class Driver:
     def _run_stage(self, run: RunState, spec: StageSpec) -> None:
         stage = self.stages[spec.name]
         run.stage_states[spec.name] = StageStatus.RUNNING
-        ctx = StageContext(run_id=run.run_id, project_id=run.project_id, outputs=run.outputs)
+        ctx = StageContext(run_id=run.run_id, project_id=run.project_id, outputs=run.outputs,
+                            on_progress=self._progress_for(spec.name))
         output = stage.run(ctx, spec.params)
         run.outputs[spec.name] = output
 

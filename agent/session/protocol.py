@@ -82,9 +82,19 @@ class StageStarted:
     stage: str
 
 
-# 注意没有 StageProgress 事件：目前所有 stage 都是单次阻塞子进程调用，
-# 没有细粒度进度可报；SessionView.stage_progress 字段留着给以后需要的
-# stage 用，现在恒为 None。
+# T-8：stage 运行到一半的进度。两个来源，事件本身不区分：
+#   - 进程内产生的（StyleApplyAll 是 N 次子进程调用的 Python for 循环，
+#     i/N 在循环里天然就有）；
+#   - 跨进程解析出来的（dedup/curate 的 --ai 在 stderr 上逐行吐进度）。
+# 尽力而为：丢一条不影响正确性，consumer 只拿它刷 SessionView 和播报。
+# 节流在 consumer 侧（决策二），worker 收到多少发多少。
+@dataclass
+class StageProgress:
+    generation: int
+    run_id: str
+    stage: str
+    done: int
+    total: int
 
 
 @dataclass

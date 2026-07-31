@@ -39,6 +39,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    StageProgress,
     StageStarted,
 )
 
@@ -176,6 +177,19 @@ class SessionWorker:
     # -- drive --
 
     def _execute_drive(self, job: DriveJob) -> None:
+        # 进度布防：整个 job 期间挂着，finally 摘掉。范围比 cancel 的
+        # per-stage 布防大，因为进度对每个 stage 都无害（没有子进度的
+        # stage 一次都不会调），而 cancel 只能给可杀的 stage 挂。
+        # 必须在 finally 里摘：留着的话下一个 job 的进度会带着上一代的
+        # generation 混进队列、被 consumer 当过期丢弃，比不报进度更难查。
+        self.driver.progress_sink = lambda stage, done, total: self.events.put(
+            StageProgress(job.generation, job.run_id, stage, done, total))
+        try:
+            self._execute_drive_inner(job)
+        finally:
+            self.driver.progress_sink = None
+
+    def _execute_drive_inner(self, job: DriveJob) -> None:
         run = self.store.load(job.run_id)
         if job.action == "start":
             if run.status != RunStatus.RUNNING:  # consumer 已置好，这里兜底

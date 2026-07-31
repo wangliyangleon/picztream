@@ -7,6 +7,9 @@ step() 驱动，不起真线程。
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
+from dataclasses import field as dc_field
+from typing import List
 
 from compose.adjustment_parser import (
     AdjustmentError,
@@ -28,6 +31,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    StageProgress,
     StageStarted,
 )
 
@@ -561,3 +565,68 @@ def test_export_previews_clears_stale_files_before_reexport(tmp_path):
 
     assert err is None
     assert not stale.exists()  # 旧预览已清，不会把旧滤镜图又发一遍
+
+
+# -- 运行期进度（T-8 G2/G3）--
+
+
+@dataclass
+class _ProgressingStage:
+    """只为验接线存在：真 stage 里只有 StyleApplyAll 有子进度（Python 侧
+    for 循环），而它跑在 Style 闸门之后，用它测要先走两道闸门。换掉 Dedup
+    最短。"""
+    name: str
+    inputs: List[str] = dc_field(default_factory=list)
+    steps: int = 2
+    cost_class: str = "local"
+    criticality: str = "critical"
+
+    def run(self, ctx, params):
+        for i in range(1, self.steps + 1):
+            ctx.on_progress(i, self.steps)
+        return StageOutput(ok=True)
+
+
+def test_drive_emits_stage_progress_events(tmp_path):
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _ProgressingStage(name="Dedup", inputs=["Ingest"], steps=2)
+    env.put_drive(DriveJob(generation=7, action="start", run_id=run.run_id))
+
+    env.step()
+
+    progress = [e for e in env.drain_events() if isinstance(e, StageProgress)]
+    assert [(e.stage, e.done, e.total) for e in progress] == [("Dedup", 1, 2), ("Dedup", 2, 2)]
+    assert all(e.generation == 7 and e.run_id == run.run_id for e in progress)
+
+
+def test_progress_sink_is_detached_after_the_drive_job(tmp_path):
+    # 跟 cancel_event 布防同一个约定：出了这次 job 就摘掉。留着的话下一个
+    # job 的进度会带着上一代的 generation 混进队列，被 consumer 当过期丢
+    # 弃——比不报进度更难查。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _ProgressingStage(name="Dedup", inputs=["Ingest"], steps=1)
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    assert env.driver.progress_sink is None
+
+
+def test_progress_sink_is_detached_even_when_the_stage_raises(tmp_path):
+    # _execute_drive 里任何异常都会被 _step 兜成 JobCrashed，摘除必须在
+    # finally 里，否则一次崩溃会让 sink 永久挂着上一代的 generation。
+    class _Boom(_ProgressingStage):
+        def run(self, ctx, params):
+            raise RuntimeError("boom")
+
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _Boom(name="Dedup", inputs=["Ingest"])
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    assert env.driver.progress_sink is None
+    assert any(isinstance(e, JobCrashed) for e in env.drain_events())
