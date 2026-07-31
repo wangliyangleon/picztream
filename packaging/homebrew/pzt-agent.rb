@@ -9,8 +9,8 @@ class PztAgent < Formula
 
   desc "Telegram half-automated culling/delivery agent for PicZTream"
   homepage "https://github.com/wangliyangleon/picztream"
-  url "https://github.com/wangliyangleon/picztream/archive/refs/tags/v2026.7.24.tar.gz"
-  sha256 "2df68afb8af711bb0ee4dff955bb54dcd27c80de54fe68990804bd5aa65c1496"
+  url "https://github.com/wangliyangleon/picztream/archive/refs/tags/v2026.7.31.tar.gz"
+  sha256 "553c0b3825d8f13a28700787ea1501810fbefdfb5cd5a6fc9045cc56b8d8ca26"
   license "MIT"
   head "https://github.com/wangliyangleon/picztream.git", branch: "main"
 
