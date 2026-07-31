@@ -190,3 +190,52 @@ def test_curate_passthrough_ignores_ai_enabled():
     # 没有比较，AI 开关在这个分支下没有意义——压根不该走到 pzt curate。
     assert call_log[0] == ["/fake/pzt", "images", "proj-1", "--json"]
     assert output.ok is True
+
+
+# -- 降级信号（T-8 G4）--
+
+
+def test_ai_fallback_count_survives_into_the_stage_output():
+    # 此前这个字段在这里蒸发：run() 重建了一个只含 requested/returned/
+    # selected 的新 dict（dedup.py 是 data=result 原样带过，所以没丢）。
+    # 整簇因为 AI 比较失败退化成"按拍摄时间选最新"时，用户拿到的话术和
+    # AI 真跑通时完全一样。
+    call_log = []
+    client = _make_client({"curate": '{"requested": 2, "returned": 2, '
+                                      '"selected": ["a.jpg", "b.jpg"], "ai_fallback_count": 3}',
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": 2, "apply_tag": "精选", "ai_enabled": True, "provider": "local"})
+
+    assert output.data["ai_fallback_count"] == 3
+
+
+def test_missing_ai_fallback_count_defaults_to_zero():
+    # PRD 风险三：不带 --ai 时 pzt curate 的 JSON 里这个 key 根本不出现
+    # （不是"出现但恒为 0"，是 W2026-07-21 目标二刻意定的），直接下标会
+    # KeyError 把整个 stage 打成失败。
+    call_log = []
+    client = _make_client({"curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg"]}',
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": 2, "apply_tag": "精选"})
+
+    assert output.ok is True
+    assert output.data["ai_fallback_count"] == 0
+
+
+def test_passthrough_reports_no_fallback():
+    # count=None 走 passthrough，根本不调 pzt curate，没有退化可言。
+    call_log = []
+    client = _make_client({"images": json.dumps({"images": [{"path": "a.jpg", "tags": []}]}),
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选"})
+
+    assert output.data["ai_fallback_count"] == 0

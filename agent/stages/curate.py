@@ -25,6 +25,10 @@ class CurateStage:
         apply_tag = params.get("apply_tag", "精选")
         exclude = params.get("exclude", [])
 
+        # T-8：整簇因为 AI 比较失败退化成"按拍摄时间选最新"的簇数。不带出
+        # 去的话，退化时用户拿到的话术跟 AI 真跑通时完全一样。passthrough
+        # 分支根本不调 pzt curate，没有退化可言，保持 0。
+        ai_fallback_count = 0
         try:
             if count is None:
                 # passthrough：Curate 被跳过聚类，直接把去重后的候选原样
@@ -50,6 +54,10 @@ class CurateStage:
                 # 之后必须重新收口标签状态：不能指望 --apply-tag 自己做对。
                 final_selection = [p for p in result["selected"] if p not in exclude][:count]
                 requested = count
+                # .get 不是下标：不带 --ai 时这个 key 根本不出现（不是
+                # "出现但恒为 0"，见 W2026-07-21 目标二），下标会 KeyError
+                # 把整个 stage 打成失败。
+                ai_fallback_count = result.get("ai_fallback_count", 0)
 
             self.client.call("tag", "clear", ctx.project_id, apply_tag)
             for path in final_selection:
@@ -61,4 +69,5 @@ class CurateStage:
             "requested": requested,
             "returned": len(final_selection),
             "selected": final_selection,
+            "ai_fallback_count": ai_fallback_count,
         })
