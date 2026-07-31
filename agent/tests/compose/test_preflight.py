@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from compose.llm_client import LlmRequestError, effective_ollama_model
+from compose.llm_client import LlmRequestError, effective_ollama_model, ollama_base_url
 from compose.preflight import check_meta_provider_key, check_ollama
 
 BASE = "http://localhost:11434"
@@ -115,3 +115,13 @@ def test_effective_ollama_model_honours_the_env_override(monkeypatch):
 
     monkeypatch.delenv("PZT_AGENT_OLLAMA_MODEL", raising=False)
     assert effective_ollama_model() == "gemma4:e2b"
+
+
+def test_ollama_base_url_honours_the_env_override(monkeypatch):
+    # 同上:预检探的地址必须跟真实调用发的地址一致,否则会出现"预检说连不
+    # 上、实际调用好好的"(或反过来)这种最难查的错。
+    monkeypatch.setenv("PZT_AGENT_OLLAMA_BASE_URL", "http://box.local:11500")
+    assert ollama_base_url() == "http://box.local:11500"
+
+    monkeypatch.delenv("PZT_AGENT_OLLAMA_BASE_URL", raising=False)
+    assert ollama_base_url() == "http://localhost:11434"

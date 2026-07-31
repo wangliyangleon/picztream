@@ -54,7 +54,13 @@ tmux new -s pzt 'set -a; source ~/.pzt-agent.env; set +a; pzt-agent'
 | `TELEGRAM_BOT_TOKEN` | 是 | @BotFather 给的 token |
 | `TELEGRAM_CHAT_ID` | 是 | 只接受这个 chat 的消息(单用户自托管) |
 | `PZT_AGENT_META_PROVIDER` | 否 | 语言推理 provider:`local`(默认)/`gemini`/`claude` |
+| `PZT_AGENT_OLLAMA_BASE_URL` | 否 | Ollama 地址,默认 `http://localhost:11434`。跑在别的机器/端口上时设它 |
+| `PZT_AGENT_OLLAMA_MODEL` | 否 | 本地模型名,默认 `gemma4:e2b` |
 | `PZT_BIN` | 否 | 指定 `pzt` 二进制;brew 装了就在 PATH 上,一般无需设 |
+
+启动时会做一次环境预检:`local` provider 下探一次 Ollama(服务连不上、或模型没
+`pull`,各给一句对应的提示),云端 provider 下检查对应的 API key 有没有设。**预检
+只告警、不阻止启动** - 先起 agent 再起 Ollama 是正常用法。
 
 ## 命令行参数
 

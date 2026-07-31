@@ -119,6 +119,30 @@ def test_local_model_defaults_and_env_override(monkeypatch):
     assert captured["body"]["model"] == "qwen3:4b"
 
 
+def test_local_base_url_defaults_and_env_override(monkeypatch):
+    # 跟模型名同一个套路:Ollama 不在本机默认端口时(跑在另一台机器上、或改
+    # 过端口)不该只能改代码。真实调用与启动预检必须看同一个地址,所以这里
+    # 断的是 request_json 真的把请求发到了覆盖后的地址,不只是 getter 变了。
+    captured = {}
+
+    def fake_http_post(url, headers, body):
+        captured["url"] = url
+        return 200, json.dumps({"message": {"content": "{}"}})
+
+    monkeypatch.delenv("PZT_AGENT_OLLAMA_BASE_URL", raising=False)
+    request_json("x", "s", "local", http_post=fake_http_post)
+    assert captured["url"] == "http://localhost:11434/api/chat"
+
+    monkeypatch.setenv("PZT_AGENT_OLLAMA_BASE_URL", "http://box.local:11500")
+    request_json("x", "s", "local", http_post=fake_http_post)
+    assert captured["url"] == "http://box.local:11500/api/chat"
+
+    # 末尾斜杠不该拼出 //api/chat。
+    monkeypatch.setenv("PZT_AGENT_OLLAMA_BASE_URL", "http://box.local:11500/")
+    request_json("x", "s", "local", http_post=fake_http_post)
+    assert captured["url"] == "http://box.local:11500/api/chat"
+
+
 def test_local_malformed_response_shape_raises_parse_error():
     def fake_http_post(url, headers, body):
         return 200, json.dumps({"unexpected": "shape"})

@@ -25,9 +25,14 @@ _OLLAMA_MODEL = "gemma4:e2b"
 
 
 def ollama_base_url() -> str:
-    """本地 Ollama 的地址。抽成函数是给 preflight 用的:预检和真实调用必须
-    看同一个地址,各读一份常量迟早会分叉。"""
-    return _OLLAMA_BASE_URL
+    """这次真正会连的 Ollama 地址,可经 PZT_AGENT_OLLAMA_BASE_URL 覆盖(跟模
+    型名的 PZT_AGENT_OLLAMA_MODEL 同一个套路):Ollama 跑在另一台机器上、或
+    改过端口时,不该只能改代码。
+
+    真实调用与启动预检都从这里取。两边各读一份的话,会出现"预检说连不上、
+    实际调用好好的"(或反过来)这种最难查的错。末尾斜杠在这里剥掉,免得调用
+    方拼出 `//api/chat`。"""
+    return os.environ.get("PZT_AGENT_OLLAMA_BASE_URL", _OLLAMA_BASE_URL).rstrip("/")
 
 
 def effective_ollama_model() -> str:
@@ -163,7 +168,7 @@ def request_json(user_prompt: str, schema_instruction: str, provider: str,
         headers = {"content-type": "application/json"}
         request_body = json.dumps({"contents": [{"parts": [{"text": instruction_text}]}]})
     elif provider == "local":
-        url = f"{_OLLAMA_BASE_URL}/api/chat"
+        url = f"{ollama_base_url()}/api/chat"
         headers = {"content-type": "application/json"}
         request_body = json.dumps({
             # 本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，不必改代码（AG-13）。
