@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from orchestrator.stage import StageContext
 from orchestrator.types import StageOutput
 from pzt_client import PztClient, PztCommandError
+from stages.progress import forwarding
 
 
 @dataclass
@@ -46,9 +47,13 @@ class CurateStage:
                     "--count", str(count + len(exclude)),
                     "--apply-tag", apply_tag,
                 ]
-                if params.get("ai_enabled", False):
+                ai_enabled = params.get("ai_enabled", False)
+                if ai_enabled:
                     args += ["--ai", "--provider", params.get("provider", "local")]
-                result = self.client.call(*args)
+                # T-8：只给这一次调用挂进度 sink。下面的 tag clear / N 次
+                # tag apply 是毫秒级、没有进度可言，不该顶着 sink 跑。
+                with forwarding(self.client, ctx, ai_enabled):
+                    result = self.client.call(*args)
                 # pzt curate --apply-tag 无条件给拿到的每一张候选打标(包括
                 # 多要的 len(exclude) 张、以及要被换掉的那几张)，过滤裁剪
                 # 之后必须重新收口标签状态：不能指望 --apply-tag 自己做对。
