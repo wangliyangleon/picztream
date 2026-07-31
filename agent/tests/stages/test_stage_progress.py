@@ -38,7 +38,7 @@ class _ProgressingClient:
 
 def _ctx(seen):
     ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
-    ctx.on_progress = lambda done, total: seen.append((done, total))
+    ctx.on_progress = lambda done, total, kind: seen.append((done, total, kind))
     return ctx
 
 
@@ -51,7 +51,7 @@ def test_dedup_without_ai_forwards_the_clustering_phase():
 
     DedupStage(client=client).run(_ctx(seen), {"ai_enabled": False})
 
-    assert seen == [(1, 4), (4, 4)]
+    assert seen == [(1, 4, "groups"), (4, 4, "groups")]
 
 
 def test_dedup_with_ai_forwards_the_comparison_phase():
@@ -61,7 +61,7 @@ def test_dedup_with_ai_forwards_the_comparison_phase():
 
     DedupStage(client=client).run(_ctx(seen), {"ai_enabled": True, "provider": "local"})
 
-    assert seen == [(1, 9), (5, 9)]
+    assert seen == [(1, 9, "comparisons"), (5, 9, "comparisons")]
 
 
 def test_curate_forwards_progress_the_same_way():
@@ -71,7 +71,7 @@ def test_curate_forwards_progress_the_same_way():
     CurateStage(client=client).run(_ctx(seen), {"count": 2, "apply_tag": "精选",
                                                  "ai_enabled": True, "provider": "local"})
 
-    assert seen == [(1, 9), (5, 9)]
+    assert seen == [(1, 9, "comparisons"), (5, 9, "comparisons")]
 
 
 def test_sink_is_detached_after_the_call():

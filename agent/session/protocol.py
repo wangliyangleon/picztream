@@ -96,6 +96,9 @@ class StageProgress:
     stage: str
     done: int
     total: int
+    # 数的是什么（orchestrator.stage.PROGRESS_*）。跟着数字一起传，展示层
+    # 才不用猜单位，见那边的说明。
+    kind: str
 
 
 @dataclass

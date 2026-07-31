@@ -27,7 +27,7 @@ class Driver:
         # PztClient.cancel_event 同一个套路 —— 挂在实例上而不是 advance()
         # 的参数，stages 内部的 ctx.on_progress 才能零改动吃到上报能力。
         # Driver 不关心进度送去哪，只负责绑上 stage 名再交给 StageContext。
-        self.progress_sink: Optional[Callable[[str, int, int], None]] = None
+        self.progress_sink: Optional[Callable[[str, int, int, str], None]] = None
 
     def advance(self, run: RunState) -> RunState:
         if run.status in (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED):
@@ -168,7 +168,7 @@ class Driver:
         sink = self.progress_sink
         if sink is None:
             return _noop_progress
-        return lambda done, total: sink(stage_name, done, total)
+        return lambda done, total, kind: sink(stage_name, done, total, kind)
 
     def _spec_by_name(self, run: RunState, name: str) -> StageSpec:
         for spec in run.plan.stages:

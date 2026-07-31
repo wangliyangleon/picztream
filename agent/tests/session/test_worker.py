@@ -586,7 +586,7 @@ class _ProgressingStage:
 
     def run(self, ctx, params):
         for i in range(1, self.steps + 1):
-            ctx.on_progress(i, self.steps)
+            ctx.on_progress(i, self.steps, "groups")
         return StageOutput(ok=True)
 
 
@@ -599,7 +599,8 @@ def test_drive_emits_stage_progress_events(tmp_path):
     env.step()
 
     progress = [e for e in env.drain_events() if isinstance(e, StageProgress)]
-    assert [(e.stage, e.done, e.total) for e in progress] == [("Dedup", 1, 2), ("Dedup", 2, 2)]
+    assert [(e.stage, e.done, e.total, e.kind) for e in progress] == [("Dedup", 1, 2, "groups"),
+                                                                       ("Dedup", 2, 2, "groups")]
     assert all(e.generation == 7 and e.run_id == run.run_id for e in progress)
 
 

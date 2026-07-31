@@ -901,7 +901,7 @@ class SessionConsumer:
         新的），往 Telegram 发则按 progress_interval_seconds 节流 —— 一个
         20 张的簇是 19 次比较，每次发一条会被限流。决策二：core/cli 侧不
         节流，谁播报谁节流。"""
-        self.view.stage_progress = (event.done, event.total)
+        self.view.stage_progress = (event.done, event.total, event.kind)
         now = self.now_fn()
         last = self._stage_progress_notified_at
         if last is not None and now - last < self.progress_interval_seconds:

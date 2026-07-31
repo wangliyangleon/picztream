@@ -27,7 +27,7 @@ class ProgressingStage:
 
     def run(self, ctx: StageContext, params: dict[str, Any]) -> StageOutput:
         for i in range(1, self.steps + 1):
-            ctx.on_progress(i, self.steps)
+            ctx.on_progress(i, self.steps, "photos")
         return StageOutput(ok=True)
 
 
@@ -45,12 +45,13 @@ def test_progress_sink_receives_stage_name_and_counts(tmp_path):
     stage = ProgressingStage(name="StyleApplyAll", steps=3)
     plan = Plan(stages=[StageSpec(name="StyleApplyAll")])
     driver = Driver(stages={"StyleApplyAll": stage}, store=RunStore(tmp_path))
-    seen: List[Tuple[str, int, int]] = []
-    driver.progress_sink = lambda name, done, total: seen.append((name, done, total))
+    seen: List[Tuple[str, int, int, str]] = []
+    driver.progress_sink = lambda name, done, total, kind: seen.append((name, done, total, kind))
 
     driver.advance(make_run(plan))
 
-    assert seen == [("StyleApplyAll", 1, 3), ("StyleApplyAll", 2, 3), ("StyleApplyAll", 3, 3)]
+    assert seen == [("StyleApplyAll", 1, 3, "photos"), ("StyleApplyAll", 2, 3, "photos"),
+                    ("StyleApplyAll", 3, 3, "photos")]
 
 
 def test_stage_can_report_progress_with_no_sink_attached(tmp_path):
@@ -73,11 +74,11 @@ def test_sink_is_rebound_per_stage(tmp_path):
     second = ProgressingStage(name="Curate", steps=1)
     plan = Plan(stages=[StageSpec(name="Dedup"), StageSpec(name="Curate")])
     driver = Driver(stages={"Dedup": first, "Curate": second}, store=RunStore(tmp_path))
-    seen: List[Tuple[str, int, int]] = []
-    driver.progress_sink = lambda name, done, total: seen.append((name, done, total))
+    seen: List[Tuple[str, int, int, str]] = []
+    driver.progress_sink = lambda name, done, total, kind: seen.append((name, done, total, kind))
 
     run = make_run(plan)
     driver.advance(run)
     driver.advance(run)
 
-    assert [name for name, _, _ in seen] == ["Dedup", "Curate"]
+    assert [row[0] for row in seen] == ["Dedup", "Curate"]

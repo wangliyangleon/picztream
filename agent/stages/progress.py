@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import contextlib
 
+from orchestrator.stage import PROGRESS_COMPARISONS, PROGRESS_GROUPS
+
 
 @contextlib.contextmanager
 def forwarding(client, ctx, ai_enabled: bool):
@@ -26,11 +28,12 @@ def forwarding(client, ctx, ai_enabled: bool):
     AI 时压根没有比较阶段。代价是开 AI 且批量很大时分簇那一段仍然静默 ——
     接受，它比改造前的整段静默短得多，且 stderr 上两个 phase 都在。
     """
-    wanted = "compare" if ai_enabled else "cluster"
+    wanted, kind = (("compare", PROGRESS_COMPARISONS) if ai_enabled
+                    else ("cluster", PROGRESS_GROUPS))
 
     def sink(phase: str, done: int, total: int) -> None:
         if phase == wanted:
-            ctx.on_progress(done, total)
+            ctx.on_progress(done, total, kind)
 
     client.progress_sink = sink
     try:

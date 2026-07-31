@@ -111,11 +111,25 @@ core 的回调每次都触发，cli 每次都往 stderr 写一行（本地管道
 
 连带收益：`--progress-interval-seconds` 的语义从"只管收图"自然扩成"所有周期性播报"，正好把 `agent/README.md` 那句不实描述改成真的（G6）。
 
-### 决策三：`view.stage_progress` 保持 `(done, total)` 二元组，两级进度压成一级展示
+### 决策三：~~`view.stage_progress` 保持 `(done, total)` 二元组，两级进度压成一级展示~~（**真机验收推翻，见下**）
 
-`SessionView.stage_progress` 的类型（`Optional[Tuple[int, int]]`）不变，`view.py:74-75` 那句"已完成 X/Y 张"的措辞形态也不变。AI 阶段的两级进度（组 + 比较）在到达 view 之前压成一级：**用比较次数**，因为那正是 `AiGateFn` 报给用户看的那把尺子（`dedup.h:52-58` 的注释已经论证过：只报组号时单个大簇会一动不动挂几分钟）。
+原文：`SessionView.stage_progress` 的类型（`Optional[Tuple[int, int]]`）不变，`view.py:74-75` 那句"已完成 X/Y 张"的措辞形态也不变。AI 阶段的两级进度（组 + 比较）在到达 view 之前压成一级：**用比较次数**，因为那正是 `AiGateFn` 报给用户看的那把尺子。不引入新的 view 字段、不引入平行枚举 - `view.py:9` 已经写明"平行枚举只会漂移"。
 
-不引入新的 view 字段、不引入平行枚举 - `view.py:9` 已经写明"平行枚举只会漂移"。
+**推翻的理由**：把 phase 压掉之后，展示层只剩一个写死的单位"张"，而各阶段数的根本不是同一种东西 - 本地分簇数**候选簇**、AI 阶段数**比较次数**、`StyleApplyAll` 才数**照片**。真机验收拿到的原话是"正在筛选，已完成 1/1 张"，用户要选的是 3 张，那个 1/1 其实是 1 个候选簇 - **单位和主语双错**，而且错得像 bug 而不像进度。
+
+"不引入平行枚举"那条依据也用错了地方：`view.py:9` 说的是不要再造一个跟 `(status, current_stage, stage_progress)` 重复的步骤枚举，而"这个数字数的是什么"根本没有任何现存字段表达，不是重复，是缺失。
+
+**修正后**：进度三元组 `(done, total, kind)`，`kind` 取 `orchestrator.stage.PROGRESS_{PHOTOS,GROUPS,COMPARISONS}`，从 stage 一路传到 view。传的是语义 key 不是"组"/"张"这种词 - prose 全部留在 `view.py` 的 `_PROGRESS_PHRASINGS`，`orchestrator` 与 `stages` 层不碰对话文本。
+
+整句由 `kind` 决定，不是在 stage 的通用句子后面拼一个尾巴：数的东西不同，前半句也该不同。
+
+| kind | 文案 |
+|---|---|
+| `groups` | 正在处理需要比较筛选的照片组，已完成 1/1组 |
+| `comparisons` | 正在两两比较、挑出更好的那张，已完成 12/51次 |
+| `photos` | 正在套滤镜，已完成 18/30张 |
+
+"AI 阶段用比较次数当尺子"这半条决策仍然成立，被推翻的只是"压掉 phase"。
 
 ### 决策四：`StyleApplyAll` 的进度不经 stderr，纯 agent 侧产出
 

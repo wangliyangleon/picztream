@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-from orchestrator.stage import StageContext
+from orchestrator.stage import PROGRESS_PHOTOS, StageContext
 from orchestrator.types import StageOutput
 from pzt_client import PztClient, PztCommandError
 
@@ -45,7 +45,7 @@ class StyleApplyAllStage:
             # 失败的也推进：单张失败是软失败（criticality="optional"），计
             # 数卡住不动的话用户看到的是"卡死"而不是"跳过了一张"。
             done += 1
-            ctx.on_progress(done, total)
+            ctx.on_progress(done, total, PROGRESS_PHOTOS)
 
         if remaining and len(skipped) == len(remaining):
             return StageOutput(

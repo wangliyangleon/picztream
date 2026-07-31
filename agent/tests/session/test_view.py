@@ -134,13 +134,36 @@ def test_describe_awaiting_gate_curate_says_dedup_done_not_selected_count(tmp_pa
 def test_describe_running_with_progress_mentions_counts(tmp_path):
     view = SessionView(incoming_root=tmp_path / "incoming", run_id="tg-r1",
                        status=RunStatus.RUNNING, current_stage="Curate",
-                       stage_progress=(34, 120))
+                       stage_progress=(34, 120, "comparisons"))
 
     text = view.describe()
 
-    assert "正在筛选" in text
-    assert "34/120" in text
+    assert "34/120次" in text
     assert "取消" not in text  # 不再提示取消（真机反馈）
+
+
+def test_describe_running_picks_the_wording_by_what_is_being_counted(tmp_path):
+    # 真机验收踩到的：Curate 的本地分簇阶段报"正在筛选，已完成 1/1 张"，
+    # 用户明明要选 3 张。那个 1/1 是候选簇不是照片，单位和主语双错。整句
+    # 由"数的是什么"决定，不由 stage 决定 —— 同一个 Curate 两个阶段数的
+    # 东西就不一样。
+    def describe(kind):
+        return SessionView(incoming_root=tmp_path / "incoming", run_id="tg-r1",
+                           status=RunStatus.RUNNING, current_stage="Curate",
+                           stage_progress=(1, 1, kind)).describe()
+
+    assert describe("groups") == "正在处理需要比较筛选的照片组，已完成 1/1组"
+    assert describe("comparisons") == "正在两两比较、挑出更好的那张，已完成 1/1次"
+    assert describe("photos") == "正在套滤镜，已完成 1/1张"
+
+
+def test_describe_running_falls_back_to_the_stage_wording_for_an_unknown_kind(tmp_path):
+    # 未知 kind 不该炸也不该说错话，退回 stage 的通用句子。
+    view = SessionView(incoming_root=tmp_path / "incoming", run_id="tg-r1",
+                       status=RunStatus.RUNNING, current_stage="Dedup",
+                       stage_progress=(2, 5, "something-new"))
+
+    assert view.describe() == "正在执行去重，已完成 2/5张"
 
 
 def test_describe_running_without_progress_still_names_stage(tmp_path):

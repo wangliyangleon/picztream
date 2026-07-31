@@ -91,7 +91,7 @@ def test_total_apply_failure_of_remaining_photos_reports_stage_failure():
 
 def _ctx_with_progress(selected, chosen_recipe, preview_photo, seen):
     ctx = _ctx(selected, chosen_recipe, preview_photo)
-    ctx.on_progress = lambda done, total: seen.append((done, total))
+    ctx.on_progress = lambda done, total, kind: seen.append((done, total, kind))
     return ctx
 
 
@@ -103,7 +103,7 @@ def test_reports_progress_over_all_selected_photos():
 
     stage.run(_ctx_with_progress(["a.jpg", "b.jpg", "c.jpg"], "Havana 1959", "a.jpg", seen), {})
 
-    assert seen == [(2, 3), (3, 3)]
+    assert seen == [(2, 3, "photos"), (3, 3, "photos")]
 
 
 def test_progress_counts_from_zero_when_there_is_no_preview_photo():
@@ -112,7 +112,7 @@ def test_progress_counts_from_zero_when_there_is_no_preview_photo():
 
     stage.run(_ctx_with_progress(["a.jpg", "b.jpg"], "Havana 1959", None, seen), {})
 
-    assert seen == [(1, 2), (2, 2)]
+    assert seen == [(1, 2, "photos"), (2, 2, "photos")]
 
 
 def test_failed_photos_still_advance_the_counter():
@@ -123,7 +123,7 @@ def test_failed_photos_still_advance_the_counter():
 
     output = stage.run(_ctx_with_progress(["a.jpg", "b.jpg", "c.jpg"], "Havana 1959", "a.jpg", seen), {})
 
-    assert seen == [(2, 3), (3, 3)]
+    assert seen == [(2, 3, "photos"), (3, 3, "photos")]
     assert len(output.skipped) == 1
 
 

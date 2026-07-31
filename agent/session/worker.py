@@ -192,18 +192,19 @@ class SessionWorker:
         # 必须在 finally 里摘：留着的话下一个 job 的进度会带着上一代的
         # generation 混进队列、被 consumer 当过期丢弃，比不报进度更难查。
         self._last_progress = None
-        self.driver.progress_sink = lambda stage, done, total: self._on_stage_progress(job, stage,
-                                                                                        done, total)
+        self.driver.progress_sink = lambda stage, done, total, kind: self._on_stage_progress(
+            job, stage, done, total, kind)
         try:
             self._execute_drive_inner(job)
         finally:
             self.driver.progress_sink = None
             self._last_progress = None
 
-    def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int) -> None:
+    def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int,
+                            kind: str) -> None:
         # 记一份最近进度：取消收尾时要靠它说清"已经落地了多少"（决策五）。
         self._last_progress = (stage, done, total)
-        self.events.put(StageProgress(job.generation, job.run_id, stage, done, total))
+        self.events.put(StageProgress(job.generation, job.run_id, stage, done, total, kind))
 
     @contextlib.contextmanager
     def _armed(self, stage_name: Optional[str], job: DriveJob):

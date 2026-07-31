@@ -26,11 +26,13 @@ def _running_env(tmp_path, interval: float = 60.0):
 def test_stage_progress_fills_the_view_and_gets_broadcast(tmp_path):
     env, job = _running_env(tmp_path)
 
-    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 3, 10))
+    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 3, 10, "groups"))
     env.consumer.step()
 
-    assert env.consumer.view.stage_progress == (3, 10)
-    assert "3/10" in env.transport.texts()[-1]
+    assert env.consumer.view.stage_progress == (3, 10, "groups")
+    # 单位跟着数字走：这里数的是候选簇，不是照片张数（真机验收踩到的原话
+    # 是"已完成 1/1 张"，用户明明要选 3 张）。
+    assert "3/10组" in env.transport.texts()[-1]
 
 
 def test_first_progress_of_a_stage_is_sent_immediately(tmp_path):
@@ -38,10 +40,10 @@ def test_first_progress_of_a_stage_is_sent_immediately(tmp_path):
     # 回来了一遍（只是短一点）。第一条必须立刻出去。
     env, job = _running_env(tmp_path, interval=600.0)
 
-    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 1, 20))
+    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 1, 20, "comparisons"))
     env.consumer.step()
 
-    assert "1/20" in env.transport.texts()[-1]
+    assert "1/20次" in env.transport.texts()[-1]
 
 
 def test_progress_between_intervals_updates_the_view_but_does_not_send(tmp_path):
@@ -49,26 +51,26 @@ def test_progress_between_intervals_updates_the_view_but_does_not_send(tmp_path)
     # 较，每次发一条会被 Telegram 限流。
     env, job = _running_env(tmp_path, interval=60.0)
     gen = env.consumer.generation
-    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 20))
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 20, "comparisons"))
     env.consumer.step()
     before = len(env.transport.sent_texts) + len(env.transport.sent_edits)
 
     env.clock.advance(5)
-    env.put_event(StageProgress(gen, job.run_id, "Curate", 2, 20))
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 2, 20, "comparisons"))
     env.consumer.step()
 
-    assert env.consumer.view.stage_progress == (2, 20)  # view 始终是最新的
+    assert env.consumer.view.stage_progress == (2, 20, "comparisons")  # view 始终是最新的
     assert len(env.transport.sent_texts) + len(env.transport.sent_edits) == before
 
 
 def test_progress_sends_again_after_the_interval_elapses(tmp_path):
     env, job = _running_env(tmp_path, interval=60.0)
     gen = env.consumer.generation
-    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 20))
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 20, "comparisons"))
     env.consumer.step()
 
     env.clock.advance(61)
-    env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 20))
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 20, "comparisons"))
     env.consumer.step()
 
     assert "9/20" in (env.transport.texts() + [t for _, t in env.transport.sent_edits])[-1]
@@ -80,13 +82,13 @@ def test_each_stage_starts_a_fresh_progress_message(tmp_path):
     # 史是错的。
     env, job = _running_env(tmp_path)
     gen = env.consumer.generation
-    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 5))
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 5, "groups"))
     env.consumer.step()
     edits_before = len(env.transport.sent_edits)
 
     env.put_event(StageStarted(gen, job.run_id, "Deliver"))
     env.consumer.step()
-    env.put_event(StageProgress(gen, job.run_id, "Deliver", 1, 5))
+    env.put_event(StageProgress(gen, job.run_id, "Deliver", 1, 5, "photos"))
     env.consumer.step()
 
     assert len(env.transport.sent_edits) == edits_before  # 新消息，不是编辑旧的
@@ -96,7 +98,7 @@ def test_stale_generation_progress_is_dropped(tmp_path):
     env, job = _running_env(tmp_path)
     sent_before = len(env.transport.sent_texts)
 
-    env.put_event(StageProgress(env.consumer.generation - 1, job.run_id, "Curate", 3, 10))
+    env.put_event(StageProgress(env.consumer.generation - 1, job.run_id, "Curate", 3, 10, "groups"))
     env.consumer.step()
 
     assert env.consumer.view.stage_progress is None
@@ -134,7 +136,7 @@ def test_reset_session_clears_the_stage_progress_slot(tmp_path):
     # 条进度会去编辑上一批那条已经作废的消息。_collecting_progress 一直
     # 是这么做的，运行期这两个是 B.1a 漏掉的。
     env, job = _running_env(tmp_path)
-    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 1, 5))
+    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 1, 5, "groups"))
     env.consumer.step()
     assert env.consumer._stage_progress is not None
 

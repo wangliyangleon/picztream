@@ -27,6 +27,16 @@ STAGE_PROGRESS_MESSAGES = {
     "Deliver": "正在交付...",
 }
 
+# 进度的整句措辞，按"数的是什么"分（orchestrator.stage.PROGRESS_*），不按
+# stage 分：同一个 Curate，本地分簇阶段数的是候选簇、AI 阶段数的是比较次
+# 数，共用一句话必然有一边说错。prose 全部落在这里，orchestrator 与
+# stages 只传语义 key。
+_PROGRESS_PHRASINGS = {
+    "groups": ("正在处理需要比较筛选的照片组", "组"),
+    "comparisons": ("正在两两比较、挑出更好的那张", "次"),
+    "photos": ("正在套滤镜", "张"),
+}
+
 
 @dataclass
 class SessionView:
@@ -35,7 +45,7 @@ class SessionView:
     project_id: Optional[str] = None
     status: Optional[RunStatus] = None
     current_stage: Optional[str] = None            # StageStarted 事件更新
-    stage_progress: Optional[Tuple[int, int]] = None  # (done, total)
+    stage_progress: Optional[Tuple[int, int, str]] = None  # (done, total, kind)
     gate_stage: Optional[str] = None               # GateReached 事件更新
     plan_summary: Optional[dict] = None            # count/apply_tag/ai_enabled
     selected_count: Optional[int] = None           # GateReached payload / 重建时从 outputs 抄
@@ -70,10 +80,15 @@ class SessionView:
             return f"已经选好了 {self.selected_count or 0} 张，等你回复"
         if self.status == RunStatus.RUNNING:
             base = STAGE_PROGRESS_MESSAGES.get(self.current_stage or "", "正在处理...")
-            progress = ""
-            if self.stage_progress is not None:
-                progress = f"，已完成 {self.stage_progress[0]}/{self.stage_progress[1]} 张"
-            return f"{base.rstrip('.')}{progress}"
+            if self.stage_progress is None:
+                return base.rstrip(".")
+            done, total, kind = self.stage_progress
+            # 有进度时整句都由 kind 决定，不拼在 stage 的通用句子后面：数
+            # 的东西不同，前半句也该不同。"正在筛选，已完成 1/1 张"是真机
+            # 验收踩到的原话 —— 用户要选 3 张，那个 1/1 其实是 1 个候选簇，
+            # 单位和主语双错。
+            phrase, unit = _PROGRESS_PHRASINGS.get(kind, (base.rstrip("."), "张"))
+            return f"{phrase}，已完成 {done}/{total}{unit}"
         return "没什么可说的"
 
 
