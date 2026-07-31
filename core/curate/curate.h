@@ -54,7 +54,7 @@ struct CurateResult {
 // tournament::ChooseSummary 早就产出了这两个字段，而 curate.cpp 里那句
 // `if (summary.clusters.empty())` 会把它们连同"什么都没做"的语义一起丢
 // 掉，跟"候选池本来就是空的"折叠成同一个返回值。今天不可达只是因为这
-// 两个钩子都没传。见 docs/Headless_Observability_PRD.md 决策七及其附注。
+// 两个钩子都没传。见 docs/history/Headless_Observability_PRD.md 决策七及其附注。
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold,

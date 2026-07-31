@@ -1,8 +1,11 @@
 # PZT 工程设计：headless 长运行的进度通道
 
-- **对应 PRD**：`docs/Headless_Observability_PRD.md`（提案 T-8）
+- **对应 PRD**：`Headless_Observability_PRD.md`（同目录）（提案 T-8）
 - **日期**：2026-07-31
 - **范围**：只覆盖 PRD"待 Eng Design 解决的问题"里那三条。B（进程内进度）、C（降级信号）、D（取消补全）三段不需要设计决策，已按 PRD 直接实现并收口。
+- **状态**：**已收口归档（2026-07-31）**。三条决策的落地形态与本文一致，真机验收未推翻其中任何一条（被推翻的是 PRD 决策三，见那边的归档说明）。
+
+> **归档补记（实现期发现，已并入正文）**：决策三里"排水必须无条件"那条从"审慎"升级成了"必需" - `core/dedup/dedup.cpp:272` 每一对比较都往 stderr 打一行，量级足以填满 64KB 管道。另外 D 段实现时发现"改 `KILLABLE_STAGES` 元组"是不够的：`Style` 与 `StyleApplyAll` 分别经 `rerun_style` / `resolve_gate` 直接进 driver，绕开 `_drive_to_stop` 的循环布防，为此把布防抽成 `_armed()` 上下文管理器统一四条路径，顺带收编了 `rerun_curate` 那份手写的 arm/try/finally。
 
 ---
 
@@ -40,7 +43,9 @@ finally:
 
 ### 一个 run 里只转发一个 phase
 
-`view.stage_progress` 是 `(done, total)` 二元组，没有 phase。两个 phase 都往上送的话，用户会看到"已完成 17/17 张"紧接着变成"已完成 1/51 张" - 分母和分子同时跳，读起来像进度条倒退（PRD 风险二要求避免）。
+两个 phase 都往上送的话，用户会看到"已完成 17/17"紧接着变成"已完成 1/51" - 分母和分子同时跳，读起来像进度条倒退（PRD 风险二要求避免）。
+
+> **归档订正**：本节原文的依据是"`view.stage_progress` 是 `(done, total)` 二元组，没有 phase"。真机验收之后它变成了 `(done, total, kind)` 三元组（PRD 决策三被推翻）。**本节的规则本身不变** - 三元组带的是"数的是什么"（单位），不是"当前在哪个阶段"，仍然一个 run 只转发一个 phase，理由与下面写的一致。
 
 规则：**`ai_enabled` 时只转发 `compare`，否则只转发 `cluster`。** 依据是"哪个阶段是分钟级的"：开 AI 时耗时几乎全在比较上（每次一个受 60s 超时约束的视觉推理），分簇相对是一瞬；不开 AI 时压根没有比较阶段。
 

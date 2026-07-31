@@ -75,7 +75,7 @@ def _parse_progress(line: str) -> Optional[Tuple[str, int, int]]:
     情况而不是异常。为自己的格式假设过期而报错，等于把自己的 bug 报成用
     户的错 —— 跟启动预检"模型清单解析不出来就闭嘴"同一条原则。
 
-    schema 见 docs/Headless_Observability_Eng_Design.md 决策一。"""
+    schema 见 docs/history/Headless_Observability_Eng_Design.md 决策一。"""
     line = line.strip()
     if not line.startswith("{"):
         return None

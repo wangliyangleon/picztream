@@ -81,8 +81,8 @@ int emit_json_error(const char* code, const std::string& message) {
 // T-8：运行期进度的带外通道。stdout 的原子性一个字节不变(跑完才写，且只
 // 写一个对象)，进度走 stderr、一行一个 JSON 对象——调用方 json.loads
 // (stdout) 那句话不能容忍多出任何一行，而 stderr 上本来就跑着 emit_json_
-// error 的对象，是既成的结构化通道。见 docs/Headless_Observability_Eng_
-// Design.md 决策一。
+// error 的对象，是既成的结构化通道。见 docs/history/Headless_
+// Observability_Eng_Design.md 决策一。
 //
 // 外层包一个 "progress" key 而不是平铺 phase/done/total：读取方要能一眼
 // 跟错误对象分辨开，靠"有没有 progress 这个 key"比靠"有没有 error"更稳

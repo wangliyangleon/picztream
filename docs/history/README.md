@@ -43,6 +43,7 @@
 
 - `Dedup_AI_Console_PRD.md` - 控制台 `/dedup <范围> --ai`（2026-07-29 收口）。W2026-07-21 的 AI 锦标赛此前只有 agent 层通过 headless `pzt dedup --ai` 接得上，交互控制台没有入口；这一刀补上开关、开跑前的开销闸门（报精确的组数/比较次数，取消则零写入）与分组/比较两段进度反馈，并删掉随那轮改造一起失效的"未评估"确认。文档篇幅小、没有独立 Eng Design，实现记录与偏离说明直接写在 PRD 里
 - `Env_Preflight_PRD.md` / `Env_Preflight_Eng_Design.md` - 环境前提不满足时告知原因（2026-07-30 收口，提案 T-10）。三个必须满足的运行前提（Kitty 协议终端、Telegram 凭证、Ollama 可达）不满足时都会失败，但没有一处告知原因；最恶劣的是非 Kitty 终端下渲染是"静默成功"的（`write()` 返回值等于长度、`RenderError` 不涵盖这种情况），产品核心卖点表现为一个只是不显示照片的完整界面。这一刀补上终端白名单探测 + 提示、Telegram 凭证的人话错误、Ollama/API key 的启动期预检（仅告警不拦启动），顺带救活两条被 `DebugLogRedirect` 吞掉、永远没人看得见的死文案。**真机验收推翻了 PRD 的"提示不阻塞"与 Eng Design 的"提示画进 banner"**，返工记录与方法论教训写在两份文档顶部的归档说明里
+- `Headless_Observability_PRD.md` / `Headless_Observability_Eng_Design.md` - headless 长运行的进度、降级信号与取消（2026-07-31 收口，提案 T-8）。`--ai` 把一次 headless 调用推到分钟级之后，坐在终端前的人那一侧已经连收四刀（T-9a/T-9b/T-14/T-10），Telegram 那一侧一次都没收过：确认方案后一句"正在筛选..."然后分钟级沉默，期间不知道跑到哪、不知道能不能停、结束后分不出结果是 AI 真跑通的还是超时退化的。这一刀补上三条：**进度走 stderr 的带外通道**（stdout 的原子性一字节不变，SPEC §3.2 的契约表述相应改写）、`ai_fallback_count` 不再在 Curate 路径上蒸发并进入用户话术、`Style`/`StyleApplyAll` 补进可取消集合（带部分完成回执）。**真机验收推翻了 PRD 决策三"把 phase 压掉"**，返工两轮，教训写在 PRD 顶部的归档说明里。Eng Design 只覆盖三个有真设计风险的问题（stderr schema、curate 签名、流式读不踩管道死锁），其余按 PRD 直接实现
 - `Dedup_Cancel_PRD.md` - `/dedup` 跑到一半按 Ctrl-C 取消（2026-07-29 收口）。上一条把进度补到每一次比较之后，紧跟着的诉求就是"看着它走、然后不等了"——而当时唯一能按的 Ctrl-C 会杀掉整个 `pzt open`。这一刀让取消只作用于这一次去重：下一次比较边界生效（不打断正在飞的请求）、按下立刻回显"正在取消…"、零写入。**明确推翻了 `Dedup_AI_Console_PRD.md` 的非目标"不做中途可中断"**，推翻依据写在 PRD 的"与既有文档的冲突"一节。同样没有独立 Eng Design，实现记录与超范围改动写在 PRD 里
 
 ## 跨里程碑活文档（归档时的状态快照）
