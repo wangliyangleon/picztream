@@ -78,6 +78,27 @@ int emit_json_error(const char* code, const std::string& message) {
   return 1;
 }
 
+// T-8：运行期进度的带外通道。stdout 的原子性一个字节不变(跑完才写，且只
+// 写一个对象)，进度走 stderr、一行一个 JSON 对象——调用方 json.loads
+// (stdout) 那句话不能容忍多出任何一行，而 stderr 上本来就跑着 emit_json_
+// error 的对象，是既成的结构化通道。见 docs/Headless_Observability_Eng_
+// Design.md 决策一。
+//
+// 外层包一个 "progress" key 而不是平铺 phase/done/total：读取方要能一眼
+// 跟错误对象分辨开，靠"有没有 progress 这个 key"比靠"有没有 error"更稳
+// (将来 stderr 上再多一种带外消息时判据不用改)。
+//
+// phase 是必需的，因为分母中途会换尺子：cluster 数的是候选簇，compare
+// 数的是比较次数，两者不同源，不带 phase 就分不清"进度推进了"和"换阶段
+// 了"。stderr 上两个 phase 都写，agent 侧只用哪个是它自己的取舍。
+//
+// 不节流：本地管道写一行的成本可忽略，节流是下游的事(谁播报谁节流)。
+// stderr 无缓冲，一次 fprintf 写完整行，保证行原子。
+void emit_json_progress(const char* phase, int done, int total) {
+  nlohmann::json j = {{"progress", {{"phase", phase}, {"done", done}, {"total", total}}}};
+  std::fprintf(stderr, "%s\n", j.dump().c_str());
+}
+
 // resolve_project 的 headless 版本：找不到项目时走 JSON 错误，不是
 // i18n 人读文案。
 std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& project_name) {
@@ -197,10 +218,18 @@ int cmd_dedup(const std::vector<std::string>& args) {
 
   auto settings = pzt::core::load_settings();
   pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
-  auto result = pzt::core::find_and_tag_duplicates(*project_id, resolved.ids,
-                                                     settings.dedup_time_window_seconds,
-                                                     settings.dedup_hash_threshold, /*on_progress=*/nullptr,
-                                                     ai_enabled, provider, local_config);
+  // 两个进度回调都无条件传：on_ai_progress 只在 ai_enabled 时才会被 core
+  // 调到(见 cluster_and_choose_impl)，不需要在这里判。on_ai_gate 仍然是
+  // nullptr——headless 不问闸门，要不要花这笔开销由 agent 侧的对话闸门
+  // 决定，不是 CLI 的事。
+  auto result = pzt::core::find_and_tag_duplicates(
+      *project_id, resolved.ids, settings.dedup_time_window_seconds,
+      settings.dedup_hash_threshold,
+      [](int done, int total) { emit_json_progress("cluster", done, total); },
+      ai_enabled, provider, local_config, /*on_ai_gate=*/nullptr,
+      [](const pzt::core::dedup::AiProgress& p) {
+        emit_json_progress("compare", p.comparison_done, p.comparison_total);
+      });
   if (!result.ok()) {
     return emit_json_error("dedup_failed", "dedup failed");
   }

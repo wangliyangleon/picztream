@@ -94,6 +94,10 @@ reader-stderr ──┘   （stderr 每读到一行就立刻回调 progress_sink
 
 **排水必须无条件**：即使调用方没挂 `progress_sink`，stderr 的 reader 也照读不误（只是不回调），否则进度行会把管道填满、把子进程卡死。这是本次改造最容易写错的地方，要有针对性回归测试 - **构造一个 stderr 输出量远超管道缓冲区（macOS 上 64KB）的假子进程，断言它能正常跑完而不是超时**。
 
+**这个风险不是假设的**（A.1 实测发现）。`core/dedup/dedup.cpp:272` 对候选簇内**每一对**比较都无条件往 stderr 打一行明细（F-08 调参用），量级是 Σ C(簇大小, 2)：一个 20 张的簇就是 190 行、约 13KB，几十个中等簇就能越过 64KB 管道缓冲区。也就是说 dedup 这条路径今天就在大量写 stderr，只是 `communicate` 一直在替我们排水，所以从没暴露过。
+
+顺带订正一处失准的注释：`dedup.cpp:266-271` 称"默认路径下 stderr 整个被重定向到 /dev/null"，那只对 `pzt open` 的 TUI 路径成立（`DebugLogRedirect`）。headless 路径没有这层重定向，这些行直接进 agent 的管道。本增量不动这些调试行（它们确实有用），但读取方必须把非 JSON 行当正常情况忽略，不能当异常。
+
 **`_real_runner` 那条分支不动**（`cancel_event is None`）：走它的都是不需要进度的短命令，`subprocess.run` 内部本来就用 `communicate`，没有死锁风险。
 
 ### 解析规则：尽力而为
