@@ -197,11 +197,14 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
 // 式传入。
 using CurateResult = curate::CurateResult;
 // ai_enabled/ai_provider/local_config(W2026-07-21 目标二新增)透传给
-// core::curate::curate，默认值保证现有调用点零改动。
+// core::curate::curate，默认值保证现有调用点零改动。on_progress/
+// on_ai_progress(T-8)同理，语义与"为什么只补这两个"见 core/curate/curate.h。
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
                             int time_window_seconds, int hash_threshold, bool ai_enabled = false,
                             Provider ai_provider = Provider::Local,
-                            const LocalModelConfig& local_config = LocalModelConfig{});
+                            const LocalModelConfig& local_config = LocalModelConfig{},
+                            dedup::DedupProgressFn on_progress = nullptr,
+                            dedup::AiProgressFn on_ai_progress = nullptr);
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见

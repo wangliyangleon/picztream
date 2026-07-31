@@ -5,6 +5,7 @@
 
 #include "core/ai/ai.h"
 #include "core/db/database.h"
+#include "core/dedup/dedup.h"  // DedupProgressFn / AiProgressFn(两者都定义在这里)
 #include "core/project/project.h"
 #include "core/tagging/tagging.h"
 
@@ -40,10 +41,26 @@ struct CurateResult {
 // winner 集合里随机挑(不做种子化，接受不可复现)。两种模式下候选簇数不
 // 足 count 时都返回全部 winner，见 core::tournament::cluster_and_choose
 // 的说明。
+// on_progress/on_ai_progress（T-8）：原样转给 cluster_and_choose，语义见
+// core::dedup::DedupProgressFn 与 core::tournament::AiProgressFn。默认
+// nullptr，现有调用点零改动，跟 W2026-07-21 给 dedup 加参数时同一个约
+// 定。on_ai_progress 无条件传即可——core 只在 ai_enabled 时才会调它。
+//
+// 刻意不补的还有四项（on_ai_gate、on_cancel、返回结构的 ai_declined/
+// cancelled），它们在 dedup 那边有、这边没有。判据是有没有消费者，不是
+// 对不对称：`/curate` 按 SPEC §3.2 不进 TUI（没人问闸门），agent 的取消
+// 是进程级 terminate。**将来谁给 curate 加上 on_ai_gate 或 on_cancel，
+// 必须在同一个改动里给 CurateResult 补上 ai_declined/cancelled**——
+// tournament::ChooseSummary 早就产出了这两个字段，而 curate.cpp 里那句
+// `if (summary.clusters.empty())` 会把它们连同"什么都没做"的语义一起丢
+// 掉，跟"候选池本来就是空的"折叠成同一个返回值。今天不可达只是因为这
+// 两个钩子都没传。见 docs/Headless_Observability_PRD.md 决策七及其附注。
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold,
                      bool ai_enabled = false, ai::Provider ai_provider = ai::Provider::Local,
-                     const ai::LocalModelConfig& local_config = ai::LocalModelConfig{});
+                     const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
+                     dedup::DedupProgressFn on_progress = nullptr,
+                     dedup::AiProgressFn on_ai_progress = nullptr);
 
 }  // namespace pzt::core::curate

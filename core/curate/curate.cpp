@@ -91,7 +91,8 @@ RepInfo greedy_pick(std::vector<RepInfo>& pool, const std::vector<RepInfo>& sele
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold, bool ai_enabled,
-                     ai::Provider ai_provider, const ai::LocalModelConfig& local_config) {
+                     ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
+                     dedup::DedupProgressFn on_progress, dedup::AiProgressFn on_ai_progress) {
   auto ids = resolve_scope_ids(db, project_id, candidate_scope);
 
   // 分簇 + 每簇选 winner 整个委托给 tournament::cluster_and_choose：排除
@@ -104,7 +105,8 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
   auto choose_result = tournament::cluster_and_choose(
       db, project_id, ids, time_window_seconds, hash_threshold,
       {tagging::kRejectTagName, tagging::kDuplicateTagName}, /*apply_dup_tag=*/false, ai_enabled,
-      ai_provider, local_config);
+      ai_provider, local_config, std::move(on_progress), /*on_ai_gate=*/nullptr,
+      std::move(on_ai_progress));
   const auto& summary = choose_result.value();
 
   if (summary.clusters.empty()) return CurateResult{{}, count, 0, 0};

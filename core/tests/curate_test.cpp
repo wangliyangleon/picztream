@@ -314,3 +314,68 @@ TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-s
   std::sort(sorted_selected.begin(), sorted_selected.end());
   CHECK(std::adjacent_find(sorted_selected.begin(), sorted_selected.end()) == sorted_selected.end());
 }
+
+// T-8 A.2：进度回调。改造前 core/curate 连钩子都没有——dedup 是"有钩子
+// 但 cmd_dedup 传 nullptr"，curate 是"签名里根本没这几个参数"。根因是
+// 四个回调（on_progress/on_ai_gate/on_ai_progress/on_cancel）全部由 TUI
+// 的 /dedup 驱动加进来，而 curate 没有 TUI 入口，从来没人走在那条路上。
+// 只补有消费者的两个，理由与不补的那四项见 PRD 决策七。
+TEST_CASE("curate reports local clustering progress") {
+  auto fx = make_fixture("cluster_progress", 3);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 200));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1005);
+  set_captured_at(fx.db, fx.images[2], 100000);
+
+  std::vector<std::pair<int, int>> seen;
+  curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*ai_enabled=*/false,
+         Provider::Local, pzt::core::ai::LocalModelConfig{},
+         [&](int done, int total) { seen.emplace_back(done, total); });
+
+  REQUIRE(!seen.empty());
+  // 单调递增、最后一次 done==total：调用方拿它当进度条的刻度，回退或者
+  // 停在半路都会让用户以为卡住了。
+  for (std::size_t i = 1; i < seen.size(); ++i) CHECK(seen[i].first > seen[i - 1].first);
+  CHECK(seen.back().first == seen.back().second);
+}
+
+TEST_CASE("curate reports AI comparison progress") {
+  // 同上面几个 AI 用例的技巧：Provider::Claude 没设 key 时确定性地
+  // MissingApiKey，不连真网络。进度是在发起比较之前报的，所以比较本身
+  // 失败不影响这里要验的东西。
+  EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
+  auto fx = make_fixture("ai_progress", 3);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "c.jpg", 16, 16, 200));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1005);
+  set_captured_at(fx.db, fx.images[2], 100000);
+
+  std::vector<int> compares;
+  curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*ai_enabled=*/true,
+         Provider::Claude, pzt::core::ai::LocalModelConfig{}, nullptr,
+         [&](const pzt::core::dedup::AiProgress& p) { compares.push_back(p.comparison_done); });
+
+  REQUIRE(!compares.empty());
+  for (std::size_t i = 1; i < compares.size(); ++i) CHECK(compares[i] > compares[i - 1]);
+}
+
+TEST_CASE("curate with no progress callbacks behaves exactly as before") {
+  // 默认 nullptr 保证现有调用点零改动，跟 W2026-07-21 给 dedup 加这些
+  // 参数时同一个约定。
+  auto fx = make_fixture("no_progress_cb", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 200));
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 100000);
+
+  auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
+
+  CHECK(result.returned == 2);
+}
