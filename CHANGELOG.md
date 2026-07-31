@@ -3,6 +3,75 @@
 > 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
 > 发布与生成流程见 `scripts/release.sh`。
 
+## v2026.7.31 - 2026-07-31
+
+
+### 📝 文档
+- Docs: T-10 真机验收全部通过
+- Docs: T-10 收口归档
+- Docs: T-9b 真机验收全部通过
+- Docs: T-9 收口归档
+- Docs: 标记 T-9a 已完成
+- Docs: T-9 拆成 T-9a/T-9b
+- Docs: 回填 T-21/T-14 状态，T-25 提到 P1
+- Docs: /dedup --ai 收口归档
+- Docs: 收口 /dedup --ai，顺手修正 SPEC 里 bracket 归属的旧说法
+- Docs: 标记 T-3 / T-6 已完成
+- Docs: 修正 WAL 边车的措辞 (T-7)
+- Docs: schema 版本约定与数据兼容性 (T-7)
+- Docs: 纳入三视角评审提案，标记 T-19 已完成
+- Docs: README/SPEC 命令清单补上 pzt unarchive
+- Docs: task pool 核验清理(F-43 导出入口改址、两处 PRD 路径改指 history)
+- Docs: slim-plan 分析快照收口，归档进 history
+
+### 🔩 其它
+- agent: Ollama 地址可经环境变量覆盖
+- cli: 终端提示改在进备用屏幕之前拦一下 (T-10 真机反馈)
+- agent: 启动时就把环境问题说清楚 (T-10 D.2/D.3 + META_PROVIDER)
+- agent: Ollama 与云端 key 的启动期预检 (T-10 D.1)
+- cli: 渲染/解码失败的提示真的看得见了 (T-10 B.1)
+- cli: 终端可能不显示图片时说一声 (T-10 A.3)
+- cli/core: 终端提示文案与关掉它的开关 (T-10 A.2)
+- cli: 探测终端是不是很可能讲 Kitty 图像协议 (T-10 A.1)
+- Eng Design: 环境前提不满足时告知原因 (T-10)
+- agent: 缺 Telegram 凭证时给人话而不是 traceback (T-10 C.1)
+- PRD: 环境前提不满足时告知原因 (T-10)
+- 取消回显时把第二行的 Ctrl-C 提示一起擦掉
+- --debug 面板在 /dedup 阻塞期间实时刷新
+- cli: /dedup 期间 Ctrl-C 取消这次去重，不再退出 pzt (T-9b)
+- core: dedup/锦标赛支持中途取消 (T-9b)
+- PRD: /dedup 跑到一半按 Ctrl-C 取消 (T-9b)
+- AI 比较进度报到每一次比较，第二行挂 Ctrl-C 提示
+- 闸门问完之后把 banner 第二行擦掉
+- AI 比较的进度在开跑前报，不是跑完之后
+- Ctrl-C 不再把终端留在备用屏幕里 (T-9a)
+- SPEC: 写清两个命令面的划分规则，curate 定为 agent 独占
+- 把注释里失效的 docs 路径全部指向 docs/history/
+- 把筛选相关的 g 命名统一改成 f
+- dedup 结果里的入口提示改成 f 9
+- AGENTS.md: 同步 bracket 归属与 /dedup --ai
+- 控制台的 /dedup 能触发 AI 锦标赛了
+- 锦标赛开跑前加一道闸门，跑起来之后有进度
+- 删掉 /dedup 那道已经不成立的"未评估"确认
+- 纯 JPEG 批量导出不再全程零进度 (T-6)
+- 还原被误改的既有注释标点
+- 筛选键在文档里一直写错，顶层未知按键不再静默 (T-3)
+- 库打不开时不再终止评估 worker (T-7)
+- 把 schema 版本过新呈现为用户可读错误 (T-7)
+- Enable WAL journal mode on every database open (T-7)
+- Add PRAGMA user_version schema 闸门，删除按列名的 DROP 启发式 (T-7)
+- Test: 钉住 schema 版本与 WAL 预期 (T-7, RED)
+- Test: temp db 辅助函数清理 WAL 边车 (T-7)
+- Add "export everything still kept" outlet to the culling loop (T-1)
+- Fix misleading no-images error on pure-RAW directories (T-2)
+- Add Google Analytics to pzt homepage
+- Add MIT LICENSE, wire up license field in Homebrew formulas (T-19)
+- Fix: Kitty 渲染写序列失败时清理残留 tmpfile (Task Pool F-46a)
+- Feat: 补全 pzt unarchive 子命令 (Task Pool F-29)
+- agent: 合并 adjustment_parser 简单分类器样板 (slim-plan T-1)
+
+### 🚀 部署与分发
+- Deploy: 回填 pzt/pzt-agent formula 到 v2026.7.24 (sha256)
 ## v2026.7.24 - 2026-07-24
 
 
@@ -16,6 +85,7 @@
 - Docs: W2026-07-21 周目标 PRD + 目标一 Eng Design(eval 解耦 + core pairwise 地基)
 
 ### 🔩 其它
+- Release v2026.7.24
 - agent: 选片确认挪到滤镜之前, 简化最终交付(真机反馈)
 - agent: 修复"去重+筛N张"数量识别失败, 调整确认文案措辞(真机反馈)
 - agent: 去重确认精简 + 追问后打字给数量要二次确认(目标三真机反馈)
