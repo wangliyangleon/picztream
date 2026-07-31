@@ -7,21 +7,24 @@ stage 边界 save 就是断点续跑检查点），交接靠"落盘 + 事件"，
 对象——consumer 收到事件后要读 run 就自己重新 load。
 
 取消：cancel_event 在 stage 边界（推进循环每轮开头）必查；可杀 stage
-（Dedup/Curate，AI 开时可能跑到分钟级）advance 前把事件挂到 worker 专属
-的 client 实例上，PztCancelledError 从 stage.run/driver.advance 一路穿
-透到这里（它不是 PztCommandError，stages 吞不掉），统一走 CANCELLED 收
-尾。其余 stage 秒级，跑完为止。
+（见 KILLABLE_STAGES，都是可能跑到分钟级的）运行前把事件挂到 worker 专
+属的 client 实例上，PztCancelledError 从 stage.run/driver.advance 一路
+穿透到这里（它不是 PztCommandError，stages 吞不掉），统一走 CANCELLED
+收尾。剩下的 Ingest/Deliver 是本地文件 IO，秒级，跑完为止。布防统一走
+_armed()：除了推进循环，resolve_gate/rerun_style/rerun_curate 三条"driver
+内部直接跑 stage"的路径都绕开循环，各自也要挂。
 
 step() 单步驱动是测试口径，线程只是 run() 这层薄壳。
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from compose.adjustment_parser import AdjustmentError
 from compose.llm_client import LlmRequestError
@@ -45,7 +48,13 @@ from session.protocol import (
 
 _log = logging.getLogger("pzt.agent.worker")
 
-KILLABLE_STAGES = ("Dedup", "Curate")
+KILLABLE_STAGES = ("Dedup", "Curate", "Style", "StyleApplyAll")
+
+# 取消时会留下部分成果的 stage。判据是"写入是不是逐张的"：
+# StyleApplyAll 每张一次 pzt recipe apply，取消一定停在中间；dedup/curate
+# 的写库统一在最后一步，按 core 的契约取消一定零写入（见 core/dedup/
+# dedup.h 的 CancelFn 说明），报"已经处理了 N 张"是主动误导。
+PARTIAL_ON_CANCEL_STAGES = ("StyleApplyAll",)
 
 
 class SessionWorker:
@@ -182,12 +191,35 @@ class SessionWorker:
         # stage 一次都不会调），而 cancel 只能给可杀的 stage 挂。
         # 必须在 finally 里摘：留着的话下一个 job 的进度会带着上一代的
         # generation 混进队列、被 consumer 当过期丢弃，比不报进度更难查。
-        self.driver.progress_sink = lambda stage, done, total: self.events.put(
-            StageProgress(job.generation, job.run_id, stage, done, total))
+        self._last_progress = None
+        self.driver.progress_sink = lambda stage, done, total: self._on_stage_progress(job, stage,
+                                                                                        done, total)
         try:
             self._execute_drive_inner(job)
         finally:
             self.driver.progress_sink = None
+            self._last_progress = None
+
+    def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int) -> None:
+        # 记一份最近进度：取消收尾时要靠它说清"已经落地了多少"（决策五）。
+        self._last_progress = (stage, done, total)
+        self.events.put(StageProgress(job.generation, job.run_id, stage, done, total))
+
+    @contextlib.contextmanager
+    def _armed(self, stage_name: Optional[str], job: DriveJob):
+        """可杀 stage 期间把 cancel_event 挂到 client 上，出作用域摘掉。
+
+        四条路径都要用：_drive_to_stop 的推进循环，以及 resolve_gate /
+        rerun_style / rerun_curate 三条"driver 内部直接跑 stage"的路径 ——
+        后三条绕开循环，不手动布防的话对应 stage 就是不可杀的。"""
+        armed = stage_name in self.killable_stages
+        if armed:
+            self.client.cancel_event = job.cancel_event
+        try:
+            yield
+        finally:
+            if armed:
+                self.client.cancel_event = None
 
     def _execute_drive_inner(self, job: DriveJob) -> None:
         run = self.store.load(job.run_id)
@@ -200,16 +232,28 @@ class SessionWorker:
             # _run_stage），_drive_to_stop 的循环只覆盖闸门之后的下游，所以
             # 这个 stage 的 StageStarted 要在这里补发（"正在交付..."出现在批准
             # 之后，AG-05）。
-            if run.gate_state is not None:
-                self.events.put(StageStarted(job.generation, run.run_id,
-                                             run.gate_state.stage_name))
-            self.driver.resolve_gate(run, "proceed")
+            gate_stage = run.gate_state.stage_name if run.gate_state is not None else None
+            if gate_stage is not None:
+                self.events.put(StageStarted(job.generation, run.run_id, gate_stage))
+            with self._armed(gate_stage, job):
+                try:
+                    self.driver.resolve_gate(run, "proceed")
+                except PztCancelledError:
+                    self.driver.cancel(run)
         elif job.action == "adjustment":
             self.driver.apply_adjustment(run, job.args["delta"])
         elif job.action == "rerun_style":
             # rerun_style 跳过闸门直接跑 Style，同样在 driver 内部运行，补发。
             self.events.put(StageStarted(job.generation, run.run_id, "Style"))
-            self.driver.rerun_stage(run, "Style", {"style_description": job.args["style_description"]})
+            with self._armed("Style", job):
+                try:
+                    self.driver.rerun_stage(run, "Style",
+                                             {"style_description": job.args["style_description"]})
+                except PztCancelledError:
+                    # 不 return：跟 rerun_curate 一样落到方法尾部共享的
+                    # _report_stop。取消后 run 已是 CANCELLED，下面的
+                    # match_failed 分支和 _drive_to_stop 的循环都不会进。
+                    self.driver.cancel(run)
             style_out = run.outputs.get("Style")
             if style_out is not None and style_out.data.get("match_failed"):
                 # 描述没匹配上任何 preset：软失败，退回 Style 闸门重新问，不往下
@@ -224,15 +268,13 @@ class SessionWorker:
             # 的用法）。Curate 在 KILLABLE_STAGES 里，这条路径绕开了
             # _drive_to_stop 的循环布防，这里手动布防/解防、接住取消。
             self.events.put(StageStarted(job.generation, run.run_id, "Curate"))
-            self.client.cancel_event = job.cancel_event
-            try:
-                self.driver.rerun_stage(run, "Curate", job.args["params"])
-            except PztCancelledError:
-                # 不 return：跟 _drive_to_stop 循环里的取消处理一样，落到方法
-                # 尾部共享的 _report_stop 才会真的发 RunFinished(cancelled)。
-                self.driver.cancel(run)
-            finally:
-                self.client.cancel_event = None
+            with self._armed("Curate", job):
+                try:
+                    self.driver.rerun_stage(run, "Curate", job.args["params"])
+                except PztCancelledError:
+                    # 不 return：跟 _drive_to_stop 循环里的取消处理一样，落到
+                    # 方法尾部共享的 _report_stop 才会真的发 RunFinished。
+                    self.driver.cancel(run)
         elif job.action != "resume":
             raise ValueError(f"unknown drive action: {job.action!r}")
         self._drive_to_stop(run, job)
@@ -253,17 +295,12 @@ class SessionWorker:
             if next_spec is not None and not stops_at_gate:
                 _log.info(f"[worker] run={run.run_id} 运行 stage={next_spec.name}")
                 self.events.put(StageStarted(job.generation, run.run_id, next_spec.name))
-            armed = (next_spec.name if next_spec else None) in self.killable_stages
-            if armed:
-                self.client.cancel_event = job.cancel_event
-            try:
-                self.driver.advance(run)
-            except PztCancelledError:
-                self.driver.cancel(run)
-                return
-            finally:
-                if armed:
-                    self.client.cancel_event = None
+            with self._armed(next_spec.name if next_spec else None, job):
+                try:
+                    self.driver.advance(run)
+                except PztCancelledError:
+                    self.driver.cancel(run)
+                    return
 
     def _report_stop(self, run: RunState, job: DriveJob) -> None:
         if run.status == RunStatus.AWAITING_GATE:
@@ -275,7 +312,17 @@ class SessionWorker:
             # 全部 stage 跑完的自动收尾，对齐旧 router 各路径的自动 approve。
             self.driver.approve(run)
         detail = self._first_failure_detail(run) if run.status == RunStatus.FAILED else None
-        self.events.put(RunFinished(job.generation, run.run_id, run.status.value, detail))
+        self.events.put(RunFinished(job.generation, run.run_id, run.status.value, detail,
+                                     self._partial_on_cancel(run)))
+
+    def _partial_on_cancel(self, run: RunState):
+        """取消时已经落地的部分成果，没有就 None（决策五）。只认写入逐张
+        的 stage：dedup/curate 的取消是零写入的，报数字等于凭空造出用户
+        并没有得到的东西。"""
+        if run.status != RunStatus.CANCELLED or self._last_progress is None:
+            return None
+        stage, _, _ = self._last_progress
+        return self._last_progress if stage in PARTIAL_ON_CANCEL_STAGES else None
 
     def _first_failure_detail(self, run: RunState) -> str:
         for name, status in run.stage_states.items():

@@ -455,6 +455,8 @@ class SessionConsumer:
         self.active_drive_job = None
         self._cancel_confirm_pending = False
         self._collecting_progress = None  # 进度消息槽随会话重置（AG-16.3）
+        self._stage_progress = None       # 同上，运行期那条（T-8）
+        self._stage_progress_notified_at = None
         self._curate_narrow_pending = None
         self._pending_selection_approval = False
 
@@ -572,7 +574,7 @@ class SessionConsumer:
             self.cancelling_run_id = None
             self.store.clear_cancelling(event.run_id)  # 正常收尾即清标记（AG-12）
             self._cleanup_run_files(event.run_id)      # 终态即删大文件（AG-14）
-            self._send("已取消")
+            self._send(self._cancel_receipt(event))
             return
         if event.generation != self.generation:
             return
@@ -882,6 +884,17 @@ class SessionConsumer:
         message = STAGE_PROGRESS_MESSAGES.get(event.stage)
         if message:
             self._send(message)
+
+    def _cancel_receipt(self, event: RunFinished) -> str:
+        """取消回执。写入逐张的 stage（当前只有 StyleApplyAll）被打断时
+        一定留下部分成果，只说"已取消"等于假装什么都没发生 —— 用户回头
+        看到一半照片带滤镜会更困惑。零写入的 dedup/curate 走裸回执，worker
+        那边就不会给 cancelled_partial（决策五）。"""
+        partial = event.cancelled_partial
+        if partial is None:
+            return "已取消"
+        _, done, total = partial
+        return f"已取消（已经给 {done}/{total} 张套上滤镜了，这部分保留）"
 
     def _on_stage_progress(self, event: StageProgress) -> None:
         """T-8：运行期进度。view 每条都刷新（用户主动问"到哪了"要拿到最

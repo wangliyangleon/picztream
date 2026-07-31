@@ -9,7 +9,8 @@
 """
 from __future__ import annotations
 
-from session.protocol import StageProgress, StageStarted
+from orchestrator.types import RunStatus
+from session.protocol import RunFinished, StageProgress, StageStarted
 from session_fakes import FakeClock, make_consumer, to_running
 
 
@@ -100,3 +101,44 @@ def test_stale_generation_progress_is_dropped(tmp_path):
 
     assert env.consumer.view.stage_progress is None
     assert len(env.transport.sent_texts) == sent_before
+
+
+# -- 取消回执带上部分成果（T-8 决策五）--
+
+
+def test_cancel_receipt_says_how_many_were_already_styled(tmp_path):
+    # StyleApplyAll 的写入是逐张的，取消一定留下部分成果。只说"已取消"
+    # 等于假装什么都没发生 —— 用户回头看到一半照片带滤镜会更困惑。
+    env, job = _running_env(tmp_path)
+    env.consumer._do_cancel()
+    env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value,
+                               cancelled_partial=("StyleApplyAll", 3, 10)))
+    env.consumer.step()
+
+    text = env.transport.texts()[-1]
+    assert "已取消" in text and "3/10" in text
+
+
+def test_cancel_receipt_stays_bare_when_nothing_was_written(tmp_path):
+    # dedup/curate 的取消按 core 契约是零写入，回执一个数字都不该有。
+    env, job = _running_env(tmp_path)
+    env.consumer._do_cancel()
+    env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value))
+    env.consumer.step()
+
+    assert env.transport.texts()[-1] == "已取消"
+
+
+def test_reset_session_clears_the_stage_progress_slot(tmp_path):
+    # 进度消息是原地编辑的（AG-16.3）。槽不随会话重置的话，下一批的第一
+    # 条进度会去编辑上一批那条已经作废的消息。_collecting_progress 一直
+    # 是这么做的，运行期这两个是 B.1a 漏掉的。
+    env, job = _running_env(tmp_path)
+    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 1, 5))
+    env.consumer.step()
+    assert env.consumer._stage_progress is not None
+
+    env.consumer._reset_session()
+
+    assert env.consumer._stage_progress is None
+    assert env.consumer._stage_progress_notified_at is None

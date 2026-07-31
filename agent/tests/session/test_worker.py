@@ -19,6 +19,7 @@ from compose.adjustment_parser import (
     PlanConfirmationReply,
 )
 from compose.llm_client import LlmRequestError
+from pzt_client import PztCancelledError
 from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
 from session.protocol import (
     ClassifyDone,
@@ -632,3 +633,108 @@ def test_progress_sink_is_detached_even_when_the_stage_raises(tmp_path):
 
     assert env.driver.progress_sink is None
     assert any(isinstance(e, JobCrashed) for e in env.drain_events())
+
+
+# -- 取消覆盖面补全（T-8 D）--
+
+
+def _walk_to_style_gate(env, run):
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+    env.step()
+    env.drain_events()
+
+
+def _walk_to_style_apply_all_gate(env, run):
+    _walk_to_style_gate(env, run)
+    env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
+                           args={"style_description": "复古暖色调"}))
+    env.step()
+    env.drain_events()
+
+
+def test_style_is_armed_for_cancellation(tmp_path):
+    # Style 内部是一次视觉推理，受 core/ai 的 60s 超时约束，跟 Dedup 一样
+    # 是分钟级阻塞窗口。它经 rerun_style 直接进 driver，绕开 _drive_to_stop
+    # 的循环布防，要单独挂。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    _walk_to_style_gate(env, run)
+
+    env.put_drive(DriveJob(generation=1, action="rerun_style", run_id=run.run_id,
+                           args={"style_description": "复古暖色调"}))
+    env.step()
+
+    assert env.client.armed_during["recipe"] is True
+
+
+def test_style_apply_all_is_armed_for_cancellation(tmp_path):
+    # StyleApplyAll 是 N 次子进程的循环（30 张精选 = 30 次进程启动），经
+    # resolve_gate 直接进 driver，同样绕开循环布防。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    _walk_to_style_apply_all_gate(env, run)
+    env.client.armed_during.pop("recipe", None)  # 清掉 Style 那次的记录
+
+    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
+    env.step()
+
+    assert env.client.armed_during["recipe"] is True
+
+
+class _CancelOnNthRecipeApply(FakeClient):
+    """套到第 n 张时用户喊停。`recipe apply` 的调用横跨两个 stage：Style
+    先给代表图套一次（第 1 次），StyleApplyAll 再套剩下的，所以 n 从 2
+    起才落在 StyleApplyAll 里。curate 多返回一张，让 StyleApplyAll 有不
+    止一张要套 —— 只有一张的话取消必然发生在第一张之前，测不出"部分"。"""
+
+    def __init__(self, cancel_on: int) -> None:
+        super().__init__()
+        self.cancel_on = cancel_on
+        self.recipe_applies = 0
+
+    def call(self, *args):
+        if args[0] == "curate":
+            self.calls.append(args)
+            return {"requested": 3, "returned": 3, "selected": ["a.jpg", "b.jpg", "c.jpg"]}
+        if args[0] == "recipe" and args[1] == "apply":
+            self.recipe_applies += 1
+            if self.recipe_applies == self.cancel_on:
+                raise PztCancelledError(list(args))
+        return super().call(*args)
+
+
+def test_cancel_during_style_apply_all_reports_how_many_were_already_styled(tmp_path):
+    # PRD 决策五：这个 stage 的写入是逐张的，取消一定留下部分成果。回执
+    # 不能只说"已取消"，那等于假装什么都没发生。
+    env = make_worker(tmp_path, client=_CancelOnNthRecipeApply(cancel_on=3))
+    run = env.make_running_run()
+    # make_fixed_plan 的 count=2，CurateStage 会把结果截到 2 张，
+    # StyleApplyAll 就只剩 1 张要套、取消必然落在第一张之前。
+    next(s for s in run.plan.stages if s.name == "Curate").params["count"] = 3
+    env.store.save(run)
+    _walk_to_style_apply_all_gate(env, run)
+    env.put_drive(DriveJob(generation=1, action="resolve_gate", run_id=run.run_id))
+
+    env.step()
+
+    finished = [e for e in env.drain_events() if isinstance(e, RunFinished)][-1]
+    assert finished.status == "cancelled"
+    # 代表图 + StyleApplyAll 里成功的那一张 = 2/3。
+    assert finished.cancelled_partial == ("StyleApplyAll", 2, 3)
+
+
+def test_cancel_during_dedup_reports_no_partial_work(tmp_path):
+    # dedup/curate 的取消按 core 的契约一定是零写入（写库统一在最后一
+    # 步）。报"已经处理了 N 张"是主动误导。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    job = DriveJob(generation=1, action="start", run_id=run.run_id)
+    env.client.raise_cancelled_on = {"dedup"}
+    job.cancel_event.set()
+    env.put_drive(job)
+
+    env.step()
+
+    finished = [e for e in env.drain_events() if isinstance(e, RunFinished)][-1]
+    assert finished.status == "cancelled"
+    assert finished.cancelled_partial is None

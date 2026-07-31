@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 # -- jobs (consumer -> worker) --
 
@@ -40,7 +40,8 @@ class DriveJob:
     run_id: str
     args: dict = field(default_factory=dict)
     # 取消 = consumer set()；worker 在 stage 边界必查，并在可杀 stage
-    # （Dedup/Curate）期间把它挂到 PztClient 上做子进程级终止。
+    # （见 session.worker.KILLABLE_STAGES）期间把它挂到 PztClient 上做子
+    # 进程级终止。
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -111,6 +112,11 @@ class RunFinished:
     run_id: str
     status: str  # RunStatus.value: "done" | "failed" | "cancelled"
     detail: Optional[str] = None
+    # T-8 决策五：取消时已经落地的部分成果 (stage, done, total)。只对写入
+    # 是逐张的 stage 有值（见 worker.PARTIAL_ON_CANCEL_STAGES）；dedup/
+    # curate 的取消按 core 契约一定是零写入，报"已经处理了 N 张"是主动
+    # 误导，所以那些路径恒为 None。文案由 consumer 渲染，这里只给数据。
+    cancelled_partial: Optional[Tuple[str, int, int]] = None
 
 
 @dataclass
