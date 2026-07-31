@@ -15,14 +15,34 @@ import pytest
 from pzt_client import PztCancelledError, PztClient, PztCommandError
 
 
-class FakePopen:
-    """可控 Popen 替身：finish_after 次 communicate(timeout=...) 超时后
-    才结束；terminate/kill 各自记录调用并（可配置地）让进程结束。"""
+class _FakePipe:
+    """行读接口的假管道。真 Popen 那边是 text=True 的 TextIOWrapper，
+    读取端只用到 readline/close 两个方法。"""
 
-    def __init__(self, argv, stdout='{"ok": true}', returncode=0,
+    def __init__(self, text: str = "") -> None:
+        self._lines = text.splitlines(keepends=True)
+        self.closed = False
+
+    def readline(self) -> str:
+        return self._lines.pop(0) if self._lines else ""  # "" == EOF
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakePopen:
+    """可控 Popen 替身：finish_after 次 wait(timeout=...) 超时后才结束；
+    terminate/kill 各自记录调用并（可配置地）让进程结束。
+
+    T-8：读取端从轮询 communicate 改成两个读取线程之后，替身也从
+    communicate 改成暴露 stdout/stderr 两条管道 + wait()。断言的语义一条
+    没变，变的只是 PztClient 跟 Popen 之间的接口面。"""
+
+    def __init__(self, argv, stdout='{"ok": true}', stderr="", returncode=0,
                  finish_after=0, stubborn=False):
         self.argv = argv
-        self._stdout = stdout
+        self.stdout = _FakePipe(stdout)
+        self.stderr = _FakePipe(stderr)
         self._returncode_when_done = returncode
         self._timeouts_left = finish_after
         self._stubborn = stubborn  # terminate 后仍不退出，逼出 kill()
@@ -30,17 +50,17 @@ class FakePopen:
         self.killed = False
         self.returncode = None
 
-    def communicate(self, timeout=None):
+    def wait(self, timeout=None):
         if self.killed or (self.terminated and not self._stubborn):
             self.returncode = -15
-            return "", ""
+            return self.returncode
         if self._timeouts_left > 0:
             self._timeouts_left -= 1
             raise subprocess.TimeoutExpired(self.argv, timeout)
         if self.terminated and self._stubborn:
             raise subprocess.TimeoutExpired(self.argv, timeout)
         self.returncode = self._returncode_when_done
-        return self._stdout, ""
+        return self.returncode
 
     def terminate(self):
         self.terminated = True
