@@ -47,7 +47,12 @@ from session.protocol import (
     StageProgress,
     StageStarted,
 )
-from session.view import STAGE_PROGRESS_MESSAGES, SessionView, view_from_run
+from session.view import (
+    STAGE_PROGRESS_MESSAGES,
+    SessionView,
+    describe_progress_done,
+    view_from_run,
+)
 
 _log = logging.getLogger("pzt.agent.consumer")
 
@@ -873,7 +878,26 @@ class SessionConsumer:
         else:
             self._send(f"没看懂这句意图，能换个说法再说一次吗？（{event.message}）")
 
+    def _finalize_stage_progress(self) -> None:
+        """把这一条进度消息改成终态（真机反馈）。
+
+        只有 3/3 还不够 —— 那句话仍然是"正在…"，读起来像还在跑，然后下一
+        件事无预警发生。调用点都是"上一个 stage 确实跑完了"的时刻：下一个
+        stage 开跑、停在闸门、整批完成。**取消和失败不调**，把半截进度改
+        成"套完了"是在撒谎。
+
+        原地编辑同一条消息而不是新发一条：进度本来就只占一条（AG-16.3），
+        每个 stage 再追一条"完成"会把对话刷成流水账。"""
+        if self._stage_progress is None or self.view.stage_progress is None:
+            return
+        _, total, kind = self.view.stage_progress
+        self._send_progress(describe_progress_done(kind, total), "_stage_progress")
+        self._stage_progress = None
+        self._stage_progress_notified_at = None
+
     def _on_stage_started(self, event: StageStarted) -> None:
+        # 下一个 stage 开跑 = 上一个跑完了，先把它那条进度收尾。
+        self._finalize_stage_progress()
         self.view.current_stage = event.stage
         self.view.stage_progress = None
         # 换一个 stage 就换一条进度消息（AG-16.3 的进度是原地编辑的）：不
@@ -904,12 +928,17 @@ class SessionConsumer:
         self.view.stage_progress = (event.done, event.total, event.kind)
         now = self.now_fn()
         last = self._stage_progress_notified_at
-        if last is not None and now - last < self.progress_interval_seconds:
+        # 最后一跳不节流：它往往紧跟着前一跳（2/3 -> 3/3 中间可能只隔几十
+        # 毫秒），落在窗口里被吃掉的话，可见的最后一条永远停在 2/3（真机
+        # 反馈）。
+        terminal = event.total > 0 and event.done >= event.total
+        if not terminal and last is not None and now - last < self.progress_interval_seconds:
             return
         self._send_progress(self.view.describe(), "_stage_progress")
         self._stage_progress_notified_at = now
 
     def _on_gate_reached(self, event: GateReached) -> None:
+        self._finalize_stage_progress()  # 停在闸门 = 闸门前那个 stage 跑完了
         self.active_drive_job = None
         run = self.store.load(event.run_id)  # 所有权交回：从盘上取，不共享内存
         self.run = run
@@ -997,6 +1026,7 @@ class SessionConsumer:
         if event.status == RunStatus.FAILED.value:
             self._send(f"处理失败：{event.detail or '未知错误'}")
         elif event.status == RunStatus.DONE.value:
+            self._finalize_stage_progress()
             # Deliver stage 自己已说"选好了 N 张"，这里补一句收尾，明确告诉
             # 用户这批结束了、可以开新的（真机反馈）。
             self._send("这批就处理完啦～想开新的一批，随时把照片发给我就行 📷")

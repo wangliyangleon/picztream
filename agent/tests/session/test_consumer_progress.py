@@ -10,8 +10,8 @@
 from __future__ import annotations
 
 from orchestrator.types import RunStatus
-from session.protocol import RunFinished, StageProgress, StageStarted
-from session_fakes import FakeClock, make_consumer, to_running
+from session.protocol import GateReached, RunFinished, StageProgress, StageStarted
+from session_fakes import FakeClock, make_consumer, to_running, worker_saves_gate
 
 
 def _running_env(tmp_path, interval: float = 60.0):
@@ -91,7 +91,11 @@ def test_each_stage_starts_a_fresh_progress_message(tmp_path):
     env.put_event(StageProgress(gen, job.run_id, "Deliver", 1, 5, "photos"))
     env.consumer.step()
 
-    assert len(env.transport.sent_edits) == edits_before  # 新消息，不是编辑旧的
+    # 换 stage 时只该多一次编辑：把上一条进度收尾（"照片组都处理完了"）。
+    # 新 stage 的进度必须是一条新消息，不是继续改写上一条。
+    assert len(env.transport.sent_edits) == edits_before + 1
+    assert "处理完了" in env.transport.sent_edits[-1][1]
+    assert "1/5张" in env.transport.texts()[-1]
 
 
 def test_stale_generation_progress_is_dropped(tmp_path):
@@ -144,3 +148,67 @@ def test_reset_session_clears_the_stage_progress_slot(tmp_path):
 
     assert env.consumer._stage_progress is None
     assert env.consumer._stage_progress_notified_at is None
+
+
+# -- 进度要有个终态（真机反馈）--
+
+
+def test_the_final_tick_is_never_throttled_away(tmp_path):
+    # 最后一跳往往紧跟着前一跳（比如 2/3 -> 3/3 中间只隔几十毫秒），正好
+    # 落在节流窗口里被吃掉，于是可见的最后一条停在 2/3。
+    env, job = _running_env(tmp_path, interval=600.0)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "StyleApplyAll", 2, 3, "photos"))
+    env.consumer.step()
+
+    env.clock.advance(1)  # 远不到 600 秒
+    env.put_event(StageProgress(gen, job.run_id, "StyleApplyAll", 3, 3, "photos"))
+    env.consumer.step()
+
+    assert "3/3" in env.transport.sent_edits[-1][1]
+
+
+def test_progress_message_is_closed_out_when_the_next_stage_starts(tmp_path):
+    # 光有 3/3 还不够：那句话仍然是"正在…"，读起来像还在跑。下一个 stage
+    # 开跑说明这个已经完了，把同一条消息改成终态。
+    env, job = _running_env(tmp_path)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "StyleApplyAll", 3, 3, "photos"))
+    env.consumer.step()
+
+    env.put_event(StageStarted(gen, job.run_id, "Deliver"))
+    env.consumer.step()
+
+    closed = env.transport.sent_edits[-1][1]
+    assert "正在" not in closed
+    assert "3" in closed
+
+
+def test_progress_message_is_closed_out_at_a_gate(tmp_path):
+    env, job = _running_env(tmp_path)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 4, 4, "groups"))
+    env.consumer.step()
+
+    worker_saves_gate(env, job.run_id, "Style")
+    env.put_event(GateReached(gen, job.run_id, "Style", {
+        "selected_count": 2, "preview_failed_count": 0, "export_error": None}))
+    env.consumer.step()
+
+    assert "正在" not in env.transport.sent_edits[-1][1]
+
+
+def test_cancelled_progress_is_not_closed_out_as_finished(tmp_path):
+    # 取消不是完成。把半截进度改成"套完了"是在撒谎。
+    env, job = _running_env(tmp_path)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "StyleApplyAll", 1, 10, "photos"))
+    env.consumer.step()
+    edits_before = len(env.transport.sent_edits)
+
+    env.consumer._do_cancel()
+    env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value,
+                               cancelled_partial=("StyleApplyAll", 1, 10)))
+    env.consumer.step()
+
+    assert len(env.transport.sent_edits) == edits_before

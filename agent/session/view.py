@@ -37,6 +37,18 @@ _PROGRESS_PHRASINGS = {
     "photos": ("正在套滤镜", "张"),
 }
 
+# 同一条进度消息的终态措辞（真机反馈）。跑完还停在"正在…"上的话，用户看
+# 到的最后一条永远是未完成态，然后下一件事无预警发生。
+_PROGRESS_DONE_PHRASINGS = {
+    "groups": "照片组都处理完了，共 {n} 组",
+    "comparisons": "两两比较跑完了，共 {n} 次",
+    "photos": "滤镜都套好了，共 {n} 张",
+}
+
+
+def describe_progress_done(kind: str, total: int) -> str:
+    return _PROGRESS_DONE_PHRASINGS.get(kind, "处理完了，共 {n} 项").format(n=total)
+
 
 @dataclass
 class SessionView:
