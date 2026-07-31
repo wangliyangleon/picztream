@@ -1305,3 +1305,48 @@ def test_idle_with_draft_and_photos_auto_composes(tmp_path):
     [compose_job] = env.drain_jobs()
     assert isinstance(compose_job, ComposeJob)
     assert compose_job.intent_text == "选三张发朋友圈"
+
+
+# -- 降级信号进话术（T-8 G4/C.2）--
+
+
+def _selection_gate(env, job, payload_extra=None):
+    worker_saves_gate(env, job.run_id, "Style")
+    payload = {"selected_count": 2, "preview_failed_count": 0, "export_error": None}
+    payload.update(payload_extra or {})
+    env.put_event(GateReached(0, job.run_id, "Style", payload))
+    env.consumer.step()
+
+
+def test_selection_gate_says_which_groups_were_not_chosen_by_ai(tmp_path):
+    # 整簇 AI 比较失败时会退化成"按拍摄时间选最新"。不说出来的话，用户
+    # 在这个闸门上点"满意"，以为自己认可的是 AI 的判断。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    _selection_gate(env, job, {"ai_fallback_count": 2})
+
+    [text] = [t for t in env.transport.texts() if "选好了 2 张" in t]
+    assert "2 组" in text and "拍摄时间" in text
+
+
+def test_selection_gate_stays_quiet_when_nothing_degraded(tmp_path):
+    # 文案逐字对齐既有实现：没退化时一个字都不该多。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    _selection_gate(env, job, {"ai_fallback_count": 0})
+
+    assert ("选好了 2 张，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
+            ) in env.transport.texts()
+
+
+def test_selection_gate_tolerates_a_payload_without_the_key(tmp_path):
+    # 老 run 续跑（进程被 kill 后重启）时盘上的 payload 没有这个 key。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    _selection_gate(env, job)
+
+    assert ("选好了 2 张，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
+            ) in env.transport.texts()

@@ -971,6 +971,11 @@ class SessionConsumer:
         summary = f"选好了 {payload.get('selected_count', 0)} 张"
         if payload.get("preview_failed_count"):
             summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，风格/交付时仍会正常导出)"
+        # T-8：整簇 AI 比较失败会退化成"按拍摄时间选最新"。不说出来的话，
+        # 用户在这个闸门上点"满意"，以为自己认可的是 AI 的判断。缺 key 走
+        # 0（老 run 续跑时盘上的 payload 没有它）。
+        if payload.get("ai_fallback_count"):
+            summary += f"(其中 {payload['ai_fallback_count']} 组 AI 比较失败，是按拍摄时间挑的)"
         summary += "，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
         self._send_buttons(summary, _DELIVER_BUTTONS)
 

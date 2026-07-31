@@ -297,7 +297,12 @@ class SessionWorker:
                 return {}
             curate_output = run.outputs.get("Curate")
             selected = curate_output.data.get("selected", []) if curate_output else []
-            payload = {"selected_count": len(selected), "preview_failed_count": 0, "export_error": None}
+            payload = {"selected_count": len(selected), "preview_failed_count": 0,
+                        "export_error": None,
+                        # T-8：退化了几簇。consumer 在选片确认闸门上说出来，
+                        # 别让用户以为自己认可的是 AI 的判断。
+                        "ai_fallback_count": (curate_output.data.get("ai_fallback_count", 0)
+                                               if curate_output else 0)}
             if not selected:
                 return payload
             export_error = self._export_previews(run, selected)

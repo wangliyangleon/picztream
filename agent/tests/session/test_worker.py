@@ -184,7 +184,8 @@ def test_drive_start_runs_to_style_gate(tmp_path):
     assert gate.stage == "Style"
     # make_fixed_plan 的 Curate.count=2（真正筛选过），阶段一先给选片预览
     # payload（真机反馈：选片确认放在滤镜之前）。
-    assert gate.payload == {"selected_count": 2, "preview_failed_count": 0, "export_error": None}
+    assert gate.payload == {"selected_count": 2, "preview_failed_count": 0,
+                            "export_error": None, "ai_fallback_count": 0}
     assert env.store.load(run.run_id).status == RunStatus.AWAITING_GATE
 
 
@@ -207,7 +208,8 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     assert isinstance(gate, GateReached)
     assert gate.stage == "Style"
     # make_fixed_plan 的 Curate.count=2（真正筛选过），阶段一先给选片预览。
-    assert gate.payload == {"selected_count": 2, "preview_failed_count": 0, "export_error": None}
+    assert gate.payload == {"selected_count": 2, "preview_failed_count": 0,
+                            "export_error": None, "ai_fallback_count": 0}
     assert len(env.transport.sent_photos) == 2  # 选片预览
     # 选片预览逐张带"第 N 张"编号（AG-15）。
     assert env.transport.sent_photo_captions == ["第 1 张", "第 2 张"]
