@@ -70,6 +70,8 @@ tmux new -s pzt 'set -a; source ~/.pzt-agent.env; set +a; pzt-agent'
   `deliver-out/`、`agent.log` 等)。
 - `--poll-interval`:Telegram 长轮询间隔。
 - `--idle-reminder-seconds` / `--progress-interval-seconds`:提醒与进度播报节奏。
+  进度播报覆盖收图阶段(已收到 N 张)与处理阶段(去重/选片跑到第几次比较、
+  套滤镜套到第几张)。同一批的进度只占一条消息、原地编辑。
 
 ## 单用户自托管语义
 
