@@ -97,9 +97,20 @@ BOT_COMMANDS = [
     ("help", "看可用命令"),
 ]
 
+# 引导用户说出意图的示例文案，下面五处共用这一份。收敛的动机是票 08 要把它
+# 扩写成能引导用户说出题材偏好的形式（"选三张有景有人、表情活泼的照片发朋友
+# 圈"），五处分头改必漏。
+#
+# 之所以带一个 verb 参数而不是光秃秃一个常量：去重追问那一处的上文是"告诉我
+# 留几张"，例子跟着用"留"，其余四处用"选"；除这个动词外五处逐字相同。把动词
+# 做成参数，示例本身仍然只有一份，票 08 那次改写照样只动这一个函数体。
+def _intent_hint_example(verb: str = "选") -> str:
+    return f"{verb}3张发朋友圈"
+
+
 # 重复文案收敛（AG-20）。
 _MSG_EXPIRED = "这个选项已经过期了，看我最新的消息哈"
-_MSG_NEED_INTENT = "还没告诉我想怎么处理呢，说一句吧，比如\"选3张发朋友圈\""
+_MSG_NEED_INTENT = f"还没告诉我想怎么处理呢，说一句吧，比如\"{_intent_hint_example()}\""
 
 
 class SessionConsumer:
@@ -979,7 +990,8 @@ class SessionConsumer:
             ("AI筛选 🤖", _BTN_AI_NARROW)]
         self._send_buttons(
             f"去重后还剩 {payload.get('remaining', 0)} 张，要不要再筛选一下？"
-            f"留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪，比如\"留3张发朋友圈\"。{hint}",
+            f"留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪，"
+            f"比如\"{_intent_hint_example('留')}\"。{hint}",
             buttons,
         )
 
@@ -1128,7 +1140,7 @@ class SessionConsumer:
                        "照片尽管发，发完告诉我想怎么处理就行")
         else:
             self._send("收到～新任务开始了！照片尽管发，发完告诉我想怎么处理就行，"
-                       "比如\"选3张发朋友圈\"")
+                       f"比如\"{_intent_hint_example()}\"")
 
     def _adopt(self, run: RunState) -> None:
         self.run = run
@@ -1207,13 +1219,14 @@ class SessionConsumer:
     def _command_help_text() -> str:
         lines = "\n".join(f"/{name} - {desc}" for name, desc in BOT_COMMANDS)
         return ("可以随时发这些命令：\n" + lines +
-                "\n\n平时把照片发给我、再说一句想怎么处理就行，比如\"选3张发朋友圈\"。")
+                "\n\n平时把照片发给我、再说一句想怎么处理就行，"
+                f"比如\"{_intent_hint_example()}\"。")
 
     def _send_help(self) -> None:
         self._send(
             "我是帮你选照片的小助手 📷\n"
             "把要处理的照片发给我，再用一句话说想怎么弄就行，比如：\n"
-            "· 选3张发朋友圈\n"
+            f"· {_intent_hint_example()}\n"
             "· 挑5张精修\n"
             "· 筛一下，糊的去掉\n"
             "发完照片说一声，我就开始～"

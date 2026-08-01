@@ -867,6 +867,10 @@ def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
     env.consumer.step()
 
     assert any("留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪" in t for t in env.transport.texts())
+    # 票 02：示例文案收敛成 _intent_hint_example 后，这一处的动词仍得是
+    # "留"（上文是"告诉我留几张"），不能被顺手统一成其余四处的"选"。此前
+    # 没有断言钉住它，收敛时最容易在这里悄悄改掉用户看到的字。
+    assert any("比如\"留3张发朋友圈\"" in t for t in env.transport.texts())
     # ai_enabled 默认 False，追问闸门也带 AI 快捷按钮（目标三决策五）。
     assert env.transport.button_tokens() == ["skip_curate", "ai_narrow"]
 
