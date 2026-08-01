@@ -87,6 +87,14 @@ RepInfo greedy_pick(std::vector<RepInfo>& pool, const std::vector<RepInfo>& sele
   return result;
 }
 
+// 从 pool 里按 farthest-point 依次取 n 张，取走的从 pool 里移除。裁预选
+// 集和最终选片是同一个动作、只是 n 不同(票 04)，共用这一个循环。
+std::vector<RepInfo> take_farthest_points(std::vector<RepInfo>& pool, int n) {
+  std::vector<RepInfo> taken;
+  for (int i = 0; i < n && !pool.empty(); ++i) taken.push_back(greedy_pick(pool, taken));
+  return taken;
+}
+
 }  // namespace
 
 namespace detail {
@@ -134,41 +142,38 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
 
   if (static_cast<int>(winners.size()) >= count) {
     // 票 04：先把候选集(每簇一张代表)按时间多样性裁成预选集，两条路都走
-    // 这一刀。裁剪用的就是下面 AI 关那条路的 farthest-point，所以 AI 关
-    // 时输出一字不变——贪心是增量的，"先挑 K 张再从 K 张里挑 count 张"
-    // 每一步的 argmax 都落在 K 里，跟直接挑 count 张同序。AI 开时这一刀
-    // 是实打实的收窄：随机采样只在预选集里发生。K == winners.size() 时
-    // 是空操作(候选集介于 count 与目标之间就是这种情况)。
+    // 这一刀。裁剪用的就是 AI 关那条路的 farthest-point，所以 AI 关时输
+    // 出一字不变 - 贪心是增量的，"先挑 K 张再从 K 张里挑 count 张"每一
+    // 步的 argmax 都落在 K 里，跟直接挑 count 张同序。AI 开时这一刀是实
+    // 打实的收窄：随机采样只在预选集里发生。K == winners.size() 时是空
+    // 操作(候选集介于 count 与目标之间就是这种情况)。
     int k = detail::preselect_size(static_cast<int>(winners.size()), preselect_multiplier, count);
-    if (k < static_cast<int>(winners.size())) {
-      std::vector<RepInfo> pool;
+    bool clamps = k < static_cast<int>(winners.size());
+
+    // 每张代表只读一次库：裁剪与 AI 关那条路共用同一个 pool。AI 开且不
+    // 裁剪时一次都不读(这条路只需要 id)，跟票 04 之前一样。
+    std::vector<RepInfo> pool;
+    if (clamps || !ai_enabled) {
       for (auto id : winners) pool.push_back(make_rep_info(db, id));
-      std::vector<RepInfo> preselected;
-      for (int i = 0; i < k && !pool.empty(); ++i) {
-        preselected.push_back(greedy_pick(pool, preselected));
-      }
+    }
+    if (clamps) {
+      auto preselected = take_farthest_points(pool, k);
+      pool = std::move(preselected);
       winners.clear();
-      for (const auto& r : preselected) winners.push_back(r.id);
+      for (const auto& r : pool) winners.push_back(r.id);
     }
 
     if (ai_enabled) {
-      // AI 开：从 winner 集合随机挑 count 个(PRD 已拍板接受不可复现，见
-      // curate.h 的说明)——没有质量分可比，"哪个 winner 更该被选中"本来
+      // AI 开：从预选集里随机挑 count 个(PRD 已拍板接受不可复现，见
+      // curate.h 的说明) - 没有质量分可比，"哪个 winner 更该被选中"本来
       // 就没有确定性答案。
       std::mt19937 rng(std::random_device{}());
       std::sample(winners.begin(), winners.end(), std::back_inserter(selected), count, rng);
     } else {
       // AI 关：farthest-point 多样性，逻辑不变，只是输入源从旧
       // build_cluster_reps 换成 winners(ai_enabled=false 时两者等价)，票
-      // 04 之后 winners 可能已经被裁剪过。
-      std::vector<RepInfo> pool;
-      for (auto id : winners) pool.push_back(make_rep_info(db, id));
-      std::vector<RepInfo> selected_info;
-      for (int i = 0; i < count && !pool.empty(); ++i) {
-        auto picked = greedy_pick(pool, selected_info);
-        selected.push_back(picked.id);
-        selected_info.push_back(picked);
-      }
+      // 04 之后 pool 可能已经被裁剪过。
+      for (const auto& picked : take_farthest_points(pool, count)) selected.push_back(picked.id);
     }
   } else {
     // 簇数 < N：两种模式都返回全部 winner，不分 ai_enabled——没有"选"这

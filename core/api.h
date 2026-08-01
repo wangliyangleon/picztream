@@ -199,11 +199,13 @@ using CurateResult = curate::CurateResult;
 // ai_enabled/ai_provider/local_config(W2026-07-21 目标二新增)透传给
 // core::curate::curate，默认值保证现有调用点零改动。on_progress/
 // on_ai_progress(T-8)同理，语义与"为什么只补这两个"见 core/curate/curate.h。
-// preselect_multiplier(票 04 的 M)同理由调用方从
-// Settings.curate_preselect_multiplier 显式传入，语义见 core/curate/curate.h。
+// preselect_multiplier(票 04 的 M)跟 time_window_seconds/hash_threshold
+// 一样没有默认值：PRD 决策十一要求它由 CLI 从
+// Settings.curate_preselect_multiplier 读出后显式传入，给个默认值等于允
+// 许调用方绕过 Settings、再复制一份"2"出来。语义见 core/curate/curate.h。
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
                             int time_window_seconds, int hash_threshold,
-                            double preselect_multiplier = 2.0, bool ai_enabled = false,
+                            double preselect_multiplier, bool ai_enabled = false,
                             Provider ai_provider = Provider::Local,
                             const LocalModelConfig& local_config = LocalModelConfig{},
                             dedup::DedupProgressFn on_progress = nullptr,
