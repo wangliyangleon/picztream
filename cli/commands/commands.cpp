@@ -571,7 +571,16 @@ int cmd_curate(const std::vector<std::string>& args) {
       [](int done, int total) { emit_json_progress("cluster", done, total); },
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);
-      });
+      },
+      // 闸门：headless 这一侧没有可以问的人，跟 `pzt dedup --ai` 的
+      // headless 路径同一个处置(那边也是 nullptr，闸门只在 `pzt open` 的
+      // 控制台里有)。curate 按 SPEC §3.2 不进 TUI，所以这个钩子当前没有
+      // 调用方 - 它先在 core 里就位，接给谁由后续的票决定。
+      /*on_ai_gate=*/nullptr,
+      // 票 05：评估阶段的第三个 phase。cluster/compare 数的是候选簇和比
+      // 较次数，这个数的是照片张数——三者单位不同，展示层必须按 phase 分
+      // 别措辞(T-8 真机验收推翻过"把 phase 压掉"的做法，见 SPEC §3.2)。
+      [](int done, int total) { emit_json_progress("evaluate", done, total); });
 
   if (!result.selected.empty()) {
     auto apply_tag_id = resolve_or_create_tag(*project_id, apply_tag_name);

@@ -7,7 +7,10 @@
 #include <limits>
 #include <random>
 
+#include "core/ai/evaluation.h"
+#include "core/ai/evaluation_store.h"
 #include "core/browse/browse.h"
+#include "core/media/media.h"
 #include "core/tournament/tournament.h"
 
 namespace pzt::core::curate {
@@ -127,13 +130,35 @@ int preselect_size(int candidate_count, double multiplier, int count) {
 
 }  // namespace detail
 
-CurateResult curate(db::Database& db, project::ProjectId project_id,
-                     std::optional<tagging::TagId> candidate_scope, int count,
-                     int time_window_seconds, int hash_threshold, double preselect_multiplier,
-                     bool ai_enabled, ai::Provider ai_provider,
-                     const ai::LocalModelConfig& local_config, dedup::DedupProgressFn on_progress,
-                     dedup::AiProgressFn on_ai_progress) {
+CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id,
+                                  std::optional<tagging::TagId> candidate_scope, int count,
+                                  int time_window_seconds, int hash_threshold,
+                                  double preselect_multiplier, bool ai_enabled,
+                                  ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
+                                  detail::EvaluateFn evaluate_fn, dedup::DedupProgressFn on_progress,
+                                  dedup::AiProgressFn on_ai_progress, CurateAiGateFn on_ai_gate,
+                                  EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
   auto ids = resolve_scope_ids(db, project_id, candidate_scope);
+
+  // 空结果的三种含义各有一个构造点，刻意不共用一个"空"——它们对用户说的
+  // 话完全不同(PRD 决策十九)。
+  auto declined_result = [&] {
+    CurateResult r{{}, count, 0, 0};
+    r.ai_declined = true;
+    return r;
+  };
+  auto cancelled_result = [&] {
+    CurateResult r{{}, count, 0, 0};
+    r.cancelled = true;
+    return r;
+  };
+
+  // 闸门要报的评估张数 = 预选集大小。候选不足 count 时没有"选"这个动作、
+  // 也就没有预选集，评估开销为 0(票 04 定的"裁剪不参与"在开销上的对应)。
+  auto evaluation_count_for = [&](int candidate_count) {
+    if (candidate_count < count) return 0;
+    return detail::preselect_size(candidate_count, preselect_multiplier, count);
+  };
 
   // 分簇 + 每簇选 winner 整个委托给 tournament::cluster_and_choose：排除
   // 废片和重复标签(curate 独有，dedup 只排废片)、apply_dup_tag=false(簇
@@ -142,13 +167,35 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
   // 造前的 build_cluster_reps 输出——project_id 由调用方(pzt curate 命
   // 令)调用前已经用 resolve_project_json 验证过存在，这里不会失败，跟
   // core/api.cpp 其它门面对已验证 project_id 的处理一致，不再二次判空。
+  // 闸门转接（票 05）：报给调用方的是**合并**开销(比较多少次 + 评估多少
+  // 张)，只问一次。tournament 在本地分簇跑完、任何一次比较发出之前调这个
+  // lambda，那一刻 AiCost.candidate_count 已经是准的，正好够算评估张数。
+  //
+  // gate_consulted 记下这一趟到底问没问：tournament 只在存在 size>=2 的簇
+  // 时才问(对它自己而言没有比较就没有开销)，而 curate 即使一次比较都不发
+  // 也仍然要评估。那种情况下由下面的评估段补问，两处合起来保证"任何视觉
+  // 调用之前必然问过一次，且只问一次"。
+  bool gate_consulted = false;
+  tournament::AiGateFn tournament_gate = nullptr;
+  if (ai_enabled && on_ai_gate) {
+    tournament_gate = [&](const tournament::AiCost& cost) {
+      gate_consulted = true;
+      return on_ai_gate(cost.comparison_count, evaluation_count_for(cost.candidate_count));
+    };
+  }
+
   auto choose_result = tournament::cluster_and_choose(
       db, project_id, ids, time_window_seconds, hash_threshold,
       {tagging::kRejectTagName, tagging::kDuplicateTagName}, /*apply_dup_tag=*/false, ai_enabled,
-      ai_provider, local_config, std::move(on_progress), /*on_ai_gate=*/nullptr,
-      std::move(on_ai_progress));
+      ai_provider, local_config, std::move(on_progress), std::move(tournament_gate),
+      std::move(on_ai_progress), on_cancel);
   const auto& summary = choose_result.value();
 
+  // 这三个返回点此前折叠成同一个值(空 selected + returned 0)。前两个必须
+  // 先判：ai_declined/cancelled 的结果里 clusters 也是空的，落到下面那句
+  // 会被当成"这个项目里一张照片都没有"。
+  if (summary.ai_declined) return declined_result();
+  if (summary.cancelled) return cancelled_result();
   if (summary.clusters.empty()) return CurateResult{{}, count, 0, 0};
 
   std::vector<project::ImageId> winners;
@@ -183,9 +230,46 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
     }
 
     if (ai_enabled) {
+      // 票 05：补问闸门。走到这里说明 tournament 没问过——它只在存在
+      // size>=2 的簇时才问，而全是单例簇的项目一次比较都不发、开销却不为
+      // 零(评估还在后面)。此刻仍然满足"任何视觉调用之前"：没有比较发生
+      // 过，评估也还没开始。
+      if (on_ai_gate && !gate_consulted) {
+        gate_consulted = true;
+        if (!on_ai_gate(/*comparison_count=*/0, static_cast<int>(winners.size()))) {
+          return declined_result();
+        }
+      }
+
+      // 只评估预选集(PRD 决策十)：评估次数因此由构造保证有界，与图库大
+      // 小无关。已经有评估记录的跳过——缓存判据是"有记录就跳过"，不做字
+      // 段完整性检查也不加版本号(PRD 决策七)。
+      std::vector<project::ImageId> to_evaluate;
+      auto already_evaluated = project::evaluated_image_ids(db, winners);
+      for (auto id : winners) {
+        if (!already_evaluated.count(id)) to_evaluate.push_back(id);
+      }
+
+      int eval_total = static_cast<int>(to_evaluate.size());
+      for (int i = 0; i < eval_total; ++i) {
+        // 先查取消再报进度：取消之后这张不会被评估，报一个"正在评估第 N
+        // 张"只会让最后停住的那一帧多走一格、对不上实际发生的事(同
+        // tournament 里 on_comparison_start 的顺序，理由一样)。
+        if (on_cancel && on_cancel()) return cancelled_result();
+        if (on_eval_progress) on_eval_progress(i + 1, eval_total);
+        // 单张失败不中断整批：它只是没有描述可用，由票 06 的选择那一步处
+        // 理，跟"某簇比较失败就那一簇退化、不中断其它簇"是同一个立场。
+        (void)evaluate_fn(db, to_evaluate[i]);
+      }
+      // 评估跟锦标赛不一样，写库是逐张发生的，所以中途取消**不是零写
+      // 入**：已经评估完的那几张会留在库里。这不是遗漏 - 每条记录本身都
+      // 是完整的，留着正好被下一次运行的缓存判据命中，比回滚掉再花一次钱
+      // 好。零写入的承诺只对闸门(ai_declined)成立，那时一张都还没评估。
+      if (on_cancel && on_cancel()) return cancelled_result();
+
       // AI 开：从预选集里随机挑 count 个(PRD 已拍板接受不可复现，见
       // curate.h 的说明) - 没有质量分可比，"哪个 winner 更该被选中"本来
-      // 就没有确定性答案。
+      // 就没有确定性答案。票 06 起改由模型读着描述连选带排。
       std::mt19937 rng(std::random_device{}());
       std::sample(winners.begin(), winners.end(), std::back_inserter(selected), count, rng);
     } else {
@@ -211,7 +295,65 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
     for (auto& r : reps) selected.push_back(r.id);
   }
 
-  return CurateResult{selected, count, static_cast<int>(selected.size()), summary.ai_fallback_count};
+  CurateResult result{selected, count, static_cast<int>(selected.size()),
+                       summary.ai_fallback_count};
+  return result;
+}
+
+namespace {
+
+// production 的评估一张图：解码预览图 -> request_evaluation -> 落库。跟
+// EvaluationWorker::process_request_impl 是同一条链路，区别只在这里是同步
+// 的、跑在调用线程上——curate 要在一次 headless 调用内部把预选集串行评估
+// 完，用不了那套异步队列。
+//
+// 三个刻意的取值：
+// - extra_guidance 传空串。用途**不**注入评估(PRD 决策五)：描述回答"这张
+//   照片是什么"，是关于照片的客观事实；用途回答"这些事实里哪些重要"，是
+//   关于这次任务的。注进去还会让缓存只对一种用途有效。
+// - auto_reject 传 false。curate 是"挑哪几张"，不该顺手改变废片标签——那
+//   会改变下一次运行的候选集，是一个用户没要求过的副作用。
+// - language 用 request_evaluation 的默认值(中文)。curate 只有 headless
+//   一个入口，core 不认识 cli 的界面语言；content 是给机器读的、不进
+//   TUI，assessment 在这条路径上也不展示给人。票 07 的文案如果需要跟随
+//   界面语言，那时再把语言接进来。
+bool evaluate_and_store(db::Database& db, project::ImageId image_id, ai::Provider provider,
+                        const ai::LocalModelConfig& local_config) {
+  auto info = project::get_image(db, image_id);
+  if (!info) return false;
+  auto project_summary = project::open_project(db, info->project_id);
+  if (!project_summary.ok()) return false;
+
+  std::string path = media::resolve_preview_path(project_summary.value().root_path, info->file_path,
+                                                  info->kind, info->preview_cache_path);
+  auto decoded = media::decode_preview_file(path);
+  if (!decoded.ok()) return false;
+
+  auto evaluated = ai::request_evaluation(decoded.value(), /*extra_guidance=*/"", provider,
+                                           ai::Language::Chinese, local_config);
+  if (!evaluated.ok()) return false;
+  return ai::store_evaluation(db, image_id, evaluated.value(), /*extra_guidance=*/"", provider,
+                              /*auto_reject=*/false)
+      .ok();
+}
+
+}  // namespace
+
+CurateResult curate(db::Database& db, project::ProjectId project_id,
+                     std::optional<tagging::TagId> candidate_scope, int count,
+                     int time_window_seconds, int hash_threshold, double preselect_multiplier,
+                     bool ai_enabled, ai::Provider ai_provider,
+                     const ai::LocalModelConfig& local_config, dedup::DedupProgressFn on_progress,
+                     dedup::AiProgressFn on_ai_progress, CurateAiGateFn on_ai_gate,
+                     EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
+  return detail::curate_impl(
+      db, project_id, candidate_scope, count, time_window_seconds, hash_threshold,
+      preselect_multiplier, ai_enabled, ai_provider, local_config,
+      [ai_provider, &local_config](db::Database& d, project::ImageId id) {
+        return evaluate_and_store(d, id, ai_provider, local_config);
+      },
+      std::move(on_progress), std::move(on_ai_progress), std::move(on_ai_gate),
+      std::move(on_eval_progress), std::move(on_cancel));
 }
 
 }  // namespace pzt::core::curate

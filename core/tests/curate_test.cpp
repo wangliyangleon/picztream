@@ -4,9 +4,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 
+#include "core/ai/evaluation_store.h"
 #include "core/curate/curate.h"
 #include "core/db/database.h"
 #include "core/decode/decode.h"
@@ -546,4 +549,275 @@ TEST_CASE("curate with no progress callbacks behaves exactly as before") {
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
 
   CHECK(result.returned == 2);
+}
+
+// ---------------------------------------------------------------------------
+// 票 05：curate 内部评估预选集 - 闸门 + 进度 + ai_declined/cancelled
+//
+// 这一组用例全部走 detail::curate_impl 注入假 evaluate_fn。理由见
+// curate.h 上 EvaluateFn 的说明：本票要覆盖的行为(闸门报的张数跟真实发
+// 起的次数对不对得上、缓存跳过、进度计数、取消)只存在于成功路径上，而
+// 这个文件既有的 AI 用例一律是"让调用必然失败、只验证退化"。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 记账用的假评估：记下被评估过的 id，按需汇报失败。真的往库里写一条评估
+// 记录，好让"已评估过的跳过"这条能被下一次调用观察到。
+struct FakeEvaluator {
+  std::vector<ImageId> evaluated;
+  bool succeed = true;
+
+  bool operator()(Database& db, ImageId id) {
+    evaluated.push_back(id);
+    if (!succeed) return false;
+    pzt::core::ai::EvaluationResult r{"锐利、构图均衡", false, "一只猫趴在窗台上"};
+    return pzt::core::ai::store_evaluation(db, id, r, "", Provider::Local, /*auto_reject=*/false)
+        .ok();
+  }
+};
+
+bool has_evaluation(Database& db, ImageId id) {
+  auto info = pzt::core::project::get_image(db, id);
+  return info && info->evaluation.has_value();
+}
+
+// 全是单例簇的 fixture：图片时间上互相远离，一个 size>=2 的簇都没有，因
+// 此一次比较都不会发起。用它把"评估"这条路径跟锦标赛隔离开单独观察。
+Fixture make_singletons(const std::string& tag, int n) {
+  auto fx = make_fixture(tag, n);
+  for (int i = 0; i < n; ++i) set_captured_at(fx.db, fx.images[i], i * 100000);
+  return fx;
+}
+
+}  // namespace
+
+TEST_CASE("curate --ai evaluates exactly the preselection, not the whole library") {
+  // 12 个单例簇、count=2、M=2 => 预选集 4 张。评估次数跟着预选集走，跟
+  // 图库大小(12)无关 - 这是 PRD 决策十"由构造保证有界"的可观测形式。
+  auto fx = make_singletons("eval_preselection", 12);
+  FakeEvaluator eval;
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10,
+                                     /*preselect_multiplier=*/2.0, /*ai_enabled=*/true,
+                                     Provider::Local, pzt::core::ai::LocalModelConfig{},
+                                     std::ref(eval));
+
+  CHECK(result.returned == 2);
+  CHECK(eval.evaluated.size() == 4);
+
+  // 评估的必须正好是预选集本身，而不是随便 4 张。不把那 4 个 id 写死：
+  // farthest-point 打平时按 image id 兜底，而 id 是按目录扫描顺序分配
+  // 的、不保证跟文件名同序，写死等于把测试钉在文件系统的返回顺序上。
+  // 改成断言一个不变量——预选集就是"关 AI 时挑 k 张"的结果，两者走的是
+  // 同一个 take_farthest_points(票 04 的裁剪与最终选片共用同一个循环)。
+  auto deterministic = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/4, 20, 10,
+                                            2.0, /*ai_enabled=*/false, Provider::Local,
+                                            pzt::core::ai::LocalModelConfig{}, std::ref(eval));
+  std::vector<ImageId> expected = deterministic.selected;
+  std::vector<ImageId> got = eval.evaluated;
+  got.resize(4);  // 上面那次关 AI 的调用不评估，evaluated 不会增长，这里只是防御
+  std::sort(expected.begin(), expected.end());
+  std::sort(got.begin(), got.end());
+  CHECK(got == expected);
+}
+
+TEST_CASE("curate --ai skips photos that already have an evaluation") {
+  auto fx = make_singletons("eval_cache_skip", 6);
+  FakeEvaluator first;
+  detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                       /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
+                       std::ref(first));
+  REQUIRE(first.evaluated.size() == 4);
+
+  // 同一批照片再跑一次：预选集是确定性的，四张全都已经有评估记录了，一
+  // 次请求都不该再发出去(PRD 决策七：有记录就跳过，不做字段完整性检查)。
+  FakeEvaluator second;
+  detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                       /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
+                       std::ref(second));
+  CHECK(second.evaluated.empty());
+}
+
+TEST_CASE("curate --ai gate is consulted before any evaluation and sees the exact counts") {
+  auto fx = make_singletons("eval_gate_counts", 12);
+  FakeEvaluator eval;
+
+  int seen_comparisons = -1;
+  int seen_evaluations = -1;
+  auto result = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), /*on_progress=*/nullptr,
+      /*on_ai_progress=*/nullptr, [&](int comparisons, int evaluations) {
+        seen_comparisons = comparisons;
+        seen_evaluations = evaluations;
+        // 闸门被问到的这一刻，一张都还没评估过。
+        CHECK(eval.evaluated.empty());
+        return true;
+      });
+
+  CHECK(result.returned == 2);
+  CHECK(seen_comparisons == 0);  // 全是单例簇，没有任何比较
+  CHECK(seen_evaluations == 4);
+  // 闸门报的张数跟真实发起的次数对得上(冷缓存下是相等，热缓存下只会更少)。
+  CHECK(static_cast<int>(eval.evaluated.size()) == seen_evaluations);
+}
+
+TEST_CASE("curate --ai gate is still consulted when there is nothing to compare") {
+  // tournament 的闸门只在存在 size>=2 的簇时才问(没有比较就没有开销)，但
+  // curate 即使一次比较都不发也仍然要评估，开销不为零。这条守的就是那个
+  // 缺口 - 少了它，全是单例簇的项目会绕过闸门直接开始花钱。
+  auto fx = make_singletons("eval_gate_no_groups", 6);
+  FakeEvaluator eval;
+
+  bool asked = false;
+  auto result = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      [&](int, int) {
+        asked = true;
+        return false;
+      });
+
+  CHECK(asked);
+  CHECK(result.ai_declined);
+  CHECK(eval.evaluated.empty());
+}
+
+TEST_CASE("curate --ai gate returning false writes absolutely nothing and is distinguishable from an empty pool") {
+  auto fx = make_singletons("eval_gate_declined", 6);
+  FakeEvaluator eval;
+
+  auto declined = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      [](int, int) { return false; });
+
+  CHECK(declined.ai_declined);
+  CHECK_FALSE(declined.cancelled);
+  CHECK(declined.selected.empty());
+  CHECK(declined.returned == 0);
+  CHECK(declined.requested == 2);
+  CHECK(eval.evaluated.empty());
+  for (auto id : fx.images) CHECK_FALSE(has_evaluation(fx.db, id));
+
+  // PRD 决策十九的整条理由就在这两行：拒绝之前，"selected 为空"唯一的含
+  // 义是"这个项目里没有可选的照片"。两者必须能分辨，否则用户点了"不跑"
+  // 会收到一句"没选出照片"。
+  // 候选池真的为空：唯一那张图被打了废片标签，排除之后一个候选都不剩。
+  auto empty_fx = make_singletons("eval_gate_empty_pool", 1);
+  auto reject_tag = ensure_reject_tag(empty_fx.db, empty_fx.project_id);
+  REQUIRE(add_tag(empty_fx.db, empty_fx.images[0], reject_tag).ok());
+  auto empty = detail::curate_impl(empty_fx.db, empty_fx.project_id, std::nullopt, /*count=*/2, 20,
+                                    10, 2.0, /*ai_enabled=*/true, Provider::Local,
+                                    pzt::core::ai::LocalModelConfig{}, std::ref(eval));
+  CHECK(empty.selected.empty());
+  CHECK_FALSE(empty.ai_declined);
+  CHECK_FALSE(empty.cancelled);
+}
+
+TEST_CASE("curate --ai reports per-photo evaluation progress, counted from 1 up to the real total") {
+  auto fx = make_singletons("eval_progress", 12);
+  FakeEvaluator eval;
+
+  std::vector<std::pair<int, int>> progress;
+  // 报在**发起之前**：每次回调时，已评估数应当正好比 done 少 1。
+  detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                       /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
+                       std::ref(eval), nullptr, nullptr, nullptr, [&](int done, int total) {
+                         CHECK(static_cast<int>(eval.evaluated.size()) == done - 1);
+                         progress.push_back({done, total});
+                       });
+
+  REQUIRE(progress.size() == 4);
+  for (std::size_t i = 0; i < progress.size(); ++i) {
+    CHECK(progress[i].first == static_cast<int>(i) + 1);  // 1-based，逐张递增
+    CHECK(progress[i].second == 4);                        // total 全程不变
+  }
+}
+
+TEST_CASE("curate --ai cancellation mid-evaluation is reported as cancelled, not as an empty pool") {
+  auto fx = make_singletons("eval_cancel", 12);
+  FakeEvaluator eval;
+
+  // 粘性取消：评估过两张之后开始喊停(CancelFn 的契约要求一旦为真就一直
+  // 为真，见 dedup.h)。
+  bool stop = false;
+  auto result = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{},
+      [&](Database& db, ImageId id) {
+        bool ok = eval(db, id);
+        if (eval.evaluated.size() >= 2) stop = true;
+        return ok;
+      },
+      nullptr, nullptr, nullptr, nullptr, [&] { return stop; });
+
+  CHECK(result.cancelled);
+  CHECK_FALSE(result.ai_declined);
+  CHECK(result.selected.empty());
+  CHECK(result.returned == 0);
+  CHECK(eval.evaluated.size() == 2);  // 喊停之后不再发起新的评估
+}
+
+TEST_CASE("curate with ai disabled neither gates nor evaluates nor reports evaluation progress") {
+  auto fx = make_singletons("eval_ai_off", 6);
+  FakeEvaluator eval;
+
+  bool gated = false;
+  bool progressed = false;
+  auto result = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/false,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      [&](int, int) {
+        gated = true;
+        return false;  // 万一被问到，返回 false 会让结果明显不对
+      },
+      [&](int, int) { progressed = true; });
+
+  CHECK(result.returned == 2);
+  CHECK_FALSE(gated);
+  CHECK_FALSE(progressed);
+  CHECK(eval.evaluated.empty());
+  CHECK_FALSE(result.ai_declined);
+  CHECK_FALSE(result.cancelled);
+}
+
+TEST_CASE("curate --ai carries on when a single evaluation fails") {
+  // 一张图评估失败只是它没有描述可用(票 06 起由选择那一步处理)，不该让
+  // 整批选片失败 - 跟锦标赛里"某簇比较失败就那一簇退化、不中断其它簇"是
+  // 同一个立场。
+  auto fx = make_singletons("eval_failure", 12);
+  FakeEvaluator eval;
+  eval.succeed = false;
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval));
+
+  CHECK(eval.evaluated.size() == 4);  // 四张都试过
+  CHECK(result.returned == 2);        // 选片照常交付
+  CHECK_FALSE(result.cancelled);
+  CHECK_FALSE(result.ai_declined);
+}
+
+TEST_CASE("curate --ai does not evaluate when the candidate pool is smaller than count") {
+  // 候选不足 count 时没有"选"这个动作(全部返回)，也就没有预选集，因此没
+  // 有任何评估开销 - 闸门报 0 张，一次请求都不发。
+  auto fx = make_singletons("eval_shortfall", 2);
+  FakeEvaluator eval;
+
+  bool gated = false;
+  auto result = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      [&](int, int evaluations) {
+        gated = true;
+        CHECK(evaluations == 0);
+        return true;
+      });
+
+  CHECK(result.returned == 2);
+  CHECK(eval.evaluated.empty());
+  CHECK_FALSE(gated);  // 开销恒为 0，不打扰调用方
 }

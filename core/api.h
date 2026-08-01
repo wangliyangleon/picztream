@@ -203,13 +203,21 @@ using CurateResult = curate::CurateResult;
 // 一样没有默认值：PRD 决策十一要求它由 CLI 从
 // Settings.curate_preselect_multiplier 读出后显式传入，给个默认值等于允
 // 许调用方绕过 Settings、再复制一份"2"出来。语义见 core/curate/curate.h。
+// on_ai_gate/on_eval_progress/on_cancel(票 05)同样只是透传，语义见
+// core/curate/curate.h 上 CurateAiGateFn/EvalProgressFn 与 dedup::CancelFn
+// 的说明。
+using CurateAiGateFn = curate::CurateAiGateFn;
+using EvalProgressFn = curate::EvalProgressFn;
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
                             int time_window_seconds, int hash_threshold,
                             double preselect_multiplier, bool ai_enabled = false,
                             Provider ai_provider = Provider::Local,
                             const LocalModelConfig& local_config = LocalModelConfig{},
                             dedup::DedupProgressFn on_progress = nullptr,
-                            dedup::AiProgressFn on_ai_progress = nullptr);
+                            dedup::AiProgressFn on_ai_progress = nullptr,
+                            CurateAiGateFn on_ai_gate = nullptr,
+                            EvalProgressFn on_eval_progress = nullptr,
+                            dedup::CancelFn on_cancel = nullptr);
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见
