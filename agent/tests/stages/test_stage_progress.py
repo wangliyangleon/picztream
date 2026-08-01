@@ -105,7 +105,7 @@ def test_evaluation_phase_is_not_forwarded_when_ai_is_off():
 def test_dedup_is_unaffected_by_the_new_evaluation_phase():
     # 转发规则按 phase 分派、不按 stage 分（模块 docstring：不让"该转发哪
     # 个 phase"变成第三份实现）。dedup 从不发 evaluate，所以它实际看到的
-    # 东西一字未变 —— 这里喂的就是 dedup 真会发的那两个 phase。
+    # 东西一字未变 - 这里喂的就是 dedup 真会发的那两个 phase。
     seen = []
     client = _ProgressingClient(_BOTH_PHASES)
 

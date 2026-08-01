@@ -155,7 +155,7 @@ def test_describe_running_picks_the_wording_by_what_is_being_counted(tmp_path):
     assert describe("groups") == "正在处理需要比较筛选的照片组，已完成 1/1组"
     assert describe("comparisons") == "正在两两比较、挑出更好的那张，已完成 1/1次"
     assert describe("photos") == "正在套滤镜，已完成 1/1张"
-    # 票 09 的第四类。单位跟 photos 一样是"张"，但活动不同 —— 复用 photos
+    # 票 09 的第四类。单位跟 photos 一样是"张"，但活动不同 - 复用 photos
     # 会让用户在评估阶段看到"正在套滤镜"。
     assert describe("evaluations") == "正在逐张看照片、记下画面内容与优缺点，已完成 1/1张"
 

@@ -894,7 +894,7 @@ class SessionConsumer:
 
         只有 3/3 还不够 —— 那句话仍然是"正在…"，读起来像还在跑，然后下一
         件事无预警发生。调用点都是"上一段确实跑完了"的时刻：下一个 stage
-        开跑、停在闸门、整批完成，以及票 09 起的第四个 —— 同一个 stage 内
+        开跑、停在闸门、整批完成，以及票 09 起的第四个 - 同一个 stage 内
         换 phase（开 AI 的 curate 先比较、后逐张评估）。**取消和失败不
         调**，把半截进度改成"套完了"是在撒谎。
 
@@ -907,16 +907,27 @@ class SessionConsumer:
         self._stage_progress = None
         self._stage_progress_notified_at = None
 
-    def _on_stage_started(self, event: StageStarted) -> None:
-        # 下一个 stage 开跑 = 上一个跑完了，先把它那条进度收尾。
+    def _close_progress_slot(self) -> None:
+        """收尾当前这条进度并腾空槽位，下一条进度于是会是一条新消息。
+
+        换 stage 和换 phase 共用这一步。**腾空必须无条件做，不能只依赖
+        _finalize_stage_progress**：那一步在槽是空的时候会提前返回，而槽正
+        是上一次发送失败时被 _send_progress 置空的（拿不到 message_id）。
+        只走收尾的话计时器会残留下来，下一段的第一帧落进上一段的节流窗口
+        里被吃掉。
+        """
         self._finalize_stage_progress()
-        self.view.current_stage = event.stage
-        self.view.stage_progress = None
-        # 换一个 stage 就换一条进度消息（AG-16.3 的进度是原地编辑的）：不
-        # 换槽的话 Curate 的进度会去改写 Dedup 那条，用户往回翻看到的历史
-        # 是错的。时间戳一起清零，下一个 stage 的第一条立刻发得出去。
+        # 换槽的理由（AG-16.3 的进度是原地编辑的）：不换的话下一段的进度会
+        # 去改写上一段那条，用户往回翻看到的历史是错的。时间戳一起清零，下
+        # 一段的第一条立刻发得出去。
         self._stage_progress = None
         self._stage_progress_notified_at = None
+
+    def _on_stage_started(self, event: StageStarted) -> None:
+        # 下一个 stage 开跑 = 上一个跑完了，先把它那条进度收尾。
+        self._close_progress_slot()
+        self.view.current_stage = event.stage
+        self.view.stage_progress = None
         message = STAGE_PROGRESS_MESSAGES.get(event.stage)
         if message:
             self._send(message)
@@ -941,16 +952,15 @@ class SessionConsumer:
         换 phase 时另起一条消息（票 09）：票 05 之后开 AI 的 curate 会在一
         个 Curate stage 里先比较、后逐张评估，两段数的东西不同（次 / 张）。
         挤在同一条里原地编辑的话，用户会看到"已完成 160/160 次"直接变成
-        "已完成 1/6 张" —— 分子分母同时跳，读起来像进度条倒退；而且比较那
-        条的终态句永远发不出去，因为 _finalize_stage_progress 只在 stage
-        边界触发，评估的第一帧会把它原地覆盖掉。换槽的手法与
-        _on_stage_started 一致（那里是换 stage，这里是换 phase）。"""
+        "已完成 1/6 张" - 分子分母同时跳，读起来像进度条倒退；而且比较那条
+        的终态句永远发不出去，因为收尾原本只在 stage 边界触发，评估的第一
+        帧会把它原地覆盖掉。换 stage 与换 phase 共用 _close_progress_slot。
+        """
         if (self.view.stage_progress is not None
                 and self.view.stage_progress[2] != event.kind):
             # 必须在覆盖 view.stage_progress 之前收尾：终态句的 kind 和
-            # total 都是从它里面读的。收尾会把槽和计时器一起清掉，于是下面
-            # 这一帧发的是新消息、且不受上一个 phase 的节流窗口约束。
-            self._finalize_stage_progress()
+            # total 都是从它里面读的。
+            self._close_progress_slot()
         self.view.stage_progress = (event.done, event.total, event.kind)
         now = self.now_fn()
         last = self._stage_progress_notified_at

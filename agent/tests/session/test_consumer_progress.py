@@ -202,7 +202,7 @@ def test_progress_message_is_closed_out_at_a_gate(tmp_path):
 #
 # 票 05 之后，开 AI 的 curate 会在一个 Curate stage 里先比较、后逐张评估。
 # 两段数的东西不同（次 / 张），挤在同一条消息里原地编辑的话，用户会看到
-# "已完成 160/160 次"直接变成"已完成 1/6 张" —— 分子分母同时跳，读起来像
+# "已完成 160/160 次"直接变成"已完成 1/6 张" - 分子分母同时跳，读起来像
 # 进度条倒退；比较那条的终态句也就永远发不出去了。
 
 
@@ -243,6 +243,28 @@ def test_first_frame_after_a_phase_switch_is_not_throttled(tmp_path):
     env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 9, "comparisons"))
     env.consumer.step()
 
+    env.clock.advance(1)  # 远不到 600 秒
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 6, "evaluations"))
+    env.consumer.step()
+
+    assert "1/6张" in env.transport.texts()[-1]
+
+
+def test_phase_switch_resets_the_timer_even_when_the_previous_send_failed(tmp_path):
+    # 上一条进度发送失败时（Telegram 抽风，_send 拿不到 message_id），
+    # _send_progress 会把槽置空，而计时器照样落了戳。收尾那一步遇到空槽会
+    # 提前返回，于是计时器残留下来，评估的第一帧落进比较那一段的节流窗口
+    # 被吃掉 - 正是这条验收标准点名要防的那种沉默。
+    env, job = _running_env(tmp_path, interval=600.0)
+    gen = env.consumer.generation
+    ok_send = env.transport.send_text
+    env.transport.send_text = lambda chat_id, text: None
+
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 9, "comparisons"))
+    env.consumer.step()
+    assert env.consumer._stage_progress is None  # 槽确实被发送失败清空了
+
+    env.transport.send_text = ok_send
     env.clock.advance(1)  # 远不到 600 秒
     env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 6, "evaluations"))
     env.consumer.step()
