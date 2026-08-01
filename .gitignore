@@ -6,3 +6,6 @@ agent/.pytest_cache/
 agent/**/__pycache__/
 agent/*.egg-info/
 .DS_Store
+
+# clangd 的本地索引缓存(LSP 生成,跟机器绑定,不进版本库)
+.cache/
