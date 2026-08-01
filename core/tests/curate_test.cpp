@@ -129,7 +129,7 @@ struct EnvVarGuard {
 }  // namespace
 
 // 票 04：预选集大小的纯函数。表驱动穷举边界，不需要数据库或网络(PRD
-// 测试决策的第二条缝隙)——这一块最容易写错的是钳制的三个方向(下界
+// 测试决策的第二条缝隙) - 这一块最容易写错的是钳制的三个方向(下界
 // 1.5、上界候选集大小、ceil 的取整方向)，摘出来才能穷举。
 TEST_CASE("preselect_size clamps by lower bound 1.5, candidate count, and ceils") {
   struct Case {
@@ -158,6 +158,7 @@ TEST_CASE("preselect_size clamps by lower bound 1.5, candidate count, and ceils"
       {5, 2.0, 4, 5, "capped by candidate count"},
       {4, 2.0, 4, 4, "candidate count == N: preselection is a no-op"},
       {6, 2.0, 4, 6, "between N and target: degenerates to no-op"},
+      {8, 2.0, 4, 8, "target exactly equals candidate count"},
       {1000000000, 2.0, 1000000000, 1000000000, "no overflow at extreme N"},
       // 退化输入：候选集为空 / 非正的 count(curate 的契约保证 count>0，
       // 这里只保证不返回负数或崩)
@@ -429,7 +430,7 @@ TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-s
 // 一刀。6 个单例簇(全是 size=1，不发起任何 AI 比较)，count=2、M=1.5 =>
 // 预选集 3 张。farthest-point 是确定性的：seed 取最新 f(500000)，再取离
 // 它最远的 a(0)，第三名额 c 与 d 的最小距离打平(都是 200000)、按 id 小
-// 者胜出 -> c。随机采样只在这 3 张里发生，b/d/e 永远不会入选——不裁剪的
+// 者胜出 -> c。随机采样只在这 3 张里发生，b/d/e 永远不会入选 - 不裁剪的
 // 话它们都在池子里，重复跑必然会撞上。
 TEST_CASE("curate clamps the candidate set to the preselection before the AI path samples") {
   EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
@@ -449,9 +450,11 @@ TEST_CASE("curate clamps the candidate set to the preselection before the AI pat
 }
 
 // 票 04：AI 关的那条路同样经过裁剪，且输出一字不变。farthest-point 是增
-// 量贪心，"先挑 K 张再从这 K 张里挑 N 张"与"直接挑 N 张"的前 N 步完全同
-// 序(每一步的 argmax 都落在 K 里)，所以裁剪在这条路上外部不可观测——这
-// 条用例守的就是这个不变量，而不是某个新行为。
+// 量贪心，"先挑 K 张再从这 K 张里挑 N 张"与"直接挑 N 张"选出同一个集合
+// (每一步的 argmax 都落在 K 里)，而交付顺序自票 01 起一律由
+// by_captured_at_desc 决定、与挑选顺序无关，两头都不受裁剪影响，所以裁
+// 剪在这条路上外部不可观测 - 这条用例守的就是这个不变量，而不是某个新
+// 行为。
 TEST_CASE("curate preselection leaves the non-AI selection unchanged") {
   auto fx = make_fixture("preselect_non_ai", 6);
   for (int i = 0; i < 6; ++i) set_captured_at(fx.db, fx.images[i], i * 100000);

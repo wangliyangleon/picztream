@@ -62,7 +62,7 @@ struct CurateResult {
 // preselect_multiplier（票 04 的 M）：选片之前先把候选集(每簇一张代表)
 // 按时间多样性裁成预选集，规模 = min(ceil(max(1.5, M) · count), 候选集
 // 大小)，选择逻辑本身不变、只是面对一个更小的池子。跟
-// time_window_seconds/hash_threshold 同一个约定——curate 不读 Settings，
+// time_window_seconds/hash_threshold 同一个约定 - curate 不读 Settings，
 // 由调用方从 Settings.curate_preselect_multiplier 显式传入。默认 2 与
 // Settings 的默认值一致。见 docs/Intent_Curation_PRD.md 决策十至十二：
 // 这一刀跑在(将来的)评估之前，因此多样性只沿 captured_at 衡量，也因此评

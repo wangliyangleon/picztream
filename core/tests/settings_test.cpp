@@ -117,6 +117,7 @@ TEST_CASE("load falls back per-field on bad types or unrecognized values, others
     "dedup_time_window_seconds": "twenty",
     "dedup_hash_threshold": 8,
     "curate_hash_threshold": "ten",
+    "curate_preselect_multiplier": "two",
     "eval_reject": "yes"
   })json");
 
@@ -125,6 +126,7 @@ TEST_CASE("load falls back per-field on bad types or unrecognized values, others
   CHECK(s.dedup_time_window_seconds == 10);          // 字符串类型不对，回退默认
   CHECK(s.dedup_hash_threshold == 8);                // 这个字段本身合法，正常生效
   CHECK(s.curate_hash_threshold == 10);              // 字符串类型不对，回退默认
+  CHECK(s.curate_preselect_multiplier == doctest::Approx(2.0));  // 字符串类型不对，回退默认
   CHECK(s.eval_reject == false);                     // 字符串类型不对，回退默认
 }
 

@@ -195,6 +195,7 @@
         <tr><td class="k"><code>ollama_model</code></td><td class="mono">gemma4:e2b</td><td><b>本地视觉模型名</b>（看图点评/去重-选片比较用）；换模型改这里</td></tr>
         <tr><td class="k"><code>ollama_base_url</code></td><td class="mono">localhost:11434</td><td>本地 Ollama 服务地址</td></tr>
         <tr><td class="k"><code>curate_time_window_seconds</code><br><code>curate_hash_threshold</code></td><td class="mono">20<br>10</td><td>选片分簇的时间窗（秒）与哈希阈值</td></tr>
+        <tr><td class="k"><code>curate_preselect_multiplier</code></td><td class="mono">2</td><td>选片前先按拍摄时间裁出的预选集倍率：选 N 张时预选 <code>N ×</code> 该值张（小于 1.5 按 1.5 生效）</td></tr>
         <tr><td class="k"><code>dedup_time_window_seconds</code><br><code>dedup_hash_threshold</code></td><td class="mono">10<br>5</td><td>近似重复分簇的时间窗（秒）与哈希阈值</td></tr>
         <tr><td class="k"><code>auto_ai_reject</code></td><td class="mono">false</td><td>AI 点评判定有硬伤（unusable）就自动打「废片」标签</td></tr>
         <tr><td class="k"><code>eval_reject</code> / <code>dedup_reject</code><br><code>export_reject</code> / <code>export_dup</code></td><td class="mono">false</td><td>批量操作的默认排除策略开关（改成 true 即「不排除」）</td></tr>
