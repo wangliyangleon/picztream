@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "core/ai/ai.h"
+#include "core/ai/selection.h"
 #include "core/db/database.h"
 #include "core/dedup/dedup.h"  // DedupProgressFn / AiProgressFn(两者都定义在这里)
 #include "core/project/project.h"
@@ -20,7 +21,8 @@ struct CurateResult {
   // 有序，且这个顺序有意义：调用方(pzt curate -> agent -> Deliver)按它的
   // 次序发送，决定九宫格位置与轮播先后。票 01 起两条确定性路径(关 AI 凑够
   // count、候选簇数不足 count)都是 captured_at 降序、id 升序；开 AI 且候选
-  // 够那条仍是 std::sample 的保序输出(即簇遍历顺序)，票 06 改由模型决定。
+  // 够那条自票 06 起是**模型返回的顺序**——选与排是同一次决定，返回顺序即
+  // 交付顺序(PRD 决策十四)。
   std::vector<project::ImageId> selected;
   int requested;
   int returned;  // == selected.size()，< requested 表示候选不足
@@ -41,6 +43,17 @@ struct CurateResult {
   // 入)，分开报是因为对用户的含义不同-一个是"没点头"，一个是"点了头又
   // 喊停"。见 core::tournament::ChooseSummary 的同名字段。
   bool cancelled = false;
+  // 票 06（PRD 决策二十一）：模型的选择整批没用上——调用失败，或者返回值
+  // 清洗完剩下的有效序号不足 count——这一次的选择与排序退化成了确定性路
+  // 径。ai_enabled=false 时恒为 false（那条路本来就是确定性的，谈不上退
+  // 化）。
+  //
+  // **刻意不复用 ai_fallback_count**：那个数的语义是"某**几个簇**的比较失
+  // 败、那几簇退化成选 captured_at 最新的一张"，而且已经进了用户话术("哪
+  // 几组不是 AI 挑的")。整批的选择退化是另一回事——照片是 AI 挑的还是按时
+  // 间挑的，说错了用户会当场发现。两个信号互不干扰：一次运行里可以只有其
+  // 中一个为真，也可以两个同时为真。
+  bool ai_selection_fallback = false;
 };
 
 // 票 05：AI 真正开跑前的合并开销闸门。comparison_count 是簇内锦标赛要发
@@ -86,10 +99,12 @@ using EvalProgressFn = std::function<void(int done, int total)>;
 // ai_enabled/ai_provider/local_config(W2026-07-21 目标二新增)：默认
 // ai_enabled=false，保证现有调用点零改动。ai_enabled=false 时每簇选
 // captured_at 最新的代表，凑够 count 张走现有 farthest-point 多样性；
-// ai_enabled=true 时每簇改走单淘汰锦标赛选出 winner，凑够 count 张时从
-// winner 集合里随机挑(不做种子化，接受不可复现)。两种模式下候选簇数不
-// 足 count 时都返回全部 winner，见 core::tournament::cluster_and_choose
-// 的说明。
+// ai_enabled=true 时每簇改走单淘汰锦标赛选出 winner，凑够 count 张时由
+// 模型读着预选集里每张的质量评价与内容描述连选带排(票 06；此前是
+// std::sample 的随机抽样，因为那时没有任何可比的东西)。模型没给出能用
+// 的答案时整批退化成上面那条确定性路径，并置 ai_selection_fallback。两
+// 种模式下候选簇数不足 count 时都返回全部 winner，见
+// core::tournament::cluster_and_choose 的说明。
 // on_progress/on_ai_progress（T-8）：原样转给 cluster_and_choose，语义见
 // core::dedup::DedupProgressFn 与 core::tournament::AiProgressFn。默认
 // nullptr，现有调用点零改动，跟 W2026-07-21 给 dedup 加参数时同一个约
@@ -134,13 +149,24 @@ namespace detail {
 // 一个先例。
 using EvaluateFn = std::function<bool(db::Database&, project::ImageId)>;
 
-// 仅供单元测试使用-evaluate_fn 可注入，不需要真的解码 JPEG 或连网络。
-// production 的 curate 就是这个函数塞真实 evaluate_fn 的一层薄封装。
+// 票 06：让模型读着预选集的描述连选带排的那一步，同样抽成可注入的一步。
+// 参数是按预选集顺序排好的候选描述与要选的张数，返回模型给的 1-based 序
+// 号；调用失败(网络/解析)返回 nullopt。返回值不做清洗，那是
+// resolve_selection 的事。
+//
+// production 的 curate 塞的是 ai::request_selection 的薄封装。传 nullptr
+// (测试里的默认)等价于"模型不可用"，走整批退化。
+using SelectFn = std::function<std::optional<std::vector<int>>(
+    const std::vector<ai::SelectionCandidate>& candidates, int count)>;
+
+// 仅供单元测试使用-evaluate_fn/select_fn 可注入，不需要真的解码 JPEG 或连
+// 网络。production 的 curate 就是这个函数塞真实实现的一层薄封装。
 CurateResult curate_impl(db::Database& db, project::ProjectId project_id,
                           std::optional<tagging::TagId> candidate_scope, int count,
                           int time_window_seconds, int hash_threshold, double preselect_multiplier,
                           bool ai_enabled, ai::Provider ai_provider,
                           const ai::LocalModelConfig& local_config, EvaluateFn evaluate_fn,
+                          SelectFn select_fn = nullptr,
                           dedup::DedupProgressFn on_progress = nullptr,
                           dedup::AiProgressFn on_ai_progress = nullptr,
                           CurateAiGateFn on_ai_gate = nullptr,
@@ -153,6 +179,22 @@ CurateResult curate_impl(db::Database& db, project::ProjectId project_id,
 // 跟 core/ai 里 detail::request_*_impl 是同一个先例。candidate_count 或
 // count 非正时返回 0(curate 的契约保证 count > 0，这里只保证不返回负数)。
 int preselect_size(int candidate_count, double multiplier, int count);
+
+// 票 06（PRD 决策十三）：模型返回的原始序号 -> 最终选择。
+//
+// 1. 剔除不在 1..pool_size 的序号、去重，**保序**
+// 2. 剩余 >= count：取前 count 返回（1-based，调用方按它翻译回照片）
+// 3. 剩余 < count：返回**空**，表示这一批整体退化成确定性选择
+//
+// 不选"任何不合法就整体退化"：模型返回 9 个好序号外加 1 个越界的，把整批
+// 扔掉丢的是真信号。也不选"不足时用确定性结果补齐"：补进来的照片既不符合
+// 用户的题材偏好、也不在模型排的叙事顺序里，交付的会是两套逻辑拼接的结
+// 果，而用户看到的话术只有一种。
+//
+// 跟 preselect_size 一样摘成纯函数只为可测：这是本票最容易写错、最需要穷
+// 举边界的一块（越界、重复、恰好卡在 count 上下），不碰网络与数据库才能表
+// 驱动覆盖。count 非正时返回空（curate 的契约保证 count > 0）。
+std::vector<int> resolve_selection(const std::vector<int>& raw, int pool_size, int count);
 
 }  // namespace detail
 

@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <iterator>
 #include <limits>
-#include <random>
 
 #include "core/ai/evaluation.h"
 #include "core/ai/evaluation_store.h"
@@ -128,6 +126,24 @@ int preselect_size(int candidate_count, double multiplier, int count) {
   return static_cast<int>(target);
 }
 
+std::vector<int> resolve_selection(const std::vector<int>& raw, int pool_size, int count) {
+  if (count <= 0 || pool_size <= 0) return {};
+
+  std::vector<int> cleaned;
+  std::vector<bool> taken(static_cast<std::size_t>(pool_size) + 1, false);
+  for (int index : raw) {
+    if (index < 1 || index > pool_size) continue;  // 越界剔除
+    if (taken[static_cast<std::size_t>(index)]) continue;  // 去重，留第一次出现的位置
+    taken[static_cast<std::size_t>(index)] = true;
+    cleaned.push_back(index);
+  }
+
+  // 分界在这一行：够 count 就取前 count 采纳，不够则整批退化(返回空)。
+  if (static_cast<int>(cleaned.size()) < count) return {};
+  cleaned.resize(static_cast<std::size_t>(count));
+  return cleaned;
+}
+
 }  // namespace detail
 
 CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id,
@@ -135,7 +151,8 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
                                   int time_window_seconds, int hash_threshold,
                                   double preselect_multiplier, bool ai_enabled,
                                   ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-                                  detail::EvaluateFn evaluate_fn, dedup::DedupProgressFn on_progress,
+                                  detail::EvaluateFn evaluate_fn, detail::SelectFn select_fn,
+                                  dedup::DedupProgressFn on_progress,
                                   dedup::AiProgressFn on_ai_progress, CurateAiGateFn on_ai_gate,
                                   EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
   auto ids = resolve_scope_ids(db, project_id, candidate_scope);
@@ -203,6 +220,20 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   for (const auto& c : summary.clusters) winners.push_back(c.winner);
 
   std::vector<project::ImageId> selected;
+  bool selection_fallback = false;
+
+  // 确定性选择：farthest-point 挑 count 张，再按 by_captured_at_desc 交
+  // 付。关 AI 那条路走它，票 06 的整批退化也走它——退化必须落在**同一套**
+  // 逻辑上，否则"AI 挑的"与"退化后挑的"会是两种排列，而用户看到的话术只
+  // 有一种(PRD 决策十三否掉"用确定性结果补齐"是同一个理由)。
+  auto deterministic_select = [&](std::vector<RepInfo>& pool) {
+    auto selected_info = take_farthest_points(pool, count);
+    // 票 01：选中的是哪几张仍由 farthest-point 决定，但交出去的顺序不是
+    // 它的挑选顺序——那个算法每次挑离已选集最远的一张，排列在时间上必然
+    // 跳跃，而这个列表顺序一路决定 Deliver 的发送次序。
+    std::sort(selected_info.begin(), selected_info.end(), by_captured_at_desc);
+    for (const auto& r : selected_info) selected.push_back(r.id);
+  };
 
   if (static_cast<int>(winners.size()) >= count) {
     // 票 04：先把候选集(每簇一张代表)按时间多样性裁成预选集，两条路都走
@@ -272,21 +303,56 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
       // 好。零写入的承诺只对闸门(ai_declined)成立，那时一张都还没评估。
       if (on_cancel && on_cancel()) return cancelled_result();
 
-      // AI 开：从预选集里随机挑 count 个(PRD 已拍板接受不可复现，见
-      // curate.h 的说明) - 没有质量分可比，"哪个 winner 更该被选中"本来
-      // 就没有确定性答案。票 06 起改由模型读着描述连选带排。
-      std::mt19937 rng(std::random_device{}());
-      std::sample(winners.begin(), winners.end(), std::back_inserter(selected), count, rng);
+      // 票 06：AI 开那条路的选择到此为止一直是 std::sample——代码自己写明
+      // 了原因"没有质量分可比"。现在预选集里每张都有描述可读了，改由模型
+      // 一次调用连**选**带**排**(PRD 决策十四：叙事要求会反过来影响选哪几
+      // 张，拆成"先选再排"会切在错误的地方)。
+      //
+      // 候选按 winners 的顺序编号，模型只吐 1-based 序号(决策十三)，翻译
+      // 回照片靠的就是这个顺序，两者不能错位。评估失败的那几张这里是两个
+      // 空串——不跳过、也不改变编号，否则序号与照片的对应关系会随"哪几张
+      // 评估失败"而变。
+      std::optional<std::vector<int>> raw_picks;
+      if (select_fn) {
+        std::vector<ai::SelectionCandidate> candidates;
+        candidates.reserve(winners.size());
+        for (auto id : winners) {
+          auto info = project::get_image(db, id);
+          ai::SelectionCandidate candidate;
+          if (info && info->evaluation) {
+            // 两个字段一起给(决策六)：只给 content 会丢掉质量维度，而几张
+            // 都符合题材偏好时，决定选谁的恰恰是 assessment。
+            candidate.assessment = info->evaluation->assessment;
+            candidate.content = info->evaluation->content;
+          }
+          candidates.push_back(std::move(candidate));
+        }
+        raw_picks = select_fn(candidates, count);
+      }
+
+      std::vector<int> picks;
+      if (raw_picks) {
+        picks = detail::resolve_selection(*raw_picks, static_cast<int>(winners.size()), count);
+      }
+
+      if (!picks.empty()) {
+        for (int index : picks) selected.push_back(winners[static_cast<std::size_t>(index) - 1]);
+      } else {
+        // 整批退化：调用失败，或者清洗完的有效序号不足 count。信号独立于
+        // ai_fallback_count(决策二十一)，两者对用户说的话不一样。
+        selection_fallback = true;
+        // 不裁剪那条路上 pool 还是空的(AI 开且不裁剪时前面一次库都没
+        // 读)，退化到此刻才需要每张的 captured_at。
+        if (pool.empty()) {
+          for (auto id : winners) pool.push_back(make_rep_info(db, id));
+        }
+        deterministic_select(pool);
+      }
     } else {
       // AI 关：farthest-point 多样性，逻辑不变，只是输入源从旧
       // build_cluster_reps 换成 winners(ai_enabled=false 时两者等价)，票
       // 04 之后 pool 可能已经被裁剪过。
-      auto selected_info = take_farthest_points(pool, count);
-      // 票 01：选中的是哪几张仍由 farthest-point 决定，但交出去的顺序不
-      // 是它的挑选顺序——那个算法每次挑离已选集最远的一张，排列在时间上
-      // 必然跳跃，而这个列表顺序一路决定 Deliver 的发送次序。
-      std::sort(selected_info.begin(), selected_info.end(), by_captured_at_desc);
-      for (const auto& r : selected_info) selected.push_back(r.id);
+      deterministic_select(pool);
     }
   } else {
     // 簇数 < N：两种模式都返回全部 winner，不分 ai_enabled——没有"选"这
@@ -300,8 +366,10 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
     for (auto& r : reps) selected.push_back(r.id);
   }
 
-  return CurateResult{selected, count, static_cast<int>(selected.size()),
+  CurateResult result{selected, count, static_cast<int>(selected.size()),
                        summary.ai_fallback_count};
+  result.ai_selection_fallback = selection_fallback;
+  return result;
 }
 
 namespace {
@@ -355,6 +423,17 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
       preselect_multiplier, ai_enabled, ai_provider, local_config,
       [ai_provider, &local_config](db::Database& d, project::ImageId id) {
         return evaluate_and_store(d, id, ai_provider, local_config);
+      },
+      // 票 06：选择那一步的 production 实现。失败(网络/解析/没有 key)一律
+      // 折成 nullopt - 对 curate 而言"模型没给出能用的答案"只有一种处置，
+      // 就是整批退化，具体是哪种失败不改变这个决定。选片简述恒为空，把它
+      // 从 agent 的意图解析穿到这里是票 08 的事。
+      [ai_provider, &local_config](const std::vector<ai::SelectionCandidate>& candidates,
+                                    int n) -> std::optional<std::vector<int>> {
+        auto result = ai::request_selection(candidates, n, ai_provider, /*selection_brief=*/"",
+                                             local_config);
+        if (!result.ok()) return std::nullopt;
+        return result.value().picks;
       },
       std::move(on_progress), std::move(on_ai_progress), std::move(on_ai_gate),
       std::move(on_eval_progress), std::move(on_cancel));

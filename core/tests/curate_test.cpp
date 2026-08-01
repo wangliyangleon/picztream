@@ -176,6 +176,49 @@ TEST_CASE("preselect_size clamps by lower bound 1.5, candidate count, and ceils"
   }
 }
 
+// 票 06：模型返回的原始序号 -> 最终选择的纯函数(PRD 测试决策的第一条缝
+// 隙)。决策十三的全部分支都在这里穷举：越界剔除、去重保序、≥N 取前 N、
+// <N 整体退化。不碰网络也不碰数据库，所以这些边界不需要注入就能钉死。
+TEST_CASE("resolve_selection cleans out-of-range and duplicate indices, then decides fallback") {
+  struct Case {
+    std::vector<int> raw;
+    int pool_size;
+    int count;
+    std::vector<int> expected;  // 空 = 整体退化
+    const char* why;
+  };
+  const Case cases[] = {
+      // 正常路径：全合法，原样保序(顺序即交付顺序，不许排序)
+      {{3, 1, 2}, 3, 3, {3, 1, 2}, "all valid, order preserved verbatim"},
+      {{2, 1}, 5, 2, {2, 1}, "model order is not sorted"},
+      // 越界剔除，其余按原序采纳——不是"任何不合法就整批扔"
+      {{2, 5, 1}, 3, 2, {2, 1}, "out-of-range dropped, rest kept in order"},
+      {{0, 1, 2}, 3, 2, {1, 2}, "0 is out of range (indices are 1-based)"},
+      {{-1, 3, 2}, 3, 2, {3, 2}, "negative dropped"},
+      {{4, 1, 2, 3}, 3, 3, {1, 2, 3}, "above pool_size dropped"},
+      // 去重且保序：留第一次出现的那个位置
+      {{2, 2, 1, 2}, 3, 2, {2, 1}, "duplicates dropped, first occurrence wins"},
+      {{1, 2, 1, 3}, 3, 3, {1, 2, 3}, "duplicate in the middle does not shift the rest"},
+      // 清洗后多于 count：取前 count
+      {{3, 1, 2}, 3, 2, {3, 1}, "more than count: take the first count"},
+      {{1, 9, 2, 9, 3}, 3, 1, {1}, "take the first one only"},
+      // 清洗后不足 count：整体退化(不拿确定性结果补齐)
+      {{1, 7}, 3, 2, {}, "only one valid left, needs 2 -> whole-batch fallback"},
+      {{9, 9, 9}, 3, 1, {}, "everything out of range -> fallback"},
+      {{2, 2, 2}, 3, 2, {}, "dedupe leaves too few -> fallback"},
+      {{}, 3, 1, {}, "empty reply -> fallback"},
+      // 边界与退化输入
+      {{1}, 1, 1, {1}, "single-element pool"},
+      {{1, 2}, 0, 1, {}, "empty pool: every index is out of range"},
+      {{1, 2}, 3, 0, {}, "count=0 selects nothing"},
+      {{1, 2}, 3, -1, {}, "negative count selects nothing"},
+  };
+  for (const auto& c : cases) {
+    CAPTURE(c.why);
+    CHECK(detail::resolve_selection(c.raw, c.pool_size, c.count) == c.expected);
+  }
+}
+
 // W2026-07-21：curate 不再看 evaluation 记录，纯标签排除。原来"未评估就
 // 排除""未达标(gate)就排除"两条用例整合成这一条——未评估的图照样进候选。
 TEST_CASE("curate includes unevaluated images (no evaluation dependency)") {
@@ -646,7 +689,8 @@ TEST_CASE("curate --ai gate is consulted before any evaluation and sees the exac
   int seen_evaluations = -1;
   auto result = detail::curate_impl(
       fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
-      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), /*on_progress=*/nullptr,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), /*select_fn=*/nullptr,
+      /*on_progress=*/nullptr,
       /*on_ai_progress=*/nullptr, [&](int comparisons, int evaluations) {
         seen_comparisons = comparisons;
         seen_evaluations = evaluations;
@@ -672,7 +716,7 @@ TEST_CASE("curate --ai gate is still consulted when there is nothing to compare"
   bool asked = false;
   auto result = detail::curate_impl(
       fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
-      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr, nullptr,
       [&](int, int) {
         asked = true;
         return false;
@@ -689,7 +733,7 @@ TEST_CASE("curate --ai gate returning false writes absolutely nothing and is dis
 
   auto declined = detail::curate_impl(
       fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
-      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr, nullptr,
       [](int, int) { return false; });
 
   CHECK(declined.ai_declined);
@@ -723,7 +767,7 @@ TEST_CASE("curate --ai reports per-photo evaluation progress, counted from 1 up 
   // 报在**发起之前**：每次回调时，已评估数应当正好比 done 少 1。
   detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
                        /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
-                       std::ref(eval), nullptr, nullptr, nullptr, [&](int done, int total) {
+                       std::ref(eval), nullptr, nullptr, nullptr, nullptr, [&](int done, int total) {
                          CHECK(static_cast<int>(eval.evaluated.size()) == done - 1);
                          progress.push_back({done, total});
                        });
@@ -750,7 +794,7 @@ TEST_CASE("curate --ai cancellation mid-evaluation is reported as cancelled, not
         if (eval.evaluated.size() >= 2) stop = true;
         return ok;
       },
-      nullptr, nullptr, nullptr, nullptr, [&] { return stop; });
+      nullptr, nullptr, nullptr, nullptr, nullptr, [&] { return stop; });
 
   CHECK(result.cancelled);
   CHECK_FALSE(result.ai_declined);
@@ -767,7 +811,7 @@ TEST_CASE("curate with ai disabled neither gates nor evaluates nor reports evalu
   bool progressed = false;
   auto result = detail::curate_impl(
       fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/false,
-      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr, nullptr,
       [&](int, int) {
         gated = true;
         return false;  // 万一被问到，返回 false 会让结果明显不对
@@ -809,7 +853,7 @@ TEST_CASE("curate --ai does not evaluate when the candidate pool is smaller than
   bool gated = false;
   auto result = detail::curate_impl(
       fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10, 2.0, /*ai_enabled=*/true,
-      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(eval), nullptr, nullptr, nullptr,
       [&](int, int evaluations) {
         gated = true;
         CHECK(evaluations == 0);
@@ -836,7 +880,7 @@ TEST_CASE("curate --ai gate reports the cache-adjusted count, not the raw presel
   int seen_evaluations = -1;
   detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, 2.0,
                        /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
-                       std::ref(again), nullptr, nullptr, [&](int, int evaluations) {
+                       std::ref(again), nullptr, nullptr, nullptr, [&](int, int evaluations) {
                          seen_evaluations = evaluations;
                          return true;
                        });
@@ -846,4 +890,255 @@ TEST_CASE("curate --ai gate reports the cache-adjusted count, not the raw presel
   // "闸门报出的评估张数与实际执行的数量一致"要的。
   CHECK(seen_evaluations == static_cast<int>(again.evaluated.size()));
   CHECK(seen_evaluations < 6);  // 确实扣掉了缓存，不是原样报预选集大小
+}
+
+// ---------------------------------------------------------------------------
+// 票 06：模型连选带排接进 curate
+//
+// 这一组同样走 detail::curate_impl 注入假 select_fn。本票要覆盖的行为(校
+// 验、排序、退化分界)**全部只存在于成功路径上**，而这个文件既有的 AI 用例
+// 一律是"让调用必然失败、只验证退化"——照抄等于零覆盖(PRD 测试决策的现状
+// 警告)。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 记账用的假选择：把模型看到的候选录下来，按需返回一组序号或者汇报调用失
+// 败(nullopt)。
+struct FakeSelector {
+  std::vector<pzt::core::ai::SelectionCandidate> seen;
+  std::optional<std::vector<int>> reply;
+  int calls = 0;
+  int seen_count = -1;
+
+  std::optional<std::vector<int>> operator()(
+      const std::vector<pzt::core::ai::SelectionCandidate>& candidates, int count) {
+    seen = candidates;
+    seen_count = count;
+    ++calls;
+    return reply;
+  }
+};
+
+}  // namespace
+
+TEST_CASE("curate --ai delivers exactly the photos the model picked, in the model's order") {
+  auto fx = make_singletons("select_order", 12);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{3, 1};  // count=2，预选集 4 张
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  // 冷缓存下评估顺序就是预选集顺序，也就是模型看到的 1..K 的编号顺序。
+  REQUIRE(eval.evaluated.size() == 4);
+  CHECK(select.calls == 1);
+  CHECK(select.seen_count == 2);
+  CHECK(result.returned == 2);
+  // 顺序即交付顺序(PRD 决策十四)：3 在前、1 在后，不重排成时间序。
+  CHECK(result.selected == std::vector<ImageId>{eval.evaluated[2], eval.evaluated[0]});
+  CHECK_FALSE(result.ai_selection_fallback);
+  // 选择结果不再来自 std::sample：同样的输入重复跑，结果逐字相同。
+  FakeEvaluator eval2;
+  FakeSelector select2;
+  select2.reply = std::vector<int>{3, 1};
+  auto again = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                    /*ai_enabled=*/true, Provider::Local,
+                                    pzt::core::ai::LocalModelConfig{}, std::ref(eval2),
+                                    std::ref(select2));
+  CHECK(again.selected == result.selected);
+}
+
+TEST_CASE("curate --ai hands the model both the quality assessment and the content description") {
+  auto fx = make_singletons("select_candidates", 12);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{1, 2};
+
+  detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                       /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
+                       std::ref(eval), std::ref(select));
+
+  // PRD 决策六：两个字段一起。候选的条数与顺序跟预选集一一对应(模型返回的
+  // 序号靠这个对应关系翻译回照片)。
+  REQUIRE(select.seen.size() == 4);
+  for (const auto& c : select.seen) {
+    CHECK(c.assessment == "锐利、构图均衡");
+    CHECK(c.content == "一只猫趴在窗台上");
+  }
+}
+
+TEST_CASE("curate --ai drops out-of-range and duplicate picks but still uses the valid ones") {
+  auto fx = make_singletons("select_cleanup", 12);
+  FakeEvaluator eval;
+  FakeSelector select;
+  // 4 张预选集里：99 越界、3 重复。清洗后剩 {3,1}，够 count=2，采纳。
+  select.reply = std::vector<int>{3, 99, 3, 1, 0};
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  REQUIRE(eval.evaluated.size() == 4);
+  CHECK(result.selected == std::vector<ImageId>{eval.evaluated[2], eval.evaluated[0]});
+  CHECK_FALSE(result.ai_selection_fallback);  // 局部不合法不算整批退化
+}
+
+TEST_CASE("curate --ai falls back wholesale when too few picks survive cleaning") {
+  auto fx = make_singletons("select_fallback_short", 12);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{1, 77};  // 清洗后只剩 1 个，count=2 不够
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(result.ai_selection_fallback);
+  CHECK(result.returned == 2);
+  // 退化成**确定性**选择，不是拿模型那一个再补一张(PRD 决策十三：补进来的
+  // 照片既不符合用户偏好、也不在模型排的顺序里，交付的会是两套逻辑拼接的
+  // 结果，而用户看到的话术只有一种)。这里断言它跟关 AI 走同一条路的结果
+  // 逐字相同 - 关 AI 那条路自己有独立用例钉着行为。
+  FakeEvaluator unused;
+  FakeSelector never;
+  auto deterministic = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10,
+                                            2.0, /*ai_enabled=*/false, Provider::Local,
+                                            pzt::core::ai::LocalModelConfig{}, std::ref(unused),
+                                            std::ref(never));
+  CHECK(result.selected == deterministic.selected);
+  CHECK(never.calls == 0);
+}
+
+TEST_CASE("curate --ai falls back wholesale when the selection call itself fails") {
+  auto fx = make_singletons("select_fallback_error", 12);
+  FakeEvaluator eval;
+  FakeSelector select;  // reply 保持 nullopt = 网络/解析失败
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(select.calls == 1);
+  CHECK(result.ai_selection_fallback);
+  CHECK(result.returned == 2);
+  CHECK_FALSE(result.ai_declined);
+  CHECK_FALSE(result.cancelled);
+}
+
+TEST_CASE("curate --ai keeps the whole-batch fallback signal independent from ai_fallback_count") {
+  // PRD 决策二十一：ai_fallback_count 的语义是"**整簇**因为比较失败退化"，
+  // 已经进了用户话术("哪几组不是 AI 挑的")；整批的选择退化是另一回事，混
+  // 进同一个数字会让那句话直接说错。这条用例让两者同时可观测：两个 size>=2
+  // 的簇因为没有 API key 必然比较失败(ai_fallback_count=2)，而选择这一步
+  // 成功(ai_selection_fallback=false)。
+  EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
+  auto fx = make_fixture("select_signal_independence", 6);
+  auto dir = fs::path(fx.root_path);
+  for (char name : {'a', 'b', 'c', 'd', 'e', 'f'}) {
+    REQUIRE(write_solid_jpeg(dir / (std::string(1, name) + ".jpg"), 16, 16, 120));
+  }
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1010);    // 跟 a 同簇
+  set_captured_at(fx.db, fx.images[2], 100000);
+  set_captured_at(fx.db, fx.images[3], 100010);  // 跟 c 同簇
+  set_captured_at(fx.db, fx.images[4], 200000);
+  set_captured_at(fx.db, fx.images[5], 300000);
+
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{2, 1};
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Claude,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(result.ai_fallback_count == 2);
+  CHECK_FALSE(result.ai_selection_fallback);
+  CHECK(result.returned == 2);
+
+  // 反过来也成立：选择整批退化时，ai_fallback_count 不跟着变。
+  FakeEvaluator eval2;
+  FakeSelector failing;
+  auto degraded = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                       /*ai_enabled=*/true, Provider::Claude,
+                                       pzt::core::ai::LocalModelConfig{}, std::ref(eval2),
+                                       std::ref(failing));
+  CHECK(degraded.ai_fallback_count == 2);
+  CHECK(degraded.ai_selection_fallback);
+}
+
+TEST_CASE("curate with ai disabled never consults the model and never reports a selection fallback") {
+  auto fx = make_singletons("select_ai_off", 6);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{1, 2};  // 万一被问到，结果会明显不对
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/false, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(select.calls == 0);
+  CHECK_FALSE(result.ai_selection_fallback);
+  CHECK(result.returned == 2);
+  CHECK(result.selected == std::vector<ImageId>{fx.images[5], fx.images[0]});
+}
+
+TEST_CASE("curate --ai does not consult the model when the candidate pool is smaller than count") {
+  // 候选不足 count 时没有"选"这个动作(全部返回、确定性排序)，也就没有可
+  // 挑的余地 - 一次调用都不该发。
+  auto fx = make_singletons("select_shortfall", 2);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{1};
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(select.calls == 0);
+  CHECK(result.returned == 2);
+  CHECK_FALSE(result.ai_selection_fallback);
+  CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
+}
+
+TEST_CASE("curate --ai does not consult the model after the caller cancels or declines") {
+  auto fx = make_singletons("select_not_after_stop", 12);
+
+  FakeEvaluator declined_eval;
+  FakeSelector declined_select;
+  declined_select.reply = std::vector<int>{1, 2};
+  auto declined = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{}, std::ref(declined_eval),
+      std::ref(declined_select), nullptr, nullptr, [](int, int) { return false; });
+  CHECK(declined.ai_declined);
+  CHECK(declined_select.calls == 0);
+  CHECK_FALSE(declined.ai_selection_fallback);  // 没跑过就谈不上退化
+
+  FakeEvaluator cancel_eval;
+  FakeSelector cancel_select;
+  cancel_select.reply = std::vector<int>{1, 2};
+  bool stop = false;
+  auto cancelled = detail::curate_impl(
+      fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0, /*ai_enabled=*/true,
+      Provider::Local, pzt::core::ai::LocalModelConfig{},
+      [&](Database& db, ImageId id) {
+        bool ok = cancel_eval(db, id);
+        if (cancel_eval.evaluated.size() >= 2) stop = true;
+        return ok;
+      },
+      std::ref(cancel_select), nullptr, nullptr, nullptr, nullptr, [&] { return stop; });
+  CHECK(cancelled.cancelled);
+  CHECK(cancel_select.calls == 0);
+  CHECK_FALSE(cancelled.ai_selection_fallback);
 }

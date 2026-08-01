@@ -603,7 +603,14 @@ int cmd_curate(const std::vector<std::string>& args) {
   nlohmann::json out{{"requested", result.requested},
                       {"returned", result.returned},
                       {"selected", std::move(selected_paths)}};
-  if (ai_enabled) out["ai_fallback_count"] = result.ai_fallback_count;
+  if (ai_enabled) {
+    out["ai_fallback_count"] = result.ai_fallback_count;
+    // 票 06（PRD 决策二十一）：整批的选择与排序退化，跟上面那个"某几个簇
+    // 的比较退化了"是两个信号，刻意分开报——混进同一个数字会让 agent 那句
+    // "哪几组不是 AI 挑的"直接说错。两个都只在 --ai 时出现，不带 --ai 的
+    // 输出逐字节不变。
+    out["ai_selection_fallback"] = result.ai_selection_fallback;
+  }
   emit_json(out);
   return 0;
 }
