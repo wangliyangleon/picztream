@@ -54,4 +54,15 @@
 1. `ai::request_selection` 的签名**现在就带上 `selection_brief`**（默认空串，为空时整段不进提示词），省得票 08 再动一次签名与提示词。当前恒为空。
 2. `ai_selection_fallback` **这次就序列化进 `pzt curate --json`**（仅 `--ai` 时输出，不带 `--ai` 的输出逐字节不变，已冒烟核对）。票 05 落地记录里"未接线的两处"第 2 条只解了一半：`ai_declined`/`cancelled` 仍未序列化，因为那两个钩子在 headless 上还是 nullptr，加进去仍是死字段，留给票 10。
 
+**真机验证结果（2026-08-01）：云端通,本地被 60 秒超时卡死。**
+
+- `--provider gemini`：一次跑通,返回 `{"picks": [5, 3, 6]}`,`ai_selection_fallback=false`,交付顺序与 `picks` 一致。整条链路成立。
+- `--provider local`（`gemma4:e2b`，SPEC §3.3 的默认 provider）：请求发得出去,**stderr 上一条 response 都没有**,最后整批退化。`perform_curl_post` 的 `CURLOPT_TIMEOUT` 是 60 秒（`core/ai/ai.cpp`），选择这次调用超了。
+
+**这不是本地模型做不了这件事。** 绕开 60 秒上限、直接对同一个 Ollama 发同样形状的请求（真实长度的中文描述、六条候选、约束解码 + `temperature=0`），返回的是干净的 `{"picks": [1, 3, 5]}`；描述全为空串时也照样吐得出合法序号。是**延迟**不是**能力** - PRD 风险三担心的"本地模型在十几个条目里做可靠取舍的能力"这一条,现有数据不支持,真正的拦路石是那 60 秒。
+
+代码行为本身完全符合规格：调用失败 -> 整批退化 -> 落在与关 AI 同一条确定性路径上,`ai_selection_fallback` 如实为真。同一次运行里还顺带观察到两个信号并存（`ai_fallback_count=1` 且 `ai_selection_fallback=true`），互不干扰,与单测一致。
+
+**留给后续的一个决定（本票不动）**：那 60 秒是 `perform_curl_post` 里所有 AI 调用共用的常量，改它会同时影响评估与锦标赛比较。要么按调用类型分别给上限，要么把它提进 Settings。没有票认领。
+
 **没覆盖到的一处**：`交付顺序...经 headless 输出保真` 里 headless 那一段没有自动化用例。`cmd_curate` 确实按 `result.selected` 的次序输出，但 cli 层没有命令级 JSON 测试的先例（`cli/tests` 只有 i18n/kitty/text/signal 这类纯函数），为这一条现开一个进程级测试缝隙超出本票范围。core 侧的顺序保真有用例钉着，headless 那一段是手工冒烟核对的。
