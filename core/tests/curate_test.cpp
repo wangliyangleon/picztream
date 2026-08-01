@@ -128,6 +128,50 @@ struct EnvVarGuard {
 
 }  // namespace
 
+// 票 04：预选集大小的纯函数。表驱动穷举边界，不需要数据库或网络(PRD
+// 测试决策的第二条缝隙)——这一块最容易写错的是钳制的三个方向(下界
+// 1.5、上界候选集大小、ceil 的取整方向)，摘出来才能穷举。
+TEST_CASE("preselect_size clamps by lower bound 1.5, candidate count, and ceils") {
+  struct Case {
+    int candidate_count;
+    double multiplier;
+    int count;
+    int expected;
+    const char* why;
+  };
+  const Case cases[] = {
+      // 常规：M=2 默认值，池子够大 -> 2N
+      {100, 2.0, 9, 18, "default M=2 gives 2N"},
+      {100, 3.0, 4, 12, "M=3 gives 3N"},
+      // 下界 1.5：M 小于 1.5 一律按 1.5 生效(M=1 时池子等于要选的数量,
+      // 模型没有选择余地)
+      {100, 1.0, 4, 6, "M=1 clamps up to 1.5"},
+      {100, 0.0, 4, 6, "M=0 clamps up to 1.5"},
+      {100, -5.0, 4, 6, "negative M clamps up to 1.5"},
+      {100, 1.4999, 4, 6, "just below 1.5 clamps up"},
+      {100, 1.5, 4, 6, "exactly 1.5 stays"},
+      {100, 1.6, 4, 7, "above 1.5 is honored (ceil(6.4)=7)"},
+      // ceil 向上取整：1.5·N 是奇数 N 时的半张要进一
+      {100, 1.5, 3, 5, "ceil(4.5)=5"},
+      {100, 1.5, 1, 2, "ceil(1.5)=2"},
+      // 上界候选集大小：不设绝对条数上限，但不超过手上有的
+      {5, 2.0, 4, 5, "capped by candidate count"},
+      {4, 2.0, 4, 4, "candidate count == N: preselection is a no-op"},
+      {6, 2.0, 4, 6, "between N and target: degenerates to no-op"},
+      {1000000000, 2.0, 1000000000, 1000000000, "no overflow at extreme N"},
+      // 退化输入：候选集为空 / 非正的 count(curate 的契约保证 count>0，
+      // 这里只保证不返回负数或崩)
+      {0, 2.0, 4, 0, "empty candidate set"},
+      {10, 2.0, 0, 0, "count=0 selects nothing"},
+      {10, 2.0, -1, 0, "negative count selects nothing"},
+      {-1, 2.0, 4, 0, "negative candidate count"},
+  };
+  for (const auto& c : cases) {
+    CAPTURE(c.why);
+    CHECK(detail::preselect_size(c.candidate_count, c.multiplier, c.count) == c.expected);
+  }
+}
+
 // W2026-07-21：curate 不再看 evaluation 记录，纯标签排除。原来"未评估就
 // 排除""未达标(gate)就排除"两条用例整合成这一条——未评估的图照样进候选。
 TEST_CASE("curate includes unevaluated images (no evaluation dependency)") {
@@ -277,7 +321,7 @@ TEST_CASE("curate with ai_enabled=true and clusters<count returns the same winne
   set_captured_at(fx.db, fx.images[2], 100000);  // 独立单例，不发起任何 AI 调用
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10,
-                        /*ai_enabled=*/true, Provider::Claude);
+                        /*preselect_multiplier=*/2.0, /*ai_enabled=*/true, Provider::Claude);
   CHECK(result.returned == 2);
   CHECK(result.selected == std::vector<ImageId>{fx.images[2], fx.images[1]});  // 同非 AI 版本的结果
   CHECK(result.ai_fallback_count == 1);  // 只有 {a,b} 这一簇尝试过 AI 并退化，单例 c 不算
@@ -302,7 +346,7 @@ TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-s
   set_captured_at(fx.db, fx.images[5], 300000);    // f: 独立单例
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10,
-                        /*ai_enabled=*/true, Provider::Claude);
+                        /*preselect_multiplier=*/2.0, /*ai_enabled=*/true, Provider::Claude);
   REQUIRE(result.returned == 3);
   CHECK(result.ai_fallback_count == 2);  // {a,b}、{c,d} 两簇都尝试过 AI 并退化，e/f 单例不算
 
@@ -313,6 +357,61 @@ TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-s
   std::vector<ImageId> sorted_selected = result.selected;
   std::sort(sorted_selected.begin(), sorted_selected.end());
   CHECK(std::adjacent_find(sorted_selected.begin(), sorted_selected.end()) == sorted_selected.end());
+}
+
+// 票 04：候选集在选择之前先按时间多样性裁成预选集，AI 开的那条路也走这
+// 一刀。6 个单例簇(全是 size=1，不发起任何 AI 比较)，count=2、M=1.5 =>
+// 预选集 3 张。farthest-point 是确定性的：seed 取最新 f(500000)，再取离
+// 它最远的 a(0)，第三名额 c 与 d 的最小距离打平(都是 200000)、按 id 小
+// 者胜出 -> c。随机采样只在这 3 张里发生，b/d/e 永远不会入选——不裁剪的
+// 话它们都在池子里，重复跑必然会撞上。
+TEST_CASE("curate clamps the candidate set to the preselection before the AI path samples") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
+  auto fx = make_fixture("preselect_ai", 6);
+  for (int i = 0; i < 6; ++i) set_captured_at(fx.db, fx.images[i], i * 100000);
+
+  std::vector<ImageId> preselected{fx.images[5], fx.images[0], fx.images[2]};
+  for (int run = 0; run < 20; ++run) {
+    auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10,
+                          /*preselect_multiplier=*/1.5, /*ai_enabled=*/true, Provider::Claude);
+    REQUIRE(result.returned == 2);
+    CHECK(result.ai_fallback_count == 0);  // 全是单例簇，没有比较可失败
+    for (auto id : result.selected) {
+      CHECK(std::find(preselected.begin(), preselected.end(), id) != preselected.end());
+    }
+  }
+}
+
+// 票 04：AI 关的那条路同样经过裁剪，且输出一字不变。farthest-point 是增
+// 量贪心，"先挑 K 张再从这 K 张里挑 N 张"与"直接挑 N 张"的前 N 步完全同
+// 序(每一步的 argmax 都落在 K 里)，所以裁剪在这条路上外部不可观测——这
+// 条用例守的就是这个不变量，而不是某个新行为。
+TEST_CASE("curate preselection leaves the non-AI selection unchanged") {
+  auto fx = make_fixture("preselect_non_ai", 6);
+  for (int i = 0; i < 6; ++i) set_captured_at(fx.db, fx.images[i], i * 100000);
+
+  auto clamped = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10,
+                         /*preselect_multiplier=*/1.5);
+  CHECK(clamped.selected == std::vector<ImageId>{fx.images[5], fx.images[0]});
+
+  // M 大到裁剪退化成空操作时结果一样。
+  auto unclamped = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10,
+                           /*preselect_multiplier=*/100.0);
+  CHECK(unclamped.selected == clamped.selected);
+}
+
+// 票 04：候选集小于 N 时裁剪不参与，沿用既有行为(全部返回、captured_at
+// 降序的确定性排序)。M 取一个会把预选集算成 2 张的值也不影响。
+TEST_CASE("curate skips preselection when the candidate set is smaller than N") {
+  auto fx = make_fixture("preselect_shortfall", 2);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 100000);
+
+  auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10,
+                        /*preselect_multiplier=*/1.5);
+  CHECK(result.requested == 5);
+  CHECK(result.returned == 2);
+  CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
 }
 
 // T-8 A.2：进度回调。改造前 core/curate 连钩子都没有——dedup 是"有钩子
@@ -331,8 +430,8 @@ TEST_CASE("curate reports local clustering progress") {
   set_captured_at(fx.db, fx.images[2], 100000);
 
   std::vector<std::pair<int, int>> seen;
-  curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*ai_enabled=*/false,
-         Provider::Local, pzt::core::ai::LocalModelConfig{},
+  curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*preselect_multiplier=*/2.0,
+         /*ai_enabled=*/false, Provider::Local, pzt::core::ai::LocalModelConfig{},
          [&](int done, int total) { seen.emplace_back(done, total); });
 
   REQUIRE(!seen.empty());
@@ -357,8 +456,8 @@ TEST_CASE("curate reports AI comparison progress") {
   set_captured_at(fx.db, fx.images[2], 100000);
 
   std::vector<int> compares;
-  curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*ai_enabled=*/true,
-         Provider::Claude, pzt::core::ai::LocalModelConfig{}, nullptr,
+  curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*preselect_multiplier=*/2.0,
+         /*ai_enabled=*/true, Provider::Claude, pzt::core::ai::LocalModelConfig{}, nullptr,
          [&](const pzt::core::dedup::AiProgress& p) { compares.push_back(p.comparison_done); });
 
   REQUIRE(!compares.empty());
