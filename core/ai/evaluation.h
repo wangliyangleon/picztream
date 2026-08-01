@@ -46,9 +46,19 @@ enum class Language { Chinese, English };
 // 起请求时调用方已经知道的上下文。W2026-07-21：eval 从三维技术打分改成
 // "一段客观文字描述(构图/色彩/对焦/摄影审美) + 一个是否存在硬伤而不可用
 // 的 flag"，涉及质量比较的选择改走锦标赛，见 docs/W2026-07-21_*。
+//
+// content 是 2026-08 意图驱动跨簇选片增量新增的第三个字段(PRD 决策四)：
+// assessment 覆盖的是"拍得怎么样"(构图/色彩/对焦/摄影审美)，回答不了"画
+// 面里有什么"，而后者是跨簇选片与文案生成唯一的输入——那次 LLM 调用手里
+// 只有文字描述、没有照片。两者**刻意不合并**，理由有二：(1) TUI 的"AI 点
+// 评"面板按显示宽度硬换行且装不下的部分静默不画，合并会让超出的内容无声
+// 消失；(2) 坐在 TUI 前的人正看着照片，不需要"这张照片里有什么"的文字复
+// 述——content 只为看不见照片的机器存在。因此 **content 不进 TUI**，
+// assessment 的语义、长度与显示一字不变。
 struct EvaluationResult {
   std::string assessment;  // 一段简练客观的文字评价
   bool unusable;           // 是否存在硬伤(严重失焦/欠过曝等)导致根本不可用
+  std::string content;     // 画面内容：发生了什么、有谁、在哪、什么氛围
 };
 
 // 落库/读回用的完整形状——比 EvaluationResult 多两个字段(extra_guidance/
@@ -58,6 +68,11 @@ struct EvaluationInfo {
   bool unusable;
   std::string extra_guidance;
   std::string provider;
+  // 读老记录(2026-08 之前落库的那些)时退化为空串而不是报错——库里
+  // result_json 是 TEXT，读取侧的守卫只认 assessment/unusable，见
+  // core/project/project.cpp。这跟下面 request_evaluation 对模型响应的
+  // **严格**要求是两回事，别把两者搞混。
+  std::string content;
 };
 
 // 取代原来的 passes_gate——不再从三维分数算达标，直接读模型给的 unusable
@@ -70,9 +85,16 @@ inline bool is_usable(const EvaluationInfo& info) { return !info.unusable; }
 // 构图/色彩/对焦/摄影审美，并判定 unusable)后面跟一段"Additional
 // guidance: {extra_guidance}"(为空时省略)，作为 user_prompt 传给
 // request_json；schema_instruction 描述 EvaluationResult 对应的 JSON 形
-// 状(assessment + unusable)。assessment 的输出语言:始终用 language 参数指定
-// 的界面语言(见 Language 枚举)，不跟随 guidance。取 assessment(string)
-// 和 unusable(bool)，任一取不到或类型不对整体算失败(ParseError)。
+// 状(assessment + unusable + content)。assessment 与 content 的输出语言:始终
+// 用 language 参数指定的界面语言(见 Language 枚举)，不跟随 guidance。取
+// assessment(string)、unusable(bool) 和 content(string)，任一取不到或类型不对
+// 整体算失败(ParseError)。
+//
+// content 与另外两个字段**同等严格**，不宽松退化为空串：
+// image_evaluations 以 image_id 为主键，缓存判据是"有评估记录就跳过"(PRD
+// 决策七，不做字段完整性检查也不加版本号)，所以一条 content 为空的记录
+// 之后永远不会被刷新，是不报错的哑数据。整条算失败、不写库，下次 run 自
+// 然会重跑这张图。
 // RequestError 直接映射到同名的 EvaluationError。框架模板本身不展示给用户
 // (是给模型的系统指令)，固定英文。
 //

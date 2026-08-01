@@ -1,5 +1,6 @@
 #include <doctest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -54,8 +55,12 @@ std::string wrap_claude_response(const nlohmann::json& inner) {
   return outer.dump();
 }
 
-nlohmann::json response_json(const std::string& assessment, bool unusable) {
-  return {{"assessment", assessment}, {"unusable", unusable}};
+// content 带默认值：绝大多数用例只关心 assessment/unusable，但提取守卫对
+// content 同样严格(缺字段整条算 ParseError)，所以每个"应当成功"的假响应都
+// 得带上它。给默认值省掉在每个调用点重复一句无关的文案。
+nlohmann::json response_json(const std::string& assessment, bool unusable,
+                            const std::string& content = "two people on a beach at sunset") {
+  return {{"assessment", assessment}, {"unusable", unusable}, {"content", content}};
 }
 
 }  // namespace
@@ -100,7 +105,7 @@ TEST_CASE("request_evaluation_impl reports ParseError when assessment is missing
     auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
                          const std::string&) -> Result<HttpResponse, RequestError> {
       return Result<HttpResponse, RequestError>::Ok(
-          HttpResponse{200, wrap_claude_response({{"unusable", false}})});
+          HttpResponse{200, wrap_claude_response({{"unusable", false}, {"content", "a cat"}})});
     };
     auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
     REQUIRE(!result.ok());
@@ -110,8 +115,9 @@ TEST_CASE("request_evaluation_impl reports ParseError when assessment is missing
   SUBCASE("wrong type") {
     auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
                          const std::string&) -> Result<HttpResponse, RequestError> {
-      return Result<HttpResponse, RequestError>::Ok(
-          HttpResponse{200, wrap_claude_response({{"assessment", 42}, {"unusable", false}})});
+      return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+          200,
+          wrap_claude_response({{"assessment", 42}, {"unusable", false}, {"content", "a cat"}})});
     };
     auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
     REQUIRE(!result.ok());
@@ -127,7 +133,7 @@ TEST_CASE("request_evaluation_impl reports ParseError when unusable is missing o
     auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
                          const std::string&) -> Result<HttpResponse, RequestError> {
       return Result<HttpResponse, RequestError>::Ok(
-          HttpResponse{200, wrap_claude_response({{"assessment", "ok"}})});
+          HttpResponse{200, wrap_claude_response({{"assessment", "ok"}, {"content", "a cat"}})});
     };
     auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
     REQUIRE(!result.ok());
@@ -137,8 +143,9 @@ TEST_CASE("request_evaluation_impl reports ParseError when unusable is missing o
   SUBCASE("not a boolean") {
     auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
                          const std::string&) -> Result<HttpResponse, RequestError> {
-      return Result<HttpResponse, RequestError>::Ok(
-          HttpResponse{200, wrap_claude_response({{"assessment", "ok"}, {"unusable", "yes"}})});
+      return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+          200, wrap_claude_response(
+                   {{"assessment", "ok"}, {"unusable", "yes"}, {"content", "a cat"}})});
     };
     auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
     REQUIRE(!result.ok());
@@ -249,9 +256,10 @@ TEST_CASE("request_evaluation_impl passes a real JSON Schema in format for Provi
   auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
                         const std::string& body) -> Result<HttpResponse, RequestError> {
     captured_body = body;
-    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
-        200,
-        R"({"message":{"role":"assistant","content":"{\"assessment\":\"ok\",\"unusable\":false}"}})"});
+    return Result<HttpResponse, RequestError>::Ok(
+        HttpResponse{200,
+                      R"({"message":{"role":"assistant","content":"{\"assessment\":\"ok\",)"
+                      R"(\"unusable\":false,\"content\":\"a dog in a park\"}"}})"});
   };
 
   auto result = detail::request_evaluation_impl(img, "", Provider::Local, fake_post);
@@ -263,4 +271,106 @@ TEST_CASE("request_evaluation_impl passes a real JSON Schema in format for Provi
   CHECK(parsed_body["format"]["properties"].contains("assessment"));
   CHECK(parsed_body["format"]["properties"].contains("unusable"));
   CHECK(parsed_body["options"]["temperature"] == 0);
+}
+
+// content 的形状在三处被定义(提示词/schema instruction/约束解码 JSON Schema)，
+// 漏掉第三处会让本地模型不稳定地吐这个字段——这一条就是钉住第三处的。
+TEST_CASE("the local constrained-decoding schema requires content, not just assessment/unusable") {
+  auto img = make_image(4, 4);
+
+  std::string captured_body;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(
+        HttpResponse{200,
+                      R"({"message":{"role":"assistant","content":"{\"assessment\":\"ok\",)"
+                      R"(\"unusable\":false,\"content\":\"a dog in a park\"}"}})"});
+  };
+
+  auto result = detail::request_evaluation_impl(img, "", Provider::Local, fake_post);
+  REQUIRE(result.ok());
+
+  auto parsed_body = nlohmann::json::parse(captured_body);
+  CHECK(parsed_body["format"]["properties"].contains("content"));
+  CHECK(parsed_body["format"]["properties"]["content"]["type"] == "string");
+  // 只出现在 properties 里不够——不进 required，模型照样可以省略它。
+  auto required = parsed_body["format"]["required"];
+  REQUIRE(required.is_array());
+  CHECK(std::find(required.begin(), required.end(), "content") != required.end());
+}
+
+TEST_CASE("request_evaluation_impl extracts content alongside the assessment") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  auto img = make_image(4, 4);
+
+  auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                       const std::string&) -> Result<HttpResponse, RequestError> {
+    return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+        200, wrap_claude_response(response_json("sharp, well composed", false,
+                                                 "two kids laughing on a beach at sunset"))});
+  };
+
+  auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
+  REQUIRE(result.ok());
+  const auto& r = result.value();
+  CHECK(r.content == "two kids laughing on a beach at sunset");
+  // 两个字段互不串味。
+  CHECK(r.assessment == "sharp, well composed");
+}
+
+// 严格而非宽松退化为空：`image_evaluations` 以 image_id 为主键，缓存判据是
+// "有评估记录就跳过"(PRD 决策七)，一条 content 为空的记录永远不会被刷新。
+// 宁可整条失败让下次 run 重跑，也不留哑数据。
+TEST_CASE("request_evaluation_impl reports ParseError when content is missing or wrong type") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  auto img = make_image(4, 4);
+
+  SUBCASE("missing") {
+    auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                         const std::string&) -> Result<HttpResponse, RequestError> {
+      return Result<HttpResponse, RequestError>::Ok(
+          HttpResponse{200, wrap_claude_response({{"assessment", "ok"}, {"unusable", false}})});
+    };
+    auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
+    REQUIRE(!result.ok());
+    CHECK(result.error() == EvaluationError::ParseError);
+  }
+
+  SUBCASE("wrong type") {
+    auto fake_post = [](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                         const std::string&) -> Result<HttpResponse, RequestError> {
+      return Result<HttpResponse, RequestError>::Ok(HttpResponse{
+          200, wrap_claude_response(
+                   {{"assessment", "ok"}, {"unusable", false}, {"content", 42}})});
+    };
+    auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
+    REQUIRE(!result.ok());
+    CHECK(result.error() == EvaluationError::ParseError);
+  }
+}
+
+// PRD 风险二(高)：提示词不明确的话，模型会顺着 assessment 的调子继续写摄影
+// 评语，两个字段变成同义反复，下游文案就只能是空洞的漂亮话。
+TEST_CASE("request_evaluation_impl's prompt asks for scene content, distinct from the assessment") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  auto img = make_image(4, 4);
+
+  std::string captured;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured = body;
+    return Result<HttpResponse, RequestError>::Ok(
+        HttpResponse{200, wrap_claude_response(response_json("ok", false))});
+  };
+  auto result = detail::request_evaluation_impl(img, "", Provider::Claude, fake_post);
+  REQUIRE(result.ok());
+
+  // 四个要素都要点名，否则模型只会挑着答。
+  CHECK(captured.find("what is happening") != std::string::npos);
+  CHECK(captured.find("who") != std::string::npos);
+  CHECK(captured.find("where") != std::string::npos);
+  CHECK(captured.find("mood") != std::string::npos);
+  // 并且明确要求别重复 assessment 那套摄影评语。
+  CHECK(captured.find("Do not repeat") != std::string::npos);
 }
