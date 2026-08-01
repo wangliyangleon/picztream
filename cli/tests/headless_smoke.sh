@@ -237,7 +237,7 @@ assert_json_has "$out" \
 # 上面那几条断言的是失败路径，evaluated 恒为空，覆盖不到"评估成功之后
 # 输出长什么样"。要覆盖到得同时满足两件事：图片真能解码，以及不发真的
 # AI 请求。所以这里单开一个项目，塞一张真的(1x1)JPEG，再用
-# PZT_FAKE_EVAL 把 EvaluationFn 换成固定返回的假函数——那个开关本来就
+# PZT_FAKE_EVAL 把 EvaluationFn 换成固定返回的假函数 - 那个开关本来就
 # 是为这个场景存在的(见 cmd_eval 里的说明)。不动上面 a/b/c 那三个假字
 # 节 fixture：export-images/dedup/curate 的断言都建立在它们身上。
 REAL_PHOTOS="$WORKDIR/real_photos"

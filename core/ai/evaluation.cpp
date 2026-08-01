@@ -63,7 +63,7 @@ std::string build_evaluation_schema_instruction() {
 }
 
 // 描述的形状在三处被定义：上面的提示词、上面的 schema instruction，以及这里
-// 的约束解码 JSON Schema。三处必须一起改——漏掉这一处，本地模型(Ollama 的
+// 的约束解码 JSON Schema。三处必须一起改 - 漏掉这一处，本地模型(Ollama 的
 // format 字段)会不稳定地省略新字段，云端 provider 反而看不出问题，因为它们
 // 只吃前两处的自然语言。
 nlohmann::json build_evaluation_json_schema() {

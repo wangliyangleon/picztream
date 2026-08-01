@@ -274,7 +274,7 @@ TEST_CASE("request_evaluation_impl passes a real JSON Schema in format for Provi
 }
 
 // content 的形状在三处被定义(提示词/schema instruction/约束解码 JSON Schema)，
-// 漏掉第三处会让本地模型不稳定地吐这个字段——这一条就是钉住第三处的。
+// 漏掉第三处会让本地模型不稳定地吐这个字段 - 这一条就是钉住第三处的。
 TEST_CASE("the local constrained-decoding schema requires content, not just assessment/unusable") {
   auto img = make_image(4, 4);
 
@@ -294,7 +294,7 @@ TEST_CASE("the local constrained-decoding schema requires content, not just asse
   auto parsed_body = nlohmann::json::parse(captured_body);
   CHECK(parsed_body["format"]["properties"].contains("content"));
   CHECK(parsed_body["format"]["properties"]["content"]["type"] == "string");
-  // 只出现在 properties 里不够——不进 required，模型照样可以省略它。
+  // 只出现在 properties 里不够 - 不进 required，模型照样可以省略它。
   auto required = parsed_body["format"]["required"];
   REQUIRE(required.is_array());
   CHECK(std::find(required.begin(), required.end(), "content") != required.end());

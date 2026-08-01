@@ -49,11 +49,11 @@ enum class Language { Chinese, English };
 //
 // content 是 2026-08 意图驱动跨簇选片增量新增的第三个字段(PRD 决策四)：
 // assessment 覆盖的是"拍得怎么样"(构图/色彩/对焦/摄影审美)，回答不了"画
-// 面里有什么"，而后者是跨簇选片与文案生成唯一的输入——那次 LLM 调用手里
+// 面里有什么"，而后者是跨簇选片与文案生成唯一的输入 - 那次 LLM 调用手里
 // 只有文字描述、没有照片。两者**刻意不合并**，理由有二：(1) TUI 的"AI 点
 // 评"面板按显示宽度硬换行且装不下的部分静默不画，合并会让超出的内容无声
 // 消失；(2) 坐在 TUI 前的人正看着照片，不需要"这张照片里有什么"的文字复
-// 述——content 只为看不见照片的机器存在。因此 **content 不进 TUI**，
+// 述 - content 只为看不见照片的机器存在。因此 **content 不进 TUI**，
 // assessment 的语义、长度与显示一字不变。
 struct EvaluationResult {
   std::string assessment;  // 一段简练客观的文字评价
@@ -68,7 +68,7 @@ struct EvaluationInfo {
   bool unusable;
   std::string extra_guidance;
   std::string provider;
-  // 读老记录(2026-08 之前落库的那些)时退化为空串而不是报错——库里
+  // 读老记录(2026-08 之前落库的那些)时退化为空串而不是报错 - 库里
   // result_json 是 TEXT，读取侧的守卫只认 assessment/unusable，见
   // core/project/project.cpp。这跟下面 request_evaluation 对模型响应的
   // **严格**要求是两回事，别把两者搞混。
