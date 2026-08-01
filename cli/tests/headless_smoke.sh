@@ -233,6 +233,41 @@ assert_json_has "$out" \
   "len(j['failed']) == 3 and all(f['error'] in ('image_unavailable', 'unknown') for f in j['failed'])" \
   "eval: --provider local fails at decode, not at some provider-specific code path"
 
+# --- pzt eval：成功路径的输出形状(content 字段) ---
+# 上面那几条断言的是失败路径，evaluated 恒为空，覆盖不到"评估成功之后
+# 输出长什么样"。要覆盖到得同时满足两件事：图片真能解码，以及不发真的
+# AI 请求。所以这里单开一个项目，塞一张真的(1x1)JPEG，再用
+# PZT_FAKE_EVAL 把 EvaluationFn 换成固定返回的假函数——那个开关本来就
+# 是为这个场景存在的(见 cmd_eval 里的说明)。不动上面 a/b/c 那三个假字
+# 节 fixture：export-images/dedup/curate 的断言都建立在它们身上。
+REAL_PHOTOS="$WORKDIR/real_photos"
+mkdir -p "$REAL_PHOTOS"
+python3 -c "
+import base64, sys
+# 最小的合法 baseline JPEG(1x1)，内联成 base64 免得往仓库里塞二进制资源。
+sys.stdout.buffer.write(base64.b64decode(
+  '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof'
+  'Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwh'
+  'MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAAR'
+  'CAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAA'
+  'AgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK'
+  'FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWG'
+  'h4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl'
+  '5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREA'
+  'AgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYk'
+  'NOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE'
+  'hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk'
+  '5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q=='))
+" > "$REAL_PHOTOS/real.jpg"
+"$PZT" new evalshape "$REAL_PHOTOS" >/dev/null
+out="$(PZT_FAKE_EVAL=1 "$PZT" eval evalshape --scope '*' --provider gemini --json)"
+assert_json_has "$out" "len(j['evaluated']) == 1 and len(j['failed']) == 0" \
+  "eval: a decodable image plus PZT_FAKE_EVAL actually succeeds"
+assert_json_has "$out" "all('content' in e for e in j['evaluated'])" \
+  "eval: every evaluated entry carries a content field"
+assert_json_has "$out" "j['evaluated'][0]['content'] != ''" \
+  "eval: the content field is non-empty (round-trips through result_json and back)"
+
 # --- pzt curate ---
 # W2026-07-21：curate 从目标一起不再看评估状态，只按标签排除(废片/重
 # 复)。a/b/c 分散的 captured_at(避免互相聚簇)，c.jpg 打废片标签验证候
