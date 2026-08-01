@@ -11,7 +11,7 @@
 |---|---|---|---|
 | [01](01-chronological-order-when-ai-off.md) | AI 关时交付按拍摄时间排序 | 无 | ready-for-agent |
 | [02](02-consolidate-intent-hint-text.md) | 引导语收成单一常量 | 无 | ready-for-agent |
-| [03](03-content-field-in-description.md) | 描述新增 `content` 字段 | 无 | ready-for-agent |
+| [03](03-content-field-in-description.md) | 描述新增 `content` 字段 | 无 | done |
 | [04](04-preselection-clamp-and-m-knob.md) | 预选集裁剪与 M 旋钮 | 无 | ready-for-agent |
 | [05](05-evaluate-preselection-gate-progress.md) | curate 内部评估预选集：闸门 + 进度 + 偿还语义折叠 | 03, 04 | ready-for-agent |
 | [06](06-model-selection-and-ordering.md) | 模型选择与排序接进 curate | 03, 04, 05 | ready-for-agent |

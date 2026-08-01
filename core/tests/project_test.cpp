@@ -481,7 +481,7 @@ TEST_CASE("get_image returns nullopt evaluation by default, reads it back once s
   CHECK(eval.provider == "gemini");
   // 上面那条 result_json 没有 content(它就是 2026-08 之前的老记录形状)：读
   // 回不报错、不整条作废，content 退化为空串。表结构没动过，所以老库里的行
-  // 原样躺在那儿，读取侧必须宽松——这跟模型响应侧对 content 的严格要求相反，
+  // 原样躺在那儿，读取侧必须宽松 - 这跟模型响应侧对 content 的严格要求相反，
   // 两者刻意不一致，见 core/ai/evaluation.h。
   CHECK(eval.content.empty());
 }

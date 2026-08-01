@@ -17,13 +17,21 @@
 
 **Blocked by:** None - can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `pzt eval --json` 的输出含 `content` 字段
-- [ ] 库里落盘的评估记录含 `content`
-- [ ] 走本地模型的约束解码时稳定产出 `content`（三处形状定义均已更新）
-- [ ] 读取一条不含 `content` 的旧评估记录不报错，`content` 退化为空
-- [ ] 表结构未改动，无迁移脚本
-- [ ] TUI 的"AI 点评"面板显示内容与改动前一致，不含 `content`
-- [ ] `assessment` 的提示词与语义未变
-- [ ] 真机验证：`content` 写的是画面内容而非摄影评语，与 `assessment` 不重复
+- [x] `pzt eval --json` 的输出含 `content` 字段
+- [x] 库里落盘的评估记录含 `content`
+- [x] 走本地模型的约束解码时稳定产出 `content`（三处形状定义均已更新）
+- [x] 读取一条不含 `content` 的旧评估记录不报错，`content` 退化为空
+- [x] 表结构未改动，无迁移脚本
+- [x] TUI 的"AI 点评"面板显示内容与改动前一致，不含 `content`
+- [x] `assessment` 的提示词与语义未变
+- [x] 真机验证：`content` 写的是画面内容而非摄影评语，与 `assessment` 不重复
+
+## 落地记录
+
+一处规格未明、实现时拍板的点：**模型响应里缺 `content` 算 `ParseError`**（整条评估失败、不写库），而**读老库记录时宽松退化为空串**。两侧刻意不一致：缓存判据是"有评估记录就跳过"（PRD 决策七，不做字段完整性检查也不加版本号），所以一条 `content` 为空的记录之后永远不会被刷新，正是 `00-README.md` 那条顺序约束点名的哑数据；整条失败反而能让下次 run 自然重跑。读取侧则必须宽松，否则老记录会整条被当成"未评估"。
+
+副作用一条，ticket 没有预期到：严格判定同样作用于 TUI 的 eval 路径，云端 provider 不走约束解码，模型漏掉 `content` 时用户会看到一次评估失败（重跑即可恢复）。
+
+真机验证（`qwen2.5vl:3b`，3 张 japan2022 实拍）：`content` 产出的是"手持物件伸向窗外/阳台远眺富士山/一盘炸虾与蔬菜"这类画面事实，`assessment` 仍是"构图均衡、对焦锐利、色彩自然"这类摄影评语，两者没有同义反复。PRD 风险二在当前措辞下未复现。
