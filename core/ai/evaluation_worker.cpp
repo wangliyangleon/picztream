@@ -148,10 +148,13 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   }
 
   const auto& r = result.value();
-  // result_json 存模型返回的原始形状(assessment/unusable)，不是拆开的列——
-  // 以后再问模型要新的值,只用扩展 EvaluationResult + 这里的 json 字面量,
-  // 不需要再来一次 core/db/schema.cpp 的破坏性表重建,见那边的注释。
-  std::string result_json = nlohmann::json{{"assessment", r.assessment}, {"unusable", r.unusable}}.dump();
+  // result_json 存模型返回的原始形状(assessment/unusable/content)，不是拆开
+  // 的列——以后再问模型要新的值,只用扩展 EvaluationResult + 这里的 json 字面
+  // 量,不需要再来一次 core/db/schema.cpp 的破坏性表重建,见那边的注释。2026-08
+  // 加 content 就是这个设计第一次兑现:没动 DDL、没 bump kSchemaVersion。
+  std::string result_json =
+      nlohmann::json{{"assessment", r.assessment}, {"unusable", r.unusable}, {"content", r.content}}
+          .dump();
   db::Stmt stmt(db.handle(),
                 "INSERT INTO image_evaluations (image_id, result_json, extra_guidance, provider) "
                 "VALUES (?, ?, ?, ?) "
