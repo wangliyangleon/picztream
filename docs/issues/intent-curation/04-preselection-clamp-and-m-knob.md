@@ -19,7 +19,7 @@ min(ceil(max(1.5, M) · N), 候选集大小)
 
 **Blocked by:** None - can start immediately.
 
-**Status:** done
+**Status:** done（`904ba3a`..`35dcb92`，2026-08-01，PR #1）
 
 - [x] 预选集大小等于 `min(ceil(max(1.5, M) · N), 候选集大小)`
 - [x] M 配置为小于 1.5 的值时按 1.5 生效
