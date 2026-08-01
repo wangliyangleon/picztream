@@ -43,6 +43,22 @@ RepInfo make_rep_info(db::Database& db, project::ImageId id) {
   return RepInfo{id, info->captured_at};
 }
 
+// 一张照片给模型看的全部材料(票 06)。两个字段一起给(PRD 决策六)：只给
+// content 会丢掉质量维度，而预选集里若干张都符合题材偏好时，决定选谁的恰
+// 恰是 assessment。
+//
+// 评估失败或还没评估的那几张这里是两个空串 - 不跳过、也不改变编号，否则
+// 序号与照片的对应关系会随"哪几张评估失败"而变，而模型返回的正是序号。
+ai::SelectionCandidate make_selection_candidate(db::Database& db, project::ImageId id) {
+  ai::SelectionCandidate candidate;
+  auto info = project::get_image(db, id);
+  if (info && info->evaluation) {
+    candidate.assessment = info->evaluation->assessment;
+    candidate.content = info->evaluation->content;
+  }
+  return candidate;
+}
+
 // 交付顺序：captured_at 降序，打平用 id 升序兜底。没有 captured_at 的取
 // int64 最小值，于是稳定落在最后，不引入不确定性。
 //
@@ -223,13 +239,13 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   bool selection_fallback = false;
 
   // 确定性选择：farthest-point 挑 count 张，再按 by_captured_at_desc 交
-  // 付。关 AI 那条路走它，票 06 的整批退化也走它——退化必须落在**同一套**
+  // 付。关 AI 那条路走它，票 06 的整批退化也走它-退化必须落在**同一套**
   // 逻辑上，否则"AI 挑的"与"退化后挑的"会是两种排列，而用户看到的话术只
   // 有一种(PRD 决策十三否掉"用确定性结果补齐"是同一个理由)。
   auto deterministic_select = [&](std::vector<RepInfo>& pool) {
     auto selected_info = take_farthest_points(pool, count);
     // 票 01：选中的是哪几张仍由 farthest-point 决定，但交出去的顺序不是
-    // 它的挑选顺序——那个算法每次挑离已选集最远的一张，排列在时间上必然
+    // 它的挑选顺序-那个算法每次挑离已选集最远的一张，排列在时间上必然
     // 跳跃，而这个列表顺序一路决定 Deliver 的发送次序。
     std::sort(selected_info.begin(), selected_info.end(), by_captured_at_desc);
     for (const auto& r : selected_info) selected.push_back(r.id);
@@ -303,30 +319,18 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
       // 好。零写入的承诺只对闸门(ai_declined)成立，那时一张都还没评估。
       if (on_cancel && on_cancel()) return cancelled_result();
 
-      // 票 06：AI 开那条路的选择到此为止一直是 std::sample——代码自己写明
+      // 票 06：AI 开那条路的选择到此为止一直是 std::sample-代码自己写明
       // 了原因"没有质量分可比"。现在预选集里每张都有描述可读了，改由模型
       // 一次调用连**选**带**排**(PRD 决策十四：叙事要求会反过来影响选哪几
       // 张，拆成"先选再排"会切在错误的地方)。
       //
       // 候选按 winners 的顺序编号，模型只吐 1-based 序号(决策十三)，翻译
-      // 回照片靠的就是这个顺序，两者不能错位。评估失败的那几张这里是两个
-      // 空串——不跳过、也不改变编号，否则序号与照片的对应关系会随"哪几张
-      // 评估失败"而变。
+      // 回照片靠的就是这个顺序，两者不能错位。
       std::optional<std::vector<int>> raw_picks;
       if (select_fn) {
         std::vector<ai::SelectionCandidate> candidates;
         candidates.reserve(winners.size());
-        for (auto id : winners) {
-          auto info = project::get_image(db, id);
-          ai::SelectionCandidate candidate;
-          if (info && info->evaluation) {
-            // 两个字段一起给(决策六)：只给 content 会丢掉质量维度，而几张
-            // 都符合题材偏好时，决定选谁的恰恰是 assessment。
-            candidate.assessment = info->evaluation->assessment;
-            candidate.content = info->evaluation->content;
-          }
-          candidates.push_back(std::move(candidate));
-        }
+        for (auto id : winners) candidates.push_back(make_selection_candidate(db, id));
         raw_picks = select_fn(candidates, count);
       }
 

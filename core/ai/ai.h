@@ -72,7 +72,7 @@ Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& im
                                                     const LocalModelConfig& local_config = LocalModelConfig{},
                                                     const std::optional<nlohmann::json>& local_json_schema = std::nullopt);
 
-// 纯文本重载——一张图都不发。2026-08 意图驱动跨簇选片增量新增(见
+// 纯文本重载-一张图都不发。2026-08 意图驱动跨簇选片增量新增(见
 // core/ai/selection.h)：那次调用读的是每张照片已经落库的文字描述，不看
 // 像素，是 core 里第一条不吃图的 LLM 路径。放在这一层而不是 agent，判据
 // 是"输入里有没有照片信息(含照片的衍生描述)"，取舍见

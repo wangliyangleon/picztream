@@ -191,7 +191,7 @@ TEST_CASE("resolve_selection cleans out-of-range and duplicate indices, then dec
       // 正常路径：全合法，原样保序(顺序即交付顺序，不许排序)
       {{3, 1, 2}, 3, 3, {3, 1, 2}, "all valid, order preserved verbatim"},
       {{2, 1}, 5, 2, {2, 1}, "model order is not sorted"},
-      // 越界剔除，其余按原序采纳——不是"任何不合法就整批扔"
+      // 越界剔除，其余按原序采纳-不是"任何不合法就整批扔"
       {{2, 5, 1}, 3, 2, {2, 1}, "out-of-range dropped, rest kept in order"},
       {{0, 1, 2}, 3, 2, {1, 2}, "0 is out of range (indices are 1-based)"},
       {{-1, 3, 2}, 3, 2, {3, 2}, "negative dropped"},
@@ -897,7 +897,7 @@ TEST_CASE("curate --ai gate reports the cache-adjusted count, not the raw presel
 //
 // 这一组同样走 detail::curate_impl 注入假 select_fn。本票要覆盖的行为(校
 // 验、排序、退化分界)**全部只存在于成功路径上**，而这个文件既有的 AI 用例
-// 一律是"让调用必然失败、只验证退化"——照抄等于零覆盖(PRD 测试决策的现状
+// 一律是"让调用必然失败、只验证退化"-照抄等于零覆盖(PRD 测试决策的现状
 // 警告)。
 // ---------------------------------------------------------------------------
 

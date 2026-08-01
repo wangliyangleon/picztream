@@ -1,12 +1,13 @@
 #include "core/ai/selection.h"
 
 #include <string>
+#include <vector>
 
 namespace pzt::core::ai {
 
 namespace {
 
-// 发给模型的任务描述——固定英文框架(同 evaluation.cpp/compare.cpp 的惯
+// 发给模型的任务描述-固定英文框架(同 evaluation.cpp/compare.cpp 的惯
 // 例，框架文案是给模型的系统指令，不跟 cli::i18n 走)，中间嵌的是照片描述
 // 与选片简述的原文，那两段本来就是用界面语言写的。
 //
@@ -49,7 +50,7 @@ std::string build_selection_schema_instruction(int count) {
          "photo numbers listed above.";
 }
 
-// 约束解码用的 JSON Schema——形状在三处被定义(提示词、schema instruction、
+// 约束解码用的 JSON Schema-形状在三处被定义(提示词、schema instruction、
 // 这里)，必须一起改。漏掉这一处，本地模型会不稳定地吐回字符串序号或者别的
 // 键名，而云端 provider 反而看不出问题，因为它们只吃前两处的自然语言。同
 // evaluation.cpp 的说明。

@@ -48,7 +48,7 @@ struct SelectionResult {
 // "整数在不在范围内"，Provider::Local 还能用约束解码直接卡住类型。
 //
 // selection_brief：用户这次想要什么(用途 / 题材偏好 / 叙事结构 提炼成的一
-// 段自由文本，PRD 决策二)。为空时整段不进提示词。当前恒为空——把它从
+// 段自由文本，PRD 决策二)。为空时整段不进提示词。当前恒为空-把它从
 // agent 的意图解析一路穿到这里是票 08 的事，这里先留出位置，免得那一票再
 // 动一次签名与提示词。
 Result<SelectionResult, SelectionError> request_selection(
@@ -56,7 +56,7 @@ Result<SelectionResult, SelectionError> request_selection(
     const std::string& selection_brief = "",
     const LocalModelConfig& local_config = LocalModelConfig{});
 
-// 仅供单元测试使用——http_post 可注入，不需要真的连网络。放在 detail 里是
+// 仅供单元测试使用-http_post 可注入，不需要真的连网络。放在 detail 里是
 // 为了在头文件层面标出"这不是主 API，是给测试开的后门"，照抄 compare.h/
 // evaluation.h/style.h 的先例。
 //

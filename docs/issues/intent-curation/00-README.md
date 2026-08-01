@@ -14,7 +14,7 @@
 | [03](03-content-field-in-description.md) | 描述新增 `content` 字段 | 无 | **done** (`dc91dc7`..`6ee4baa`) |
 | [04](04-preselection-clamp-and-m-knob.md) | 预选集裁剪与 M 旋钮 | 无 | **done** (`904ba3a`..`35dcb92`) |
 | [05](05-evaluate-preselection-gate-progress.md) | curate 内部评估预选集：闸门 + 进度 + 偿还语义折叠 | 03, 04 | **done** |
-| [06](06-model-selection-and-ordering.md) | 模型选择与排序接进 curate | 03, 04, 05 | ready-for-agent |
+| [06](06-model-selection-and-ordering.md) | 模型选择与排序接进 curate | 03, 04, 05 | **done** |
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | ready-for-agent |
 | [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | ready-for-agent |
 | [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | **done** (`1f34fb0`..`95cfb37`) |
@@ -33,11 +33,10 @@
 
 **可并行开工**：01、02、03、04 四张没有任何阻塞。
 
-## 剩余四张的开工次序
+## 剩余三张的开工次序
 
-- **06** 是唯一依赖已全部解开、且没有未决问题的票，走关键路径。
-- **07**、**08** 都等 06，只能串在它后面。08 的另一条阻塞边 02 早已满足。
-- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。它**不是 ready**：闸门问在哪一层还没定，见票内。排在 06 之后是因为那时 JSON 输出正在动，两处可以一次做齐。
+- **07**、**08** 的阻塞边（06）已经解开，两张都可以开工，彼此无先后关系。08 的另一条阻塞边 02 早已满足。
+- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。它**不是 ready**：闸门问在哪一层还没定，见票内。06 落地时已经把 `ai_selection_fallback` 序列化进 `pzt curate --json`，`ai_declined`/`cancelled` 仍等这一票（两个钩子在 headless 上还是 nullptr，先加进去是死字段）。
 
 ## 一条必须遵守的顺序约束
 

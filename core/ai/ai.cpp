@@ -185,7 +185,7 @@ nlohmann::json build_local_request(const std::vector<std::string>& image_base64s
                                     const std::string& model,
                                     const std::optional<nlohmann::json>& json_schema) {
   // 纯文本路径(core/ai/selection.h)一张图都不发：images 这个键整个省掉，
-  // 而不是发一个空数组——Ollama 的 chat API 里 images 本来就是可选字段，
+  // 而不是发一个空数组-Ollama 的 chat API 里 images 本来就是可选字段，
   // 发空数组是在向模型声明"这次带了图片，只是零张"，跟事实不符。
   nlohmann::json message = {{"role", "user"}, {"content", instruction_text}};
   if (!image_base64s.empty()) message["images"] = image_base64s;
