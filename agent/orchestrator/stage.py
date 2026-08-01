@@ -13,9 +13,15 @@ from .types import StageOutput
 #
 # 传语义 key 而不是"组"/"张"这种词：prose 归 consumer/view 渲染，
 # orchestrator 层不碰对话文本。
-PROGRESS_PHOTOS = "photos"            # 张
+PROGRESS_PHOTOS = "photos"            # 张（套滤镜）
 PROGRESS_GROUPS = "groups"            # 组（候选簇）
 PROGRESS_COMPARISONS = "comparisons"  # 次（两两比较）
+PROGRESS_EVALUATIONS = "evaluations"  # 张（逐张评估）
+
+# 第四类的单位跟 PROGRESS_PHOTOS 一样是"张"，仍然要单独一类（票 09）：这
+# 个维度同时扛着"单位"和"在干什么"两件事，而"张"那一类的活动已经被套滤镜
+# 占用，复用会让用户在评估阶段看到"正在套滤镜，已完成 7/18 张"。只加一类
+# 不拆这个维度 - 拆是更大的改动，债记在 PRD 决策二十里。
 
 # (done, total, kind)。stage 只报数和单位，不报自己叫什么 - 名字由 Driver
 # 在 _run_stage 里绑好（stage 自报名字会跟 Plan 里的 key 对不上）。

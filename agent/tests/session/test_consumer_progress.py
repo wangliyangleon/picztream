@@ -198,6 +198,73 @@ def test_progress_message_is_closed_out_at_a_gate(tmp_path):
     assert "正在" not in env.transport.sent_edits[-1][1]
 
 
+# -- 同一个 stage 里换 phase（票 09）--
+#
+# 票 05 之后，开 AI 的 curate 会在一个 Curate stage 里先比较、后逐张评估。
+# 两段数的东西不同（次 / 张），挤在同一条消息里原地编辑的话，用户会看到
+# "已完成 160/160 次"直接变成"已完成 1/6 张" —— 分子分母同时跳，读起来像
+# 进度条倒退；比较那条的终态句也就永远发不出去了。
+
+
+def test_switching_phase_closes_out_the_previous_progress_message(tmp_path):
+    env, job = _running_env(tmp_path)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 9, "comparisons"))
+    env.consumer.step()
+
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 6, "evaluations"))
+    env.consumer.step()
+
+    closed = env.transport.sent_edits[-1][1]
+    assert "正在" not in closed
+    assert "9" in closed and "次" in closed
+
+
+def test_switching_phase_starts_a_new_message_instead_of_editing(tmp_path):
+    # 不换槽的话评估进度会去改写比较那条，用户往回翻看到的历史是错的。
+    env, job = _running_env(tmp_path)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 9, "comparisons"))
+    env.consumer.step()
+    texts_before = len(env.transport.sent_texts)
+
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 6, "evaluations"))
+    env.consumer.step()
+
+    assert len(env.transport.sent_texts) == texts_before + 1
+    assert "1/6张" in env.transport.texts()[-1]
+
+
+def test_first_frame_after_a_phase_switch_is_not_throttled(tmp_path):
+    # 换槽必须把计时器一起归零，否则评估的第一帧落在比较那一帧的节流窗口
+    # 里被吃掉，用户在分钟级的评估阶段面对的是一条已经收尾的消息。
+    env, job = _running_env(tmp_path, interval=600.0)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 9, 9, "comparisons"))
+    env.consumer.step()
+
+    env.clock.advance(1)  # 远不到 600 秒
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 6, "evaluations"))
+    env.consumer.step()
+
+    assert "1/6张" in env.transport.texts()[-1]
+
+
+def test_same_phase_keeps_editing_one_message(tmp_path):
+    # 反向保护：同一个 phase 内不该被这套换槽逻辑带得每帧发新消息。
+    env, job = _running_env(tmp_path, interval=0.0)
+    gen = env.consumer.generation
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 1, 9, "comparisons"))
+    env.consumer.step()
+    texts_before = len(env.transport.sent_texts)
+
+    env.put_event(StageProgress(gen, job.run_id, "Curate", 2, 9, "comparisons"))
+    env.consumer.step()
+
+    assert len(env.transport.sent_texts) == texts_before
+    assert "2/9次" in env.transport.sent_edits[-1][1]
+
+
 def test_cancelled_progress_is_not_closed_out_as_finished(tmp_path):
     # 取消不是完成。把半截进度改成"套完了"是在撒谎。
     env, job = _running_env(tmp_path)

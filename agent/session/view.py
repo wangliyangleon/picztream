@@ -35,6 +35,7 @@ _PROGRESS_PHRASINGS = {
     "groups": ("正在处理需要比较筛选的照片组", "组"),
     "comparisons": ("正在两两比较、挑出更好的那张", "次"),
     "photos": ("正在套滤镜", "张"),
+    "evaluations": ("正在逐张看照片、记下画面内容与优缺点", "张"),
 }
 
 # 同一条进度消息的终态措辞（真机反馈）。跑完还停在"正在…"上的话，用户看
@@ -43,6 +44,7 @@ _PROGRESS_DONE_PHRASINGS = {
     "groups": "照片组都处理完了，共 {n} 组",
     "comparisons": "两两比较跑完了，共 {n} 次",
     "photos": "滤镜都套好了，共 {n} 张",
+    "evaluations": "照片都看完了，共 {n} 张",
 }
 
 

@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import contextlib
 
-from orchestrator.stage import PROGRESS_COMPARISONS, PROGRESS_GROUPS
+from orchestrator.stage import PROGRESS_COMPARISONS, PROGRESS_EVALUATIONS, PROGRESS_GROUPS
+
+# phase -> 进度类别。开 AI 时转发的是那些分钟级的阶段：比较（每次一个受
+# 60s 超时约束的视觉推理，实测本地模型约 40s/次）和票 05 起 curate 新增的
+# 逐张评估。本地分簇（cluster）相对是一瞬，不转发；关 AI 时压根没有比较和
+# 评估，分簇就是全部耗时，转发它。
+#
+# dedup 不发 evaluate，这张表对它而言就是原来那一条，行为不变。
+_AI_PHASES = {"compare": PROGRESS_COMPARISONS, "evaluate": PROGRESS_EVALUATIONS}
+_LOCAL_PHASES = {"cluster": PROGRESS_GROUPS}
 
 
 @contextlib.contextmanager
@@ -18,21 +27,25 @@ def forwarding(client, ctx, ai_enabled: bool):
     布防/摘除跟 worker 挂 cancel_event 是同一个套路：挂在 client 实例上，
     stage 内部的 client.call(...) 零改动就吃得到。
 
-    **一个 run 里只转发一个 phase。** 两个都往上送的话，用户会看到"已完
-    成 17/17 张"紧接着变成"已完成 1/51 张" —— 分子分母同时跳，读起来像
-    进度条倒退（PRD 风险二）。根因是两个阶段的分母不同源：本地分簇数的是
-    候选簇，AI 阶段数的是比较次数。
+    **转发多个 phase，但只转发分钟级的那些**（票 09）。这条规则此前是"一
+    个 run 里只转发一个 phase"，理由是分母不同源会让进度看着倒退：用户会
+    看到"已完成 17/17 张"紧接着变成"已完成 1/51 张"。票 05 之后开 AI 的
+    curate 有了两个都是分钟级的阶段（比较、逐张评估），继续只转发一个等于
+    让另一段整段静默，而那正是票 09 要消除的沉默。
 
-    取哪个按"哪个阶段是分钟级的"：开 AI 时耗时几乎全在比较上（每次一个受
-    60s 超时约束的视觉推理，实测本地模型约 40s/次），分簇相对是一瞬；不开
-    AI 时压根没有比较阶段。代价是开 AI 且批量很大时分簇那一段仍然静默 ——
-    接受，它比改造前的整段静默短得多，且 stderr 上两个 phase 都在。
+    倒退这个顾虑没有消失，是**挪到了 consumer**：换 phase 时先把上一条进
+    度收尾成终态，评估另起一条消息，两个数字不再挤在同一条里原地跳。代价
+    是 Curate 期间占两条进度消息，明确偏离 AG-16.3"进度只占一条"，理由见
+    docs/issues/intent-curation/09-agent-progress-rendering.md。
+
+    仍然不转发本地分簇：开 AI 时它相对是一瞬，且 stderr 上三个 phase 都
+    在，需要时查日志。
     """
-    wanted, kind = (("compare", PROGRESS_COMPARISONS) if ai_enabled
-                    else ("cluster", PROGRESS_GROUPS))
+    phases = _AI_PHASES if ai_enabled else _LOCAL_PHASES
 
     def sink(phase: str, done: int, total: int) -> None:
-        if phase == wanted:
+        kind = phases.get(phase)
+        if kind is not None:
             ctx.on_progress(done, total, kind)
 
     client.progress_sink = sink

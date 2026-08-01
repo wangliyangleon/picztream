@@ -74,6 +74,46 @@ def test_curate_forwards_progress_the_same_way():
     assert seen == [(1, 9, "comparisons"), (5, 9, "comparisons")]
 
 
+# -- 票 05 之后 curate 多了第三个 phase：逐张评估预选集（票 09）--
+
+_CURATE_AI_PHASES = [("cluster", 4, 4), ("compare", 9, 9), ("evaluate", 1, 6), ("evaluate", 6, 6)]
+
+
+def test_curate_with_ai_forwards_both_the_comparison_and_the_evaluation_phase():
+    # 只转发一个的话评估那段（分钟级、逐张一次视觉调用）整段静默，而它正
+    # 是票 09 要解决的那段沉默。
+    seen = []
+    client = _ProgressingClient(_CURATE_AI_PHASES)
+
+    CurateStage(client=client).run(_ctx(seen), {"count": 2, "apply_tag": "精选",
+                                                 "ai_enabled": True, "provider": "local"})
+
+    assert seen == [(9, 9, "comparisons"), (1, 6, "evaluations"), (6, 6, "evaluations")]
+
+
+def test_evaluation_phase_is_not_forwarded_when_ai_is_off():
+    # 关 AI 时压根不评估，真出现这个 phase 也是上游的错，不该当进度播。
+    seen = []
+    client = _ProgressingClient(_CURATE_AI_PHASES)
+
+    CurateStage(client=client).run(_ctx(seen), {"count": 2, "apply_tag": "精选",
+                                                 "ai_enabled": False})
+
+    assert seen == [(4, 4, "groups")]
+
+
+def test_dedup_is_unaffected_by_the_new_evaluation_phase():
+    # 转发规则按 phase 分派、不按 stage 分（模块 docstring：不让"该转发哪
+    # 个 phase"变成第三份实现）。dedup 从不发 evaluate，所以它实际看到的
+    # 东西一字未变 —— 这里喂的就是 dedup 真会发的那两个 phase。
+    seen = []
+    client = _ProgressingClient(_BOTH_PHASES)
+
+    DedupStage(client=client).run(_ctx(seen), {"ai_enabled": True, "provider": "local"})
+
+    assert seen == [(1, 9, "comparisons"), (5, 9, "comparisons")]
+
+
 def test_sink_is_detached_after_the_call():
     # 留着的话，后面那几次 tag apply 的 stderr 也会被当进度解析。更要紧
     # 的是 ctx 是这一次 run 的，跨 stage 泄漏出去就是错的上报。
