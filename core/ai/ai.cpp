@@ -184,13 +184,16 @@ nlohmann::json build_local_request(const std::vector<std::string>& image_base64s
                                     const std::string& instruction_text,
                                     const std::string& model,
                                     const std::optional<nlohmann::json>& json_schema) {
+  // 纯文本路径(core/ai/selection.h)一张图都不发：images 这个键整个省掉，
+  // 而不是发一个空数组——Ollama 的 chat API 里 images 本来就是可选字段，
+  // 发空数组是在向模型声明"这次带了图片，只是零张"，跟事实不符。
+  nlohmann::json message = {{"role", "user"}, {"content", instruction_text}};
+  if (!image_base64s.empty()) message["images"] = image_base64s;
   nlohmann::json request = {
       {"model", model},
       {"format", json_schema.has_value() ? *json_schema : nlohmann::json("json")},
       {"stream", false},
-      {"messages", nlohmann::json::array({
-          {{"role", "user"}, {"content", instruction_text}, {"images", image_base64s}}
-      })},
+      {"messages", nlohmann::json::array({std::move(message)})},
   };
   if (json_schema.has_value()) {
     // Ollama 官方文档给结构化输出的建议——真机验证过：qwen2.5vl:3b 在
@@ -439,6 +442,15 @@ Result<nlohmann::json, RequestError> request_json(const std::vector<decode::Deco
   if (provider == Provider::Claude) return parse_claude_response(response.body);
   if (provider == Provider::Gemini) return parse_gemini_response(response.body);
   return parse_local_response(response.body);
+}
+
+Result<nlohmann::json, RequestError> request_json(const std::string& user_prompt,
+                                                    const std::string& schema_instruction,
+                                                    Provider provider, HttpPostFn http_post,
+                                                    const LocalModelConfig& local_config,
+                                                    const std::optional<nlohmann::json>& local_json_schema) {
+  return request_json(std::vector<decode::DecodedImage>{}, user_prompt, schema_instruction, provider,
+                      std::move(http_post), local_config, local_json_schema);
 }
 
 Result<nlohmann::json, RequestError> request_json(const decode::DecodedImage& image,

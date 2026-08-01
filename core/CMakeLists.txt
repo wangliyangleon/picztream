@@ -43,6 +43,7 @@ add_library(core STATIC
   ai/evaluation_store.cpp
   ai/style.cpp
   ai/compare.cpp
+  ai/selection.cpp
   dedup/dedup.cpp
   curate/curate.cpp
   tournament/tournament.cpp

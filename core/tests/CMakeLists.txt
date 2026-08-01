@@ -16,6 +16,7 @@ add_executable(core_tests
   evaluation_worker_test.cpp
   style_test.cpp
   compare_test.cpp
+  selection_test.cpp
   dedup_test.cpp
   curate_test.cpp
   tournament_test.cpp
