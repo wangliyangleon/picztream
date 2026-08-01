@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -234,7 +235,17 @@ std::size_t write_callback(char* ptr, std::size_t size, std::size_t nmemb, void*
   return size * nmemb;
 }
 
+// atomic 而不是普通 int：EvaluationWorker 在后台 jthread 上调
+// perform_curl_post，而 cli 在主线程上设值。语义见 ai.h。
+std::atomic<int> g_request_timeout_seconds{kDefaultRequestTimeoutSeconds};
+
 }  // namespace
+
+void set_request_timeout_seconds(int seconds) {
+  g_request_timeout_seconds.store(seconds > 0 ? seconds : kDefaultRequestTimeoutSeconds);
+}
+
+int request_timeout_seconds() { return g_request_timeout_seconds.load(); }
 
 namespace detail {
 
@@ -335,14 +346,15 @@ Result<HttpResponse, RequestError> perform_curl_post(
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(request_timeout_seconds()));
   // F-21：这个函数会在 EvaluationWorker 的后台线程上被调用，不是单线
   // 程场景——libcurl 默认可能用信号中断 DNS 解析超时，多线程进程里给
   // 一个不受自己管理的线程发信号是经典的崩溃/未定义行为来源，NOSIGNAL
   // 关掉这个行为(curl 自己的文档建议多线程程序始终设置这个选项)。
-  // CONNECTTIMEOUT 单独给一个远小于总超时(60s)的上限——断网/DNS 卡住
-  // 时不该让用户等一分钟才等到"网络失败"这个反馈，10s 对建立 TCP 连
-  // 接这一步来说已经足够宽松。
+  // CONNECTTIMEOUT 单独给一个远小于总超时的上限(总超时可配，见
+  // request_timeout_seconds)-断网/DNS 卡住时不该让用户等满整个上限才等到
+  // "网络失败"这个反馈，10s 对建立 TCP 连接这一步来说已经足够宽松，也不
+  // 会跟着总超时一起变大。
   curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 

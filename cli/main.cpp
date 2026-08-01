@@ -14,6 +14,13 @@ int main(int argc, char** argv) {
 
   pzt::cli::i18n::init_lang();
 
+  // AI 请求的超时上限：core 不读 Settings，由 cli 读一次推进去(同
+  // LocalModelConfig 那条"可调行为参数由调用方显式传入"的约定)。放在这
+  // 里而不是各个 AI 命令里，是因为漏一处的后果是那条路径静默沿用默认值，
+  // 而这种漏很难被测出来。语义与默认值见 core/ai/ai.h。
+  pzt::core::ai::set_request_timeout_seconds(
+      pzt::core::load_settings().ai_request_timeout_seconds);
+
   if (argc < 2) {
     print_usage();
     return 1;

@@ -439,3 +439,26 @@ TEST_CASE("compact_for_debug_log keeps a complete multi-byte character landing e
 
   CHECK(result == std::string(237, 'a') + "\xe4\xb8\xad" + "...");
 }
+
+// 票 06 真机踩出来的：AI 请求的墙钟上限此前是 perform_curl_post 里写死的
+// 60 秒,而本地模型跑一次跨簇选择实测 45-80 秒(自报计算只有 2-6 秒,其余
+// 是加载与排队),恰好骑在这条线上 - 表现为"有时退化有时不退化"。改成由
+// cli 启动时从 Settings 读一次推进来,core 自己仍然不读 Settings。
+//
+// 只测得到 setter/getter 与钳制：真正生效的那一步是 curl_easy_setopt,
+// 要验证它得起一个会挂起的 HTTP 服务器,那是集成测试不是单元测试。
+TEST_CASE("request timeout is settable, and non-positive values fall back to the default") {
+  int original = request_timeout_seconds();
+
+  set_request_timeout_seconds(300);
+  CHECK(request_timeout_seconds() == 300);
+
+  // 0 在 libcurl 里的含义是"永不超时",配错一个 0 就是无限挂起 - 与其把
+  // 这个雷留给用户,不如退回默认值。负数同理。
+  set_request_timeout_seconds(0);
+  CHECK(request_timeout_seconds() == kDefaultRequestTimeoutSeconds);
+  set_request_timeout_seconds(-5);
+  CHECK(request_timeout_seconds() == kDefaultRequestTimeoutSeconds);
+
+  set_request_timeout_seconds(original);
+}

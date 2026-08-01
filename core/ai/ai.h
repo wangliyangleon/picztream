@@ -60,6 +60,26 @@ Result<HttpResponse, RequestError> perform_curl_post(
     const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
     const std::string& body);
 
+// 一次 AI 请求的墙钟上限(秒)，perform_curl_post 用它设 CURLOPT_TIMEOUT。
+//
+// 这个数原先是写死的 60，票 06 的真机验收把它撞出来了：本地 provider 跑一
+// 次跨簇选择实测 45-80 秒(模型自报的计算只有 2-6 秒，其余是加载与排队)，
+// 正好骑在 60 这条线上，表现为"同样的项目有时退化有时不退化"。默认值改成
+// 180，留 3-4 倍余量。
+//
+// **core 仍然不读 Settings**：值由 cli 在启动时读一次 Settings 后推进来
+// (cli/main.cpp)，跟 LocalModelConfig 那条"可调行为参数由调用方显式传入"
+// 是同一个立场。做成进程级而不是逐调用穿参，是因为这个旋钮按定义对所有
+// AI 调用取同一个值 - 把一个处处相同的数穿过 cli -> curate -> tournament
+// -> ai 四层、给本来就有十几个参数的签名再加一个，换不到任何表达力。
+// EvaluationWorker 在后台 jthread 上发请求，所以内部是 atomic。
+//
+// 非正值(0 在 libcurl 里的含义是"永不超时")一律退回默认值：配错一个 0 就
+// 是无限挂起，这个雷不留给用户。
+constexpr int kDefaultRequestTimeoutSeconds = 180;
+void set_request_timeout_seconds(int seconds);
+int request_timeout_seconds();
+
 // schema_instruction:调用方用自然语言描述这次要模型回什么样的 JSON(字段
 // 名、类型、取值范围);user_prompt:调用方自己的任务描述。两者会被拼进一
 // 段固定的"只回 JSON"系统层指令模板里发给模型,返回值是解析出来的 JSON

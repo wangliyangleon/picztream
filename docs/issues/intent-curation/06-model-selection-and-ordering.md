@@ -63,6 +63,11 @@
 
 代码行为本身完全符合规格：调用失败 -> 整批退化 -> 落在与关 AI 同一条确定性路径上,`ai_selection_fallback` 如实为真。同一次运行里还顺带观察到两个信号并存（`ai_fallback_count=1` 且 `ai_selection_fallback=true`），互不干扰,与单测一致。
 
-**留给后续的一个决定（本票不动）**：那 60 秒是 `perform_curl_post` 里所有 AI 调用共用的常量，改它会同时影响评估与锦标赛比较。要么按调用类型分别给上限，要么把它提进 Settings。没有票认领。
+**超时同刀修掉（拍板：进 Settings 一个旋钮，所有调用共用）**：新增
+`ai_request_timeout_seconds`，默认 **180**（原来是写死的 60）。实测依据：本地跑一次跨簇选择墙钟 45-80 秒，而模型自报的计算只有 2-6 秒 - 差额是模型加载、排队，以及 `gemma4:e2b` 在吐 `picks` 之前先跑的一段 `thinking`。45 秒这个中位数正好骑在 60 上，所以同一个项目会时好时坏；180 留 3-4 倍余量。
+
+值由 cli 在 `main.cpp` 读一次 Settings 后推给 `core::ai`（core 仍然不读 Settings），做成进程级而不是逐调用穿参：这个旋钮按定义对所有 AI 调用取同一个值，把一个处处相同的数穿过 `cli -> curate -> tournament -> ai` 四层、给本来就有十几个参数的签名再加一个，换不到任何表达力。非正值退回默认（`0` 在 libcurl 里是"永不超时"，不把这个雷留给用户）。`CONNECTTIMEOUT` 保持 10 秒不跟着变大 - 断网时仍然 10 秒就报错，不用等满三分钟。
+
+**改完之后同一条路径真机复跑**：`--provider local` 一次跑通，`ai_selection_fallback=false`，模型返回 `{"picks": [1, 4]}`。整条命令 7 分 31 秒（4 次评估 + 1 次比较 + 1 次选择）。
 
 **没覆盖到的一处**：`交付顺序...经 headless 输出保真` 里 headless 那一段没有自动化用例。`cmd_curate` 确实按 `result.selected` 的次序输出，但 cli 层没有命令级 JSON 测试的先例（`cli/tests` 只有 i18n/kitty/text/signal 这类纯函数），为这一条现开一个进程级测试缝隙超出本票范围。core 侧的顺序保真有用例钉着，headless 那一段是手工冒烟核对的。

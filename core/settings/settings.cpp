@@ -67,6 +67,7 @@ Settings load(const std::string& path) {
   }
   assign_if_present(j, "ollama_base_url", settings.ollama_base_url);
   assign_if_present(j, "ollama_model", settings.ollama_model);
+  assign_if_present(j, "ai_request_timeout_seconds", settings.ai_request_timeout_seconds);
   assign_if_present(j, "dedup_time_window_seconds", settings.dedup_time_window_seconds);
   assign_if_present(j, "dedup_hash_threshold", settings.dedup_hash_threshold);
   assign_if_present(j, "curate_time_window_seconds", settings.curate_time_window_seconds);

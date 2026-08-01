@@ -34,6 +34,7 @@ TEST_CASE("load returns all defaults when the config file doesn't exist") {
   CHECK(s.ai_provider == Provider::Local);
   CHECK(s.ollama_base_url == "http://localhost:11434");
   CHECK(s.ollama_model == "gemma4:e2b");
+  CHECK(s.ai_request_timeout_seconds == 180);
   CHECK(s.dedup_time_window_seconds == 10);
   CHECK(s.dedup_hash_threshold == 5);
   CHECK(s.curate_time_window_seconds == 20);
@@ -71,6 +72,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
     "ai_provider": "claude",
     "ollama_base_url": "http://example:1234",
     "ollama_model": "custom-model",
+    "ai_request_timeout_seconds": 300,
     "dedup_time_window_seconds": 20,
     "dedup_hash_threshold": 8,
     "curate_time_window_seconds": 30,
@@ -91,6 +93,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
   CHECK(s.ai_provider == Provider::Claude);
   CHECK(s.ollama_base_url == "http://example:1234");
   CHECK(s.ollama_model == "custom-model");
+  CHECK(s.ai_request_timeout_seconds == 300);
   CHECK(s.dedup_time_window_seconds == 20);
   CHECK(s.dedup_hash_threshold == 8);
   CHECK(s.curate_time_window_seconds == 30);

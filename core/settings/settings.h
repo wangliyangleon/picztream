@@ -24,6 +24,17 @@ struct Settings {
   // 第三节）。
   std::string ollama_base_url = "http://localhost:11434";
   std::string ollama_model = "gemma4:e2b";
+  // 一次 AI 请求的墙钟上限(秒)，所有 provider、所有调用共用。默认 180。
+  //
+  // 票 06 真机验收踩出来的：这个数原先写死在 perform_curl_post 里是 60，
+  // 而本地模型跑一次跨簇选择实测 45-80 秒(自报计算只有 2-6 秒，其余是加
+  // 载与排队)，正好骑在那条线上，同一个项目有时退化有时不退化。云端
+  // provider 一次就通，所以不是形状问题、是延迟问题。
+  //
+  // 调小的正当用途是"我不想为一次卡住的请求等三分钟"；调大的正当用途是
+  // 更慢的本地模型或更大的预选集。非正值在 core 侧退回默认值(0 在
+  // libcurl 里是"永不超时")，见 core/ai/ai.h::request_timeout_seconds。
+  int ai_request_timeout_seconds = 180;
   int dedup_time_window_seconds = 10;
   int dedup_hash_threshold = 5;
   // B：curate 分簇用的阈值，独立于 dedup_*、不共用同一份配置（避免"调宽
