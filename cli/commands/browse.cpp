@@ -424,11 +424,11 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   // 标签都不会写，所以这里不需要任何回滚。
   pzt::core::dedup::AiGateFn on_ai_gate = nullptr;
   if (ai_enabled) {
-    on_ai_gate = [&](int group_count, int comparison_count) {
+    on_ai_gate = [&](const pzt::core::dedup::AiCost& cost) {
       // 闸门要读键,不能整段持锁(会把后台重画卡到用户按键为止)。只锁住
       // 画提示这一下,读键本身在锁外。
       char c = prompt_and_read_key_2line(
-          pzt::cli::i18n::msg_dedup_ai_confirm_line1(group_count, comparison_count),
+          pzt::cli::i18n::msg_dedup_ai_confirm_line1(cost.group_count, cost.comparison_count),
           pzt::cli::i18n::msg_dedup_ai_confirm_line2(), banner_row, start_col, content_cols);
       // 自己重写第二行。space/f/r 那几个二级菜单不需要这一步,是因为它们
       // 返回主循环后立刻整屏重绘;闸门返回后直接进了 core 的阻塞调用,主

@@ -56,10 +56,11 @@ struct ChooseSummary {
 };
 
 // AI 锦标赛真正开跑前的闸门，在本地分簇跑完、任何一次 request_comparison
-// 发出之前调用一次。group_count 是 size>=2 的簇数，comparison_count 是这
-// 些簇的 (members.size()-1) 之和——单淘汰赛 N 个成员恰好 N-1 场(见
+// 发出之前调用一次。AiCost.group_count 是 size>=2 的簇数，comparison_count
+// 是这些簇的 (members.size()-1) 之和——单淘汰赛 N 个成员恰好 N-1 场(见
 // run_bracket 的说明)，所以这是精确开销而不是估算，调用方可以拿它直接问
-// 用户"要不要为此发这么多次请求"。
+// 用户"要不要为此发这么多次请求"。candidate_count 是候选总数(含单例)，
+// 锦标赛自己用不上，是给 curate 算评估张数用的(见 dedup.h 上的说明)。
 //
 // 返回 false = 不跑：不发起任何比较、不写任何标签，直接返回
 // ai_declined=true 的空结果。nullptr(默认)= 无条件继续，等价于加这个参数
@@ -70,6 +71,7 @@ struct ChooseSummary {
 //
 // 类型本身定义在 core/dedup/dedup.h(那边有说明为什么不能反过来)，这里
 // 引进本命名空间；这两行是同一个类型的两个名字，不是两套东西。
+using AiCost = dedup::AiCost;
 using AiGateFn = dedup::AiGateFn;
 
 // **每发起一次比较之前**回调一次，带上"第几组/共几组"和"第几次比较/共几

@@ -425,12 +425,14 @@ TEST_CASE("cluster_and_choose: on_ai_gate sees the exact group and comparison co
 
   int seen_groups = -1;
   int seen_comparisons = -1;
+  int seen_candidates = -1;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      [&](int groups, int comparisons) {
-        seen_groups = groups;
-        seen_comparisons = comparisons;
+      [&](const AiCost& cost) {
+        seen_groups = cost.group_count;
+        seen_comparisons = cost.comparison_count;
+        seen_candidates = cost.candidate_count;
         return true;
       });
   REQUIRE(result.ok());
@@ -438,6 +440,11 @@ TEST_CASE("cluster_and_choose: on_ai_gate sees the exact group and comparison co
   // (2-1) + (3-1)：单淘汰赛 N 个成员恰好 N-1 场，所以这是精确开销而不是
   // 估算——闸门报给用户的数字必须跟真实发出的请求数对得上。
   CHECK(seen_comparisons == 3);
+  // 候选集 = 每簇一张代表，5 张图聚成 2 簇、没有单例，所以是 2 而不是 5。
+  // 这个数就是 curate 拿去算"要评估多少张"的那个池子大小(票 05)，跟
+  // clusters 最终的大小必须一致。
+  CHECK(seen_candidates == 2);
+  CHECK(seen_candidates == static_cast<int>(result.value().clusters.size()));
   CHECK(fake_compare.calls == 3);
 }
 
@@ -455,7 +462,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate returning false writes absolutely noth
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      [](int, int) { return false; });
+      [](const AiCost&) { return false; });
 
   REQUIRE(result.ok());
   CHECK(result.value().ai_declined);
@@ -484,7 +491,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate returning true is indistinguishable fr
     return std::make_pair(result.value(), fake_compare.calls);
   };
 
-  auto [with_gate, with_gate_calls] = run("gate_true", [](int, int) { return true; });
+  auto [with_gate, with_gate_calls] = run("gate_true", [](const AiCost&) { return true; });
   auto [no_gate, no_gate_calls] = run("gate_absent", nullptr);
 
   CHECK(with_gate.clusters.size() == no_gate.clusters.size());
@@ -505,7 +512,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when ai is disabled
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      [&](int, int) {
+      [&](const AiCost&) {
         gate_called = true;
         return false;  // 万一被调用了，返回 false 会让结果明显不对，不会被蒙混过去
       });
@@ -528,7 +535,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when there is nothi
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      [&](int, int) {
+      [&](const AiCost&) {
         gate_called = true;
         return false;
       });
@@ -752,7 +759,7 @@ TEST_CASE("cluster_and_choose: cancelling during clustering stops before the gat
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
       Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
-      [&](int, int) {
+      [&](const AiCost&) {
         gate_asked = true;
         return true;
       },

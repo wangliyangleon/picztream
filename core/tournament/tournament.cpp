@@ -155,8 +155,15 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   // 都还没发、一个标签都还没写，所以这里是唯一一个"能报出精确开销、且拒绝
   // 之后系统状态跟没执行过完全一样"的位置。放在下面写库那一段之前直接
   // return，取消的原子性就不需要任何回滚逻辑来保证。
+  // 候选总数 = 成簇的 + 落单的，正好是下面 clusters 最终的大小。在这里
+  // 算而不是等 clusters 造出来，是因为闸门必须问在任何一次比较之前，而
+  // curate 要拿这个数算"要评估多少张"(见 dedup.h 上 AiCost 的说明)。
+  int candidate_total =
+      static_cast<int>(groups.size()) +
+      (static_cast<int>(candidates.size()) - static_cast<int>(grouped_ids.size()));
+
   if (ai_enabled && on_ai_gate && !groups.empty()) {
-    if (!on_ai_gate(static_cast<int>(groups.size()), comparison_total)) {
+    if (!on_ai_gate(AiCost{static_cast<int>(groups.size()), comparison_total, candidate_total})) {
       ChooseSummary declined{};
       declined.tagged_count = 0;
       declined.skipped_no_capture_time = skipped_no_capture_time;
