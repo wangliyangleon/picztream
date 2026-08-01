@@ -137,14 +137,15 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
 }
 
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
-                            int time_window_seconds, int hash_threshold, bool ai_enabled,
-                            Provider ai_provider, const LocalModelConfig& local_config,
+                            int time_window_seconds, int hash_threshold,
+                            double preselect_multiplier, bool ai_enabled, Provider ai_provider,
+                            const LocalModelConfig& local_config,
                             dedup::DedupProgressFn on_progress,
                             dedup::AiProgressFn on_ai_progress) {
   db::Database db = db::Database::open_default();
   return curate::curate(db, project_id, candidate_scope, count, time_window_seconds, hash_threshold,
-                         ai_enabled, ai_provider, local_config, std::move(on_progress),
-                         std::move(on_ai_progress));
+                         preselect_multiplier, ai_enabled, ai_provider, local_config,
+                         std::move(on_progress), std::move(on_ai_progress));
 }
 
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,

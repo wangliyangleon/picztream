@@ -566,7 +566,8 @@ int cmd_curate(const std::vector<std::string>& args) {
   // 跟 cmd_dedup 同一套带外进度（T-8）：stdout 仍然只在最后写一个对象。
   auto result = pzt::core::curate_images(
       *project_id, candidate_scope, count, settings.curate_time_window_seconds,
-      settings.curate_hash_threshold, ai_enabled, ai_provider, local_config,
+      settings.curate_hash_threshold, settings.curate_preselect_multiplier, ai_enabled, ai_provider,
+      local_config,
       [](int done, int total) { emit_json_progress("cluster", done, total); },
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);

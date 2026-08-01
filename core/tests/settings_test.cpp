@@ -38,6 +38,7 @@ TEST_CASE("load returns all defaults when the config file doesn't exist") {
   CHECK(s.dedup_hash_threshold == 5);
   CHECK(s.curate_time_window_seconds == 20);
   CHECK(s.curate_hash_threshold == 10);
+  CHECK(s.curate_preselect_multiplier == doctest::Approx(2.0));
   CHECK(s.eval_reject == false);
   CHECK(s.dedup_reject == false);
   CHECK(s.export_reject == false);
@@ -74,6 +75,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
     "dedup_hash_threshold": 8,
     "curate_time_window_seconds": 30,
     "curate_hash_threshold": 15,
+    "curate_preselect_multiplier": 3.5,
     "eval_reject": true,
     "dedup_reject": true,
     "export_reject": true,
@@ -93,6 +95,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
   CHECK(s.dedup_hash_threshold == 8);
   CHECK(s.curate_time_window_seconds == 30);
   CHECK(s.curate_hash_threshold == 15);
+  CHECK(s.curate_preselect_multiplier == doctest::Approx(3.5));
   CHECK(s.eval_reject == true);
   CHECK(s.dedup_reject == true);
   CHECK(s.export_reject == true);

@@ -59,12 +59,33 @@ struct CurateResult {
 // `if (summary.clusters.empty())` 会把它们连同"什么都没做"的语义一起丢
 // 掉，跟"候选池本来就是空的"折叠成同一个返回值。今天不可达只是因为这
 // 两个钩子都没传。见 docs/history/Headless_Observability_PRD.md 决策七及其附注。
+// preselect_multiplier（票 04 的 M）：选片之前先把候选集(每簇一张代表)
+// 按时间多样性裁成预选集，规模 = min(ceil(max(1.5, M) · count), 候选集
+// 大小)，选择逻辑本身不变、只是面对一个更小的池子。跟
+// time_window_seconds/hash_threshold 同一个约定——curate 不读 Settings，
+// 由调用方从 Settings.curate_preselect_multiplier 显式传入。默认 2 与
+// Settings 的默认值一致。见 docs/Intent_Curation_PRD.md 决策十至十二：
+// 这一刀跑在(将来的)评估之前，因此多样性只沿 captured_at 衡量，也因此评
+// 估次数由构造保证有界、与图库大小无关。候选集不足 count 时整条裁剪不参
+// 与(那时没有"选"这个动作)。
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold,
+                     double preselect_multiplier = 2.0,
                      bool ai_enabled = false, ai::Provider ai_provider = ai::Provider::Local,
                      const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
                      dedup::DedupProgressFn on_progress = nullptr,
                      dedup::AiProgressFn on_ai_progress = nullptr);
+
+namespace detail {
+
+// 预选集大小 = min(ceil(max(1.5, multiplier) · count), candidate_count)。
+// 暴露出来只为可测：这是票 04 里最需要穷举边界的一块(下界 1.5、上界候选
+// 集大小、ceil 的取整方向)，摘成不碰数据库和网络的纯函数才能表驱动覆盖，
+// 跟 core/ai 里 detail::request_*_impl 是同一个先例。candidate_count 或
+// count 非正时返回 0(curate 的契约保证 count > 0，这里只保证不返回负数)。
+int preselect_size(int candidate_count, double multiplier, int count);
+
+}  // namespace detail
 
 }  // namespace pzt::core::curate

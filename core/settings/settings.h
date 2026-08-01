@@ -33,6 +33,12 @@ struct Settings {
   // 来的数字。见 docs/history/M4_Eng_Design.md 第三节。
   int curate_time_window_seconds = 20;
   int curate_hash_threshold = 10;
+  // 票 04 的倍率 M：curate 在选片之前先把候选集按时间多样性裁成
+  // ceil(M · N) 张的预选集，跟上面两个 curate_* 同类，由 CLI 读出后显
+  // 式传进 core(curate 本身不读 Settings)。默认 2。小于 1.5 的配置值在
+  // core 侧按 1.5 生效——M=1 时池子正好等于要选的数量，后续模型没有任何
+  // 选择余地。见 docs/Intent_Curation_PRD.md 决策十一。
+  double curate_preselect_multiplier = 2.0;
   // F-26 的批量默认排除策略用的四个开关——true 表示"不排除"(把这类图
   // 片当成正常范围的一部分处理)，false(默认)是当前拍板的行为。
   bool eval_reject = false;

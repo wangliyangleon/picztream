@@ -1,6 +1,7 @@
 #include "core/curate/curate.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -105,11 +106,25 @@ RepInfo greedy_pick(std::vector<RepInfo>& pool, const std::vector<RepInfo>& sele
 
 }  // namespace
 
+namespace detail {
+
+int preselect_size(int candidate_count, double multiplier, int count) {
+  if (candidate_count <= 0 || count <= 0) return 0;
+  // double 里算再跟候选集大小取小：count 大到 int 溢出的量级时，先乘再
+  // 转 int 是未定义行为，先比较后转换不是。
+  double target = std::ceil(std::max(1.5, multiplier) * static_cast<double>(count));
+  if (target >= static_cast<double>(candidate_count)) return candidate_count;
+  return static_cast<int>(target);
+}
+
+}  // namespace detail
+
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
-                     int time_window_seconds, int hash_threshold, bool ai_enabled,
-                     ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-                     dedup::DedupProgressFn on_progress, dedup::AiProgressFn on_ai_progress) {
+                     int time_window_seconds, int hash_threshold, double preselect_multiplier,
+                     bool ai_enabled, ai::Provider ai_provider,
+                     const ai::LocalModelConfig& local_config, dedup::DedupProgressFn on_progress,
+                     dedup::AiProgressFn on_ai_progress) {
   auto ids = resolve_scope_ids(db, project_id, candidate_scope);
 
   // 分簇 + 每簇选 winner 整个委托给 tournament::cluster_and_choose：排除
@@ -135,6 +150,24 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
   std::vector<project::ImageId> selected;
 
   if (static_cast<int>(winners.size()) >= count) {
+    // 票 04：先把候选集(每簇一张代表)按时间多样性裁成预选集，两条路都走
+    // 这一刀。裁剪用的就是下面 AI 关那条路的 farthest-point，所以 AI 关
+    // 时输出一字不变——贪心是增量的，"先挑 K 张再从 K 张里挑 count 张"
+    // 每一步的 argmax 都落在 K 里，跟直接挑 count 张同序。AI 开时这一刀
+    // 是实打实的收窄：随机采样只在预选集里发生。K == winners.size() 时
+    // 是空操作(候选集介于 count 与目标之间就是这种情况)。
+    int k = detail::preselect_size(static_cast<int>(winners.size()), preselect_multiplier, count);
+    if (k < static_cast<int>(winners.size())) {
+      std::vector<RepInfo> pool;
+      for (auto id : winners) pool.push_back(make_rep_info(db, id));
+      std::vector<RepInfo> preselected;
+      for (int i = 0; i < k && !pool.empty(); ++i) {
+        preselected.push_back(greedy_pick(pool, preselected));
+      }
+      winners.clear();
+      for (const auto& r : preselected) winners.push_back(r.id);
+    }
+
     if (ai_enabled) {
       // AI 开：从 winner 集合随机挑 count 个(PRD 已拍板接受不可复现，见
       // curate.h 的说明)——没有质量分可比，"哪个 winner 更该被选中"本来
@@ -143,7 +176,8 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
       std::sample(winners.begin(), winners.end(), std::back_inserter(selected), count, rng);
     } else {
       // AI 关：farthest-point 多样性，逻辑不变，只是输入源从旧
-      // build_cluster_reps 换成 winners(ai_enabled=false 时两者等价)。
+      // build_cluster_reps 换成 winners(ai_enabled=false 时两者等价)，票
+      // 04 之后 winners 可能已经被裁剪过。
       std::vector<RepInfo> pool;
       for (auto id : winners) pool.push_back(make_rep_info(db, id));
       std::vector<RepInfo> selected_info;
