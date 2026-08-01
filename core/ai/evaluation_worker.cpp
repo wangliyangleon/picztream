@@ -3,9 +3,8 @@
 #include <cstdio>
 #include <utility>
 
-#include "core/db/stmt.h"
+#include "core/ai/evaluation_store.h"
 #include "core/media/media.h"
-#include "core/tagging/tagging.h"
 
 namespace pzt::core::ai {
 
@@ -148,45 +147,16 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   }
 
   const auto& r = result.value();
-  // result_json 存模型返回的原始形状(assessment/unusable/content)，不是拆开
-  // 的列 - 以后再问模型要新的值,只用扩展 EvaluationResult + 这里的 json 字面
-  // 量,不需要再来一次 core/db/schema.cpp 的破坏性表重建,见那边的注释。2026-08
-  // 加 content 就是这个设计第一次兑现:没动 DDL、没 bump kSchemaVersion。
-  std::string result_json =
-      nlohmann::json{{"assessment", r.assessment}, {"unusable", r.unusable}, {"content", r.content}}
-          .dump();
-  db::Stmt stmt(db.handle(),
-                "INSERT INTO image_evaluations (image_id, result_json, extra_guidance, provider) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(image_id) DO UPDATE SET "
-                "result_json = excluded.result_json, "
-                "extra_guidance = excluded.extra_guidance, "
-                "provider = excluded.provider;");
-  sqlite3_bind_int64(stmt.get(), 1, req.image_id);
-  sqlite3_bind_text(stmt.get(), 2, result_json.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt.get(), 3, req.extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt.get(), 4, to_string(req.provider), -1, SQLITE_TRANSIENT);
-  // F-17：以前不检查这一步——AI 已经给出结果，但落库失败(磁盘满、库损
-  // 坏)时会静默发生，generation_ 照样 +1 触发一次什么都没变的空重绘，
-  // 用户完全看不到发生了什么。这里不像 recipe.cpp 那些函数一样直接
-  // throw：process_request 跑在后台 jthread 上，未捕获异常会
-  // std::terminate，风险比"结果暂时没存上"这件事本身还大；改成走
-  // F-03 刚建好的 last_failure_ 通道，跟其它失败路径统一。
-  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+  // 落库 + auto_reject 打标签整个委托给 store_evaluation：票 05 起 curate
+  // 也要写这张表(它在一次 headless 调用内同步评估预选集，用不了这套异步
+  // 队列)，result_json 的形状必须只有一个地方定义。req.auto_reject 是调用
+  // 方提交请求时传进来的显式参数，process_request 本身不读 Settings。
+  auto stored = store_evaluation(db, req.image_id, r, req.extra_guidance, req.provider,
+                                  req.auto_reject);
+  if (!stored.ok()) {
     std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld failed to save evaluation result\n",
                  static_cast<long long>(req.image_id));
-    return EvaluationError::StorageFailed;
-  }
-
-  // auto_reject：结果落库之后，模型直接给的 unusable 为真时打废片标签
-  // (W2026-07-21：判据从原来的 passes_gate 三项阈值改成读 unusable flag)。
-  // 只在 unusable 时打标签，不做反向摘除(见 core/settings/settings.h 里的
-  // 说明)——这里用已经打开的 db 连接直接调 tagging:: 里的函数，不经过
-  // core/api.h 门面(那边会各自开一条新连接，没必要)。req.auto_reject 是调
-  // 用方（提交请求时）传进来的显式参数，process_request 本身不读 Settings。
-  if (req.auto_reject && r.unusable) {
-    auto reject_tag_id = tagging::ensure_reject_tag(db, info->project_id);
-    (void)tagging::add_tag(db, req.image_id, reject_tag_id);
+    return stored.error();
   }
 
   std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld unusable=%d\n",
