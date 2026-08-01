@@ -485,6 +485,11 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
       ai::EvaluationInfo eval;
       eval.assessment = result_json["assessment"].get<std::string>();
       eval.unusable = result_json["unusable"].get<bool>();
+      // content 不进上面的守卫条件：2026-08 之前落库的记录没有这个 key，把
+      // 它加进守卫会让那些老记录整条被当成"未评估"。缺失时留空串。
+      if (result_json.contains("content") && result_json["content"].is_string()) {
+        eval.content = result_json["content"].get<std::string>();
+      }
       eval.extra_guidance = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 9));
       eval.provider = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 10));
       info.evaluation = std::move(eval);

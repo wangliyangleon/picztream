@@ -55,15 +55,17 @@ void write_real_jpeg(const fs::path& p) {
   REQUIRE(result.ok());
 }
 
-// W2026-07-21：eval 结果是"一段文字 assessment + unusable flag"。默认样本
-// unusable=false(可用)，大多数测试复用它。
+// W2026-07-21：eval 结果是"一段文字 assessment + unusable flag"。2026-08 又
+// 加了第三个字段 content(画面内容描述)。默认样本 unusable=false(可用)，大多
+// 数测试复用它。
 EvaluationResult make_evaluation_result() {
-  return EvaluationResult{"balanced composition, warm color, sharp", false};
+  return EvaluationResult{"balanced composition, warm color, sharp", false,
+                          "two kids laughing on a beach at sunset"};
 }
 
 // unusable=true 的样本,auto_reject 的"打废片"用例用它。
 EvaluationResult make_unusable_evaluation_result() {
-  return EvaluationResult{"subject badly out of focus", true};
+  return EvaluationResult{"subject badly out of focus", true, "a blurred street corner"};
 }
 
 bool has_reject_tag(Database& db, ImageId id) {
@@ -139,6 +141,8 @@ TEST_CASE("a successful request writes all fields, extra_guidance is the raw gui
   CHECK(eval.unusable == false);
   CHECK(eval.extra_guidance == "focus on the crop");
   CHECK(eval.provider == "gemini");
+  // content 跟 assessment 一起进 result_json 那个 JSON blob 列，不是新开的列。
+  CHECK(eval.content == "two kids laughing on a beach at sunset");
 
   CHECK(!worker.has_pending());
   CHECK(worker.request(fx.image_id, Provider::Claude, "", false));  // 完成后去重状态清除，可以再请求
@@ -330,7 +334,8 @@ TEST_CASE("re-evaluating an image overwrites the previous result") {
   std::string assessment = "first pass";
   auto fake_evaluation = [&](const decode::DecodedImage&, const std::string&,
                               Provider, Language, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
-    return Result<EvaluationResult, EvaluationError>::Ok(EvaluationResult{assessment, false});
+    return Result<EvaluationResult, EvaluationError>::Ok(
+        EvaluationResult{assessment, false, "a quiet street corner"});
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 

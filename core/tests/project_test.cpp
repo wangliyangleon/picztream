@@ -479,6 +479,43 @@ TEST_CASE("get_image returns nullopt evaluation by default, reads it back once s
   CHECK(eval.unusable == true);
   CHECK(eval.extra_guidance == "focus on the crop");
   CHECK(eval.provider == "gemini");
+  // 上面那条 result_json 没有 content(它就是 2026-08 之前的老记录形状)：读
+  // 回不报错、不整条作废，content 退化为空串。表结构没动过，所以老库里的行
+  // 原样躺在那儿，读取侧必须宽松——这跟模型响应侧对 content 的严格要求相反，
+  // 两者刻意不一致，见 core/ai/evaluation.h。
+  CHECK(eval.content.empty());
+}
+
+TEST_CASE("get_image reads back the content field when the stored result_json has one") {
+  auto db = Database::open_at(fresh_db_path("evaluation_content_field"));
+  auto photos = fresh_photo_dir("evaluation_content_field");
+  touch(photos / "a.jpg");
+  auto created = create_project(db, "trip", photos.string());
+  REQUIRE(created.ok());
+
+  auto a_id = find_image_by_path(db, created.value(), "a.jpg");
+  REQUIRE(a_id.has_value());
+
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db.handle(),
+                      "INSERT INTO image_evaluations (image_id, result_json, "
+                      "extra_guidance, provider) VALUES (?, ?, ?, ?);",
+                      -1, &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, *a_id);
+  sqlite3_bind_text(stmt, 2,
+                     R"({"assessment":"sharp and well exposed","unusable":false,)"
+                     R"("content":"two kids laughing on a beach at sunset"})",
+                     -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, "", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, "local", -1, SQLITE_TRANSIENT);
+  REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+
+  auto after = get_image(db, *a_id);
+  REQUIRE(after.has_value());
+  REQUIRE(after->evaluation.has_value());
+  CHECK(after->evaluation->content == "two kids laughing on a beach at sunset");
+  CHECK(after->evaluation->assessment == "sharp and well exposed");
 }
 
 // F-07：批量版 get_image，只回答"这些图片里哪些已经有评估结果"，一条
