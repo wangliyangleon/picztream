@@ -30,7 +30,7 @@ Result<void, EvaluationError> store_evaluation(db::Database& db, project::ImageI
   sqlite3_bind_text(stmt.get(), 2, result_json.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 3, extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 4, to_string(provider), -1, SQLITE_TRANSIENT);
-  // F-17：以前不检查这一步——AI 已经给出结果，但落库失败(磁盘满、库损
+  // F-17：以前不检查这一步-AI 已经给出结果，但落库失败(磁盘满、库损
   // 坏)时会静默发生。不 throw 的理由见 evaluation_store.h。
   if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
     return Result<void, EvaluationError>::Err(EvaluationError::StorageFailed);

@@ -140,7 +140,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
                                   EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
   auto ids = resolve_scope_ids(db, project_id, candidate_scope);
 
-  // 空结果的三种含义各有一个构造点，刻意不共用一个"空"——它们对用户说的
+  // 空结果的三种含义各有一个构造点，刻意不共用一个"空"-它们对用户说的
   // 话完全不同(PRD 决策十九)。
   auto declined_result = [&] {
     CurateResult r{{}, count, 0, 0};
@@ -230,27 +230,32 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
     }
 
     if (ai_enabled) {
-      // 票 05：补问闸门。走到这里说明 tournament 没问过——它只在存在
-      // size>=2 的簇时才问，而全是单例簇的项目一次比较都不发、开销却不为
-      // 零(评估还在后面)。此刻仍然满足"任何视觉调用之前"：没有比较发生
-      // 过，评估也还没开始。
-      if (on_ai_gate && !gate_consulted) {
-        gate_consulted = true;
-        if (!on_ai_gate(/*comparison_count=*/0, static_cast<int>(winners.size()))) {
-          return declined_result();
-        }
-      }
-
       // 只评估预选集(PRD 决策十)：评估次数因此由构造保证有界，与图库大
-      // 小无关。已经有评估记录的跳过——缓存判据是"有记录就跳过"，不做字
+      // 小无关。已经有评估记录的跳过 - 缓存判据是"有记录就跳过"，不做字
       // 段完整性检查也不加版本号(PRD 决策七)。
+      //
+      // 算在闸门之前，是为了让补问的那一路能报**精确**张数而不是上界：这
+      // 里 winners 已经是预选集本身，扣掉命中缓存的就是真正要发的请求数。
       std::vector<project::ImageId> to_evaluate;
       auto already_evaluated = project::evaluated_image_ids(db, winners);
       for (auto id : winners) {
         if (!already_evaluated.count(id)) to_evaluate.push_back(id);
       }
-
       int eval_total = static_cast<int>(to_evaluate.size());
+
+      // 票 05：补问闸门。走到这里说明 tournament 没问过 - 它只在存在
+      // size>=2 的簇时才问，而全是单例簇的项目一次比较都不发、开销却不为
+      // 零(评估还在后面)。此刻仍然满足"任何视觉调用之前"：没有比较发生
+      // 过，评估也还没开始。
+      //
+      // 这一路报的是精确张数。tournament 那一路只能报上界(闸门问在分簇之
+      // 后、锦标赛之前，那时还不知道 winner 是谁，无从查缓存)，两者都不
+      // 会低报，方向上一致。
+      if (on_ai_gate && !gate_consulted && eval_total > 0) {
+        gate_consulted = true;
+        if (!on_ai_gate(/*comparison_count=*/0, eval_total)) return declined_result();
+      }
+
       for (int i = 0; i < eval_total; ++i) {
         // 先查取消再报进度：取消之后这张不会被评估，报一个"正在评估第 N
         // 张"只会让最后停住的那一帧多走一格、对不上实际发生的事(同
@@ -295,23 +300,22 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
     for (auto& r : reps) selected.push_back(r.id);
   }
 
-  CurateResult result{selected, count, static_cast<int>(selected.size()),
+  return CurateResult{selected, count, static_cast<int>(selected.size()),
                        summary.ai_fallback_count};
-  return result;
 }
 
 namespace {
 
 // production 的评估一张图：解码预览图 -> request_evaluation -> 落库。跟
 // EvaluationWorker::process_request_impl 是同一条链路，区别只在这里是同步
-// 的、跑在调用线程上——curate 要在一次 headless 调用内部把预选集串行评估
+// 的、跑在调用线程上-curate 要在一次 headless 调用内部把预选集串行评估
 // 完，用不了那套异步队列。
 //
 // 三个刻意的取值：
 // - extra_guidance 传空串。用途**不**注入评估(PRD 决策五)：描述回答"这张
 //   照片是什么"，是关于照片的客观事实；用途回答"这些事实里哪些重要"，是
 //   关于这次任务的。注进去还会让缓存只对一种用途有效。
-// - auto_reject 传 false。curate 是"挑哪几张"，不该顺手改变废片标签——那
+// - auto_reject 传 false。curate 是"挑哪几张"，不该顺手改变废片标签-那
 //   会改变下一次运行的候选集，是一个用户没要求过的副作用。
 // - language 用 request_evaluation 的默认值(中文)。curate 只有 headless
 //   一个入口，core 不认识 cli 的界面语言；content 是给机器读的、不进

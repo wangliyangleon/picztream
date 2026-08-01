@@ -578,7 +578,7 @@ int cmd_curate(const std::vector<std::string>& args) {
       // 调用方 - 它先在 core 里就位，接给谁由后续的票决定。
       /*on_ai_gate=*/nullptr,
       // 票 05：评估阶段的第三个 phase。cluster/compare 数的是候选簇和比
-      // 较次数，这个数的是照片张数——三者单位不同，展示层必须按 phase 分
+      // 较次数，这个数的是照片张数-三者单位不同，展示层必须按 phase 分
       // 别措辞(T-8 真机验收推翻过"把 phase 压掉"的做法，见 SPEC §3.2)。
       [](int done, int total) { emit_json_progress("evaluate", done, total); });
 

@@ -47,8 +47,9 @@ using DedupProgressFn = std::function<void(int done, int total)>;
 // 已经 include 了本文件(它复用 find_duplicates 的分簇算法)，反向 include
 // 会成环；tournament.h 那边用 `using AiGateFn = dedup::AiGateFn;` 把它们
 // 引进自己的命名空间，两边始终是同一个类型。
+
 // 闸门看到的开销快照。用结构体而不是几个平铺的 int，理由跟 AiProgress
-// 一样：这一组数还会长——票 05 给 curate 加评估之后，闸门要报的开销不再
+// 一样：这一组数还会长-票 05 给 curate 加评估之后，闸门要报的开销不再
 // 只有"比较多少次"，而 curate 算评估张数需要的 candidate_count 只有分簇
 // 跑完的那一刻才知道。平铺参数每加一个数就要改一遍全部 lambda 的形参
 // 表，结构体只让真正关心新字段的调用方去读它。
@@ -56,7 +57,7 @@ struct AiCost {
   int group_count = 0;       // size>=2、要跑锦标赛的簇数
   int comparison_count = 0;  // 这些簇的比较次数之和，精确值不是估算
   // 排除标签之后的完整候选数(含单例)，也就是 ChooseSummary.clusters 最终
-  // 的大小。dedup 用不上；curate 用它算"要评估多少张"——预选集是从候选集
+  // 的大小。dedup 用不上；curate 用它算"要评估多少张"-预选集是从候选集
   // 里裁出来的，而闸门必须在任何一次视觉调用之前问，那时 clusters 还没构
   // 造出来，只能由这里把数带出去。
   int candidate_count = 0;

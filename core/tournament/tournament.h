@@ -57,7 +57,7 @@ struct ChooseSummary {
 
 // AI 锦标赛真正开跑前的闸门，在本地分簇跑完、任何一次 request_comparison
 // 发出之前调用一次。AiCost.group_count 是 size>=2 的簇数，comparison_count
-// 是这些簇的 (members.size()-1) 之和——单淘汰赛 N 个成员恰好 N-1 场(见
+// 是这些簇的 (members.size()-1) 之和-单淘汰赛 N 个成员恰好 N-1 场(见
 // run_bracket 的说明)，所以这是精确开销而不是估算，调用方可以拿它直接问
 // 用户"要不要为此发这么多次请求"。candidate_count 是候选总数(含单例)，
 // 锦标赛自己用不上，是给 curate 算评估张数用的(见 dedup.h 上的说明)。

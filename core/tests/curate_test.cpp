@@ -609,14 +609,13 @@ TEST_CASE("curate --ai evaluates exactly the preselection, not the whole library
   // 评估的必须正好是预选集本身，而不是随便 4 张。不把那 4 个 id 写死：
   // farthest-point 打平时按 image id 兜底，而 id 是按目录扫描顺序分配
   // 的、不保证跟文件名同序，写死等于把测试钉在文件系统的返回顺序上。
-  // 改成断言一个不变量——预选集就是"关 AI 时挑 k 张"的结果，两者走的是
+  // 改成断言一个不变量-预选集就是"关 AI 时挑 k 张"的结果，两者走的是
   // 同一个 take_farthest_points(票 04 的裁剪与最终选片共用同一个循环)。
   auto deterministic = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/4, 20, 10,
                                             2.0, /*ai_enabled=*/false, Provider::Local,
                                             pzt::core::ai::LocalModelConfig{}, std::ref(eval));
   std::vector<ImageId> expected = deterministic.selected;
-  std::vector<ImageId> got = eval.evaluated;
-  got.resize(4);  // 上面那次关 AI 的调用不评估，evaluated 不会增长，这里只是防御
+  std::vector<ImageId> got = eval.evaluated;  // 上面那次关 AI 的调用不评估，不会增长
   std::sort(expected.begin(), expected.end());
   std::sort(got.begin(), got.end());
   CHECK(got == expected);
@@ -820,4 +819,31 @@ TEST_CASE("curate --ai does not evaluate when the candidate pool is smaller than
   CHECK(result.returned == 2);
   CHECK(eval.evaluated.empty());
   CHECK_FALSE(gated);  // 开销恒为 0，不打扰调用方
+}
+
+TEST_CASE("curate --ai gate reports the cache-adjusted count, not the raw preselection size") {
+  // 第一趟把预选集评估完；第二趟改成 count=3(预选集变大，多出两张没评估
+  // 过的)。闸门此刻该报的是"还要评估几张"，不是预选集的总大小 - 已经有
+  // 记录的那几张一次请求都不会发。
+  auto fx = make_singletons("eval_gate_warm_cache", 12);
+  FakeEvaluator warm;
+  detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                       /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
+                       std::ref(warm));
+  REQUIRE(warm.evaluated.size() == 4);
+
+  FakeEvaluator again;
+  int seen_evaluations = -1;
+  detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, 2.0,
+                       /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
+                       std::ref(again), nullptr, nullptr, [&](int, int evaluations) {
+                         seen_evaluations = evaluations;
+                         return true;
+                       });
+
+  // 预选集是 6 张，其中 4 张(上一趟那批)已有记录 - 但两次的预选集不一定
+  // 完全重叠，所以只断言闸门报的数跟真实发起的次数**相等**，这正是本票
+  // "闸门报出的评估张数与实际执行的数量一致"要的。
+  CHECK(seen_evaluations == static_cast<int>(again.evaluated.size()));
+  CHECK(seen_evaluations < 6);  // 确实扣掉了缓存，不是原样报预选集大小
 }

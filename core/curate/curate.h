@@ -38,7 +38,7 @@ struct CurateResult {
   // 跑"会收到一句"没选出照片"，跟事实完全不符。
   bool ai_declined = false;
   // 票 05：on_cancel 返回了 true。跟 ai_declined 同形(selected 空、零写
-  // 入)，分开报是因为对用户的含义不同——一个是"没点头"，一个是"点了头又
+  // 入)，分开报是因为对用户的含义不同-一个是"没点头"，一个是"点了头又
   // 喊停"。见 core::tournament::ChooseSummary 的同名字段。
   bool cancelled = false;
 };
@@ -54,11 +54,16 @@ struct CurateResult {
 // 返回 false = 不跑：不发起任何视觉调用、不写任何东西，直接返回
 // ai_declined=true 的空结果。nullptr(默认) = 无条件继续。
 //
-// evaluation_count 是**预选集大小**，也就是"最多要评估多少张"。已经评估
-// 过的照片会被跳过(缓存判据见 PRD 决策七)，所以实际发出的请求数可能更
-// 少 - 闸门只会高报不会低报，方向上是安全的。之所以不能报精确值：闸门必
-// 须问在任何一次比较之前，而预选集是从锦标赛的 winner 里裁出来的，那时
-// 还不知道 winner 是谁，只知道有几个。
+// evaluation_count 有两种精度，取决于这一趟有没有簇要跑锦标赛：
+//
+// - 有比较要跑时闸门必须问在第一次比较之前，那时预选集还没裁出来(它是从
+//   winner 里裁的，而 winner 由锦标赛决定)，只知道候选有几个。此时报的是
+//   **预选集大小**，即"最多要评估多少张"；命中缓存的照片会被跳过(判据见
+//   PRD 决策七)，所以实际请求数可能更少。
+// - 一次比较都不用跑时(全是单例簇)，预选集此刻已经确定，报的是**扣掉缓
+//   存之后的精确张数**。
+//
+// 两种情况都只会高报不会低报，方向上一致。
 using CurateAiGateFn = std::function<bool(int comparison_count, int evaluation_count)>;
 
 // 票 05：评估阶段的进度，**每张评估发起之前**回调一次。done 是 1-based
@@ -94,7 +99,7 @@ using EvalProgressFn = std::function<void(int done, int total)>;
 // 的命令变成了会花几分钟、会失败、会超时的命令(它现在自己评估预选集)，
 // 于是"开跑前问一句、跑的时候报进度、被拒绝时说清楚"三件事一起补上。语
 // 义见上面各自的类型说明与 dedup::CancelFn。默认 nullptr，现有调用点零改
-// 动。这一刀同时兑现了上一版这里写死的那条约束——补 on_ai_gate/on_cancel
+// 动。这一刀同时兑现了上一版这里写死的那条约束-补 on_ai_gate/on_cancel
 // 的同时给 CurateResult 补上了 ai_declined/cancelled，否则那句
 // `if (summary.clusters.empty())` 会把"用户拒绝"和"候选池本来就是空的"折
 // 叠成同一个返回值。见 docs/Intent_Curation_PRD.md 决策十八、十九。
@@ -129,7 +134,7 @@ namespace detail {
 // 一个先例。
 using EvaluateFn = std::function<bool(db::Database&, project::ImageId)>;
 
-// 仅供单元测试使用——evaluate_fn 可注入，不需要真的解码 JPEG 或连网络。
+// 仅供单元测试使用-evaluate_fn 可注入，不需要真的解码 JPEG 或连网络。
 // production 的 curate 就是这个函数塞真实 evaluate_fn 的一层薄封装。
 CurateResult curate_impl(db::Database& db, project::ProjectId project_id,
                           std::optional<tagging::TagId> candidate_scope, int count,
