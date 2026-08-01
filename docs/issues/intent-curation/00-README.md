@@ -17,7 +17,8 @@
 | [06](06-model-selection-and-ordering.md) | 模型选择与排序接进 curate | 03, 04, 05 | ready-for-agent |
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | ready-for-agent |
 | [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | ready-for-agent |
-| [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | ready-for-agent |
+| [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | ready-for-agent（phase 共存已拍板） |
+| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | needs-decision |
 
 ## 依赖图
 
@@ -26,10 +27,18 @@
 02 ────────────────────────┐
 03 ──┬──────┐              │
 04 ──┴─→ 05 ─┴─→ 06 ──┬─→ 07
-         └─→ 09        └─→ 08 ←┘(02)
+         └─→ 09        ├─→ 08 ←┘(02)
+                       └─→ 10
 ```
 
 **可并行开工**：01、02、03、04 四张没有任何阻塞。
+
+## 剩余五张的开工次序
+
+- **06** 是唯一依赖已全部解开、且没有未决问题的票，走关键路径。
+- **09** 依赖也解开了，可与 06 并行；它原本缺的那块（评估进度与比较进度如何共存）已在票内拍板。
+- **07**、**08** 都等 06，只能串在它后面。08 的另一条阻塞边 02 早已满足。
+- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。它**不是 ready**：闸门问在哪一层还没定，见票内。排在 06 之后是因为那时 JSON 输出正在动，两处可以一次做齐。
 
 ## 一条必须遵守的顺序约束
 

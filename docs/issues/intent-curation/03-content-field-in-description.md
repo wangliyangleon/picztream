@@ -17,7 +17,7 @@
 
 **Blocked by:** None - can start immediately.
 
-**Status:** done（`dc91dc7`..`6ee4baa`，PR #2 待合入）
+**Status:** done（`dc91dc7`..`6ee4baa`，2026-08-01 合入 main）
 
 - [x] `pzt eval --json` 的输出含 `content` 字段
 - [x] 库里落盘的评估记录含 `content`
