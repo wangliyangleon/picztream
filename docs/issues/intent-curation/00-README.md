@@ -10,7 +10,7 @@
 | # | 标题 | 阻塞于 | 状态 |
 |---|---|---|---|
 | [01](01-chronological-order-when-ai-off.md) | AI 关时交付按拍摄时间排序 | 无 | **done** (`158ee3a`) |
-| [02](02-consolidate-intent-hint-text.md) | 引导语收成单一常量 | 无 | ready-for-agent |
+| [02](02-consolidate-intent-hint-text.md) | 引导语收成单一常量 | 无 | **done** (`bc778e3`) |
 | [03](03-content-field-in-description.md) | 描述新增 `content` 字段 | 无 | ready-for-agent |
 | [04](04-preselection-clamp-and-m-knob.md) | 预选集裁剪与 M 旋钮 | 无 | ready-for-agent |
 | [05](05-evaluate-preselection-gate-progress.md) | curate 内部评估预选集：闸门 + 进度 + 偿还语义折叠 | 03, 04 | ready-for-agent |
