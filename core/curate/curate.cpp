@@ -41,6 +41,23 @@ RepInfo make_rep_info(db::Database& db, project::ImageId id) {
   return RepInfo{id, info->captured_at};
 }
 
+// 交付顺序：captured_at 降序，打平用 id 升序兜底。没有 captured_at 的取
+// int64 最小值，于是稳定落在最后，不引入不确定性。
+//
+// 两条**确定性**路径（关 AI 凑够 count、以及候选簇数不足 count）共用这一
+// 个比较器，是刻意的：两者方向必须一致，否则同一次 curate 会因为候选够
+// 不够而交出方向相反的两种排列。提成具名函数而不是各写一遍 lambda，是为
+// 了让这个约束是结构上的而不是靠约定。
+//
+// 开 AI 且候选够那条路径不在此列——它走 std::sample，顺序是簇的遍历顺序，
+// 本票不动（票 06 起改由模型决定，见 docs/Intent_Curation_PRD.md 决策十四）。
+bool by_captured_at_desc(const RepInfo& a, const RepInfo& b) {
+  auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
+  auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
+  if (at != bt) return at > bt;
+  return a.id < b.id;
+}
+
 // 从 pool 里挑一个：所有代表等价(去分数后无质量维度)，纯 captured_at 多
 // 样性。已选集非空时走 farthest-point——对每个候选算它离已选集里每个有
 // captured_at 的成员的时间差，取最小值，选这个最小值最大的那个(离已选
@@ -131,10 +148,13 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
       for (auto id : winners) pool.push_back(make_rep_info(db, id));
       std::vector<RepInfo> selected_info;
       for (int i = 0; i < count && !pool.empty(); ++i) {
-        auto picked = greedy_pick(pool, selected_info);
-        selected.push_back(picked.id);
-        selected_info.push_back(picked);
+        selected_info.push_back(greedy_pick(pool, selected_info));
       }
+      // 票 01：选中的是哪几张仍由 farthest-point 决定，但交出去的顺序不
+      // 是它的挑选顺序——那个算法每次挑离已选集最远的一张，排列在时间上
+      // 必然跳跃，而这个列表顺序一路决定 Deliver 的发送次序。
+      std::sort(selected_info.begin(), selected_info.end(), by_captured_at_desc);
+      for (const auto& r : selected_info) selected.push_back(r.id);
     }
   } else {
     // 簇数 < N：两种模式都返回全部 winner，不分 ai_enabled——没有"选"这
@@ -144,12 +164,7 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
     // curate 存在的多样性目的。
     std::vector<RepInfo> reps;
     for (auto id : winners) reps.push_back(make_rep_info(db, id));
-    std::sort(reps.begin(), reps.end(), [](const RepInfo& a, const RepInfo& b) {
-      auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
-      auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
-      if (at != bt) return at > bt;  // captured_at 降序
-      return a.id < b.id;
-    });
+    std::sort(reps.begin(), reps.end(), by_captured_at_desc);
     for (auto& r : reps) selected.push_back(r.id);
   }
 

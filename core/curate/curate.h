@@ -17,7 +17,11 @@
 namespace pzt::core::curate {
 
 struct CurateResult {
-  std::vector<project::ImageId> selected;  // 有序:入选顺序
+  // 有序，且这个顺序有意义：调用方(pzt curate -> agent -> Deliver)按它的
+  // 次序发送，决定九宫格位置与轮播先后。票 01 起两条确定性路径(关 AI 凑够
+  // count、候选簇数不足 count)都是 captured_at 降序、id 升序；开 AI 且候选
+  // 够那条仍是 std::sample 的保序输出(即簇遍历顺序)，票 06 改由模型决定。
+  std::vector<project::ImageId> selected;
   int requested;
   int returned;  // == selected.size()，< requested 表示候选不足
   // W2026-07-21 目标二：ai_enabled=true 时，因为某次 AI 比较失败而整簇

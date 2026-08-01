@@ -207,6 +207,72 @@ TEST_CASE("curate spreads selection across captured_at (time diversity)") {
   CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
 }
 
+// 票 01：选出来是哪几张由 farthest-point 决定，但交出去的顺序不该是它的
+// 挑选顺序——那个算法每次挑离已选集最远的一张，产出的排列在时间上必然跳
+// 跃，而这个列表顺序一路决定 Deliver 的发送次序。注意上面那条多样性用例
+// 证明不了本条：它的挑选顺序恰好已经是时间降序。这里 4 张各自独立成簇，
+// 挑选顺序是 d(3000) -> a(0) -> b(1000)，与时间序不同。
+TEST_CASE("curate orders the result by captured_at, not by farthest-point pick order") {
+  auto fx = make_fixture("chrono_order", 4);
+  auto dir = fs::path(fx.root_path);
+  for (int i = 0; i < 4; ++i) {
+    std::string name(1, static_cast<char>('a' + i));
+    REQUIRE(write_solid_jpeg(dir / (name + ".jpg"), 16, 16, 120));
+  }
+  set_captured_at(fx.db, fx.images[0], 0);     // a
+  set_captured_at(fx.db, fx.images[1], 1000);  // b
+  set_captured_at(fx.db, fx.images[2], 2000);  // c
+  set_captured_at(fx.db, fx.images[3], 3000);  // d
+
+  auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10);
+
+  // 选中的集合仍由 farthest-point 决定：seed=d(最新)，再选离 d 最远的
+  // a(差 3000)，再选 b/c 中离 {d,a} 最远的——两者 min 距离都是 1000，打
+  // 平取 id 更小的 b。集合 = {a, b, d}，本票不改变这一点。
+  // 按 id 排序后比集合(ImageId 不按文件名顺序分配，不能直接写字面量)。
+  std::vector<ImageId> got = result.selected;
+  std::vector<ImageId> want{fx.images[0], fx.images[1], fx.images[3]};
+  std::sort(got.begin(), got.end());
+  std::sort(want.begin(), want.end());
+  CHECK(got == want);
+
+  // 顺序改为按 captured_at 降序，跟簇数<N 那条分支既有的排序方向一致。
+  CHECK(result.selected ==
+        std::vector<ImageId>{fx.images[3], fx.images[1], fx.images[0]});
+}
+
+// 票 01：没有 captured_at 的照片必须有确定落位，且排序不引入不确定性。
+//
+// 这条用例必须自己会因为本票而改变结果，否则它什么也没证明。三张（两张
+// 有时间 + 一张 NULL）是不够的：greedy_pick 在还有带时间的候选时结构上
+// 永远不会挑走 NULL 那张，挑选顺序恰好等于时间序，改动前后完全一样。
+//
+// 这里用四张让两者分叉：a=0、b=1000、c=2000、d=NULL，count=4 全选。挑选
+// 顺序是 c(seed 取最新) -> a(离 c 最远) -> b -> d(没时间，垫底)；按时间
+// 降序则是 c -> b -> a -> d。a 与 b 换位，正是本票带来的差别。
+TEST_CASE("curate places images without captured_at last, deterministically") {
+  auto fx = make_fixture("chrono_null", 4);
+  auto dir = fs::path(fx.root_path);
+  for (int i = 0; i < 4; ++i) {
+    std::string name(1, static_cast<char>('a' + i));
+    REQUIRE(write_solid_jpeg(dir / (name + ".jpg"), 16, 16, 120));
+  }
+  set_captured_at(fx.db, fx.images[0], 0);     // a
+  set_captured_at(fx.db, fx.images[1], 1000);  // b
+  set_captured_at(fx.db, fx.images[2], 2000);  // c
+  // d 不设，保持 NULL
+
+  auto first = curate(fx.db, fx.project_id, std::nullopt, /*count=*/4, 20, 10);
+  REQUIRE(first.selected.size() == 4);
+  CHECK(first.selected == std::vector<ImageId>{fx.images[2], fx.images[1],
+                                                fx.images[0], fx.images[3]});
+  CHECK(first.selected.back() == fx.images[3]);  // 无 captured_at 的排最后
+
+  // 重复调用顺序完全一致，排序不引入不确定性。
+  auto second = curate(fx.db, fx.project_id, std::nullopt, /*count=*/4, 20, 10);
+  CHECK(second.selected == first.selected);
+}
+
 TEST_CASE("curate does not backfill from non-representative cluster members when clusters < N") {
   // 一簇 3 张近重复(a,b,c)，keep=c(captured_at 最新)，全部落进同一个候
   // 选池，count=2 > 簇数=1：只返回代表 c，不从簇内非代表回填凑数——回填
