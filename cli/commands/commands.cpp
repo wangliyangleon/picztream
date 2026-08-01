@@ -429,6 +429,7 @@ int cmd_eval(const std::vector<std::string>& args) {
           pzt::core::ai::EvaluationResult result;
           result.assessment = "fake evaluation (PZT_FAKE_EVAL set, no real AI call made)";
           result.unusable = false;
+          result.content = "fake content description (PZT_FAKE_EVAL set, no real AI call made)";
           return pzt::core::Result<pzt::core::ai::EvaluationResult, pzt::core::EvaluationError>::Ok(
               std::move(result));
         };
@@ -468,7 +469,11 @@ int cmd_eval(const std::vector<std::string>& args) {
     const std::string& path = path_by_id[id];
     auto info = pzt::core::get_image(id);
     if (info && info->evaluation) {
-      evaluated_out.push_back({{"path", path}, {"unusable", info->evaluation->unusable}});
+      // content 是画面内容描述，给看不见照片的 agent 用；assessment 仍然不
+      // 出现在这一面(它是给坐在 TUI 前的人看的，headless 这边没有消费者)。
+      evaluated_out.push_back({{"path", path},
+                                {"unusable", info->evaluation->unusable},
+                                {"content", info->evaluation->content}});
     } else {
       auto it = failure_by_id.find(id);
       std::string error_code = it != failure_by_id.end() ? evaluation_error_str(it->second) : "unknown";
