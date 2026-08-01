@@ -56,6 +56,17 @@ LLM（包括 Claude Code 本身）在本项目中的角色严格限定为算法�
 * 经 `implement` skill 实现功能、修改代码或文档时，**默认先开一个 worktree**（`EnterWorktree`），在隔离分支上完成，收口时再合回 `main`
 * 用户直接要求实现某个功能、没有进 `implement` skill 时，**直接在本地 `main` 分支上改**，不开 worktree
 
+开 worktree 之后**先建一次 release 构建物**，哪怕这次改动根本不碰 C++：
+
+```sh
+cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build_release
+```
+
+理由是 `agent/pzt_client.py` 的 `default_pzt_bin()` 按「`<仓库根>/build_release/cli/pzt` 存在就用它，否则回落到 PATH」解析，而 worktree 里没有构建物（那是 build 产物，不进 git）。回落是**静默**的，于是从 worktree 里起的 agent 会去调 brew 装的那个 `pzt`，版本可能落后好几周，报出来的却是一句看不出所以然的 SQL 错误。真机踩过一次：`no such column: image_evaluations.exposure_score`，那一列在 W2026-07-21 的 eval 解耦里就删了，是 brew 上 2026.7.20 的旧 schema。
+
+`agent/tests/test_pzt_client.py::test_default_pzt_bin_points_at_repo_build_release_cli_pzt` 就是这件事的哨兵：它在 worktree 里红，说的就是"此刻解析到的不是仓库构建物"，别当成环境噪音跳过。
+
 ## 行为准则
 
 Agent 在本仓库中回应时保持客观、严格、简洁、逻辑导向，不做无依据的功能扩展，不引入超出当前里程碑范围的抽象设计，遇到需求不明确或与文档冲突的情况先提出问题，不擅自假设。
