@@ -97,10 +97,19 @@ def _parse_inner_json(text: str) -> dict:
         raise LlmRequestError("parse_error", str(e)) from e
 
 
+# 原来写死 60 秒，跟 core 那边一模一样的数字、也栽在一模一样的地方（core
+# 的依据见 d8c18a3：本地 gemma4:e2b 一次调用墙钟 45-80 秒，模型自报的计算
+# 只有几秒，差额是模型加载、排队和吐正文之前那段 thinking，中位数正好骑在
+# 60 上，于是同一句话时好时坏）。票 08 给 compose 的提示词加了 selection_
+# brief 一段之后实测复现：短意图 40 秒过，带寒暄和去重的长意图稳定卡满 60
+# 秒报 timed out，用户那一侧看到的是意图没被解析。取跟 core 同一个值。
+_REQUEST_TIMEOUT_SECONDS = 180
+
+
 def _real_http_post(url: str, headers: Dict[str, str], body: str) -> Tuple[int, str]:
     request = urllib.request.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
             return response.status, response.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8")
