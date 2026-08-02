@@ -27,6 +27,15 @@ PROGRESS_EVALUATIONS = "evaluations"  # 张（逐张评估）
 # 在 _run_stage 里绑好（stage 自报名字会跟 Plan 里的 key 对不上）。
 ProgressFn = Callable[[int, int, str], None]
 
+# (comparisons, evaluations)。票 10：这一趟 AI 开跑之前算出来的**精确**开
+# 销，一个 stage 最多报一次。
+#
+# 跟进度分开一个维度，不塞进 (done, total, kind)：开销不是"完成了几分之
+# 几"，硬塞进去等于让分母再多一种含义，而分母的含义正是 T-8 真机验收踩过
+# 的坑。两个数也不合成一个总数 - 单位不同（次比较 / 张评估），耗时量级也
+# 不同，展示层要分别措辞。
+CostFn = Callable[[int, int], None]
+
 
 def _noop_progress(done: int, total: int, kind: str) -> None:
     """默认 sink。有了它，stage 里可以无条件调 ctx.on_progress，不用每处
@@ -35,12 +44,18 @@ def _noop_progress(done: int, total: int, kind: str) -> None:
     del done, total, kind
 
 
+def _noop_cost(comparisons: int, evaluations: int) -> None:
+    """同 _noop_progress：让 stage 无条件调 ctx.on_cost。"""
+    del comparisons, evaluations
+
+
 @dataclass
 class StageContext:
     run_id: str
     project_id: str
     outputs: dict[str, StageOutput] = field(default_factory=dict)
     on_progress: ProgressFn = _noop_progress
+    on_cost: CostFn = _noop_cost
 
 
 class Stage(Protocol):

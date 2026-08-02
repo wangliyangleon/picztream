@@ -101,6 +101,23 @@ class StageProgress:
     kind: str
 
 
+# 票 10：这一趟 AI 开跑之前算出来的**精确**开销，一个 stage 最多一条。
+# 它是 PRD G5（用户可以在 AI 开跑前拒绝）在 headless 上的全部兑现方式：
+# core 那一侧的闸门不等人（Telegram 那头的用户不在同一个时间轴上），改成
+# 报完数字继续跑，consumer 收到这条之后立刻告知用户并给可取消入口。
+#
+# 跟 StageProgress 分成两种事件而不是加个字段：consumer 对两者的处置完全
+# 不同 - 进度节流后原地编辑同一条消息，开销必须立刻新发一条独立消息，晚
+# 一分钟就失去意义。
+@dataclass
+class StageCost:
+    generation: int
+    run_id: str
+    stage: str
+    comparisons: int  # 两两比较次数（dedup 的锦标赛 / curate 的簇内锦标赛）
+    evaluations: int  # 逐张评估的照片数（只有 curate 有，dedup 恒为 0）
+
+
 @dataclass
 class GateReached:
     generation: int
