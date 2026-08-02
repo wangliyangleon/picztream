@@ -12,11 +12,69 @@
 
 **Blocked by:** 06（模型选择与排序接进 curate）
 
-**Status:** ready-for-agent
+**Status:** done（真机验证那一条待用户跑）
 
-- [ ] 开 AI 且模型返回合法文案时，文案随选片结果经 headless 输出、agent 携带、最终展示给用户
-- [ ] 模型未返回文案时，选片结果完全不受影响，仅缺文案
-- [ ] 模型返回的文案不合法时，同上，且不抛错、不重试
-- [ ] 关 AI 时不产出文案，流程不报错
-- [ ] 文案的语气/平台适配跟随用户意图里的用途
-- [ ] 真机验证：文案基于画面内容而非摄影评语，可直接使用
+- [x] 开 AI 且模型返回合法文案时，文案随选片结果经 headless 输出、agent 携带、最终展示给用户
+- [x] 模型未返回文案时，选片结果完全不受影响，仅缺文案
+- [x] 模型返回的文案不合法时，同上，且不抛错、不重试
+- [x] 关 AI 时不产出文案，流程不报错
+- [x] 文案的语气/平台适配跟随用户意图里的用途
+- [ ] 真机验证：文案基于画面内容而非摄影评语，可直接使用（需要 Ollama，agent 未跑）
+
+## 落地记录
+
+文案挂在票 06 已经铺好的那条管子上，全程没有新增第二次模型调用，也没有新
+增一个字段之外的形状：`ai::SelectionResult` 多一个 `caption`，一路
+`curate` → `pzt curate --json` → `CurateStage` → `DeliverStage`。
+
+### 失败隔离落在哪三处
+
+决策十五的"可选"不是一句态度，是三个具体位置：
+
+1. **约束解码 schema**：`caption` 进 `properties`、**不进 `required`**。进
+   `required` 会让本地模型在写不出文案时被逼着编一段，或者让整个响应作废、
+   连 `picks` 一起丢 - 两者恰好都是失败隔离要防的事。
+2. **解析**：缺 key、类型不对、全是空白，三种情况折叠成同一个空串，**不构
+   成 `SelectionError`**。折叠是因为对每一个下游而言处置完全相同（少展示一
+   段话），分开报只是让调用方多一个判不出所以然的分支。
+3. **headless JSON**：没有文案时 `caption` 这个键**整个不出现**，不留空字
+   段（同 `ai_fallback_count` 只在 `--ai` 时出现）。agent 侧一律 `.get`，
+   下标会把一个已经选好片的 run 打成失败。
+
+### 两处本票拍板的边界
+
+- **整批退化时文案跟着作废**（`ai_selection_fallback=true` ⇒ `caption` 为
+  空）。文案写的是模型挑的那几张，而交付的是确定性路径挑的另一批，留着等于
+  让一段讲 A 的话配着 B 发出去。这与决策十三拒绝"不足时用确定性结果补齐"是
+  同一个立场：不交付两套逻辑拼接的结果。
+- **文案的语言跟着描述走，不给 core 接界面语言参数**。提示词里写的是
+  "write it in the same language as the notes above"，而描述由
+  `evaluate_and_store` 用固定语言写出，于是文案自动落在同一种语言上。
+  `curate.cpp` 里那条"票 07 如果需要跟随界面语言，那时再把语言接进来"的注
+  释已按此改写 - i18n 只在 cli 层，curate 只有 headless 一个入口，接进来是
+  给一条没有第二个调用方的路径加参数。
+
+### 展示形态
+
+文案在 `DeliverStage` 里是**单独一条消息、不带任何前缀**。Telegram 上复制一
+整条消息是一下的事，掺进"配文："之类的引导语就得手动挑起止，而这段字的全部
+用途就是被原样贴出去。没有文案时什么都不说 - 那是附赠品的缺席，不是需要报
+告的事件。
+
+### 语气/平台适配没有新增输入
+
+票 08 的 `selection_brief` 里已经含着用途（`plan_composer` 的提示词明写
+"the destination or audience if the user named one"），本票只是在同一段提示
+词里多说一句"让它也定文案的语气"。
+
+### 验证
+
+- core 388 + cli 69，Debug 与 Release 两套都跑过
+- agent 527 passed
+- `pzt curate --json` 不带 `--ai` 的输出与 main **逐字节相同**（6 张图的临
+  时项目，两个 release 二进制对跑 `diff`）
+- 未做真机 `--ai`（需要 Ollama）。风险二（文案会不会写成摄影评语）因此仍未
+  被证伪 - 提示词里已经明写"draw on the 'content' notes, not the 'quality'
+  ones"和"never critique or mention the photography itself"，但这一类问题
+  **只有真模型能发现**，注入假 `http_post` 的用例喂的是罐头答案（同票 08 真
+  机验收的结论）。
