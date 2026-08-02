@@ -160,3 +160,53 @@ def test_cost_message_does_not_clobber_the_progress_slot(tmp_path):
     assert "18 次" in cost_text
     assert env.consumer._stage_progress is not None
     assert "1/18次" in env.transport.texts()[-1]
+
+
+# -- 取消回执的诚实（票 10 决策二/四）--
+
+
+def test_cancel_receipt_during_evaluation_says_the_records_stay(tmp_path):
+    """票 05 定的语义：curate 的评估逐张写库，喊停时已评估完的那几张留在
+    库里。这不是遗漏 —— 每条记录本身完整，留着正好被下次运行的缓存判据命
+    中，回滚等于下次再花一次钱。用户话术必须如实反映，只说"已取消"等于让
+    用户以为那几次调用白花了。"""
+    from orchestrator.types import RunStatus
+    from session.protocol import RunFinished
+
+    env, job = _running_env(tmp_path)
+    env.consumer._do_cancel()
+    env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value,
+                               cancelled_partial=("Curate", 4, 12, "evaluations")))
+    env.consumer.step()
+
+    text = env.transport.texts()[-1]
+    assert "4/12" in text
+    assert "留" in text
+
+
+def test_cancel_receipt_during_comparison_claims_nothing_was_written(tmp_path):
+    """比较阶段（锦标赛）的写库统一在最后一步，取消确实是零写入。这里报
+    "已经处理了 N 次"会是主动误导 —— 反方向的谎同样是谎。"""
+    from orchestrator.types import RunStatus
+    from session.protocol import RunFinished
+
+    env, job = _running_env(tmp_path)
+    env.consumer._do_cancel()
+    env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value, cancelled_partial=None))
+    env.consumer.step()
+
+    assert env.transport.texts()[-1] == "已取消"
+
+
+def test_cancel_receipt_for_styling_is_unchanged(tmp_path):
+    # 票 05/T-8 已有的那条一个字不动。
+    from orchestrator.types import RunStatus
+    from session.protocol import RunFinished
+
+    env, job = _running_env(tmp_path)
+    env.consumer._do_cancel()
+    env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value,
+                               cancelled_partial=("StyleApplyAll", 3, 10, "photos")))
+    env.consumer.step()
+
+    assert env.transport.texts()[-1] == "已取消（已经给 3/10 张套上滤镜了，这部分保留）"

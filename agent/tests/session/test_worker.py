@@ -722,7 +722,7 @@ def test_cancel_during_style_apply_all_reports_how_many_were_already_styled(tmp_
     finished = [e for e in env.drain_events() if isinstance(e, RunFinished)][-1]
     assert finished.status == "cancelled"
     # 代表图 + StyleApplyAll 里成功的那一张 = 2/3。
-    assert finished.cancelled_partial == ("StyleApplyAll", 2, 3)
+    assert finished.cancelled_partial == ("StyleApplyAll", 2, 3, "photos")
 
 
 def test_cancel_during_dedup_reports_no_partial_work(tmp_path):
@@ -802,3 +802,61 @@ def test_cost_sink_is_detached_even_when_the_stage_raises(tmp_path):
 
     assert env.driver.cost_sink is None
     assert any(isinstance(e, JobCrashed) for e in env.drain_events())
+
+
+def test_cancel_during_evaluation_reports_the_evaluations_already_written(tmp_path):
+    """票 10 决策四：curate 的评估段逐张写库，取消一定留下部分成果。判据
+    按 kind 而不是按 stage —— 同一个 Curate，比较段取消是零写入。"""
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _EvaluatingStage(name="Dedup", inputs=["Ingest"])
+    # 不预置 cancel_event：那样 _drive_to_stop 的 loop-top 检查会在 stage
+    # 跑之前就取消，一条进度都不会有。让 stage 跑到一半自己抛，才是真机上
+    # 用户在评估途中喊停的形状。
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    finished = [e for e in env.drain_events() if isinstance(e, RunFinished)][-1]
+    assert finished.status == "cancelled"
+    assert finished.cancelled_partial == ("Dedup", 2, 6, "evaluations")
+
+
+@dataclass
+class _EvaluatingStage:
+    """报两条逐张评估的进度，然后被取消。真机上这是 Curate 的评估段。"""
+    name: str
+    inputs: List[str] = dc_field(default_factory=list)
+    cost_class: str = "local"
+    criticality: str = "critical"
+
+    def run(self, ctx, params):
+        ctx.on_progress(1, 6, "evaluations")
+        ctx.on_progress(2, 6, "evaluations")
+        raise PztCancelledError(["pzt", "curate"])
+
+
+def test_cancel_during_comparison_still_reports_no_partial_work(tmp_path):
+    # 锦标赛的写库统一在最后一步，取消是零写入（core 的契约）。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _ComparingStage(name="Dedup", inputs=["Ingest"])
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    finished = [e for e in env.drain_events() if isinstance(e, RunFinished)][-1]
+    assert finished.status == "cancelled"
+    assert finished.cancelled_partial is None
+
+
+@dataclass
+class _ComparingStage:
+    name: str
+    inputs: List[str] = dc_field(default_factory=list)
+    cost_class: str = "local"
+    criticality: str = "critical"
+
+    def run(self, ctx, params):
+        ctx.on_progress(3, 18, "comparisons")
+        raise PztCancelledError(["pzt", "dedup"])

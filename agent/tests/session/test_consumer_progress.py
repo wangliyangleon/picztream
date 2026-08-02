@@ -118,7 +118,7 @@ def test_cancel_receipt_says_how_many_were_already_styled(tmp_path):
     env, job = _running_env(tmp_path)
     env.consumer._do_cancel()
     env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value,
-                               cancelled_partial=("StyleApplyAll", 3, 10)))
+                               cancelled_partial=("StyleApplyAll", 3, 10, "photos")))
     env.consumer.step()
 
     text = env.transport.texts()[-1]
@@ -297,7 +297,7 @@ def test_cancelled_progress_is_not_closed_out_as_finished(tmp_path):
 
     env.consumer._do_cancel()
     env.put_event(RunFinished(0, job.run_id, RunStatus.CANCELLED.value,
-                               cancelled_partial=("StyleApplyAll", 1, 10)))
+                               cancelled_partial=("StyleApplyAll", 1, 10, "photos")))
     env.consumer.step()
 
     assert len(env.transport.sent_edits) == edits_before

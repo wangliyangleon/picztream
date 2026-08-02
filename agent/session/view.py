@@ -52,6 +52,22 @@ def describe_progress_done(kind: str, total: int) -> str:
     return _PROGRESS_DONE_PHRASINGS.get(kind, "处理完了，共 {n} 项").format(n=total)
 
 
+# 取消时"已经落地了多少"的措辞，同样按"数的是什么"分（票 10 决策四）。
+# 两条说的是两件不同的事：滤镜留在照片上，评估留在库里且下次还能省钱 ——
+# 后半句是必须说的，不然用户会以为那几次调用白花了。分簇/比较不在表里，
+# 它们的取消是零写入，走裸回执。
+_CANCEL_PARTIAL_PHRASINGS = {
+    "photos": "已经给 {done}/{total} 张套上滤镜了，这部分保留",
+    "evaluations": "已经看完 {done}/{total} 张，这部分评价留在库里了，下次不用重看",
+}
+
+
+def describe_cancel_partial(kind: str, done: int, total: int) -> Optional[str]:
+    """取消回执里那句括号内容，没有对应措辞就 None（调用方发裸回执）。"""
+    phrasing = _CANCEL_PARTIAL_PHRASINGS.get(kind)
+    return None if phrasing is None else phrasing.format(done=done, total=total)
+
+
 # 本地模型一次视觉调用的实测量级（票 10 拍板时记的真机数据：40 张照片、
 # 本地 Ollama，一次约 40 秒）。**只给 local 一个数**：云端 provider 每次
 # 调用要多久没有实测过，而在一条"接下来要花多少"的消息里编一个数字，是让
