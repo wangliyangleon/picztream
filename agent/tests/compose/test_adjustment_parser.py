@@ -313,3 +313,25 @@ def test_classify_dedup_followup_unknown_action_raises():
         classify_dedup_followup("随便你", 8, http_post=_fake_http_post({"action": "do_something_else"}))
 
     assert exc_info.value.code == "unknown_action"
+
+
+def test_classify_dedup_followup_narrow_carries_a_selection_brief():
+    # 票 08：去重后追问那一处的引导语现在也带题材偏好的例子（五处共用同一
+    # 个示例函数），用户照着说了就必须接得住，否则那句引导是死的。
+    reply = classify_dedup_followup(
+        "留三张有景有人、表情活泼的照片发朋友圈", 8,
+        http_post=_fake_http_post({"action": "narrow", "count": 3, "apply_tag": "朋友圈",
+                                    "selection_brief": "发朋友圈用，要有景有人、表情活泼的"}))
+
+    assert reply.action == "narrow"
+    assert reply.count == 3
+    assert reply.selection_brief == "发朋友圈用，要有景有人、表情活泼的"
+
+
+def test_classify_dedup_followup_narrow_without_a_brief_leaves_it_none():
+    # 只给了数量时 selection_brief 是 None 而不是空串：None 的意思是"这次
+    # 没说"，交给 consumer 保留组装意图时抽出来的那一份；空串会把它冲掉。
+    reply = classify_dedup_followup(
+        "留5张", 8, http_post=_fake_http_post({"action": "narrow", "count": 5}))
+
+    assert reply.selection_brief is None

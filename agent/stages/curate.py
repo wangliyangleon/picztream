@@ -50,6 +50,14 @@ class CurateStage:
                 ai_enabled = params.get("ai_enabled", False)
                 if ai_enabled:
                     args += ["--ai", "--provider", params.get("provider", "local")]
+                # 票 08：用户的题材偏好/叙事要求，进 core 的选择提示词。没
+                # 有要求时不发这个参数（空串传下去 core 也会把那一段整个省
+                # 掉，少一个参数少一处能出错的地方）。不看 ai_enabled：关
+                # AI 时 core 自己忽略它，在这里再判一次等于把"谁消费这个字
+                # 段"的知识复制到第二个地方。
+                brief = params.get("selection_brief", "")
+                if brief:
+                    args += ["--brief", brief]
                 # T-8：只给这一次调用挂进度 sink。下面的 tag clear / N 次
                 # tag apply 是毫秒级、没有进度可言，不该顶着 sink 跑。
                 with forwarding(self.client, ctx, ai_enabled):

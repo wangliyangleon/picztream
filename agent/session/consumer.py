@@ -97,15 +97,17 @@ BOT_COMMANDS = [
     ("help", "看可用命令"),
 ]
 
-# 引导用户说出意图的示例文案，下面五处共用这一份。收敛的动机是票 08 要把它
-# 扩写成能引导用户说出题材偏好的形式（"选三张有景有人、表情活泼的照片发朋友
-# 圈"），五处分头改必漏。
+# 引导用户说出意图的示例文案，下面五处共用这一份（票 02 收敛，票 08 扩写）。
 #
 # 之所以带一个 verb 参数而不是光秃秃一个常量：去重追问那一处的上文是"告诉我
-# 留几张"，例子跟着用"留"，其余四处用"选"；除这个动词外五处逐字相同。把动词
-# 做成参数，示例本身仍然只有一份，票 08 那次改写照样只动这一个函数体。
+# 留几张"，例子跟着用"留"，其余四处用"选"；除这个动词外五处逐字相同。
+#
+# 票 08（PRD 决策三）：例子必须自己示范题材偏好，否则用户永远只说"选3张发朋
+# 友圈"，抽出来的选片简述就是空的，整条按描述选片的通路是死的——机器有能力读
+# 懂"有景有人、表情活泼"，但没人会主动这么说。张数写成"三"而不是"3"是跟着这
+# 句话的口语调子走的，compose_plan 的提示词里已经点名中文数字也算数。
 def _intent_hint_example(verb: str = "选") -> str:
-    return f"{verb}3张发朋友圈"
+    return f"{verb}三张有景有人、表情活泼的照片发朋友圈"
 
 
 # 重复文案收敛（AG-20）。
@@ -855,6 +857,11 @@ class SessionConsumer:
         curate = next(s for s in self.run.plan.stages if s.name == "Curate")
         apply_tag = reply.apply_tag or curate.params.get("apply_tag", "精选")
         self._curate_narrow_pending = {"count": reply.count, "apply_tag": apply_tag}
+        # 票 08：这次没提题材偏好就整个不放这个 key。rerun_stage 是
+        # params.update() 语义，塞个空串进去会把组装意图时抽出来的那份冲掉
+        # （"去重，挑有人的"里简述来自最初那句话，追问只补了张数）。
+        if reply.selection_brief:
+            self._curate_narrow_pending["selection_brief"] = reply.selection_brief
         self._send_buttons(
             f"留 {reply.count} 张，选中的加个标签\"{apply_tag}\"，可以吗？\n满意就点\"好的\"，想改直接打字说",
             _CONFIRM_BUTTONS,

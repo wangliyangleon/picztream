@@ -360,7 +360,14 @@ _DEDUP_FOLLOWUP_SCHEMA_INSTRUCTION = (
     'apply_tag should be derived from any destination/audience/album the user also '
     'mentions, using that as the tag name itself (for example "选一张发朋友圈" -> count 1, '
     'apply_tag "朋友圈"; "留5张，标签叫vip" -> count 5, apply_tag "vip"; "精修3张" -> count 3, '
-    'apply_tag "精修"); if the user names no destination/tag at all, apply_tag must be null; '
+    'apply_tag "精修"); if the user names no destination/tag at all, apply_tag must be null. '
+    'Also put a "selection_brief" (string or null) in the narrow shape: a short Chinese '
+    "brief telling whoever picks the photos WHAT KIND of photos this user wants and HOW "
+    'they should be ordered -- subject matter ("有景有人"/"表情活泼"/"要有小孩的"), ordering '
+    'or narrative requirements ("按时间顺序"), and the destination if they named one. Leave '
+    "out the number itself and anything that does not bear on which photos to pick. Use "
+    'null when the user said nothing about what kind of photos they want (for example a '
+    'bare "留5张"); '
     '{"action": "approve"} if the user is simply confirming/agreeing with something you '
     'just proposed, with no new number or destination mentioned (for example "对", "好的", '
     '"可以", "确认", "没问题", "是的"); '
@@ -383,6 +390,10 @@ class DedupFollowupReply:
     action: Literal["narrow", "approve", "skip", "query", "cancel"]
     count: Optional[int] = None
     apply_tag: Optional[str] = None
+    # 票 08：None 与空串在这里不是一回事。None = "这次没说题材偏好"，调用
+    # 方保留组装意图时抽出来的那一份；空串会被当成一次明确的覆盖，把它冲
+    # 掉。模型回 null 是常态（用户只说"留5张"），所以这个区分必须留着。
+    selection_brief: Optional[str] = None
 
 
 def classify_dedup_followup(text: str, remaining: int, http_post: Optional[HttpPostFn] = None,
@@ -396,8 +407,10 @@ def classify_dedup_followup(text: str, remaining: int, http_post: Optional[HttpP
     )
     action = decision.get("action")
     if action == "narrow":
+        brief = decision.get("selection_brief")
         return DedupFollowupReply(action="narrow", count=decision.get("count"),
-                                   apply_tag=decision.get("apply_tag"))
+                                   apply_tag=decision.get("apply_tag"),
+                                   selection_brief=brief if isinstance(brief, str) and brief else None)
     if action in ("approve", "skip", "query", "cancel"):
         return DedupFollowupReply(action=action)
     raise AdjustmentError("unknown_action", f"unrecognized dedup followup action {action!r}")

@@ -73,6 +73,17 @@ def validate_plan(plan: Plan) -> Plan:
             f"Curate.params['count'] must be an int in [{_MIN_COUNT}, {_MAX_COUNT}], got {count!r}",
         )
 
+    # 票 08：简述原样进模型的选择提示词，所以形状必须是字符串。空串合法
+    # （"这次没有题材要求"，验收标准三），整个 key 缺席也合法——票 08 之前
+    # 组装出来的 Plan 里没有这个字段。compose_plan 已经把 null 归一成空
+    # 串，走到这里的非字符串只可能是别的形状，那就是输出污染。
+    selection_brief = curate_spec.params.get("selection_brief", "")
+    if not isinstance(selection_brief, str):
+        raise ValidationError(
+            "bad_curate_selection_brief",
+            f"Curate.params['selection_brief'] must be a string, got {selection_brief!r}",
+        )
+
     apply_tag = by_name["Curate"].params.get("apply_tag")
     if not isinstance(apply_tag, str) or not apply_tag:
         raise ValidationError(

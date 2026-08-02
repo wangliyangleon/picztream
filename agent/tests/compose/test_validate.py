@@ -161,3 +161,25 @@ def test_rejects_bad_curate_apply_tag(apply_tag):
         validate_plan(plan)
 
     assert exc_info.value.code == "bad_curate_apply_tag"
+
+
+def test_rejects_non_string_selection_brief():
+    # 票 08：简述原样进模型的选择提示词，模型这一步吐出个 dict/数字就是输
+    # 出污染，跟 apply_tag 同一个处置——这道护栏的本意就是不让它流进确定性
+    # 驱动器。compose_plan 已经把 null 归一成空串，走到这里的非字符串只可
+    # 能是别的形状。
+    with pytest.raises(ValidationError) as exc_info:
+        validate_plan(_valid_plan(Curate={"selection_brief": {"subject": "有人"}}))
+
+    assert exc_info.value.code == "bad_curate_selection_brief"
+
+
+def test_accepts_empty_selection_brief_and_treats_a_missing_one_as_empty():
+    # 空串是"这次没有题材要求"的正常表达（验收标准三），不是错误；整个 key
+    # 缺席同理——票 08 之前存下来的 Plan 里根本没有这个字段。
+    validate_plan(_valid_plan(Curate={"selection_brief": ""}))
+
+    plan = _valid_plan()
+    curate = next(s for s in plan.stages if s.name == "Curate")
+    curate.params.pop("selection_brief", None)
+    assert validate_plan(plan) is plan

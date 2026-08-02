@@ -239,3 +239,40 @@ def test_passthrough_reports_no_fallback():
     output = stage.run(ctx, {"count": None, "apply_tag": "精选"})
 
     assert output.data["ai_fallback_count"] == 0
+
+
+def test_curate_passes_selection_brief_to_pzt_when_present(tmp_path):
+    # 票 08 的最后一段管子：agent 抽出来的简述经 `--brief` 传抵 core，
+    # core 那边把它拼进模型的选择提示词。
+    call_log = []
+    client = _make_client({
+        "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    stage.run(ctx, {"count": 2, "apply_tag": "朋友圈", "ai_enabled": True, "provider": "local",
+                     "selection_brief": "有景有人、表情活泼的，发朋友圈"})
+
+    curate_argv = next(argv for argv in call_log if argv[1] == "curate")
+    assert "--brief" in curate_argv
+    assert curate_argv[curate_argv.index("--brief") + 1] == "有景有人、表情活泼的，发朋友圈"
+
+
+def test_curate_omits_brief_flag_when_there_is_no_selection_brief(tmp_path):
+    # 没有题材要求时不发这个参数，命令行与票 08 之前逐字相同（空串传下去
+    # core 也会整段省掉，但少一个参数少一处能出错的地方）。
+    call_log = []
+    client = _make_client({
+        "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    stage.run(ctx, {"count": 2, "apply_tag": "精选", "selection_brief": ""})
+    stage.run(ctx, {"count": 2, "apply_tag": "精选"})
+
+    for argv in [argv for argv in call_log if argv[1] == "curate"]:
+        assert "--brief" not in argv

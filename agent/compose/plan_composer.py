@@ -28,7 +28,8 @@ _SCHEMA_INSTRUCTION = (
     'false), "count" (integer or null, how many final photos the user wants -- only put '
     'a number here if the user actually named a target count, no matter which verb they '
     'used to describe narrowing down: "选5张"/"留5张"/"挑5张"/"筛5张"/"筛选5张"/"筛出5张" '
-    'all mean count=5, even when combined with a dedup request in the same sentence (e.g. '
+    'all mean count=5, and Chinese numerals count too: "选三张"/"留两张" mean count=3 and '
+    "count=2; even when combined with a dedup request in the same sentence (e.g. "
     '"去重筛两张"/"去重然后筛选两张"/"去重留两张" all mean dedup_requested=true AND count=2 '
     "-- do not let the dedup mention make you drop the number); if the user only asked to "
     'dedup without naming any count at all, count MUST be null (do not default it to 9 -- '
@@ -39,7 +40,21 @@ _SCHEMA_INSTRUCTION = (
     "using that as the tag name itself: "
     '"发朋友圈"/"发朋友圈的" -> "朋友圈", "发到ins"/"发instagram" -> "ins", '
     '"给我妈看" -> "家人", "选几张精修" -> "精修". Only fall back to the default "精选" when '
-    "the user names no destination, audience, album, or tag at all)."
+    'the user names no destination, audience, album, or tag at all), "selection_brief" '
+    "(string, a short Chinese brief telling whoever picks the photos WHAT KIND of photos "
+    "this user wants and HOW they should be ordered. Include only what affects which "
+    "photos get picked and in what order: subject-matter preferences "
+    '("有景有人"/"表情活泼"/"别都是风景照"/"要有小孩的"), narrative or ordering requirements '
+    '("按时间顺序"/"开头结尾要呼应"), and the destination or audience if the user named one '
+    '("发朋友圈"/"给我妈看"). Leave OUT everything that does not bear on that choice: '
+    "deduplication requests, which AI provider to use, how many photos they want (that is "
+    'already "count"), greetings and small talk. Do NOT copy the user\'s sentence verbatim '
+    "- write the brief yourself, and never invent a preference the user did not state. "
+    'Examples: "挑8张有小孩的、别都是背影，发到ins" -> "发 ins 用，要有小孩的，别都是背影"; '
+    '"去重，然后用 gemini 留5张按时间顺序排" -> "按拍摄时间顺序排"; "选3张发朋友圈" -> '
+    '"发朋友圈用" (the user named a destination but no subject preference, so the brief '
+    'says only that); "帮我筛一下，留9张" -> "" (nothing was said about what kind of photos '
+    "or where they go)."
 )
 
 
@@ -57,6 +72,11 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
     ai_enabled = decision.get("ai_enabled", False)
     provider = decision.get("provider", "local")
     apply_tag = decision.get("apply_tag", "精选")
+    # 票 08：null 与字段缺席都归一成空串（= 这次没有题材要求），不留给
+    # validate_plan 去拒。模型在"用户什么偏好都没说"时回 null 是常态，为一
+    # 个纯增量的字段把整次方案组装打成失败，代价与收益完全不成比例。别的
+    # 形状（dict/数字）仍然原样交给 validate_plan 拦，那才是输出污染。
+    selection_brief = decision.get("selection_brief") or ""
 
     stages = [StageSpec(name="Ingest")]
     if count is None and dedup_requested:
@@ -71,6 +91,7 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
             "apply_tag": apply_tag,
             "ai_enabled": ai_enabled,
             "provider": provider,
+            "selection_brief": selection_brief,
         }, gate="required"))
     else:
         # count 给了（案例三）或什么都没给（案例一/默认 9）：core curate 的
@@ -81,6 +102,7 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
             "apply_tag": apply_tag,
             "ai_enabled": ai_enabled,
             "provider": provider,
+            "selection_brief": selection_brief,
         }))
     stages += [
         StageSpec(name="Style", params={"provider": provider}, gate="required"),

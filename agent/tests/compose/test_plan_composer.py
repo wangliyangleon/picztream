@@ -31,7 +31,8 @@ def test_compose_plan_builds_five_stage_plan_when_count_is_given(monkeypatch):
     assert all(gate == "off" for name, gate in gates.items() if name not in ("Style", "StyleApplyAll"))
     assert plan.stages[0].params == {}
     assert plan.stages[1].params == {"count": 12, "apply_tag": "朋友圈",
-                                      "ai_enabled": True, "provider": "claude"}
+                                      "ai_enabled": True, "provider": "claude",
+                                      "selection_brief": ""}
     assert plan.stages[2].params == {"provider": "claude"}
     assert plan.stages[3].params == {}
     assert plan.stages[4].params == {}
@@ -50,7 +51,8 @@ def test_compose_plan_skips_dedup_and_defaults_count_when_llm_omits_fields(monke
     # (那是跑这次解析调用本身用的 provider，两者是独立的概念)。ai_enabled
     # 没提时默认 false——对齐"opt-in 重路径，不默认全量"。
     assert style.params == {"provider": "local"}
-    assert curate.params == {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
+    assert curate.params == {"count": 9, "apply_tag": "精选", "ai_enabled": False,
+                              "provider": "local", "selection_brief": ""}
 
 
 def test_compose_plan_defers_curate_when_dedup_requested_without_count(monkeypatch):
@@ -123,3 +125,55 @@ def test_compose_plan_defaults_meta_provider_to_local(monkeypatch):
     compose_plan("留9张", None, None, http_post=fake_http_post)
 
     assert captured["url"].endswith("/api/chat")
+
+
+def test_compose_plan_carries_selection_brief_into_curate_params(monkeypatch):
+    # 票 08（PRD 决策二）：题材偏好与叙事要求提炼成一段自由文本，随 Curate
+    # 的参数往下走，最终成为 `pzt curate --brief` 的值。不拆成用途/题材/叙
+    # 事三个字段 - core 拿到之后唯一要做的就是把它们拼回一段提示词。
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    fake_http_post = _fake_gemini_http_post(
+        {"count": 3, "apply_tag": "朋友圈", "ai_enabled": True, "provider": "gemini",
+         "selection_brief": "发朋友圈，要有景有人、表情活泼的，按时间顺序排"}
+    )
+
+    plan = compose_plan("选三张有景有人、表情活泼的照片发朋友圈", None, None,
+                         http_post=fake_http_post, meta_provider="gemini")
+
+    curate = next(s for s in plan.stages if s.name == "Curate")
+    assert curate.params["selection_brief"] == "发朋友圈，要有景有人、表情活泼的，按时间顺序排"
+    # 张数与用途的解析不受影响：简述是新增的第四条信息，不是取代它们。
+    assert curate.params["count"] == 3
+    assert curate.params["apply_tag"] == "朋友圈"
+
+
+def test_compose_plan_carries_selection_brief_on_the_deferred_curate_branch(monkeypatch):
+    # 只说去重没给数量时 Curate 被挂起等追问，但简述这时候就已经能抽出来
+    # 了（"去重，挑几张有人的"），不能只在带 count 的那条分支上接线。
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    fake_http_post = _fake_gemini_http_post(
+        {"dedup_requested": True, "selection_brief": "要有人的"}
+    )
+
+    plan = compose_plan("去重，挑有人的", None, None, http_post=fake_http_post,
+                         meta_provider="gemini")
+
+    curate = next(s for s in plan.stages if s.name == "Curate")
+    assert curate.params["selection_brief"] == "要有人的"
+    assert curate.params["count"] is None
+
+
+def test_compose_plan_normalizes_a_missing_or_null_selection_brief_to_empty_string(monkeypatch):
+    # 用户只说"选3张发朋友圈"时没有题材偏好可抽，模型回 null 或者干脆不回
+    # 这个字段都是正常的，不能因此让整个方案组装失败(验收标准三)。空串 =
+    # "没有要求"，core 那边整段提示词直接省掉。
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    plan = compose_plan("选3张发朋友圈", None, None,
+                         http_post=_fake_gemini_http_post({"count": 3, "selection_brief": None}),
+                         meta_provider="gemini")
+    assert next(s for s in plan.stages if s.name == "Curate").params["selection_brief"] == ""
+
+    plan = compose_plan("选3张发朋友圈", None, None,
+                         http_post=_fake_gemini_http_post({"count": 3}), meta_provider="gemini")
+    assert next(s for s in plan.stages if s.name == "Curate").params["selection_brief"] == ""

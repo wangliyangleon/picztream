@@ -52,7 +52,8 @@ def test_first_photo_mints_collecting_run_with_single_ack(tmp_path):
     assert run.status == RunStatus.COLLECTING
     assert (tmp_path / "incoming" / run.run_id / "a.jpg").exists()
     # 一批开始回一句确认（真机反馈：初始那波图静默体验差）
-    assert env.transport.texts() == ["收到～新任务开始了！照片尽管发，发完告诉我想怎么处理就行，比如\"选3张发朋友圈\""]
+    assert env.transport.texts() == ["收到～新任务开始了！照片尽管发，发完告诉我想怎么处理就行，"
+                                      "比如\"选三张有景有人、表情活泼的照片发朋友圈\""]
 
     # 后续照片仍逐张不回复、不刷屏
     env.push_photo("b.jpg")
@@ -869,8 +870,10 @@ def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
     assert any("留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪" in t for t in env.transport.texts())
     # 票 02：示例文案收敛成 _intent_hint_example 后，这一处的动词仍得是
     # "留"（上文是"告诉我留几张"），不能被顺手统一成其余四处的"选"。此前
-    # 没有断言钉住它，收敛时最容易在这里悄悄改掉用户看到的字。
-    assert any("比如\"留3张发朋友圈\"" in t for t in env.transport.texts())
+    # 没有断言钉住它，收敛时最容易在这里悄悄改掉用户看到的字。票 08 扩写
+    # 之后这条继续钉着同一件事：例子带上了题材偏好，动词仍然是"留"。
+    assert any("比如\"留三张有景有人、表情活泼的照片发朋友圈\"" in t
+                for t in env.transport.texts())
     # ai_enabled 默认 False，追问闸门也带 AI 快捷按钮（目标三决策五）。
     assert env.transport.button_tokens() == ["skip_curate", "ai_narrow"]
 
@@ -1354,3 +1357,49 @@ def test_selection_gate_tolerates_a_payload_without_the_key(tmp_path):
 
     assert ("选好了 2 张，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
             ) in env.transport.texts()
+
+
+def test_gate_curate_followup_narrow_carries_selection_brief_into_rerun_curate(tmp_path):
+    # 票 08：追问那一处的引导语现在也举了带题材偏好的例子，用户照着说的话
+    # 必须一路走到 rerun_curate 的参数里，否则 core 那边根本收不到。
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+    env.push_text("留三张有景有人、表情活泼的照片发朋友圈")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup",
+                               DedupFollowupReply(action="narrow", count=3, apply_tag="朋友圈",
+                                                   selection_brief="发朋友圈用，要有景有人、表情活泼的")))
+    env.consumer.step()
+
+    env.push_callback(f"approve:{job.run_id}")
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()
+    assert drive_job.args == {"params": {"count": 3, "apply_tag": "朋友圈",
+                                          "selection_brief": "发朋友圈用，要有景有人、表情活泼的"}}
+
+
+def test_gate_curate_followup_narrow_without_a_brief_leaves_the_planned_one_alone(tmp_path):
+    # 用户在追问这一步只说了张数时，params 里根本不出现 selection_brief -
+    # rerun_stage 是 update 语义，塞个空串进去会把组装意图时抽出来的那份题
+    # 材偏好冲掉（"去重，挑有人的" 这种说法里，简述来自最初那句话）。
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
+    worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
+    env.put_event(GateReached(0, job.run_id, "Curate", {"remaining": 3}))
+    env.consumer.step()
+    env.push_text("留2张")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyDone(0, "dedup_followup", DedupFollowupReply(action="narrow", count=2)))
+    env.consumer.step()
+
+    env.push_callback(f"approve:{job.run_id}")
+    env.consumer.step()
+
+    [drive_job] = env.drain_jobs()
+    assert "selection_brief" not in drive_job.args["params"]
