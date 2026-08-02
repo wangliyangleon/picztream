@@ -81,6 +81,49 @@ assert 'error' in j
   fi
 }
 
+# 票 10：AI 开跑前的开销行走 stderr 带外通道（跟进度同一条），stdout 的
+# 原子性不受影响。这一对断言测的是"接线在不在"，不是数字对不对——精确
+# 开销本身由 core/tests/curate_test.cpp 的闸门用例覆盖。
+#
+# assert_cost_line <desc> <python_expr_on_c|NONE> <cmd...>
+# 表达式以 c(解析出来的 cost 对象) 为输入；传 NONE 断言的是"一行 cost
+# 都没有"（关 AI 那两条）。
+assert_cost_line() {
+  local desc="$1" expr="$2"
+  shift 2
+  "$@" >/tmp/headless_smoke_out 2>/tmp/headless_smoke_stderr || true
+  if PZT_SMOKE_EXPR="$expr" python3 -c "
+import json, os
+expr = os.environ['PZT_SMOKE_EXPR']
+costs = []
+with open('/tmp/headless_smoke_stderr') as f:
+    for line in f:
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get('cost'), dict):
+            costs.append(obj['cost'])
+if expr == 'NONE':
+    assert not costs, 'expected no cost line, got ' + repr(costs)
+else:
+    # 一条命令最多报一次开销（core 侧 gate_consulted 保证）。
+    assert len(costs) == 1, 'expected exactly one cost line, got ' + repr(costs)
+    c = costs[0]
+    assert eval(expr), 'assertion failed: ' + expr
+" 2>/tmp/headless_smoke_err; then
+    echo "PASS: $desc"
+    pass_count=$((pass_count + 1))
+  else
+    echo "FAIL: $desc"
+    cat /tmp/headless_smoke_err >&2
+    fail_count=$((fail_count + 1))
+  fi
+}
+
 # --- fixtures ---
 printf 'x%.0s' {1..30} > "$PHOTOS/a.jpg"
 printf 'x%.0s' {1..30} > "$PHOTOS/b.jpg"
@@ -321,6 +364,17 @@ assert_json_has "$out" "'ai_fallback_count' in j" \
   "curate: --ai adds ai_fallback_count to the JSON output"
 assert_json_has "$out" "j['ai_fallback_count'] == 0" \
   "curate: no cluster ever forms for these fixtures, so nothing falls back either"
+
+# 票 10：开销行的接线。这批 fixture 一个多元簇都形不成，所以比较次数是
+# 0、评估张数是候选那两张(a/b，c 被废片标签排除)——也正好覆盖 core 里
+# "一次比较都不用跑时由评估段补问闸门"那一路。
+assert_cost_line "curate: --ai reports the exact cost on stderr before any AI call" \
+  "c['comparisons'] == 0 and c['evaluations'] == 2" \
+  "$PZT" curate smoke --count 1 --ai --provider claude --json
+assert_cost_line "curate: no --ai means no cost line at all" "NONE" \
+  "$PZT" curate smoke --count 1 --json
+assert_cost_line "dedup: no --ai means no cost line at all" "NONE" \
+  "$PZT" dedup smoke --scope '*' --json
 
 # --- pzt tag clear ---
 # 承接上面 curate 段留下的状态：a.jpg 同时打了"精选"和"ins"。清掉
