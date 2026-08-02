@@ -5,7 +5,7 @@ PRD G5"用户可以在 AI 开跑前拒绝"此前只在 core 里可达：headless
 
 拍板决策一把 headless 的闸门从"阻塞式确认"改成"告知 + 随时可撤"：core
 报完精确开销就继续跑，consumer 收到之后立刻发一条独立消息并给可取消入
-口。因此这里的每一条断言都在守同一件事 —— **这条消息要早、要准、要能
+口。因此这里的每一条断言都在守同一件事 - **这条消息要早、要准、要能
 停**。
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def test_local_provider_gets_a_duration_estimate():
 
 def test_cloud_provider_reports_counts_but_invents_no_duration():
     """云端每次调用的耗时没有实测数据。在一条"要花多少"的消息里编一个数
-    字，是让用户从此不再信这条消息的最快办法 —— 次数照报，时长省掉。"""
+    字，是让用户从此不再信这条消息的最快办法 - 次数照报，时长省掉。"""
     text = describe_ai_cost(comparisons=18, evaluations=0, provider="gemini", first=True)
     assert "18 次" in text
     assert "分钟" not in text
@@ -145,7 +145,7 @@ def test_stale_generation_cost_is_dropped(tmp_path):
 
 
 def test_cost_message_does_not_clobber_the_progress_slot(tmp_path):
-    """开销是独立一条新消息，不能占用进度那个原地编辑的槽 —— 占了的话，
+    """开销是独立一条新消息，不能占用进度那个原地编辑的槽 - 占了的话，
     接下来第一条进度会把这条账单改写掉，用户翻回去看不到自己被告知过。"""
     env, job = _running_env(tmp_path, interval=600.0)
     gen = env.consumer.generation
@@ -167,7 +167,7 @@ def test_cost_message_does_not_clobber_the_progress_slot(tmp_path):
 
 def test_cancel_receipt_during_evaluation_says_the_records_stay(tmp_path):
     """票 05 定的语义：curate 的评估逐张写库，喊停时已评估完的那几张留在
-    库里。这不是遗漏 —— 每条记录本身完整，留着正好被下次运行的缓存判据命
+    库里。这不是遗漏 - 每条记录本身完整，留着正好被下次运行的缓存判据命
     中，回滚等于下次再花一次钱。用户话术必须如实反映，只说"已取消"等于让
     用户以为那几次调用白花了。"""
     from orchestrator.types import RunStatus
@@ -186,7 +186,7 @@ def test_cancel_receipt_during_evaluation_says_the_records_stay(tmp_path):
 
 def test_cancel_receipt_during_comparison_claims_nothing_was_written(tmp_path):
     """比较阶段（锦标赛）的写库统一在最后一步，取消确实是零写入。这里报
-    "已经处理了 N 次"会是主动误导 —— 反方向的谎同样是谎。"""
+    "已经处理了 N 次"会是主动误导 - 反方向的谎同样是谎。"""
     from orchestrator.types import RunStatus
     from session.protocol import RunFinished
 
@@ -210,3 +210,40 @@ def test_cancel_receipt_for_styling_is_unchanged(tmp_path):
     env.consumer.step()
 
     assert env.transport.texts()[-1] == "已取消（已经给 3/10 张套上滤镜了，这部分保留）"
+
+
+def test_cancel_confirmation_during_evaluation_does_not_contradict_the_receipt(tmp_path):
+    """决策二说"用户话术必须如实反映"，而用户读到的**决策时刻**是二次确认
+    那条，不是事后回执。原文"取消后这批照片和已处理的结果都会作废"跟本票
+    刚改诚实的回执正好相反 - 只把事后那句改对，等于在用户做决定的那一刻
+    仍然骗他。"""
+    env, job = _running_env(tmp_path)
+    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 4, 12, "evaluations"))
+    env.consumer.step()
+
+    env.consumer._prompt_cancel_confirmation()
+
+    text = env.transport.sent_buttons[-1][1]
+    assert "4/12" in text
+    assert "留在库里" in text
+
+
+def test_cancel_confirmation_during_comparison_keeps_the_plain_warning(tmp_path):
+    # 比较段取消确实零写入，没有要保留的东西可说，措辞一字不动。
+    env, job = _running_env(tmp_path)
+    env.put_event(StageProgress(env.consumer.generation, job.run_id, "Dedup", 3, 18, "comparisons"))
+    env.consumer.step()
+
+    env.consumer._prompt_cancel_confirmation()
+
+    assert env.transport.sent_buttons[-1][1] == "确定要取消整批吗？取消后这批照片和已处理的结果都会作废。"
+
+
+def test_cancel_confirmation_with_no_progress_keeps_the_plain_warning(tmp_path):
+    # Collecting 态取消（还没跑过任何 stage）：那里"照片和结果都作废"是准
+    # 确的，不该被这一刀改动。
+    env, job = _running_env(tmp_path)
+
+    env.consumer._prompt_cancel_confirmation()
+
+    assert env.transport.sent_buttons[-1][1] == "确定要取消整批吗？取消后这批照片和已处理的结果都会作废。"

@@ -53,7 +53,7 @@ def describe_progress_done(kind: str, total: int) -> str:
 
 
 # 取消时"已经落地了多少"的措辞，同样按"数的是什么"分（票 10 决策四）。
-# 两条说的是两件不同的事：滤镜留在照片上，评估留在库里且下次还能省钱 ——
+# 两条说的是两件不同的事：滤镜留在照片上，评估留在库里且下次还能省钱 - 
 # 后半句是必须说的，不然用户会以为那几次调用白花了。分簇/比较不在表里，
 # 它们的取消是零写入，走裸回执。
 _CANCEL_PARTIAL_PHRASINGS = {
@@ -79,7 +79,7 @@ def describe_ai_cost(comparisons: int, evaluations: int, provider: str,
                       first: bool) -> Optional[str]:
     """AI 开跑之前那条开销告知（票 10 决策一）。
 
-    它不是"要不要跑"的提问 —— headless 那一侧 core 报完数字就继续跑了，
+    它不是"要不要跑"的提问 - headless 那一侧 core 报完数字就继续跑了，
     这条消息的作用是让用户**知道**接下来几分钟要花什么，并且知道可以停。
     所以措辞是陈述 + 一句"想停就说"，不是"要跑吗？"。
 
@@ -92,7 +92,7 @@ def describe_ai_cost(comparisons: int, evaluations: int, provider: str,
     五：开销这件事对用户是一笔账，不是两笔）。
 
     两个数都是 0 时返回 None（没有 AI 调用要发，core 也不会报），由调用
-    方整条消息都不发 —— 翻译成一句"接下来要跑 0 次"毫无意义。
+    方整条消息都不发 - 翻译成一句"接下来要跑 0 次"毫无意义。
     """
     parts = []
     if comparisons > 0:

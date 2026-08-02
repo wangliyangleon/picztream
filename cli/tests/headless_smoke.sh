@@ -82,7 +82,7 @@ assert 'error' in j
 }
 
 # 票 10：AI 开跑前的开销行走 stderr 带外通道（跟进度同一条），stdout 的
-# 原子性不受影响。这一对断言测的是"接线在不在"，不是数字对不对——精确
+# 原子性不受影响。这一对断言测的是"接线在不在"，不是数字对不对 - 精确
 # 开销本身由 core/tests/curate_test.cpp 的闸门用例覆盖。
 #
 # assert_cost_line <desc> <python_expr_on_c|NONE> <cmd...>
@@ -366,7 +366,7 @@ assert_json_has "$out" "j['ai_fallback_count'] == 0" \
   "curate: no cluster ever forms for these fixtures, so nothing falls back either"
 
 # 票 10：开销行的接线。这批 fixture 一个多元簇都形不成，所以比较次数是
-# 0、评估张数是候选那两张(a/b，c 被废片标签排除)——也正好覆盖 core 里
+# 0、评估张数是候选那两张(a/b，c 被废片标签排除) - 也正好覆盖 core 里
 # "一次比较都不用跑时由评估段补问闸门"那一路。
 assert_cost_line "curate: --ai reports the exact cost on stderr before any AI call" \
   "c['comparisons'] == 0 and c['evaluations'] == 2" \
@@ -375,6 +375,33 @@ assert_cost_line "curate: no --ai means no cost line at all" "NONE" \
   "$PZT" curate smoke --count 1 --json
 assert_cost_line "dedup: no --ai means no cost line at all" "NONE" \
   "$PZT" dedup smoke --scope '*' --json
+
+# dedup 的正向用例要一个真能成簇的项目：上面 a/b/c 那三个假字节 fixture
+# 解码不出来、一个多元簇都形不成，闸门（`ai_enabled && !groups.empty()`）
+# 根本不会触发，只测得到"没有 cost 行"。
+#
+# 两份同一张可解码 JPEG + 同一个 captured_at，再把 dedup_hash_threshold
+# 调到 64（=汉明距离上限，等于"只要落在同一个时间窗就算一组"）。为什么
+# 要调阈值：仓库里这张内联 fixture 是 1x1 的，感知哈希在这个尺寸上退化
+# 得厉害，实测两份**逐字节相同**的拷贝算出来的距离是 14，过不了默认阈
+# 值 5。这里要测的是"闸门接线在不在、报的数对不对"，不是分组算法（那部
+# 分在 core/tests/dedup_test.cpp 有可解码的多像素 fixture 详尽覆盖），把
+# 阈值放开正好把算法这一维从断言里摘出去。
+DEDUP_PHOTOS="$WORKDIR/dedup_photos"
+mkdir -p "$DEDUP_PHOTOS"
+cp "$REAL_PHOTOS/real.jpg" "$DEDUP_PHOTOS/one.jpg"
+cp "$REAL_PHOTOS/real.jpg" "$DEDUP_PHOTOS/two.jpg"
+"$PZT" new dedupcost "$DEDUP_PHOTOS" >/dev/null
+sqlite3 "$DBPATH" "UPDATE images SET captured_at = 500000 WHERE file_path IN ('one.jpg', 'two.jpg');"
+# 只影响这一段之后的命令；后面那条 smoke 项目的断言靠 captured_at 拉开
+# （1000/100000/200000，远超 10 秒窗），不受阈值影响。
+echo '{"dedup_hash_threshold": 64}' > "$XDG_CONFIG_HOME/pzt/config.json"
+
+assert_cost_line "dedup: --ai reports the exact comparison count on stderr" \
+  "c['comparisons'] == 1 and c['evaluations'] == 0" \
+  "$PZT" dedup dedupcost --scope '*' --ai --provider claude --json
+assert_cost_line "dedup: --ai on a project with no clusters reports nothing" "NONE" \
+  "$PZT" dedup smoke --scope '*' --ai --provider claude --json
 
 # --- pzt tag clear ---
 # 承接上面 curate 段留下的状态：a.jpg 同时打了"精选"和"ins"。清掉

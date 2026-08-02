@@ -806,7 +806,7 @@ def test_cost_sink_is_detached_even_when_the_stage_raises(tmp_path):
 
 def test_cancel_during_evaluation_reports_the_evaluations_already_written(tmp_path):
     """票 10 决策四：curate 的评估段逐张写库，取消一定留下部分成果。判据
-    按 kind 而不是按 stage —— 同一个 Curate，比较段取消是零写入。"""
+    按 kind 而不是按 stage - 同一个 Curate，比较段取消是零写入。"""
     env = make_worker(tmp_path)
     run = env.make_running_run()
     env.driver.stages["Dedup"] = _EvaluatingStage(name="Dedup", inputs=["Ingest"])

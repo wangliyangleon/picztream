@@ -3,7 +3,7 @@
 跟进度共用同一条 stderr 带外通道、同一条读取线程，区别只在 key：
 `{"cost": {...}}` 是"这一趟 AI 要花多少"，`{"progress": {...}}` 是"跑到
 哪了"。分成两个 sink 而不是一个带 kind 的，是因为下游对两者的处置完全
-不同——进度节流后原地编辑一条消息，开销必须**立刻**发一条新消息并带上
+不同 - 进度节流后原地编辑一条消息，开销必须**立刻**发一条新消息并带上
 可取消入口，晚一分钟就失去意义。
 
 宽进严出这条规矩照抄进度：解析不出来的行是正常情况（stderr 上还混着
@@ -62,7 +62,7 @@ def test_cost_arrives_while_the_process_is_still_running():
 
 
 def test_progress_and_cost_sinks_do_not_cross_talk():
-    """两种消息在同一条管道上交错。各认各的 key —— 进度行喂进 cost_sink
+    """两种消息在同一条管道上交错。各认各的 key - 进度行喂进 cost_sink
     会让用户收到一条凭空的"要跑 3 次"，反过来会把开销当成进度吞掉。"""
     progress = json.dumps({"progress": {"phase": "compare", "done": 3, "total": 9}})
     cost = json.dumps({"cost": {"comparisons": 9, "evaluations": 2}})

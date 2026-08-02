@@ -200,7 +200,7 @@ class SessionWorker:
         self._last_progress = None
         self.driver.progress_sink = lambda stage, done, total, kind: self._on_stage_progress(
             job, stage, done, total, kind)
-        # 票 10：开销跟进度同范围布防、同在 finally 里摘。理由一样 —— 留着
+        # 票 10：开销跟进度同范围布防、同在 finally 里摘。理由一样 - 留着
         # 的话下一个 job 报的开销会带着上一代的 generation 进队列，被
         # consumer 当过期丢弃，比不报更难查。
         self.driver.cost_sink = lambda stage, comparisons, evaluations: self.events.put(

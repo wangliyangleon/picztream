@@ -66,7 +66,7 @@ def _real_popen_factory(argv: List[str]) -> subprocess.Popen:
 
 ProgressFn = Callable[[str, int, int], None]
 # (comparisons, evaluations)。票 10：AI 开跑前的精确开销，一条命令最多一
-# 次。跟进度分开是因为下游处置完全不同 —— 进度节流后原地编辑同一条消息，
+# 次。跟进度分开是因为下游处置完全不同 - 进度节流后原地编辑同一条消息，
 # 开销要立刻发一条新消息并带可取消入口。
 CostFn = Callable[[int, int], None]
 
