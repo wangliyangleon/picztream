@@ -83,10 +83,17 @@ class SessionView:
                 return (f"目前收到 {self.photo_count()} 张照片，方案是："
                         f"先帮你去重，"
                         f"标签叫\"{self.plan_summary['apply_tag']}\"")
-            ai_desc = ("AI 帮你从相似照片里挑更好的" if self.plan_summary.get("ai_enabled")
-                       else "按拍摄时间挑")
+            # 措辞与 consumer._send_plan_confirmation 的确认文案对齐：状态
+            # 查询是用户核对选片简述的第二个入口（确认那条消息可能已经被
+            # 后面几十条进度顶上去了），两处说法不一致会让用户以为方案变
+            # 过。两处仍是各自的字符串 - 前缀不同（"方案是："vs"理解你想："）、
+            # 结尾不同（这里不带按钮提示），能共享的只有中间这半句。
+            picker = ("使用AI帮你选择" if self.plan_summary.get("ai_enabled")
+                      else "按拍摄时间帮你选择")
+            brief = self.plan_summary.get("selection_brief", "")
+            subject = f"{brief}的照片" if brief else "照片"
             return (f"目前收到 {self.photo_count()} 张照片，方案是："
-                    f"去重复后留 {self.plan_summary['count']} 张（{ai_desc}），"
+                    f"{picker} {self.plan_summary['count']} 张{subject}，"
                     f"标签叫\"{self.plan_summary['apply_tag']}\"")
         if self.status == RunStatus.AWAITING_GATE:
             if self.gate_stage == "Curate":
@@ -117,6 +124,9 @@ def view_from_run(run: RunState, incoming_root: Path) -> SessionView:
             "count": curate.params.get("count"),
             "apply_tag": curate.params.get("apply_tag"),
             "ai_enabled": curate.params.get("ai_enabled"),
+            # 归一成空串而不是 None：describe() 只判真假，但 plan_summary
+            # 也进 dict 比较的测试断言，两种"没有简述"的表示会让它时灵时不灵。
+            "selection_brief": curate.params.get("selection_brief") or "",
         }
     curate_output = run.outputs.get("Curate")
     if curate_output is not None:

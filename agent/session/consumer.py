@@ -1286,6 +1286,26 @@ class SessionConsumer:
             "provider": curate.params.get("provider", "local"),
         }
 
+    def _plan_summary(self, run: RunState) -> dict:
+        """view.describe() 用的展示口径，比 _current_plan_params 多一个选片
+        简述。刻意分成两个方法：_current_plan_params 还喂着 refine_plan 那
+        次分类的提示词，而 PlanConfirmationReply 没有 selection_brief 字段
+        - 把它塞进提示词，模型改不了，只会当噪音读，还可能误以为自己该改。
+
+        另一份 plan_summary 由 view.view_from_run 在重启恢复时装配，两边的
+        key 集合本来就不完全一样（那边不抄 provider，describe() 也不读它）。
+        describe() 真正读的 count/apply_tag/ai_enabled/selection_brief 四个
+        必须两边都有。
+        """
+        curate = next(s for s in run.plan.stages if s.name == "Curate")
+        return {
+            "count": curate.params["count"],
+            "apply_tag": curate.params["apply_tag"],
+            "ai_enabled": curate.params.get("ai_enabled", False),
+            "provider": curate.params.get("provider", "local"),
+            "selection_brief": curate.params.get("selection_brief") or "",
+        }
+
     def _apply_confirmed_plan_params(self, count, apply_tag, ai_enabled, provider) -> None:
         # ai_enabled/provider 是全局开关，Dedup/Curate 两份拷贝一起改，不是
         # 共享引用；Dedup 这次可能压根不在 Plan 里（W2026-07-21 目标三"没提
@@ -1308,7 +1328,7 @@ class SessionConsumer:
             dedup.params["ai_enabled"] = ai_enabled
             dedup.params["provider"] = provider
         self.store.save(self.run)
-        self.view.plan_summary = self._current_plan_params(self.run)
+        self.view.plan_summary = self._plan_summary(self.run)
         self._send_plan_confirmation(self.run)
 
     def _send_plan_confirmation(self, run: RunState) -> None:

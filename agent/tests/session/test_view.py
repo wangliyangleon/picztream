@@ -19,11 +19,14 @@ from session.protocol import DriveJob
 from session.view import SessionView, view_from_run
 
 
-def _planned_run(ai_enabled: bool = False) -> RunState:
+def _planned_run(ai_enabled: bool = False, selection_brief: str = "") -> RunState:
+    params = {"count": 5, "apply_tag": "精选", "ai_enabled": ai_enabled}
+    if selection_brief:
+        params["selection_brief"] = selection_brief
     plan = Plan(stages=[
         StageSpec(name="Ingest"),
         StageSpec(name="Dedup"),
-        StageSpec(name="Curate", params={"count": 5, "apply_tag": "精选", "ai_enabled": ai_enabled}),
+        StageSpec(name="Curate", params=params),
         StageSpec(name="Deliver", gate="required"),
     ])
     return RunState(
@@ -79,9 +82,11 @@ def test_from_run_planned_fills_plan_summary_and_describe(tmp_path):
 
     view = view_from_run(run, incoming_root=incoming_root)
 
-    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": False}
+    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": False,
+                                 "selection_brief": ""}
+    # 没有题材要求时主语是光秃秃的"照片"，跟确认文案同一条规则。
     assert view.describe() == (
-        "目前收到 1 张照片，方案是：去重复后留 5 张（按拍摄时间挑），标签叫\"精选\""
+        "目前收到 1 张照片，方案是：按拍摄时间帮你选择 5 张照片，标签叫\"精选\""
     )
 
 
@@ -92,8 +97,26 @@ def test_from_run_planned_describe_mentions_ai_when_enabled(tmp_path):
 
     view = view_from_run(run, incoming_root=incoming_root)
 
-    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": True}
-    assert "AI 帮你从相似照片里挑更好的" in view.describe()
+    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": True,
+                                 "selection_brief": ""}
+    assert "使用AI帮你选择" in view.describe()
+
+
+def test_from_run_planned_describe_carries_the_selection_brief(tmp_path):
+    # 状态查询是用户核对简述的第二个入口：确认那条消息可能已经被后面几十
+    # 条进度顶上去了，问一句"现在什么情况"必须还能看到简述原文，否则又回
+    # 到"brief 不可见"那个缺陷上（真机反馈 2026-08-02）。
+    incoming_root = tmp_path / "incoming"
+    run = _planned_run(ai_enabled=True, selection_brief="发朋友圈用，有人有景，人物表情活泼")
+    (incoming_dir_for(incoming_root, run.run_id) / "a.jpg").write_bytes(b"a")
+
+    view = view_from_run(run, incoming_root=incoming_root)
+
+    assert view.plan_summary["selection_brief"] == "发朋友圈用，有人有景，人物表情活泼"
+    assert view.describe() == (
+        "目前收到 1 张照片，方案是：使用AI帮你选择 5 张发朋友圈用，有人有景，"
+        "人物表情活泼的照片，标签叫\"精选\""
+    )
 
 
 def test_from_run_awaiting_gate_restores_selected_count(tmp_path):
