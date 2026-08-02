@@ -16,7 +16,7 @@
 | [05](05-evaluate-preselection-gate-progress.md) | curate 内部评估预选集：闸门 + 进度 + 偿还语义折叠 | 03, 04 | **done** |
 | [06](06-model-selection-and-ordering.md) | 模型选择与排序接进 curate | 03, 04, 05 | **done** |
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | ready-for-agent |
-| [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | ready-for-agent |
+| [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | **done**（Telegram 端到端待真机复核）|
 | [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | **done** (`1f34fb0`..`95cfb37`) |
 | [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | needs-decision |
 
@@ -33,9 +33,11 @@
 
 **可并行开工**：01、02、03、04 四张没有任何阻塞。
 
-## 剩余三张的开工次序
+## 剩余两张的开工次序
 
-- **07**、**08** 的阻塞边（06）已经解开，两张都可以开工，彼此无先后关系。08 的另一条阻塞边 02 早已满足。
+- **07** 的阻塞边（06）已经解开，可以开工。它与刚收口的 08 都改
+  `core/ai/selection.{h,cpp}`：08 只往提示词里加输入，07 要动返回结构与本地
+  的约束解码 schema，两张并行必冲突，所以 08 先走完。
 - **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。它**不是 ready**：闸门问在哪一层还没定，见票内。06 落地时已经把 `ai_selection_fallback` 序列化进 `pzt curate --json`，`ai_declined`/`cancelled` 仍等这一票（两个钩子在 headless 上还是 nullptr，先加进去是死字段）。
 
 ## 一条必须遵守的顺序约束
