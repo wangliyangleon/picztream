@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "core/ai/ai.h"
@@ -127,12 +128,19 @@ using EvalProgressFn = std::function<void(int done, int total)>;
 // 这一刀跑在(将来的)评估之前，因此多样性只沿 captured_at 衡量，也因此评
 // 估次数由构造保证有界、与图库大小无关。候选集不足 count 时整条裁剪不参
 // 与(那时没有"选"这个动作)。
+// selection_brief（票 08）：用户这次想要什么 - 用途、题材偏好、叙事结构提
+// 炼成的一段自由文本，原样进模型的选择提示词（语义与切分理由见
+// core::ai::request_selection 与 PRD 决策二）。**是一段提炼过的话，不是意
+// 图原文**：原文里混着去重、服务商、寒暄这些跟选哪几张无关的东西，透传等
+// 于让提示词被噪声污染，提炼是 agent 的活。为空(默认)时那一段整个不进提示
+// 词，与票 08 之前的行为逐字相同。ai_enabled=false 时无处可用，忽略。
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold,
                      double preselect_multiplier = 2.0,
                      bool ai_enabled = false, ai::Provider ai_provider = ai::Provider::Local,
                      const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
+                     const std::string& selection_brief = "",
                      dedup::DedupProgressFn on_progress = nullptr,
                      dedup::AiProgressFn on_ai_progress = nullptr,
                      CurateAiGateFn on_ai_gate = nullptr,

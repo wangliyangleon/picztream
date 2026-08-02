@@ -205,7 +205,7 @@ using CurateResult = curate::CurateResult;
 // 许调用方绕过 Settings、再复制一份"2"出来。语义见 core/curate/curate.h。
 // on_ai_gate/on_eval_progress/on_cancel(票 05)同样只是透传，语义见
 // core/curate/curate.h 上 CurateAiGateFn/EvalProgressFn 与 dedup::CancelFn
-// 的说明。
+// 的说明。selection_brief(票 08)同理，语义见那里。
 using CurateAiGateFn = curate::CurateAiGateFn;
 using EvalProgressFn = curate::EvalProgressFn;
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
@@ -213,6 +213,7 @@ CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_
                             double preselect_multiplier, bool ai_enabled = false,
                             Provider ai_provider = Provider::Local,
                             const LocalModelConfig& local_config = LocalModelConfig{},
+                            const std::string& selection_brief = "",
                             dedup::DedupProgressFn on_progress = nullptr,
                             dedup::AiProgressFn on_ai_progress = nullptr,
                             CurateAiGateFn on_ai_gate = nullptr,

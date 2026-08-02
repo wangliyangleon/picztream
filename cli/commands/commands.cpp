@@ -505,6 +505,10 @@ int cmd_curate(const std::vector<std::string>& args) {
   std::string scope_tag_name;
   std::string apply_tag_name = "精选";
   std::string provider_str;
+  // 票 08：用户这次想要什么(用途/题材偏好/叙事结构)提炼成的一段话，由
+  // agent 从意图里抽出来传进来。只在开 AI 时有消费者 - 关 AI 的选择是确定
+  // 性的，没有能读这段话的东西。
+  std::string selection_brief;
   std::vector<std::string> positional;
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] == "--json") {
@@ -523,6 +527,9 @@ int cmd_curate(const std::vector<std::string>& args) {
     } else if (args[i] == "--apply-tag") {
       if (i + 1 >= args.size()) return emit_json_error("usage", "--apply-tag requires a value");
       apply_tag_name = args[++i];
+    } else if (args[i] == "--brief") {
+      if (i + 1 >= args.size()) return emit_json_error("usage", "--brief requires a value");
+      selection_brief = args[++i];
     } else if (args[i] == "--ai") {
       ai_enabled = true;
     } else if (args[i] == "--provider") {
@@ -535,7 +542,7 @@ int cmd_curate(const std::vector<std::string>& args) {
   if (positional.empty() || !count_set || count <= 0 || !json) {
     return emit_json_error("usage",
                             "usage: pzt curate <project> --count N [--tag <name>] [--apply-tag <name>] "
-                            "[--ai --provider <gemini|claude|local>] --json");
+                            "[--brief <text>] [--ai --provider <gemini|claude|local>] --json");
   }
 
   pzt::core::Provider ai_provider = pzt::core::Provider::Local;
@@ -567,7 +574,7 @@ int cmd_curate(const std::vector<std::string>& args) {
   auto result = pzt::core::curate_images(
       *project_id, candidate_scope, count, settings.curate_time_window_seconds,
       settings.curate_hash_threshold, settings.curate_preselect_multiplier, ai_enabled, ai_provider,
-      local_config,
+      local_config, selection_brief,
       [](int done, int total) { emit_json_progress("cluster", done, total); },
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);

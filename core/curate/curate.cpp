@@ -419,7 +419,8 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold, double preselect_multiplier,
                      bool ai_enabled, ai::Provider ai_provider,
-                     const ai::LocalModelConfig& local_config, dedup::DedupProgressFn on_progress,
+                     const ai::LocalModelConfig& local_config, const std::string& selection_brief,
+                     dedup::DedupProgressFn on_progress,
                      dedup::AiProgressFn on_ai_progress, CurateAiGateFn on_ai_gate,
                      EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
   return detail::curate_impl(
@@ -430,11 +431,17 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
       },
       // 票 06：选择那一步的 production 实现。失败(网络/解析/没有 key)一律
       // 折成 nullopt - 对 curate 而言"模型没给出能用的答案"只有一种处置，
-      // 就是整批退化，具体是哪种失败不改变这个决定。选片简述恒为空，把它
-      // 从 agent 的意图解析穿到这里是票 08 的事。
-      [ai_provider, &local_config](const std::vector<ai::SelectionCandidate>& candidates,
-                                    int n) -> std::optional<std::vector<int>> {
-        auto result = ai::request_selection(candidates, n, ai_provider, /*selection_brief=*/"",
+      // 就是整批退化，具体是哪种失败不改变这个决定。
+      //
+      // 票 08：选片简述在这里被捕获进去，而不是穿过 curate_impl 与 SelectFn
+      // - 它对 curate 的编排逻辑完全不透明(curate 不读它、不据它分支)，跟
+      // 上面 evaluate_and_store 那条 lambda 捕获 provider/local_config 是同
+      // 一个处置。SelectFn 的两个参数是 curate 真正决定的东西(给谁看、选几
+      // 张)，简述不是。
+      [ai_provider, &local_config, &selection_brief](
+          const std::vector<ai::SelectionCandidate>& candidates,
+          int n) -> std::optional<std::vector<int>> {
+        auto result = ai::request_selection(candidates, n, ai_provider, selection_brief,
                                              local_config);
         if (!result.ok()) return std::nullopt;
         return result.value().picks;
