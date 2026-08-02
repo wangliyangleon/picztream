@@ -43,6 +43,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    RunRewound,
     StageCost,
     StageProgress,
     StageStarted,
@@ -198,6 +199,9 @@ class SessionWorker:
         # 必须在 finally 里摘：留着的话下一个 job 的进度会带着上一代的
         # generation 混进队列、被 consumer 当过期丢弃，比不报进度更难查。
         self._last_progress = None
+        # 这一趟有没有被"停下"退回过某一步，退的是哪一步（真机反馈
+        # 2026-08-02）。跟 _last_progress 同范围，finally 里一起清。
+        self._rewound_stage = None
         self.driver.progress_sink = lambda stage, done, total, kind: self._on_stage_progress(
             job, stage, done, total, kind)
         # 票 10：开销跟进度同范围布防、同在 finally 里摘。理由一样 - 留着
@@ -211,6 +215,7 @@ class SessionWorker:
             self.driver.progress_sink = None
             self.driver.cost_sink = None
             self._last_progress = None
+            self._rewound_stage = None
 
     def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int,
                             kind: str) -> None:
@@ -254,7 +259,7 @@ class SessionWorker:
                 try:
                     self.driver.resolve_gate(run, "proceed")
                 except PztCancelledError:
-                    self.driver.cancel(run)
+                    self._stopped(run, job, gate_stage)
         elif job.action == "adjustment":
             self.driver.apply_adjustment(run, job.args["delta"])
         elif job.action == "rerun_style":
@@ -268,7 +273,7 @@ class SessionWorker:
                     # 不 return：跟 rerun_curate 一样落到方法尾部共享的
                     # _report_stop。取消后 run 已是 CANCELLED，下面的
                     # match_failed 分支和 _drive_to_stop 的循环都不会进。
-                    self.driver.cancel(run)
+                    self._stopped(run, job, "Style")
             style_out = run.outputs.get("Style")
             if style_out is not None and style_out.data.get("match_failed"):
                 # 描述没匹配上任何 preset：软失败，退回 Style 闸门重新问，不往下
@@ -288,8 +293,8 @@ class SessionWorker:
                     self.driver.rerun_stage(run, "Curate", job.args["params"])
                 except PztCancelledError:
                     # 不 return：跟 _drive_to_stop 循环里的取消处理一样，落到
-                    # 方法尾部共享的 _report_stop 才会真的发 RunFinished。
-                    self.driver.cancel(run)
+                    # 方法尾部共享的 _report_stop 才会真的发事件。
+                    self._stopped(run, job, "Curate")
         elif job.action != "resume":
             raise ValueError(f"unknown drive action: {job.action!r}")
         self._drive_to_stop(run, job)
@@ -314,10 +319,30 @@ class SessionWorker:
                 try:
                     self.driver.advance(run)
                 except PztCancelledError:
-                    self.driver.cancel(run)
+                    self._stopped(run, job, next_spec.name if next_spec else None)
                     return
 
+    def _stopped(self, run: RunState, job: DriveJob, stage_name: Optional[str]) -> None:
+        """PztCancelledError 的统一收尾，按 job 要的语义二选一。
+
+        两种语义共用同一条 SIGTERM 通路，区别只在这里：整批取消把 run 推
+        进终态，"停下"只把这一步退回未运行、run 继续活着（真机反馈
+        2026-08-02，见 DriveJob.on_cancel）。stage_name 为空是防御性的：
+        没有"正在跑的那一步"就无从退回，退化成取消。
+        """
+        if job.on_cancel == "rewind" and stage_name is not None:
+            self.driver.rewind_stage(run, stage_name)
+            self._rewound_stage = stage_name
+            return
+        self.driver.cancel(run)
+
     def _report_stop(self, run: RunState, job: DriveJob) -> None:
+        if self._rewound_stage is not None:
+            # 被停下的那一步已经退回未运行，run 还活着 - 不发 RunFinished，
+            # 它会让 consumer 清掉整批。
+            self.events.put(RunRewound(job.generation, run.run_id, self._rewound_stage,
+                                        self._partial_progress()))
+            return
         if run.status == RunStatus.AWAITING_GATE:
             stage = run.gate_state.stage_name
             payload = self._prepare_gate_payload(run, stage)
@@ -337,7 +362,14 @@ class SessionWorker:
         字等于凭空造出用户并没有得到的东西；反过来，评估段真留下了记录却
         只说"已取消"，用户会以为那几次调用白花了（它们其实会被下次运行的
         缓存判据命中）。两个方向的谎都要避免。"""
-        if run.status != RunStatus.CANCELLED or self._last_progress is None:
+        if run.status != RunStatus.CANCELLED:
+            return None
+        return self._partial_progress()
+
+    def _partial_progress(self):
+        """最近一次进度里"已经落地"的那部分，没有就 None。取消与停下共用：
+        两者都是把一条跑了一半的 stage 打断，留下什么的判据完全一样。"""
+        if self._last_progress is None:
             return None
         kind = self._last_progress[3]
         return self._last_progress if kind in PARTIAL_ON_CANCEL_KINDS else None

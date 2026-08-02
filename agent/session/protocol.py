@@ -43,6 +43,16 @@ class DriveJob:
     # （见 session.worker.KILLABLE_STAGES）期间把它挂到 PztClient 上做子
     # 进程级终止。
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    # cancel_event 被置位之后要怎么收尾（真机反馈 2026-08-02）：
+    #   "cancel"（默认，打字说"取消"）= 整批作废，run 进 CANCELLED；
+    #   "rewind"（开销消息上的"停下"）= 只把正在跑的这一步退回未运行，上
+    #     游成果留着，run 还活着，由 consumer 重新问一次要不要用 AI。
+    # 两者共用同一条 SIGTERM 通路，区别只在 worker 收尾时走哪一支。
+    #
+    # 写它的是 consumer 线程、读它的是 worker 线程，但顺序是安全的：
+    # consumer 先写这个字段再 set() 事件，worker 只有在观察到事件之后才
+    # 会读它。
+    on_cancel: str = "cancel"
 
 
 # -- events (worker -> consumer) --
@@ -142,6 +152,21 @@ class RunFinished:
     # Curate 的比较段零写入、评估段不是，按 stage 分只能一起说对或一起说
     # 错。文案由 consumer 渲染，这里只给数据。
     cancelled_partial: Optional[Tuple[str, int, int, str]] = None
+
+
+# 真机反馈 2026-08-02：被"停下"叫停的那一步已经退回未运行，run 还活着。
+# 跟 RunFinished(cancelled) 分成两种事件而不是加个字段：consumer 对两者的
+# 处置没有一处相同 - 取消要清文件、丢 run、涨 generation，停下要保住这
+# 三样，然后重新问一次那个本来就问过的问题。共用一个事件只会让每个分支
+# 都先判一次"这次是哪种"。
+@dataclass
+class RunRewound:
+    generation: int
+    run_id: str
+    stage: str  # 被退回的那一步（Dedup / Curate）
+    # 同 RunFinished.cancelled_partial：(stage, done, total, kind)，只对
+    # 写入逐张的进度类别有值。停下的回执照样要如实说明哪部分留下了。
+    partial: Optional[Tuple[str, int, int, str]] = None
 
 
 @dataclass

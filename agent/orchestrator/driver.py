@@ -134,6 +134,28 @@ class Driver:
         self.store.save(run)
         return run
 
+    def rewind_stage(self, run: RunState, stage_name: str) -> RunState:
+        """把一个被中途叫停的 stage 退回未运行，连同它的下游；上游不动。
+
+        跟 cancel 的区别是这个 run 还活着 - 用户叫停的是"这一步以当前的
+        方式跑完"，不是整批。跟 rerun_stage 的区别是它**不立刻重跑**：退
+        回 PENDING 之后就停在这里，等调用方重新征询一次再推进（真机反馈
+        2026-08-02：停下之后要回到"要不要用 AI"那一步）。
+
+        status 落在 PLANNED 而不是 RUNNING：run 此刻确实在等人回话，留成
+        RUNNING 会让 bootstrap 的自愈把它当成"崩在半路"接着往下跑。要停
+        在闸门上的那种形状由调用方随后自己 rearm_gate。
+        """
+        run.stage_states[stage_name] = StageStatus.PENDING
+        run.outputs.pop(stage_name, None)
+        for name in self._downstream_of(run.plan, stage_name):
+            run.stage_states[name] = StageStatus.PENDING
+            run.outputs.pop(name, None)
+        run.gate_state = None
+        run.status = RunStatus.PLANNED
+        self.store.save(run)
+        return run
+
     def apply_adjustment(self, run: RunState, delta: PlanDelta) -> RunState:
         spec = self._spec_by_name(run, delta.stage_name)
         spec.params.update(delta.params)

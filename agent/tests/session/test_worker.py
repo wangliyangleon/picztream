@@ -32,6 +32,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    RunRewound,
     StageCost,
     StageProgress,
     StageStarted,
@@ -860,3 +861,67 @@ class _ComparingStage:
     def run(self, ctx, params):
         ctx.on_progress(3, 18, "comparisons")
         raise PztCancelledError(["pzt", "dedup"])
+
+
+# -- 停下 = 回退这一步，不作废整批（真机反馈 2026-08-02）--
+
+
+def test_stop_rewinds_the_stage_instead_of_cancelling_the_run(tmp_path):
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _ComparingStage(name="Dedup", inputs=["Ingest"])
+    job = DriveJob(generation=1, action="start", run_id=run.run_id)
+    job.on_cancel = "rewind"
+    env.put_drive(job)
+
+    env.step()
+
+    events = env.drain_events()
+    assert not [e for e in events if isinstance(e, RunFinished)]
+    [rewound] = [e for e in events if isinstance(e, RunRewound)]
+    assert rewound.stage == "Dedup"
+    saved = env.store.load(run.run_id)
+    assert saved.status != RunStatus.CANCELLED
+    assert saved.stage_states["Dedup"] == StageStatus.PENDING
+
+
+def test_stop_keeps_the_finished_upstream_stage(tmp_path):
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _ComparingStage(name="Dedup", inputs=["Ingest"])
+    job = DriveJob(generation=1, action="start", run_id=run.run_id)
+    job.on_cancel = "rewind"
+    env.put_drive(job)
+
+    env.step()
+
+    saved = env.store.load(run.run_id)
+    assert saved.stage_states["Ingest"] == StageStatus.DONE
+
+
+def test_stop_carries_the_partial_work_so_the_receipt_can_be_honest(tmp_path):
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _EvaluatingStage(name="Dedup", inputs=["Ingest"])
+    job = DriveJob(generation=1, action="start", run_id=run.run_id)
+    job.on_cancel = "rewind"
+    env.put_drive(job)
+
+    env.step()
+
+    [rewound] = [e for e in env.drain_events() if isinstance(e, RunRewound)]
+    assert rewound.partial == ("Dedup", 2, 6, "evaluations")
+
+
+def test_default_cancel_semantics_are_unchanged(tmp_path):
+    # 打字"取消"那条路：DriveJob 默认 on_cancel="cancel"，整批作废。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _ComparingStage(name="Dedup", inputs=["Ingest"])
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    events = env.drain_events()
+    assert not [e for e in events if isinstance(e, RunRewound)]
+    assert [e for e in events if isinstance(e, RunFinished)][-1].status == "cancelled"
