@@ -547,7 +547,6 @@ TEST_CASE("curate reports local clustering progress") {
   std::vector<std::pair<int, int>> seen;
   curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*preselect_multiplier=*/2.0,
          /*ai_enabled=*/false, Provider::Local, pzt::core::ai::LocalModelConfig{},
-         /*selection_brief=*/"",
          [&](int done, int total) { seen.emplace_back(done, total); });
 
   REQUIRE(!seen.empty());
@@ -573,8 +572,7 @@ TEST_CASE("curate reports AI comparison progress") {
 
   std::vector<int> compares;
   curate(fx.db, fx.project_id, std::nullopt, /*count=*/3, 20, 10, /*preselect_multiplier=*/2.0,
-         /*ai_enabled=*/true, Provider::Claude, pzt::core::ai::LocalModelConfig{},
-         /*selection_brief=*/"", nullptr,
+         /*ai_enabled=*/true, Provider::Claude, pzt::core::ai::LocalModelConfig{}, nullptr,
          [&](const pzt::core::dedup::AiProgress& p) { compares.push_back(p.comparison_done); });
 
   REQUIRE(!compares.empty());

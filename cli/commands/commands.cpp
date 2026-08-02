@@ -574,7 +574,7 @@ int cmd_curate(const std::vector<std::string>& args) {
   auto result = pzt::core::curate_images(
       *project_id, candidate_scope, count, settings.curate_time_window_seconds,
       settings.curate_hash_threshold, settings.curate_preselect_multiplier, ai_enabled, ai_provider,
-      local_config, selection_brief,
+      local_config,
       [](int done, int total) { emit_json_progress("cluster", done, total); },
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);
@@ -587,7 +587,9 @@ int cmd_curate(const std::vector<std::string>& args) {
       // 票 05：评估阶段的第三个 phase。cluster/compare 数的是候选簇和比
       // 较次数，这个数的是照片张数-三者单位不同，展示层必须按 phase 分
       // 别措辞(T-8 真机验收推翻过"把 phase 压掉"的做法，见 SPEC §3.2)。
-      [](int done, int total) { emit_json_progress("evaluate", done, total); });
+      [](int done, int total) { emit_json_progress("evaluate", done, total); },
+      // 票 08：排在所有回调之后是有意的，理由见 core/curate/curate.h。
+      /*on_cancel=*/nullptr, selection_brief);
 
   if (!result.selected.empty()) {
     auto apply_tag_id = resolve_or_create_tag(*project_id, apply_tag_name);

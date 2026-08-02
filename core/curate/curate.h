@@ -134,18 +134,24 @@ using EvalProgressFn = std::function<void(int done, int total)>;
 // 图原文**：原文里混着去重、服务商、寒暄这些跟选哪几张无关的东西，透传等
 // 于让提示词被噪声污染，提炼是 agent 的活。为空(默认)时那一段整个不进提示
 // 词，与票 08 之前的行为逐字相同。ai_enabled=false 时无处可用，忽略。
+//
+// 它排在所有回调之后，而不是挨着语义相邻的 local_config：`nullptr` 能隐式
+// 转成 `const char*` 再进 `std::string`，放在回调前面的话，一个想把
+// on_progress 置空的位置参数调用(`curate(..., local_config, nullptr, ...)`)
+// 会静默构造出 UB 而不是编译错误。排在最后，那个 nullptr 就还是落在回调
+// 上。位置难看好过一个不报错的雷。
 CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold,
                      double preselect_multiplier = 2.0,
                      bool ai_enabled = false, ai::Provider ai_provider = ai::Provider::Local,
                      const ai::LocalModelConfig& local_config = ai::LocalModelConfig{},
-                     const std::string& selection_brief = "",
                      dedup::DedupProgressFn on_progress = nullptr,
                      dedup::AiProgressFn on_ai_progress = nullptr,
                      CurateAiGateFn on_ai_gate = nullptr,
                      EvalProgressFn on_eval_progress = nullptr,
-                     dedup::CancelFn on_cancel = nullptr);
+                     dedup::CancelFn on_cancel = nullptr,
+                     const std::string& selection_brief = "");
 
 namespace detail {
 

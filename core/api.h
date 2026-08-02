@@ -213,12 +213,12 @@ CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_
                             double preselect_multiplier, bool ai_enabled = false,
                             Provider ai_provider = Provider::Local,
                             const LocalModelConfig& local_config = LocalModelConfig{},
-                            const std::string& selection_brief = "",
                             dedup::DedupProgressFn on_progress = nullptr,
                             dedup::AiProgressFn on_ai_progress = nullptr,
                             CurateAiGateFn on_ai_gate = nullptr,
                             EvalProgressFn on_eval_progress = nullptr,
-                            dedup::CancelFn on_cancel = nullptr);
+                            dedup::CancelFn on_cancel = nullptr,
+                            const std::string& selection_brief = "");
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见

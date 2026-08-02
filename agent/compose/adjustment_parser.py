@@ -365,9 +365,9 @@ _DEDUP_FOLLOWUP_SCHEMA_INSTRUCTION = (
     "brief telling whoever picks the photos WHAT KIND of photos this user wants and HOW "
     'they should be ordered -- subject matter ("有景有人"/"表情活泼"/"要有小孩的"), ordering '
     'or narrative requirements ("按时间顺序"), and the destination if they named one. Leave '
-    "out the number itself and anything that does not bear on which photos to pick. Use "
-    'null when the user said nothing about what kind of photos they want (for example a '
-    'bare "留5张"); '
+    "out the number itself and anything that does not bear on which photos to pick. Never "
+    "invent a preference the user did not state: use null when they said nothing about "
+    'what kind of photos they want (for example a bare "留5张" or "5张就行"); '
     '{"action": "approve"} if the user is simply confirming/agreeing with something you '
     'just proposed, with no new number or destination mentioned (for example "对", "好的", '
     '"可以", "确认", "没问题", "是的"); '

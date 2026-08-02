@@ -419,10 +419,10 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
                      std::optional<tagging::TagId> candidate_scope, int count,
                      int time_window_seconds, int hash_threshold, double preselect_multiplier,
                      bool ai_enabled, ai::Provider ai_provider,
-                     const ai::LocalModelConfig& local_config, const std::string& selection_brief,
-                     dedup::DedupProgressFn on_progress,
+                     const ai::LocalModelConfig& local_config, dedup::DedupProgressFn on_progress,
                      dedup::AiProgressFn on_ai_progress, CurateAiGateFn on_ai_gate,
-                     EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
+                     EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel,
+                     const std::string& selection_brief) {
   return detail::curate_impl(
       db, project_id, candidate_scope, count, time_window_seconds, hash_threshold,
       preselect_multiplier, ai_enabled, ai_provider, local_config,

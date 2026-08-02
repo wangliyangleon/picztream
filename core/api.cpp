@@ -139,15 +139,16 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
                             int time_window_seconds, int hash_threshold,
                             double preselect_multiplier, bool ai_enabled, Provider ai_provider,
-                            const LocalModelConfig& local_config, const std::string& selection_brief,
+                            const LocalModelConfig& local_config,
                             dedup::DedupProgressFn on_progress,
                             dedup::AiProgressFn on_ai_progress, CurateAiGateFn on_ai_gate,
-                            EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel) {
+                            EvalProgressFn on_eval_progress, dedup::CancelFn on_cancel,
+                            const std::string& selection_brief) {
   db::Database db = db::Database::open_default();
   return curate::curate(db, project_id, candidate_scope, count, time_window_seconds, hash_threshold,
-                         preselect_multiplier, ai_enabled, ai_provider, local_config, selection_brief,
+                         preselect_multiplier, ai_enabled, ai_provider, local_config,
                          std::move(on_progress), std::move(on_ai_progress), std::move(on_ai_gate),
-                         std::move(on_eval_progress), std::move(on_cancel));
+                         std::move(on_eval_progress), std::move(on_cancel), selection_brief);
 }
 
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
