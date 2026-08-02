@@ -16,9 +16,10 @@
 | [05](05-evaluate-preselection-gate-progress.md) | curate 内部评估预选集：闸门 + 进度 + 偿还语义折叠 | 03, 04 | **done** |
 | [06](06-model-selection-and-ordering.md) | 模型选择与排序接进 curate | 03, 04, 05 | **done** |
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | ready-for-agent |
-| [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | **done**（Telegram 端到端待真机复核）|
+| [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | **done** (`edfcf2e`..`a841aad`) |
 | [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | **done** (`1f34fb0`..`95cfb37`) |
 | [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | ready-for-agent |
+| [11](11-adjust-selection-brief-at-gate.md) | 选片确认阶段能改题材要求 | 08 | ready-for-agent |
 
 ## 依赖图
 
@@ -27,18 +28,28 @@
 02 ────────────────────────┐
 03 ──┬──────┐              │
 04 ──┴─→ 05 ─┴─→ 06 ──┬─→ 07
-         └─→ 09        ├─→ 08 ←┘(02)
+         └─→ 09        ├─→ 08 ←┘(02) ─→ 11
                        └─→ 10
 ```
 
 **可并行开工**：01、02、03、04 四张没有任何阻塞。
 
-## 剩余两张的开工次序
+## 剩余三张的开工次序
 
-- **07** 的阻塞边（06）已经解开，可以开工。它与刚收口的 08 都改
+三张互不阻塞、改的地方也不重叠，可并行：07 在 `core/ai/selection.*`，10 在
+`core/curate` + cli + agent 进度链路，11 只在 `agent/compose` + `agent/session`。
+
+- **07** 的阻塞边（06）已经解开，可以开工。它与已收口的 08 都改
   `core/ai/selection.{h,cpp}`：08 只往提示词里加输入，07 要动返回结构与本地
-  的约束解码 schema，两张并行必冲突，所以 08 先走完。
-- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。2026-08-02 拍板完成（闸门在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，见票内），状态转 ready。它与 07 改的地方不重叠（07 在 `core/ai/selection.*`，10 在 `core/curate` + cli + agent 进度链路），可并行。`ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON，不再是等这一票的事。
+  的约束解码 schema，两张并行必冲突，所以 08 先走完了。
+- **10** 是票 05 落地记录里点名、当时无人认领的缺口。2026-08-02 拍板完成（闸门
+  在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，见票内），状态转 ready。
+  `ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON，不再是等这
+  一票的事。
+- **11** 是票 08 落地记录里点名、当时不在票面上的缺口，2026-08-02 真机跑过之
+  后成票。票 08 刚把简述做成用户唯一能表达题材偏好的通道，而这个通道在"看到
+  结果之后"这个最该用它的时刻是断的。开工前要拍一件事：新简述来时已有的
+  `exclude` 保留还是清空（见票内）。
 
 ## 一条必须遵守的顺序约束
 
