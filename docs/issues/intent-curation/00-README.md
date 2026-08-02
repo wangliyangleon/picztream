@@ -18,7 +18,7 @@
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | ready-for-agent |
 | [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | **done**（Telegram 端到端待真机复核）|
 | [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | **done** (`1f34fb0`..`95cfb37`) |
-| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | ready-for-agent |
+| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | **done**（Telegram 端到端待真机验收）|
 
 ## 依赖图
 
@@ -33,12 +33,12 @@
 
 **可并行开工**：01、02、03、04 四张没有任何阻塞。
 
-## 剩余两张的开工次序
+## 剩余一张的开工次序
 
 - **07** 的阻塞边（06）已经解开，可以开工。它与刚收口的 08 都改
   `core/ai/selection.{h,cpp}`：08 只往提示词里加输入，07 要动返回结构与本地
   的约束解码 schema，两张并行必冲突，所以 08 先走完。
-- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。2026-08-02 拍板完成（闸门在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，见票内），状态转 ready。它与 07 改的地方不重叠（07 在 `core/ai/selection.*`，10 在 `core/curate` + cli + agent 进度链路），可并行。`ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON，不再是等这一票的事。
+- **10** 已于 2026-08-02 收口（闸门在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，PRD 的 G5/决策十八已按**入口**改述）。`ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON。剩下的只有 Telegram 端到端的真机验收。
 
 ## 一条必须遵守的顺序约束
 
