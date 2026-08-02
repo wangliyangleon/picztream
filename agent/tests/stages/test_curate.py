@@ -300,7 +300,7 @@ def test_caption_survives_into_the_stage_output():
 
 def test_missing_caption_leaves_the_selection_untouched():
     # 验收 24：没有文案时这个 key 在 pzt curate 的输出里根本不出现（不是
-    # "出现但为空串"），下标会 KeyError 把整个 stage 打成失败 —— 恰恰是失
+    # "出现但为空串"），下标会 KeyError 把整个 stage 打成失败 - 恰恰是失
     # 败隔离要防的"附赠品把关键结果拖下水"。
     call_log = []
     client = _make_client({"curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',

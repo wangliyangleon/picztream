@@ -314,7 +314,7 @@ def test_deliver_sends_the_caption_as_its_own_message_after_the_photos(tmp_path)
 
 def test_deliver_says_nothing_extra_when_there_is_no_caption(tmp_path):
     # 验收 24/25：没有文案时收尾话术与票 07 之前逐字相同，不发空消息、也
-    # 不解释"这次没有文案"——那是拿一句噪音去报告一个附赠品的缺席。
+    # 不解释"这次没有文案"，那是拿一句噪音去报告一个附赠品的缺席。
     transport = FakeTransport()
     stage = DeliverStage(client=_stub_export_client(), transport=transport,
                           marker_dir=tmp_path / "delivered", staging_dir=tmp_path / "staging")

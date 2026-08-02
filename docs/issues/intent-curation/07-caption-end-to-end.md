@@ -74,7 +74,21 @@
 - `pzt curate --json` 不带 `--ai` 的输出与 main **逐字节相同**（6 张图的临
   时项目，两个 release 二进制对跑 `diff`）
 - 未做真机 `--ai`（需要 Ollama）。风险二（文案会不会写成摄影评语）因此仍未
-  被证伪 - 提示词里已经明写"draw on the 'content' notes, not the 'quality'
-  ones"和"never critique or mention the photography itself"，但这一类问题
-  **只有真模型能发现**，注入假 `http_post` 的用例喂的是罐头答案（同票 08 真
-  机验收的结论）。
+  被证伪 - 提示词里已经明写 "never critique or mention the photography
+  itself -- this is the user's own post, not a review"，但这一类问题**只有
+  真模型能发现**，注入假 `http_post` 的用例喂的是罐头答案（同票 08 真机验收
+  的结论）。
+
+### code review 收的两条（都在提示词里）
+
+1. **文案的对象没有被限定到"选中的那几张"**。模型眼前列着 K 条描述而只挑
+   `count` 条，原文一句含糊的 "these photos" 会让它顺手把落选的那几张也写进
+   去 - 交付的照片里没有的东西出现在文案里，用户当场就能发现。改成 "the
+   photos you picked -- it is about those, not about the ones you left out"。
+2. **原文把 `assessment` 从材料里剔除了**，写的是 "draw on the 'content'
+   notes, not the 'quality' ones"，与决策十五"文案的材料是被选中照片的
+   `content` 与 `assessment`"、决策六"两个字段进了上下文就对两者都可见"抵
+   触。风险二要防的是**成品**变成摄影评语，不是把那一栏从材料里拿走。改成两
+   栏都留着、只约束落笔："their 'quality' notes tell you how well each one
+   came out, so let those steer which moment you lead with, but never critique
+   or mention the photography itself"。

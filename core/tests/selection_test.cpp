@@ -320,6 +320,13 @@ TEST_CASE("request_selection_impl asks for the caption in the same call as the p
   CHECK(prompt.find("caption") != std::string::npos);
   // 简述带着用途("发朋友圈")，语气与平台适配由它驱动，不需要新的输入。
   CHECK(prompt.find("发朋友圈，多要几张有人的") != std::string::npos);
+  // 文案的对象是**被选中的那几张**。模型眼前列着 K 条描述而只挑 count 条，
+  // 不点破的话它会把落选的那几张也写进去，而那些照片根本不会被交付。
+  CHECK(prompt.find("the photos you picked") != std::string::npos);
+  CHECK(prompt.find("not about the ones you left out") != std::string::npos);
+  // 决策十五/六：两栏都在上下文里(选片本来就要用 assessment)，被约束的是成
+  // 品不许点评拍摄手法，而不是把 quality 那一栏从材料里剔除。
+  CHECK(prompt.find("never critique or mention the photography itself") != std::string::npos);
 }
 
 TEST_CASE("request_selection_impl leaves the caption optional in the Local constrained-decoding schema") {

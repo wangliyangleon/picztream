@@ -31,7 +31,7 @@ class CurateStage:
         # 分支根本不调 pzt curate，没有退化可言，保持 0。
         ai_fallback_count = 0
         # 票 07：可以直接发出去的一段话，跟选片是 core 那边同一次模型调用的
-        # 产物。空串 = 没有文案，Deliver 那边就少发一条消息 —— 缺席不是错误
+        # 产物。空串 = 没有文案，Deliver 那边就少发一条消息 - 缺席不是错误
         # （PRD 决策十五：附赠品坏了不能把关键结果一起拖下水）。passthrough
         # 分支不调 pzt curate，没有模型调用也就没有文案。
         caption = ""

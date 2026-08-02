@@ -32,21 +32,26 @@ std::string build_selection_prompt(const std::vector<SelectionCandidate>& candid
             "one carries the most weight, and the sequence should read well as a set. Use "
             "only the numbers listed above, and do not repeat a number.";
 
-  // 票 07（PRD 决策十五）：文案搭在同一次调用上。两句话是照着风险二写的
-  // - 模型手里只有描述、没有照片，不点破的话它会顺着 quality 那一栏的调子
-  // 继续写摄影评语("光影层次丰富、构图考究")，那是给摄影师看的话，不是能
-  // 发出去的话。所以明说：材料取自 content、成品是用户直接复制粘贴的那段
-  // 字，不许点评拍摄手法。
+  // 票 07（PRD 决策十五）：文案搭在同一次调用上。三件事在这一段里被说死：
   //
-  // 语言跟着描述走，不跟界面语言走：core 不认识 cli 的界面语言(i18n 只在
-  // cli 层)，而描述是评估那一步用界面无关的固定语言写的，让文案随它就自动
-  // 落在同一种语言上，比给 core 接一个语言参数少一处会走偏的地方。
+  // 1. **写的是被选中的那几张**，不是整个预选集。模型眼前列着 K 条描述而只
+  //    挑了 count 条，一句含糊的"these photos"会让它顺手把落选的那几张也写
+  //    进去 - 交付的照片里没有的东西出现在文案里，用户当场就能发现。
+  // 2. **材料是 content 与 assessment 两栏，但落笔写的是画面**（决策十五、
+  //    六）。这是照着风险二写的：模型手里只有描述、没有照片，不点破的话它
+  //    会顺着 quality 那一栏的调子继续写摄影评语("光影层次丰富、构图考究")，
+  //    那是给摄影师看的话，不是能发出去的话。所以两栏都留在上下文里(选片本
+  //    来就要用 assessment)，只约束成品不许点评拍摄手法。
+  // 3. **语言跟着描述走，不跟界面语言走**：core 不认识 cli 的界面语言(i18n
+  //    只在 cli 层)，而描述是评估那一步用界面无关的固定语言写的，让文案随它
+  //    就自动落在同一种语言上，比给 core 接一个语言参数少一处会走偏的地方。
   prompt +=
-      "\n\nAlso write a 'caption' the user can post as-is together with these photos. Write "
-      "about what is happening in the photos -- draw on the 'content' notes, not the "
-      "'quality' ones. It is a caption for the user's own post, so never critique or "
-      "mention the photography itself. Keep it to one or two sentences, and write it in the "
-      "same language as the notes above.";
+      "\n\nAlso write a 'caption' the user can post as-is alongside the photos you picked "
+      "-- it is about those, not about the ones you left out. Say what is happening in "
+      "them, drawing on their 'content' notes; their 'quality' notes tell you how well each "
+      "one came out, so let those steer which moment you lead with, but never critique or "
+      "mention the photography itself -- this is the user's own post, not a review. Keep it "
+      "to one or two sentences, and write it in the same language as the notes above.";
 
   // 票 08 之前恒为空：为空时整段省略，而不是留一句空的"用户要求：",那会让
   // 模型去揣摩一个不存在的要求。
