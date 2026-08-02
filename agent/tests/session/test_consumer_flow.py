@@ -1440,6 +1440,34 @@ def test_gate_reply_brief_adjustment_reaches_the_drive_job(tmp_path):
     assert drive.args["delta"].params == {"selection_brief": "表情活泼"}
 
 
+def test_gate_message_and_status_query_agree_on_the_brief_after_a_change(tmp_path):
+    # 票 11 决策二的替换语义靠"处处可见"兜底，那就不能一处新一处旧。闸门消
+    # 息读的是 self.run.plan（活的），describe() 读的是 view.plan_summary（快
+    # 照）- 两个不同的源，值得一条测试钉住它们不会分叉。它们之所以一致，是
+    # 因为 _on_gate_reached 每次都重新 load run 再 view_from_run 一遍。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    _selection_gate(env, job)
+
+    env.push_text("要活泼一点的")
+    env.consumer.step()
+    deliver_classify(env, "gate_reply", GateReply(
+        action="adjust",
+        delta=PlanDelta(stage_name="Curate", params={"selection_brief": "表情活泼"}),
+    ))
+    drive = [j for j in env.drain_jobs() if isinstance(j, DriveJob)][-1]
+
+    # worker 把 delta 落盘（apply_adjustment 的 params.update() 语义），重跑
+    # 完 Curate 之后又停在 Style 闸门上。
+    run = env.store.load(job.run_id)
+    next(s for s in run.plan.stages if s.name == "Curate").params.update(drive.args["delta"].params)
+    env.store.save(run)
+    _selection_gate(env, job)
+
+    assert "表情活泼" in [t for t in env.transport.texts() if "选好了" in t][-1]
+    assert "表情活泼" in env.consumer.view.describe()
+
+
 def test_gate_curate_followup_narrow_carries_selection_brief_into_rerun_curate(tmp_path):
     # 票 08：追问那一处的引导语现在也举了带题材偏好的例子，用户照着说的话
     # 必须一路走到 rerun_curate 的参数里，否则 core 那边根本收不到。

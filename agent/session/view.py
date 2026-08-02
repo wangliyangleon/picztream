@@ -68,6 +68,23 @@ def describe_cancel_partial(kind: str, done: int, total: int) -> Optional[str]:
     return None if phrasing is None else phrasing.format(done=done, total=total)
 
 
+def describe_selection_headline(brief: Optional[str]) -> str:
+    """"选好了"那半句，票 11 起可能带上此刻生效的题材要求。
+
+    两个入口共用：闸门消息（`consumer._render_selection_confirm_gate`）与状
+    态查询（下面 `describe()` 的 AWAITING_GATE 分支）。各写一份的话措辞迟早
+    分叉，而票 08 已经定死"简述必须可见"、票 11 决策二又把"用户每轮都看得见
+    此刻生效的是哪一句"当成替换语义的安全网 - 两处说法不一致会直接读成方案
+    自己变过。
+
+    措辞归给用户（"按你说的"）而不是系统："选好了 2 张（题材要求：…）"读起
+    来像系统自己的参数，用户不会意识到那是可以再改的。简述原样拼进去、不改
+    写，同 `consumer._send_plan_confirmation` 的理由（改写要么多花一次 LLM
+    调用，要么用规则截断，都可能把用户正要核对的那几个字弄没）。
+    """
+    return f"按你说的「{brief}」选好了" if brief else "选好了"
+
+
 # 本地模型一次视觉调用的实测量级（票 10 拍板时记的真机数据：40 张照片、
 # 本地 Ollama，一次约 40 秒）。**只给 local 一个数**：云端 provider 每次
 # 调用要多久没有实测过，而在一条"接下来要花多少"的消息里编一个数字，是让
@@ -165,13 +182,11 @@ class SessionView:
         if self.status == RunStatus.AWAITING_GATE:
             if self.gate_stage == "Curate":
                 return "去重完了，等你说要不要再筛选一下"
-            # 票 11：跟 consumer._render_selection_confirm_gate 同一句措辞。
-            # 简述在这个闸门上是可改的（"要活泼一点的"就地重选），改完必须
-            # 到处都看得见此刻生效的是哪一句 - 两处不一致会读成方案又变过，
-            # 同 PLANNED 分支上面那条注释的理由。
+            # 票 11：简述在这个闸门上是可改的（"要活泼一点的"就地重选），改
+            # 完必须到处都看得见此刻生效的是哪一句，同 PLANNED 分支上面那条
+            # 注释的理由。措辞与闸门消息共用 describe_selection_headline。
             brief = (self.plan_summary or {}).get("selection_brief", "")
-            picked = f"按你说的「{brief}」选好了" if brief else "选好了"
-            return f"已经{picked} {self.selected_count or 0} 张，等你回复"
+            return f"已经{describe_selection_headline(brief)} {self.selected_count or 0} 张，等你回复"
         if self.status == RunStatus.RUNNING:
             base = STAGE_PROGRESS_MESSAGES.get(self.current_stage or "", "正在处理...")
             if self.stage_progress is None:

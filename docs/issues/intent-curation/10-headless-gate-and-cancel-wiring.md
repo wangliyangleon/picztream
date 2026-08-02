@@ -87,4 +87,4 @@ core 在闸门那一刻**不等**任何人，把精确开销（比较次数 + �
 - [x] 每条命令的开销消息只发一次（core 侧 `gate_consulted` 的两个触发点合起来只报一次，行为不变）
 - [x] `pzt open` 里 `/dedup --ai` 的阻塞式闸门与其零写入承诺**一个字不动**，真机复核过
 - [x] 关 AI 时两条命令都不产生 cost 事件
-- [ ] PRD 的 G5 与决策十八改述为按**入口**（TUI / headless）切，不按命令切，且仍覆盖 TUI 那条阻塞闸门
+- [x] PRD 的 G5 与决策十八改述为按**入口**（TUI / headless）切，不按命令切，且仍覆盖 TUI 那条阻塞闸门（`3df88ce`，见 `docs/Intent_Curation_PRD.md:67`）
