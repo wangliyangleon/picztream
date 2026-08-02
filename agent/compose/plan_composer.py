@@ -71,7 +71,11 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
     dedup_requested = decision.get("dedup_requested", False)
     ai_enabled = decision.get("ai_enabled", False)
     provider = decision.get("provider", "local")
-    apply_tag = decision.get("apply_tag", "精选")
+    # `.get(k, 默认)` 只在 key 缺席时给默认值，模型显式回 null 时给的是
+    # None，会被 validate_plan 拒掉、整次方案组装失败。真机上确实会发生
+    # （"先去重，然后挑5张有小孩的" 这种没提目的地的说法，同一句话跑两次
+    # 一次 null 一次正常），是票 08 之前就有的缺陷，随手修掉。
+    apply_tag = decision.get("apply_tag") or "精选"
     # 票 08：null 与字段缺席都归一成空串（= 这次没有题材要求），不留给
     # validate_plan 去拒。模型在"用户什么偏好都没说"时回 null 是常态，为一
     # 个纯增量的字段把整次方案组装打成失败，代价与收益完全不成比例。别的

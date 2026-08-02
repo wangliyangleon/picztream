@@ -177,3 +177,17 @@ def test_compose_plan_normalizes_a_missing_or_null_selection_brief_to_empty_stri
     plan = compose_plan("选3张发朋友圈", None, None,
                          http_post=_fake_gemini_http_post({"count": 3}), meta_provider="gemini")
     assert next(s for s in plan.stages if s.name == "Curate").params["selection_brief"] == ""
+
+
+def test_compose_plan_falls_back_to_the_default_tag_when_the_model_returns_a_null_apply_tag(monkeypatch):
+    # 票 08 之前就有的缺陷，跑真实本地模型时撞出来的：`.get(k, 默认)` 只在
+    # key 缺席时兜底，模型显式回 null 时给的是 None，validate_plan 会把整
+    # 次方案组装打成失败。没提目的地的意图("先去重，然后挑5张有小孩的")真
+    # 机上就会走到这一条。
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    plan = compose_plan("挑5张有小孩的", None, None,
+                         http_post=_fake_gemini_http_post({"count": 5, "apply_tag": None}),
+                         meta_provider="gemini")
+
+    assert next(s for s in plan.stages if s.name == "Curate").params["apply_tag"] == "精选"
