@@ -52,6 +52,7 @@ from session.view import (
     STAGE_PROGRESS_MESSAGES,
     SessionView,
     describe_ai_cost,
+    describe_cancel_partial,
     describe_progress_done,
     view_from_run,
 )
@@ -965,15 +966,19 @@ class SessionConsumer:
             self._send(message)
 
     def _cancel_receipt(self, event: RunFinished) -> str:
-        """取消回执。写入逐张的 stage（当前只有 StyleApplyAll）被打断时
-        一定留下部分成果，只说"已取消"等于假装什么都没发生 —— 用户回头
-        看到一半照片带滤镜会更困惑。零写入的 dedup/curate 走裸回执，worker
-        那边就不会给 cancelled_partial（决策五）。"""
+        """取消回执。写入逐张的那些阶段被打断时一定留下部分成果，只说"已
+        取消"等于假装什么都没发生 —— 用户回头看到一半照片带滤镜会更困惑，
+        而 curate 的评估段更糟：那几次调用的结果其实留在库里、下次还能
+        省钱，不说的话用户以为白花了（票 10 决策二/四）。
+
+        零写入的那些阶段走裸回执，worker 那边就不会给 cancelled_partial
+        （决策五）。措辞按 kind 分，落在 view 里跟其它 prose 一起。"""
         partial = event.cancelled_partial
         if partial is None:
             return "已取消"
-        _, done, total = partial
-        return f"已取消（已经给 {done}/{total} 张套上滤镜了，这部分保留）"
+        _, done, total, kind = partial
+        detail = describe_cancel_partial(kind, done, total)
+        return "已取消" if detail is None else f"已取消（{detail}）"
 
     def _on_stage_progress(self, event: StageProgress) -> None:
         """T-8：运行期进度。view 每条都刷新（用户主动问"到哪了"要拿到最

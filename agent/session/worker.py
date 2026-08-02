@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional, Tuple
 from compose.adjustment_parser import AdjustmentError
 from compose.llm_client import LlmRequestError
 from compose.validate import ValidationError, validate_plan
+from orchestrator.stage import PROGRESS_EVALUATIONS, PROGRESS_PHOTOS
 from orchestrator.types import RunState, RunStatus, StageStatus
 from pzt_client import PztCancelledError, PztCommandError
 from session.protocol import (
@@ -51,11 +52,15 @@ _log = logging.getLogger("pzt.agent.worker")
 
 KILLABLE_STAGES = ("Dedup", "Curate", "Style", "StyleApplyAll")
 
-# 取消时会留下部分成果的 stage。判据是"写入是不是逐张的"：
-# StyleApplyAll 每张一次 pzt recipe apply，取消一定停在中间；dedup/curate
-# 的写库统一在最后一步，按 core 的契约取消一定零写入（见 core/dedup/
-# dedup.h 的 CancelFn 说明），报"已经处理了 N 张"是主动误导。
-PARTIAL_ON_CANCEL_STAGES = ("StyleApplyAll",)
+# 取消时会留下部分成果的**进度类别**。判据是"写入是不是逐张的"：
+# StyleApplyAll 每张一次 pzt recipe apply（photos），curate 的评估段每张
+# 一条评估记录（evaluations），两者取消都一定停在中间。
+#
+# 票 10 决策四把这个判据从"按 stage"改成"按 kind"：同一个 Curate，比较段
+# （锦标赛）的写库统一在最后一步，取消确实零写入，而紧接着的评估段不是。
+# 按 stage 分的话这两段只能一起说对或一起说错。分簇（groups）与比较
+# （comparisons）都不在表里，那两段的取消仍然如实报"零写入"。
+PARTIAL_ON_CANCEL_KINDS = (PROGRESS_PHOTOS, PROGRESS_EVALUATIONS)
 
 
 class SessionWorker:
@@ -210,7 +215,9 @@ class SessionWorker:
     def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int,
                             kind: str) -> None:
         # 记一份最近进度：取消收尾时要靠它说清"已经落地了多少"（决策五）。
-        self._last_progress = (stage, done, total)
+        # kind 一起记（票 10）：留没留下东西由"数的是什么"决定，不由 stage
+        # 决定，见 PARTIAL_ON_CANCEL_KINDS。
+        self._last_progress = (stage, done, total, kind)
         self.events.put(StageProgress(job.generation, job.run_id, stage, done, total, kind))
 
     @contextlib.contextmanager
@@ -324,13 +331,16 @@ class SessionWorker:
                                      self._partial_on_cancel(run)))
 
     def _partial_on_cancel(self, run: RunState):
-        """取消时已经落地的部分成果，没有就 None（决策五）。只认写入逐张
-        的 stage：dedup/curate 的取消是零写入的，报数字等于凭空造出用户
-        并没有得到的东西。"""
+        """取消时已经落地的部分成果，没有就 None（决策五 + 票 10 决策四）。
+
+        只认写入逐张的那些进度类别：分簇与比较的写库统一在最后一步，报数
+        字等于凭空造出用户并没有得到的东西；反过来，评估段真留下了记录却
+        只说"已取消"，用户会以为那几次调用白花了（它们其实会被下次运行的
+        缓存判据命中）。两个方向的谎都要避免。"""
         if run.status != RunStatus.CANCELLED or self._last_progress is None:
             return None
-        stage, _, _ = self._last_progress
-        return self._last_progress if stage in PARTIAL_ON_CANCEL_STAGES else None
+        kind = self._last_progress[3]
+        return self._last_progress if kind in PARTIAL_ON_CANCEL_KINDS else None
 
     def _first_failure_detail(self, run: RunState) -> str:
         for name, status in run.stage_states.items():

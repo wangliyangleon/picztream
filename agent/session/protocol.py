@@ -132,11 +132,16 @@ class RunFinished:
     run_id: str
     status: str  # RunStatus.value: "done" | "failed" | "cancelled"
     detail: Optional[str] = None
-    # T-8 决策五：取消时已经落地的部分成果 (stage, done, total)。只对写入
-    # 是逐张的 stage 有值（见 worker.PARTIAL_ON_CANCEL_STAGES）；dedup/
-    # curate 的取消按 core 契约一定是零写入，报"已经处理了 N 张"是主动
-    # 误导，所以那些路径恒为 None。文案由 consumer 渲染，这里只给数据。
-    cancelled_partial: Optional[Tuple[str, int, int]] = None
+    # T-8 决策五：取消时已经落地的部分成果 (stage, done, total, kind)。只
+    # 对写入是逐张的进度类别有值（见 worker.PARTIAL_ON_CANCEL_KINDS）：套
+    # 滤镜逐张一次 recipe apply，curate 的评估段逐张一条评估记录。分簇与
+    # 比较的写库统一在最后一步，取消是零写入，报"已经处理了 N 次"是主动误
+    # 导，那些路径恒为 None。
+    #
+    # kind 在票 10 加进来：判据从"按 stage"改成"按 kind"，因为同一个
+    # Curate 的比较段零写入、评估段不是，按 stage 分只能一起说对或一起说
+    # 错。文案由 consumer 渲染，这里只给数据。
+    cancelled_partial: Optional[Tuple[str, int, int, str]] = None
 
 
 @dataclass
