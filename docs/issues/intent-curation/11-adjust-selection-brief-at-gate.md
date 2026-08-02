@@ -61,7 +61,7 @@ action 只有三个：
 变成静默丢失；有了它，替换是自纠正的。**这两条是绑定的，实现时不能只做替换、
 把回显往后放。**
 
-## 开工前仍需回答（Eng Design 级，不阻塞拍板）
+## 开工前仍需回答（Eng Design 级，不阻塞拍板）→ 已答，见落地记录
 
 1. **组合句在 gate schema 上怎么表达。** 今天 `classify_gate_reply` 返回单个
    action，`_decision_to_delta` 一次只产一个字段的 `PlanDelta`。要让"换掉第 3
@@ -94,17 +94,58 @@ PRD 风险一的同一条边界，不是本票的缺陷，但**用户话术不�
 再被过滤掉。这不影响正确性，但意味着 `exclude` 越多、多要的张数越多，簇不够时
 最终交付可能不足 `count` 张。
 
+## 落地记录（2026-08-02）
+
+两个 Eng Design 问题的答案：
+
+**一、组合句：给现有三个 adjust shape 各挂一个可选 `selection_brief` 字段，另
+加一个只改题材要求的 `set_selection_brief` action。** 没走"一次返回多个 action"
+那条 - `GateReply` 的形状不用动，`parse_adjustment` 也不受影响。票里担心的"简述
+抽取会重复进三个 action 的说明里"靠写法避开了：可选字段的说明在
+`_GATE_SCHEMA_INSTRUCTION` 末尾统一写一次，不逐个 action 重复。新 action 只进
+`_GATE_ADJUST_ACTIONS`，故意不并进 `_ADJUST_ACTIONS`（那个元组还管着
+`parse_adjustment`，而它的提示词从没提过这个 action）。
+
+**二、None/`""` 的区分沿用票 08 立的约定。** 缺席 / `null` / 非字符串都归成"这
+次没提"，key 整个不进 `PlanDelta`（`params.update()` 语义下，不放 key 才是"不动
+旧值"）；空串是"明确要求去掉题材限制"的一次有意覆盖，必须放进去。这套约定票 08
+已经在 `DedupFollowupReply.selection_brief` 上写过一遍，两处不该各有一套。
+
+**决策一是自动成立的，不需要专门写代码：** 简述只经 `params.update()` 进
+Curate，`_resolve_swap_out` 的 `exclude` 合并逻辑一个字没改。组合句里两件事进同
+一个 delta、一次 update，谁先谁后不影响结果。
+
+**回显做了两处而不是一处：** 除了闸门消息（`_render_selection_confirm_gate`），
+`view.describe()` 的 `AWAITING_GATE` 分支也带上了简述。理由是票 08 已经在
+`view.py` 的 PLANNED 分支上写明"状态查询是用户核对选片简述的第二个入口，两处说
+法不一致会让用户以为方案变过" - 那条理由对这个闸门同样成立，而当时只覆盖了
+PLANNED。措辞两处一致：`按你说的「…」选好了 N 张`。
+
+**落地时发现一个既有缺陷，单独成票 12（`12-rerun-stage-leaves-its-gate-armed.md`）。**
+`rerun_stage` 答完的闸门不解除 `spec.gate`，导致"只说去重没给数量"那条流程里，选
+片确认闸门上的**任何**一次调整都会把"要不要再筛选一下"再问一遍、Curate 不重跑。
+它对现有三个 action 一视同仁、早于本票存在，修法要动 `orchestrator/driver.py`
+（本票范围是 `agent/compose` + `agent/session`）且与票 10 的 rewind、AG-01 的
+Style 重问共用 gate 生命周期，因此没在本票里顺手改，只用一个测试钉住了现状。
+**本票下面前两条验收在那条 deferred 流程上要等票 12 才成立**，在"一开始就给了
+数量"的主流程上已成立（那条路径的 `curate.gate` 早被 `_apply_confirmed_plan_params`
+置成 `off`）。
+
 ## 验收标准
 
-- [ ] 选片确认阶段说"要活泼一点的"/"换成有人的那几张"/"别都是风景"，能改到
-      `selection_brief` 并重选
+- [x] 选片确认阶段说"要活泼一点的"/"换成有人的那几张"/"别都是风景"，能改到
+      `selection_brief` 并重选（deferred 流程受票 12 阻碍，见落地记录）
 - [ ] 重选只花一次文本调用，不重跑评估（用已评估过的项目验，看进度里没有评估段）
-- [ ] 改完之后回显的确认文案带上新简述（票 08 真机反馈定的规矩：简述必须可见）
-- [ ] 一句话里同时给了题材要求和别的调整（数量/标签/换掉第几张）时，两件事都生效
-- [ ] 简述变更时已累积的 `exclude` **原样保留**（决策一），有测试钉住；组合句
+      - 依赖 core 的评估缓存（票 05"有评估记录就跳过"），本票无代码改动，**待真机验**
+- [x] 改完之后回显的确认文案带上新简述（票 08 真机反馈定的规矩：简述必须可见）
+- [x] 一句话里同时给了题材要求和别的调整（数量/标签/换掉第几张）时，两件事都生效
+- [x] 简述变更时已累积的 `exclude` **原样保留**（决策一），有测试钉住；组合句
       里同时产生的 `exclude` 与新简述互不擦除，与两者出现的先后无关
-- [ ] 新简述**替换**旧简述而非累加（决策二），有测试钉住
-- [ ] 没提到题材要求的轮次（如"留5张"）**不**清空已有简述
-- [ ] 原有三个 adjust action 的行为不变
+- [x] 新简述**替换**旧简述而非累加（决策二），有测试钉住
+- [x] 没提到题材要求的轮次（如"留5张"）**不**清空已有简述
+- [x] 原有三个 adjust action 的行为不变（既有的逐字 `delta.params ==` 断言一个
+      没改、全绿）
 - [ ] 简述抽取的质量用真模型验过，不只是注入假 `http_post`（票 08 真机反馈的
       教训：罐头响应永远绿，`_SCHEMA_INSTRUCTION` 上加规则会挤掉别的字段）
+      - eval 集已补 10 条 gate 用例（`tests/eval_offline/run_eval.py` 的
+        `GATE_REPLY_CASES`，`--provider` 加了 `local`），**待人读一遍输出**

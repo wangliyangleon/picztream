@@ -165,7 +165,13 @@ class SessionView:
         if self.status == RunStatus.AWAITING_GATE:
             if self.gate_stage == "Curate":
                 return "去重完了，等你说要不要再筛选一下"
-            return f"已经选好了 {self.selected_count or 0} 张，等你回复"
+            # 票 11：跟 consumer._render_selection_confirm_gate 同一句措辞。
+            # 简述在这个闸门上是可改的（"要活泼一点的"就地重选），改完必须
+            # 到处都看得见此刻生效的是哪一句 - 两处不一致会读成方案又变过，
+            # 同 PLANNED 分支上面那条注释的理由。
+            brief = (self.plan_summary or {}).get("selection_brief", "")
+            picked = f"按你说的「{brief}」选好了" if brief else "选好了"
+            return f"已经{picked} {self.selected_count or 0} 张，等你回复"
         if self.status == RunStatus.RUNNING:
             base = STAGE_PROGRESS_MESSAGES.get(self.current_stage or "", "正在处理...")
             if self.stage_progress is None:

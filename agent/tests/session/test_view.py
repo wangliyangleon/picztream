@@ -130,6 +130,19 @@ def test_from_run_awaiting_gate_restores_selected_count(tmp_path):
     assert view.describe() == "已经选好了 2 张，等你回复"
 
 
+def test_from_run_awaiting_gate_describe_carries_the_selection_brief(tmp_path):
+    # 票 11：状态查询是用户核对选片简述的第二个入口（同 PLANNED 分支已有
+    # 的理由）。简述替换之后，用户在闸门上问一句"选了几张"，这里说法必须
+    # 跟闸门消息一致，否则会读成"方案又变了"。
+    run = _planned_run(selection_brief="人物表情活泼")
+    run.status = RunStatus.AWAITING_GATE
+    run.outputs["Curate"] = StageOutput(ok=True, data={"selected": ["a.jpg", "b.jpg"]})
+
+    view = view_from_run(run, incoming_root=tmp_path / "incoming")
+
+    assert view.describe() == "已经按你说的「人物表情活泼」选好了 2 张，等你回复"
+
+
 def test_from_run_planned_deferred_curate_describe_mentions_dedup_first(tmp_path):
     incoming_root = tmp_path / "incoming"
     run = _planned_run_deferred_curate()
