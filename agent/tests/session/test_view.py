@@ -83,7 +83,7 @@ def test_from_run_planned_fills_plan_summary_and_describe(tmp_path):
     view = view_from_run(run, incoming_root=incoming_root)
 
     assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": False,
-                                 "selection_brief": ""}
+                                 "selection_brief": "", "provider": "local"}
     # 没有题材要求时主语是光秃秃的"照片"，跟确认文案同一条规则。
     assert view.describe() == (
         "目前收到 1 张照片，方案是：帮你选择 5 张照片，标签叫\"精选\""
@@ -98,7 +98,7 @@ def test_from_run_planned_describe_mentions_ai_when_enabled(tmp_path):
     view = view_from_run(run, incoming_root=incoming_root)
 
     assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": True,
-                                 "selection_brief": ""}
+                                 "selection_brief": "", "provider": "local"}
     assert "使用AI帮你选择" in view.describe()
 
 

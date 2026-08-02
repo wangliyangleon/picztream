@@ -44,12 +44,14 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    StageCost,
     StageProgress,
     StageStarted,
 )
 from session.view import (
     STAGE_PROGRESS_MESSAGES,
     SessionView,
+    describe_ai_cost,
     describe_progress_done,
     view_from_run,
 )
@@ -77,6 +79,12 @@ _INFRA_ERROR_HINTS = ("network_error", "http_error", "missing_api_key", "unknown
 _BTN_APPROVE = "approve"
 _BTN_RESTYLE = "restyle"
 _BTN_CONFIRM_CANCEL = "confirm_cancel"
+# 票 10：AI 开销告知那条消息上的"停下"。它**不是**上面说的那种确认按钮
+# （不跟"好的✅"并排、不挂在闸门上），点它只是打开既有的二次确认，误点
+# 仍然被那一道拦住 —— 危险的是"一下就炸掉整批"，不是"有地方能发起取
+# 消"。没有这个入口的话，这条消息就只是通知，G5 在 Telegram 上仍然不
+# 可达。
+_BTN_STOP = "stop"
 _BTN_KEEP = "keep"
 _BTN_SKIP_CURATE = "skip_curate"
 _BTN_AI_DEDUP = "ai_dedup"
@@ -87,6 +95,7 @@ _DELIVER_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _STYLE_APPLY_ALL_BUTTONS = [("满意 ✅", _BTN_APPROVE), ("重选 🔄", _BTN_RESTYLE)]
 _CANCEL_CONFIRM_BUTTONS = [("确认取消 ⚠️", _BTN_CONFIRM_CANCEL), ("不取消", _BTN_KEEP)]
 _DEDUP_FOLLOWUP_BUTTONS = [("不筛选了", _BTN_SKIP_CURATE)]
+_COST_BUTTONS = [("停下 ⛔", _BTN_STOP)]
 
 # Telegram /命令快路径（AG-16.2）：确定性、零 LLM、零延迟，随时可用，与按钮
 # 互补（按钮只挂在闸门消息上）。这一份是单一来源——/help 文案和 bot 菜单注
@@ -165,6 +174,9 @@ class SessionConsumer:
         # 在 worker 手上，consumer 写不了 run.last_progress_notified_at。
         self._stage_progress: Optional[tuple] = None
         self._stage_progress_notified_at: Optional[float] = None
+        # 这一批里已经报过一次 AI 开销（票 10）。真机上 Dedup 先报、Curate
+        # 再报，第二条要读成接续而不是重复。随会话重置。
+        self._cost_announced: bool = False
         # 去重追问打字给了数量后，等用户确认才真正执行——纯内存态、不落
         # 盘，跟 _cancel_confirm_pending 同一个先例（真机反馈，见目标三）。
         self._curate_narrow_pending: Optional[dict] = None
@@ -362,6 +374,16 @@ class SessionConsumer:
             self._resolve_cancel_confirmation_button(action, run_id)
             return
 
+        if action == _BTN_STOP:
+            # 跟二次确认按钮一样排在 drive_active 校验之前：这条按钮只在
+            # 跑批期间出现，而那时 run 归 worker，常规校验会把它拦成"过
+            # 期"。校验 run_id 防误触旧消息里的按钮。
+            if (self.view.run_id or "") != run_id:
+                self._send(_MSG_EXPIRED)
+                return
+            self._prompt_cancel_confirmation()
+            return
+
         if self.view.drive_active or self.run is None or self.view.run_id != run_id:
             self._send(_MSG_EXPIRED)
             return
@@ -475,6 +497,7 @@ class SessionConsumer:
         self._collecting_progress = None  # 进度消息槽随会话重置（AG-16.3）
         self._stage_progress = None       # 同上，运行期那条（T-8）
         self._stage_progress_notified_at = None
+        self._cost_announced = False      # 同上，开销告知的接续状态（票 10）
         self._curate_narrow_pending = None
         self._pending_selection_approval = False
 
@@ -608,6 +631,8 @@ class SessionConsumer:
             self._on_stage_started(event)
         elif isinstance(event, StageProgress):
             self._on_stage_progress(event)
+        elif isinstance(event, StageCost):
+            self._on_stage_cost(event)
         elif isinstance(event, GateReached):
             self._on_gate_reached(event)
         elif isinstance(event, RunFinished):
@@ -979,6 +1004,25 @@ class SessionConsumer:
             return
         self._send_progress(self.view.describe(), "_stage_progress")
         self._stage_progress_notified_at = now
+
+    def _on_stage_cost(self, event: StageCost) -> None:
+        """票 10 决策一：AI 开跑前的开销告知。
+
+        独立一条带按钮的新消息，**不进** _stage_progress 那个原地编辑的
+        槽 —— 占了的话接下来第一条进度就会把这条账单改写掉，用户翻回去看
+        不到自己被告知过什么。也不节流：它一趟最多两条（Dedup 一条、
+        Curate 一条），而且晚发就失去了全部意义。
+
+        零开销不发（describe_ai_cost 返回 None）：core 在没有 AI 调用要发
+        时本来就不报，真报了也不该翻译成一句"接下来要跑 0 次"。
+        """
+        provider = (self.view.plan_summary or {}).get("provider", "local")
+        text = describe_ai_cost(event.comparisons, event.evaluations, provider,
+                                 first=not self._cost_announced)
+        if text is None:
+            return
+        self._cost_announced = True
+        self._send_buttons(text, _COST_BUTTONS)
 
     def _on_gate_reached(self, event: GateReached) -> None:
         self._finalize_stage_progress()  # 停在闸门 = 闸门前那个 stage 跑完了
