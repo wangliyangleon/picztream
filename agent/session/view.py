@@ -88,8 +88,8 @@ class SessionView:
             # 后面几十条进度顶上去了），两处说法不一致会让用户以为方案变
             # 过。两处仍是各自的字符串 - 前缀不同（"方案是："vs"理解你想："）、
             # 结尾不同（这里不带按钮提示），能共享的只有中间这半句。
-            picker = ("使用AI帮你选择" if self.plan_summary.get("ai_enabled")
-                      else "按拍摄时间帮你选择")
+            # 关 AI 时不说"按拍摄时间"，理由同 consumer._send_plan_confirmation。
+            picker = "使用AI帮你选择" if self.plan_summary.get("ai_enabled") else "帮你选择"
             brief = self.plan_summary.get("selection_brief", "")
             subject = f"{brief}的照片" if brief else "照片"
             return (f"目前收到 {self.photo_count()} 张照片，方案是："

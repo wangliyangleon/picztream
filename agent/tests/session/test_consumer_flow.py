@@ -94,7 +94,7 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     # 选片，选片确认挪到 Style 闸门阶段一）。
     assert deliver.gate == "off"
     # 没有题材要求时不凭空造一句，主语就是光秃秃的"照片"。
-    assert "理解你想：按拍摄时间帮你选择 2 张照片，选中的加个标签\"精选\"，可以吗？" in \
+    assert "理解你想：帮你选择 2 张照片，选中的加个标签\"精选\"，可以吗？" in \
         env.transport.texts()[-1]
 
 

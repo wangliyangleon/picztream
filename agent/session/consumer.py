@@ -1356,7 +1356,10 @@ class SessionConsumer:
             # 则截断，两者都可能把用户正要核对的那几个字弄没。简述本身由
             # 模型写成"发朋友圈用，有人有景，人物表情活泼"这种短句列表，
             # 直接当"照片"的定语读得通。
-            picker = "使用AI帮你选择" if ai_enabled else "按拍摄时间帮你选择"
+            # 关 AI 时不说"按拍摄时间" - 那是当前的实现选择，不是对用户的
+            # 承诺，将来会变（真机反馈 2026-08-02）。用户需要知道的是"这次
+            # 不用 AI"，而下面那句"这一步也可以用 AI 帮你挑更准"已经说了。
+            picker = "使用AI帮你选择" if ai_enabled else "帮你选择"
             brief = curate.params.get("selection_brief", "")
             subject = f"{brief}的照片" if brief else "照片"
             text = (f"理解你想：{picker} {curate.params['count']} 张{subject}，"

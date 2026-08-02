@@ -86,7 +86,7 @@ def test_from_run_planned_fills_plan_summary_and_describe(tmp_path):
                                  "selection_brief": ""}
     # 没有题材要求时主语是光秃秃的"照片"，跟确认文案同一条规则。
     assert view.describe() == (
-        "目前收到 1 张照片，方案是：按拍摄时间帮你选择 5 张照片，标签叫\"精选\""
+        "目前收到 1 张照片，方案是：帮你选择 5 张照片，标签叫\"精选\""
     )
 
 
