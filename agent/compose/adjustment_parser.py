@@ -66,7 +66,10 @@ _GATE_SCHEMA_INSTRUCTION = (
     "change anything or proceed; "
     '{"action": "set_selection_brief", "selection_brief": <string>} if the user is '
     "asking for a different KIND of photo without changing the count, the tag, or "
-    'naming a position (for example "要活泼一点的", "换成有人的那几张", "别都是风景"). '
+    'naming a position (for example "要活泼一点的", "换成有人的那几张", "别都是风景"); '
+    "use this same action with an EMPTY selection_brief when the user asks to drop any "
+    'subject requirement (for example "不用管题材了，随便选", "题材无所谓", "什么样的都'
+    '行") -- that is a request to re-pick without a subject constraint, NOT an approval. '
     "Additionally, ANY of the set_count / set_apply_tag / swap_out shapes above may "
     'carry an extra "selection_brief" field when the same sentence ALSO states what '
     'kind of photos the user wants (for example "把第3张换掉，要活泼点的" is swap_out '
@@ -74,9 +77,7 @@ _GATE_SCHEMA_INSTRUCTION = (
     "selection_brief). Write selection_brief as a short Chinese phrase describing the "
     "subject matter / mood / ordering they asked for, and nothing else -- leave out the "
     "count, the tag, and the position. Omit the field entirely (or use null) when the "
-    "message says nothing about what kind of photos they want; use an empty string ONLY "
-    'when the user explicitly drops any subject requirement (for example "不用管题材了，'
-    '随便选").'
+    "message says nothing about what kind of photos they want."
 )
 
 _ADJUST_ACTIONS = ("set_count", "set_apply_tag", "swap_out")
@@ -192,12 +193,12 @@ def _decision_to_delta(action: str, decision: dict, run: RunState) -> PlanDelta:
 
     if action == "set_apply_tag":
         return PlanDelta(stage_name="Curate",
-                          params={"apply_tag": decision["apply_tag"], **brief})
+                         params={"apply_tag": decision["apply_tag"], **brief})
 
     return _resolve_swap_out(decision["index"], run, brief)
 
 
-def _resolve_swap_out(index: int, run: RunState, brief: Optional[dict] = None) -> PlanDelta:
+def _resolve_swap_out(index: int, run: RunState, brief: dict) -> PlanDelta:
     curate_output = run.outputs.get("Curate")
     selected: List[str] = curate_output.data.get("selected", []) if curate_output else []
     if not isinstance(index, int) or index < 1 or index > len(selected):
@@ -213,7 +214,7 @@ def _resolve_swap_out(index: int, run: RunState, brief: Optional[dict] = None) -
     if target_path not in merged_exclude:
         merged_exclude.append(target_path)
 
-    return PlanDelta(stage_name="Curate", params={"exclude": merged_exclude, **(brief or {})})
+    return PlanDelta(stage_name="Curate", params={"exclude": merged_exclude, **brief})
 
 
 _CONFIRMATION_SCHEMA_INSTRUCTION = (

@@ -55,6 +55,7 @@ from session.view import (
     describe_ai_cost,
     describe_cancel_partial,
     describe_progress_done,
+    describe_selection_headline,
     view_from_run,
 )
 
@@ -1149,16 +1150,15 @@ class SessionConsumer:
         # 票 11：把此刻生效的题材要求原样回显。决策二定的是"新简述整体替换
         # 旧简述"，而替换的安全网就是这一句 - 用户每轮都看得见自己那句话
         # 被认成了什么、以及上一轮的要求已经不在了，想同时要两个条件就重说
-        # 一句合并的。没有这句，替换会变成静默丢失。
+        # 一句合并的。没有这句，替换会变成静默丢失。措辞与状态查询那条共用
+        # describe_selection_headline（理由写在那儿）。
         #
-        # 措辞归给用户（"按你说的"）而不是系统："选好了 2 张（题材要求：…）"
-        # 读起来像系统自己的参数，用户不会意识到那是可以再改的。原样拼进
-        # 去、不改写，同 _send_plan_confirmation 的理由（改写要么多花一次
-        # LLM 调用，要么用规则截断，都可能把用户正要核对的那几个字弄没）。
+        # 读的是**当前** plan：_on_gate_reached 每次都从盘上重 load run 再
+        # view_from_run 一遍，所以闸门调整之后这里和 view.describe() 拿到的
+        # 是同一份新简述，不会一处新一处旧。
         curate = next((s for s in self.run.plan.stages if s.name == "Curate"), None)
         brief = curate.params.get("selection_brief") if curate is not None else None
-        head = f"按你说的「{brief}」选好了" if brief else "选好了"
-        summary = f"{head} {payload.get('selected_count', 0)} 张"
+        summary = f"{describe_selection_headline(brief)} {payload.get('selected_count', 0)} 张"
         if payload.get("preview_failed_count"):
             summary += f"(其中 {payload['preview_failed_count']} 张预览发送失败，风格/交付时仍会正常导出)"
         # T-8：整簇 AI 比较失败会退化成"按拍摄时间选最新"。不说出来的话，

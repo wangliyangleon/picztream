@@ -35,6 +35,9 @@ AWAITING_GATE`、`gate_state.stage_name == "Curate"`、Curate 的调用次数仍
 
 **Blocked by:** 无
 
+**Blocks:** 票 11 的收口 - 它的第一条验收"能改到 `selection_brief` 并重选"在
+deferred 流程上正是被这条挡住的。
+
 **Status:** ready-for-agent
 
 ## 开工前该知道的事
