@@ -18,7 +18,7 @@
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | ready-for-agent |
 | [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | **done**（Telegram 端到端待真机复核）|
 | [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | **done** (`1f34fb0`..`95cfb37`) |
-| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | needs-decision |
+| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | ready-for-agent |
 
 ## 依赖图
 
@@ -38,7 +38,7 @@
 - **07** 的阻塞边（06）已经解开，可以开工。它与刚收口的 08 都改
   `core/ai/selection.{h,cpp}`：08 只往提示词里加输入，07 要动返回结构与本地
   的约束解码 schema，两张并行必冲突，所以 08 先走完。
-- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。它**不是 ready**：闸门问在哪一层还没定，见票内。06 落地时已经把 `ai_selection_fallback` 序列化进 `pzt curate --json`，`ai_declined`/`cancelled` 仍等这一票（两个钩子在 headless 上还是 nullptr，先加进去是死字段）。
+- **10** 是票 05 落地记录里点名、当时无人认领的缺口，现在成票。2026-08-02 拍板完成（闸门在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，见票内），状态转 ready。它与 07 改的地方不重叠（07 在 `core/ai/selection.*`，10 在 `core/curate` + cli + agent 进度链路），可并行。`ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON，不再是等这一票的事。
 
 ## 一条必须遵守的顺序约束
 
