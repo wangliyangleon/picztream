@@ -32,12 +32,30 @@ std::string build_selection_prompt(const std::vector<SelectionCandidate>& candid
             "one carries the most weight, and the sequence should read well as a set. Use "
             "only the numbers listed above, and do not repeat a number.";
 
+  // 票 07（PRD 决策十五）：文案搭在同一次调用上。两句话是照着风险二写的
+  // - 模型手里只有描述、没有照片，不点破的话它会顺着 quality 那一栏的调子
+  // 继续写摄影评语("光影层次丰富、构图考究")，那是给摄影师看的话，不是能
+  // 发出去的话。所以明说：材料取自 content、成品是用户直接复制粘贴的那段
+  // 字，不许点评拍摄手法。
+  //
+  // 语言跟着描述走，不跟界面语言走：core 不认识 cli 的界面语言(i18n 只在
+  // cli 层)，而描述是评估那一步用界面无关的固定语言写的，让文案随它就自动
+  // 落在同一种语言上，比给 core 接一个语言参数少一处会走偏的地方。
+  prompt +=
+      "\n\nAlso write a 'caption' the user can post as-is together with these photos. Write "
+      "about what is happening in the photos -- draw on the 'content' notes, not the "
+      "'quality' ones. It is a caption for the user's own post, so never critique or "
+      "mention the photography itself. Keep it to one or two sentences, and write it in the "
+      "same language as the notes above.";
+
   // 票 08 之前恒为空：为空时整段省略，而不是留一句空的"用户要求：",那会让
   // 模型去揣摩一个不存在的要求。
   if (!selection_brief.empty()) {
+    // 票 07：同一段简述同时驱动两件事。用途("发朋友圈"/"给家人看")已经在里
+    // 面了，文案的语气与平台适配因此不需要新的输入(PRD 决策十五)。
     prompt +=
         "\n\nThe user asked for this, in their own words -- let it drive both which photos "
-        "you pick and the order you put them in: " +
+        "you pick and the order you put them in, and let it set the tone of the caption: " +
         selection_brief;
   }
   return prompt;
@@ -46,23 +64,39 @@ std::string build_selection_prompt(const std::vector<SelectionCandidate>& candid
 std::string build_selection_schema_instruction(int count) {
   return "Return a JSON object with this exact shape: {\"picks\": [<the " +
          std::to_string(count) +
-         " chosen photo numbers, in presentation order>]}. Every element must be one of the "
-         "photo numbers listed above.";
+         " chosen photo numbers, in presentation order>], \"caption\": \"<the caption>\"}. "
+         "Every element of picks must be one of the photo numbers listed above.";
 }
 
 // 约束解码用的 JSON Schema-形状在三处被定义(提示词、schema instruction、
 // 这里)，必须一起改。漏掉这一处，本地模型会不稳定地吐回字符串序号或者别的
 // 键名，而云端 provider 反而看不出问题，因为它们只吃前两处的自然语言。同
 // evaluation.cpp 的说明。
+//
+// 票 07：caption 进 properties 但**不进 required**，这就是决策十五说的"在返
+// 回 schema 里是可选字段"落到 schema 层的样子。进 required 会让本地模型在写
+// 不出文案时被约束解码逼着编一段，或者让整个响应作废、连 picks 一起丢-两
+// 者都恰好是失败隔离要防的事。
 nlohmann::json build_selection_json_schema() {
   static const char* kSchemaJson = R"json({
     "type": "object",
     "properties": {
-      "picks": {"type": "array", "items": {"type": "integer"}}
+      "picks": {"type": "array", "items": {"type": "integer"}},
+      "caption": {"type": "string"}
     },
     "required": ["picks"]
   })json";
   return nlohmann::json::parse(kSchemaJson);
+}
+
+// 文案两端的空白裁掉。约束解码卡得住类型，卡不住"是不是一段能发出去的话"：
+// 只有空白的文案跟没给是同一回事，不该让 agent 把一条空消息发给用户。
+std::string trim_caption(const std::string& raw) {
+  const char* kSpace = " \t\r\n";
+  auto begin = raw.find_first_not_of(kSpace);
+  if (begin == std::string::npos) return "";
+  auto end = raw.find_last_not_of(kSpace);
+  return raw.substr(begin, end - begin + 1);
 }
 
 SelectionError map_request_error(RequestError error) {
@@ -108,6 +142,13 @@ Result<SelectionResult, SelectionError> request_selection_impl(
   SelectionResult result;
   for (const auto& entry : j["picks"]) {
     if (entry.is_number_integer()) result.picks.push_back(entry.get<int>());
+  }
+
+  // 票 07（PRD 决策十五）：文案缺失或不合法**只丢文案**，不报错、不重试。
+  // 这里刻意没有 else 分支去记一个"文案失败"的信号-对每一个下游而言"没有
+  // 文案"只有一种处置(不展示)，具体是模型没给还是给歪了不改变这个决定。
+  if (j.contains("caption") && j["caption"].is_string()) {
+    result.caption = trim_caption(j["caption"].get<std::string>());
   }
   return Result<SelectionResult, SelectionError>::Ok(std::move(result));
 }

@@ -227,3 +227,119 @@ TEST_CASE("request_selection (public entry point) reports MissingApiKey without 
   REQUIRE(!result.ok());
   CHECK(result.error() == SelectionError::MissingApiKey);
 }
+
+// ---------------------------------------------------------------------------
+// 票 07：文案与选择同一次调用产出，失败隔离（PRD 决策十五）
+//
+// 这一组钉的是"附赠品坏了不能把关键结果拖下水"：下面每一条不合法的文案，
+// picks 都必须原样活着。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("request_selection_impl returns the caption alongside the picks") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  std::string body;
+  auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({3, 1})},
+                                                   {"caption", "海边的傍晚，和最重要的人一起走过"}});
+
+  auto result = detail::request_selection_impl(three_candidates(), 2, Provider::Claude, post);
+  REQUIRE(result.ok());
+  CHECK(result.value().picks == std::vector<int>{3, 1});
+  CHECK(result.value().caption == "海边的傍晚，和最重要的人一起走过");
+}
+
+TEST_CASE("request_selection_impl keeps the picks when the caption is missing or unusable") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  const std::vector<int> expected{3, 1};
+
+  SUBCASE("caption key absent") {
+    std::string body;
+    auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({3, 1})}});
+    auto result = detail::request_selection_impl(three_candidates(), 2, Provider::Claude, post);
+    REQUIRE(result.ok());
+    CHECK(result.value().picks == expected);
+    CHECK(result.value().caption.empty());
+  }
+
+  SUBCASE("caption is not a string") {
+    std::string body;
+    auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({3, 1})},
+                                                     {"caption", nlohmann::json::array({"a", "b"})}});
+    auto result = detail::request_selection_impl(three_candidates(), 2, Provider::Claude, post);
+    REQUIRE(result.ok());
+    CHECK(result.value().picks == expected);
+    CHECK(result.value().caption.empty());
+  }
+
+  SUBCASE("caption is null") {
+    std::string body;
+    auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({3, 1})},
+                                                     {"caption", nullptr}});
+    auto result = detail::request_selection_impl(three_candidates(), 2, Provider::Claude, post);
+    REQUIRE(result.ok());
+    CHECK(result.value().picks == expected);
+    CHECK(result.value().caption.empty());
+  }
+
+  SUBCASE("caption is whitespace only") {
+    // 约束解码卡得住类型，卡不住"是不是一段能发出去的话"。空白串跟没给是同
+    // 一回事，不该让 agent 把一条空消息发给用户。
+    std::string body;
+    auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({3, 1})},
+                                                     {"caption", "   \n\t "}});
+    auto result = detail::request_selection_impl(three_candidates(), 2, Provider::Claude, post);
+    REQUIRE(result.ok());
+    CHECK(result.value().picks == expected);
+    CHECK(result.value().caption.empty());
+  }
+}
+
+TEST_CASE("request_selection_impl trims the caption instead of shipping the model's padding") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  std::string body;
+  auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({1})},
+                                                   {"caption", "  日落时分的海边散步\n"}});
+
+  auto result = detail::request_selection_impl(three_candidates(), 1, Provider::Claude, post);
+  REQUIRE(result.ok());
+  CHECK(result.value().caption == "日落时分的海边散步");
+}
+
+TEST_CASE("request_selection_impl asks for the caption in the same call as the picks") {
+  EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
+  std::string body;
+  auto post = capturing_post(body, nlohmann::json{{"picks", nlohmann::json::array({1})}});
+
+  auto result = detail::request_selection_impl(three_candidates(), 1, Provider::Claude, post,
+                                                /*selection_brief=*/"发朋友圈，多要几张有人的");
+  REQUIRE(result.ok());
+
+  // PRD 决策十五：同一次调用，不是第二次请求。提示词里既要有 caption 这个
+  // 键名（schema instruction 与提示词形状必须对得上），也要说清它是给人直接
+  // 发出去的话，而不是又一段摄影评语（风险二）。
+  std::string prompt = claude_instruction_text(body);
+  CHECK(prompt.find("caption") != std::string::npos);
+  // 简述带着用途("发朋友圈")，语气与平台适配由它驱动，不需要新的输入。
+  CHECK(prompt.find("发朋友圈，多要几张有人的") != std::string::npos);
+}
+
+TEST_CASE("request_selection_impl leaves the caption optional in the Local constrained-decoding schema") {
+  std::string captured_body;
+  auto fake_post = [&](const std::string&, const std::vector<std::pair<std::string, std::string>>&,
+                        const std::string& body) -> Result<HttpResponse, RequestError> {
+    captured_body = body;
+    return Result<HttpResponse, RequestError>::Ok(
+        HttpResponse{200, R"({"message":{"role":"assistant","content":"{\"picks\":[2,1]}"}})"});
+  };
+
+  auto result = detail::request_selection_impl(three_candidates(), 2, Provider::Local, fake_post);
+  REQUIRE(result.ok());
+
+  auto parsed_body = nlohmann::json::parse(captured_body);
+  CHECK(parsed_body["format"]["properties"]["caption"]["type"] == "string");
+  // 决策十五说的"返回 schema 里是可选字段"就落在这里：required 只有 picks，
+  // 本地模型漏掉文案时产出的仍是合法输出，不会被约束解码逼着编一段出来、也
+  // 不会整个响应作废。
+  auto required = parsed_body["format"]["required"];
+  REQUIRE(required.is_array());
+  CHECK(required == nlohmann::json::array({"picks"}));
+}
