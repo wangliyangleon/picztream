@@ -44,6 +44,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    RunRewound,
     StageCost,
     StageProgress,
     StageStarted,
@@ -352,6 +353,27 @@ class SessionConsumer:
         done, total, kind = self.view.stage_progress
         return describe_cancel_partial(kind, done, total)
 
+    def _do_stop(self) -> None:
+        """开销消息上的"停下"：叫停这一次 AI 尝试，**不作废整批**（真机反馈
+        2026-08-02）。
+
+        跟 _do_cancel 几乎处处相反，所以是独立一条路而不是它的一个分支：
+        不弹二次确认（这已经不是危险操作，误点的代价只是回到上一个问题），
+        不落 cancelling 标记（那是给 bootstrap 看的"别复活这个 run"），不
+        _reset_session（同一批要接着走，generation 一动，紧接着回来的
+        RunRewound 就会被当过期事件丢掉）。
+
+        先写 on_cancel 再置位事件：worker 只有观察到事件之后才会去读那个
+        字段，这个顺序保证它读到的是 rewind 而不是默认的 cancel。
+        """
+        if not self.view.drive_active or self.active_drive_job is None:
+            # 跑完了才点到（分钟级任务里很常见：最后一次比较刚返回）。
+            self._send("这一步已经跑完了，没什么可停的")
+            return
+        self.active_drive_job.on_cancel = "rewind"
+        self.active_drive_job.cancel_event.set()
+        self._send("正在停下来...")
+
     def _do_cancel(self) -> None:
         """真正执行取消（已过二次确认）。覆盖 drive 中 / 持有 run / 崩后
         无主 RUNNING 三种情形。"""
@@ -401,7 +423,7 @@ class SessionConsumer:
             if (self.view.run_id or "") != run_id:
                 self._send(_MSG_EXPIRED)
                 return
-            self._prompt_cancel_confirmation()
+            self._do_stop()
             return
 
         if self.view.drive_active or self.run is None or self.view.run_id != run_id:
@@ -657,6 +679,8 @@ class SessionConsumer:
             self._on_gate_reached(event)
         elif isinstance(event, RunFinished):
             self._on_run_finished(event)
+        elif isinstance(event, RunRewound):
+            self._on_run_rewound(event)
         elif isinstance(event, JobCrashed):
             self._on_job_crashed(event)
 
@@ -1145,6 +1169,54 @@ class SessionConsumer:
         self._cleanup_run_files(event.run_id)  # 终态即删大文件（AG-14）
         self.run = None
         self.view = SessionView(incoming_root=self.incoming_root)
+
+    def _on_run_rewound(self, event: RunRewound) -> None:
+        """被"停下"叫停的那一步已经退回未运行，run 还活着（真机反馈
+        2026-08-02）。这里要做的是回到**当初问过要不要用 AI 的那一步**，
+        重新问一次。
+
+        为什么不是回到最初的方案确认：已经跑完的上游（比如去重）是有效
+        成果，退掉等于让用户白等一遍。回哪一步因此由被停的是谁决定。
+        """
+        self.active_drive_job = None
+        run = self.store.load(event.run_id)  # 所有权交回：从盘上取
+        self.run = run
+        self._touch_activity()
+        # 进度那条消息**不收尾**：停下不是跑完，把半截进度改写成"两两比较
+        # 跑完了，共 18 次"是撒谎（同取消路径的规矩）。只腾空槽位，下一段
+        # 进度会是一条新消息。
+        self._stage_progress = None
+        self._stage_progress_notified_at = None
+
+        detail = None
+        if event.partial is not None:
+            _, done, total, kind = event.partial
+            detail = describe_cancel_partial(kind, done, total)
+        self._send("好，停下了" + (f"（{detail}）" if detail else ""))
+
+        # AI 开关关掉再问：刚被停下的就是它，默认再开一次等于没听见 —— 而
+        # 且方案确认那条消息在 ai_enabled 为真时只给一个"好的"，用户唯一
+        # 能点的按钮会是"再跑一次 AI"。全局开关，两个 stage 一起关
+        # （SPEC §3.3）。
+        for name in ("Dedup", "Curate"):
+            spec = next((s for s in run.plan.stages if s.name == name), None)
+            if spec is not None:
+                spec.params["ai_enabled"] = False
+
+        curate = next((s for s in run.plan.stages if s.name == "Curate"), None)
+        followup = (event.stage == "Curate" and curate is not None and curate.gate != "off")
+        if followup:
+            # count 待定那条 Plan：要不要用 AI 选片是在去重后的追问闸门上
+            # 问的，不在最初的方案确认上。
+            self.driver.rearm_gate(run, "Curate")
+            self.view = view_from_run(run, self.incoming_root)
+            self._render_dedup_followup_gate({"remaining": self._dedup_remaining(run),
+                                               "ai_enabled": False})
+            return
+        run.status = RunStatus.PLANNED
+        self.store.save(run)
+        self.view = view_from_run(run, self.incoming_root)
+        self._send_plan_confirmation(run)
 
     def _on_job_crashed(self, event: JobCrashed) -> None:
         # 静默崩溃是最糟的失败模式（用户和终端都看不到），必须回一句话过去

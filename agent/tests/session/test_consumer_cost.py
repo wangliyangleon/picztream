@@ -59,6 +59,15 @@ def test_cloud_provider_reports_counts_but_invents_no_duration():
     assert "分钟" not in text
 
 
+def test_both_messages_say_where_stopping_takes_you_back_to(tmp_path):
+    """真机反馈：不写清楚的话，这个按钮读起来像个会炸掉整批的红色按钮，
+    而实际代价只是回到刚才那个问题。两条消息都要写。"""
+    first = describe_ai_cost(comparisons=18, evaluations=0, provider="local", first=True)
+    second = describe_ai_cost(comparisons=0, evaluations=6, provider="local", first=False)
+    for text in (first, second):
+        assert "要不要用 AI" in text
+
+
 def test_second_message_reads_as_a_continuation():
     """真机上 Dedup 先报一次、Curate 再报一次。第二条照抄第一条的措辞会
     读成"怎么又要跑一遍"，而它其实是同一笔账的后半段（决策五）。"""
@@ -97,21 +106,19 @@ def test_cost_message_carries_a_cancel_entry_point(tmp_path):
 
 
 def test_cancel_button_on_the_cost_message_really_stops_the_run(tmp_path):
-    # Dedup/Curate 都在 worker.KILLABLE_STAGES 里，取消通路是现成的。
+    """Dedup/Curate 都在 worker.KILLABLE_STAGES 里，取消通路是现成的。
+
+    真机反馈 2026-08-02 之后这一下**不再作废整批**，只叫停这一次 AI 尝
+    试；停下之后回到哪一步、留下什么，全部在 test_consumer_stop.py。"""
     env, job = _running_env(tmp_path)
     env.put_event(StageCost(env.consumer.generation, job.run_id, "Dedup", 18, 0))
     env.consumer.step()
 
-    # 点"停下"先走既有的二次确认（取消会炸掉整批，误点代价太大），确认了
-    # 才真的置位 cancel_event。
     env.push_callback(f"stop:{job.run_id}")
-    env.consumer.step()
-    assert env.transport.button_tokens() == ["confirm_cancel", "keep"]
-
-    env.push_callback(f"confirm_cancel:{job.run_id}")
     env.consumer.step()
 
     assert job.cancel_event.is_set()
+    assert job.on_cancel == "rewind"
 
 
 def test_two_stages_report_two_messages_and_the_second_continues(tmp_path):

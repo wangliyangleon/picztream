@@ -110,7 +110,12 @@ def describe_ai_cost(comparisons: int, evaluations: int, provider: str,
         minutes = max(1, round(calls * _LOCAL_SECONDS_PER_AI_CALL / 60))
         head += f"，大概 {minutes} 分钟"
 
-    tail = "，想停随时点下面的按钮" if first else "，同样可以随时停"
+    # 写明"停下之后回到哪儿"（真机反馈 2026-08-02）。用户点这个按钮的动机
+    # 是"别用 AI 跑这一步"，不是"这批不要了" - 不写清楚的话，它读起来像个
+    # 会炸掉整批的红色按钮，而实际上代价只是回到刚才那个问题。两条消息都
+    # 要写：第二条（选片）跟第一条（去重）在这件事上没有区别。
+    tail = ("。想停就点下面的按钮，会回到\u201c要不要用 AI\u201d那一步，已经跑完的不白费"
+            if first else "。想停一样点下面的按钮，回到\u201c要不要用 AI\u201d那一步")
     return head + tail
 
 
