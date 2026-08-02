@@ -18,7 +18,7 @@
 | [07](07-caption-end-to-end.md) | 文案端到端 | 06 | **done**（含真机验证）|
 | [08](08-selection-brief-plumbing.md) | 选片简述贯通 | 02, 06 | **done** (`edfcf2e`..`a841aad`) |
 | [09](09-agent-progress-rendering.md) | agent 侧进度渲染 | 05 | **done** (`1f34fb0`..`95cfb37`) |
-| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | **done**（Telegram 端到端待真机验收）|
+| [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | **done** |
 | [11](11-adjust-selection-brief-at-gate.md) | 选片确认阶段能改题材要求 | 08 | ready-for-agent |
 
 ## 依赖图
@@ -41,10 +41,9 @@
   录）。PRD 风险二未成真：文案落在画面内容上，没写成摄影评语。
 - **11** 是票 08 落地记录里点名、当时不在票面上的缺口，2026-08-02 真机跑过之
   后成票。票 08 刚把简述做成用户唯一能表达题材偏好的通道，而这个通道在"看到
-  结果之后"这个最该用它的时刻是断的。开工前要拍一件事：新简述来时已有的
-  `exclude` 保留还是清空（见票内）。它只碰 `agent/compose` + `agent/session`，
-  与已收口的 07（`core/ai/selection.*`）不重叠。
-- **10** 已于 2026-08-02 收口（闸门在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，PRD 的 G5/决策十八已按**入口**改述）。`ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON。剩下的只有 Telegram 端到端的真机验收。
+  结果之后"这个最该用它的时刻是断的。开工前该拍的板已于 2026-08-02 拍完
+  （`exclude` 保留、新简述替换旧简述，见票内"拍板"一节），可直接开工。
+- **10** 已于 2026-08-02 完全收口（闸门在 headless 上从"阻塞式确认"改成"告知 + 随时可撤"，PRD 的 G5/决策十八已按**入口**改述）。`ai_declined`/`cancelled` 按拍板决策三**永久不进** headless JSON。Telegram 端到端真机验收已通过。
 
 ## 一条必须遵守的顺序约束
 
