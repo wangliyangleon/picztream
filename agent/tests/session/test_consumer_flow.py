@@ -93,8 +93,35 @@ def test_intent_text_chains_classify_fallback_then_compose_to_planned(tmp_path):
     # Deliver 不挂闸门（真机反馈：滤镜确认完直接交付，不再二次预览全部
     # 选片，选片确认挪到 Style 闸门阶段一）。
     assert deliver.gate == "off"
-    assert "理解你想：去重复后留 2 张（按拍摄时间挑），选中的加个标签\"精选\"，可以吗？" in \
+    # 没有题材要求时不凭空造一句，主语就是光秃秃的"照片"。
+    assert "理解你想：按拍摄时间帮你选择 2 张照片，选中的加个标签\"精选\"，可以吗？" in \
         env.transport.texts()[-1]
+
+
+def test_plan_confirmation_shows_the_selection_brief_verbatim(tmp_path):
+    # 真机反馈 2026-08-02：用户说"选四张有人有景、人物表情活泼的照片发朋友
+    # 圈吧"，简述被正确抽出也确实传到了 core，但确认文案从头到尾不提它，
+    # 用户因此认为"brief 没被识别"。简述必须在这一步原样露出来，它是用户
+    # 唯一能核对自己那句要求被认成了什么的地方。
+    env = make_consumer(tmp_path)
+    env.push_photo("a.jpg")
+    env.consumer.step()
+    env.push_text("选四张有人有景、人物表情活泼的照片发朋友圈吧")
+    env.consumer.step()
+    env.drain_jobs()
+    env.put_event(ClassifyFailed(0, "collecting", retryable=True))
+    env.consumer.step()
+    env.drain_jobs()
+
+    plan = bare_compose_plan()
+    curate = next(s for s in plan.stages if s.name == "Curate")
+    curate.params.update({"count": 4, "apply_tag": "朋友圈", "ai_enabled": True,
+                          "selection_brief": "发朋友圈用，有人有景，人物表情活泼"})
+    env.put_event(ComposeDone(0, plan))
+    env.consumer.step()
+
+    assert ("理解你想：使用AI帮你选择 4 张发朋友圈用，有人有景，人物表情活泼的照片，"
+            "选中的加个标签\"朋友圈\"，可以吗？") in env.transport.texts()[-1]
 
 
 def test_second_text_waits_until_inflight_classify_resolves(tmp_path):
@@ -163,7 +190,7 @@ def test_planned_refine_confirmed_updates_params_and_reconfirms(tmp_path):
     assert curate.params["provider"] == "gemini"
     assert dedup.params["ai_enabled"] is True  # 全局开关，Dedup 也跟着改
     assert dedup.params["provider"] == "gemini"
-    assert "去重复后留 6 张（AI 帮你从相似照片里挑更好的）" in env.transport.texts()[-1]
+    assert "使用AI帮你选择 6 张照片" in env.transport.texts()[-1]
     assert env.drain_jobs() == []
 
 
@@ -1113,7 +1140,7 @@ def test_click_ai_curate_button_enables_ai_and_reconfirms(tmp_path):
     curate = next(s for s in saved.plan.stages if s.name == "Curate")
     assert curate.params["ai_enabled"] is True
     text = env.transport.texts()[-1]
-    assert "AI 帮你从相似照片里挑更好的" in text
+    assert "使用AI帮你选择" in text
     assert "也可以用 AI" not in text  # 已经开了，不再提醒
     assert env.transport.button_tokens() == ["approve"]
 
@@ -1155,7 +1182,7 @@ def test_planned_refine_deferred_curate_giving_count_clears_pending_gate(tmp_pat
     assert curate.params["count"] == 5
     assert curate.gate == "off"
     text = env.transport.texts()[-1]
-    assert "留 5 张" in text
+    assert "5 张照片" in text
     assert "None" not in text
 
 

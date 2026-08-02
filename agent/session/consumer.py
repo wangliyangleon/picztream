@@ -1327,8 +1327,19 @@ class SessionConsumer:
                     "\n满意就点\"好的\"，想改直接打字说")
             ai_button = ("AI去重 🤖", _BTN_AI_DEDUP)
         else:
-            ai_desc = ("AI 帮你从相似照片里挑更好的" if ai_enabled else "按拍摄时间挑")
-            text = (f"理解你想：去重复后留 {curate.params['count']} 张（{ai_desc}），"
+            # 票 08 的选片简述在这一步之前对用户完全不可见，他没有任何地
+            # 方能核对自己那句题材要求被认成了什么（真机反馈 2026-08-02：
+            # 抽取和传送其实都是好的，用户仍然判定"brief 没被识别"，因为
+            # 屏幕上从头到尾没出现过它）。
+            #
+            # 原样拼进句子，不改写 - 改写要么再花一次 LLM 调用，要么用规
+            # 则截断，两者都可能把用户正要核对的那几个字弄没。简述本身由
+            # 模型写成"发朋友圈用，有人有景，人物表情活泼"这种短句列表，
+            # 直接当"照片"的定语读得通。
+            picker = "使用AI帮你选择" if ai_enabled else "按拍摄时间帮你选择"
+            brief = curate.params.get("selection_brief", "")
+            subject = f"{brief}的照片" if brief else "照片"
+            text = (f"理解你想：{picker} {curate.params['count']} 张{subject}，"
                     f"选中的加个标签\"{curate.params['apply_tag']}\"，可以吗？{hint}"
                     "\n满意就点\"好的\"，想改直接打字说")
             ai_button = ("AI筛选 🤖", _BTN_AI_CURATE)
