@@ -99,6 +99,23 @@ void emit_json_progress(const char* phase, int done, int total) {
   std::fprintf(stderr, "%s\n", j.dump().c_str());
 }
 
+// 票 10：AI 真正开跑之前的**精确**开销，走跟进度同一条 stderr 带外通道，
+// 一条命令最多一行。
+//
+// 独立的 "cost" key 而不是塞进 progress：开销不是"完成了几分之几"，硬塞
+// 进 done/total 会让下游那句"分母是什么"再多一种含义。上面那段注释里
+// "将来 stderr 上再多一种带外消息时判据不用改"说的就是这一刀——读取方按
+// "有没有 cost 这个 key"分辨，progress 的解析一个字节不用动。
+//
+// 两个数分开而不是加成一个总数：它们的单位不同（次比较 / 张评估），也走
+// 不同的耗时量级，展示层要按单位分别措辞（同 T-8 真机验收推翻"把 phase
+// 压掉"的那条理由）。dedup 只报比较、evaluations 恒为 0。
+void emit_json_cost(int comparisons, int evaluations) {
+  nlohmann::json j = {
+      {"cost", {{"comparisons", comparisons}, {"evaluations", evaluations}}}};
+  std::fprintf(stderr, "%s\n", j.dump().c_str());
+}
+
 // resolve_project 的 headless 版本：找不到项目时走 JSON 错误，不是
 // i18n 人读文案。
 std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& project_name) {
@@ -219,14 +236,24 @@ int cmd_dedup(const std::vector<std::string>& args) {
   auto settings = pzt::core::load_settings();
   pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
   // 两个进度回调都无条件传：on_ai_progress 只在 ai_enabled 时才会被 core
-  // 调到(见 cluster_and_choose_impl)，不需要在这里判。on_ai_gate 仍然是
-  // nullptr——headless 不问闸门，要不要花这笔开销由 agent 侧的对话闸门
-  // 决定，不是 CLI 的事。
+  // 调到(见 cluster_and_choose_impl)，不需要在这里判。
+  //
+  // 票 10：闸门接上了，但**不阻塞**——报完精确开销无条件返回 true 继续
+  // 跑。headless 这一侧没有可以当场问的人（agent 那头的用户不在同一个时
+  // 间轴上），而"同步阻塞式闸门 + 单次调用 + 异步聊天界面"三个只能取
+  // 两个。取用户真能拒绝那一条：数字先送出去，取消走 agent 已有的 kill
+  // 通路（Dedup 在 worker.KILLABLE_STAGES 里，SIGTERM 掉这个子进程）。
+  // `pzt open` 控制台里那道阻塞式闸门（browse.cpp）不受影响，它有人可
+  // 问，也仍然承诺零写入。见票 10 决策一、五。
   auto result = pzt::core::find_and_tag_duplicates(
       *project_id, resolved.ids, settings.dedup_time_window_seconds,
       settings.dedup_hash_threshold,
       [](int done, int total) { emit_json_progress("cluster", done, total); },
-      ai_enabled, provider, local_config, /*on_ai_gate=*/nullptr,
+      ai_enabled, provider, local_config,
+      [](const pzt::core::dedup::AiCost& cost) {
+        emit_json_cost(cost.comparison_count, /*evaluations=*/0);
+        return true;
+      },
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);
       });
@@ -579,11 +606,18 @@ int cmd_curate(const std::vector<std::string>& args) {
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);
       },
-      // 闸门：headless 这一侧没有可以问的人，跟 `pzt dedup --ai` 的
-      // headless 路径同一个处置(那边也是 nullptr，闸门只在 `pzt open` 的
-      // 控制台里有)。curate 按 SPEC §3.2 不进 TUI，所以这个钩子当前没有
-      // 调用方 - 它先在 core 里就位，接给谁由后续的票决定。
-      /*on_ai_gate=*/nullptr,
+      // 闸门：跟 cmd_dedup 同一个处置（票 10 决策一、五）——报出精确开销
+      // 就继续跑，不等任何人。curate 按 SPEC §3.2 不进 TUI，这条是它唯一
+      // 的入口，所以"用户可以在 AI 开跑前拒绝"这件事在这里全靠 agent 收
+      // 到这行之后立刻告知 + 给可取消入口来兑现。
+      //
+      // 报的两个数一次给全：core 保证这个钩子一趟只被问一次（curate.cpp
+      // 的 gate_consulted 把 tournament 那一路和补问那一路合起来只问一
+      // 次），所以这里不需要防重。
+      [](int comparison_count, int evaluation_count) {
+        emit_json_cost(comparison_count, evaluation_count);
+        return true;
+      },
       // 票 05：评估阶段的第三个 phase。cluster/compare 数的是候选簇和比
       // 较次数，这个数的是照片张数-三者单位不同，展示层必须按 phase 分
       // 别措辞(T-8 真机验收推翻过"把 phase 压掉"的做法，见 SPEC §3.2)。
