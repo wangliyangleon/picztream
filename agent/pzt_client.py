@@ -65,15 +65,22 @@ def _real_popen_factory(argv: List[str]) -> subprocess.Popen:
 
 
 ProgressFn = Callable[[str, int, int], None]
+# (comparisons, evaluations)。票 10：AI 开跑前的精确开销，一条命令最多一
+# 次。跟进度分开是因为下游处置完全不同 —— 进度节流后原地编辑同一条消息，
+# 开销要立刻发一条新消息并带可取消入口。
+CostFn = Callable[[int, int], None]
 
 
-def _parse_progress(line: str) -> Optional[Tuple[str, int, int]]:
-    """把一行 stderr 解析成 (phase, done, total)，不是进度行就返回 None。
+def _parse_oob(line: str, key: str) -> Optional[dict]:
+    """把一行 stderr 解析成 `key` 那种带外消息的 payload，不是就返回 None。
 
     宽进严出，全程不抛：stderr 上混着 dedup 的 F-08 调参明细这种纯文本行
     （`core/dedup/dedup.cpp:272` 对每一对比较都打一行），解析不出来是正常
     情况而不是异常。为自己的格式假设过期而报错，等于把自己的 bug 报成用
     户的错 —— 跟启动预检"模型清单解析不出来就闭嘴"同一条原则。
+
+    按顶层 key 分辨消息种类（progress / cost / 将来还有别的），是 cli 侧
+    写死的判据（`cli/commands/commands.cpp` 的 emit_json_* 注释）。
 
     schema 见 docs/history/Headless_Observability_Eng_Design.md 决策一。"""
     line = line.strip()
@@ -85,14 +92,34 @@ def _parse_progress(line: str) -> Optional[Tuple[str, int, int]]:
         return None
     if not isinstance(obj, dict):
         return None
-    payload = obj.get("progress")
-    if not isinstance(payload, dict):
+    payload = obj.get(key)
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_progress(line: str) -> Optional[Tuple[str, int, int]]:
+    """一行 stderr -> (phase, done, total)，不是进度行就 None。"""
+    payload = _parse_oob(line, "progress")
+    if payload is None:
         return None
     done, total = payload.get("done"), payload.get("total")
     if not isinstance(done, int) or not isinstance(total, int):
         return None
     phase = payload.get("phase")
     return (phase if isinstance(phase, str) else "", done, total)
+
+
+def _parse_cost(line: str) -> Optional[Tuple[int, int]]:
+    """一行 stderr -> (comparisons, evaluations)，不是开销行就 None（票 10）。
+
+    两个字段都必须在：缺一个说明这行不是我们认识的那种开销，宁可整行丢掉
+    也不要拿一半的数字去跟用户报账。"""
+    payload = _parse_oob(line, "cost")
+    if payload is None:
+        return None
+    comparisons, evaluations = payload.get("comparisons"), payload.get("evaluations")
+    if not isinstance(comparisons, int) or not isinstance(evaluations, int):
+        return None
+    return (comparisons, evaluations)
 
 
 def _parse_error(stderr: str) -> Tuple[str, str]:
@@ -122,6 +149,10 @@ class PztClient:
         # 布防）才会流式读 stderr —— 走 subprocess.run 的都是不需要进度的
         # 短命令。挂了也不影响正确性：进度是观测，丢了不改变结果。
         self.progress_sink: Optional[ProgressFn] = None
+        # 第三个布防点（票 10），跟 progress_sink 同一个套路、同一条读取线
+        # 程。分成两个属性而不是一个多路 sink：挂进度的地方不一定要挂开销
+        # （反之亦然），合成一个的话下游每次都得先判自己收到的是哪种。
+        self.cost_sink: Optional[CostFn] = None
         self.kill_grace_seconds = 2.0
         self.poll_interval_seconds = 0.1
 
@@ -156,8 +187,10 @@ class PztClient:
         out_chunks: List[str] = []
         err_chunks: List[str] = []
         readers = [
-            threading.Thread(target=self._drain, args=(popen.stdout, out_chunks, None), daemon=True),
-            threading.Thread(target=self._drain, args=(popen.stderr, err_chunks, self.progress_sink),
+            threading.Thread(target=self._drain, args=(popen.stdout, out_chunks, None, None),
+                              daemon=True),
+            threading.Thread(target=self._drain,
+                              args=(popen.stderr, err_chunks, self.progress_sink, self.cost_sink),
                               daemon=True),
         ]
         for reader in readers:
@@ -189,7 +222,8 @@ class PztClient:
         return popen.returncode, "".join(out_chunks), "".join(err_chunks)
 
     @staticmethod
-    def _drain(pipe, chunks: List[str], progress_sink: Optional[ProgressFn]) -> None:
+    def _drain(pipe, chunks: List[str], progress_sink: Optional[ProgressFn],
+                cost_sink: Optional[CostFn]) -> None:
         """无条件读到 EOF。**没人要进度也照读**——不读就是不排水，输出量
         大的命令会被管道背压卡死（dedup 的 F-08 明细行量级是 Σ C(簇大小,2)，
         几十个中等簇就能越过 64KB 管道缓冲区）。
@@ -198,20 +232,24 @@ class PztClient:
         冲，会把已经到达的行攒着不交出来，流式就白做了。"""
         if pipe is None:
             return
+        # 一行最多命中一种带外消息（顶层 key 互斥），命中就不再往下试。
+        routes = ((_parse_progress, progress_sink), (_parse_cost, cost_sink))
         try:
             for line in iter(pipe.readline, ""):
                 chunks.append(line)
-                if progress_sink is None:
-                    continue
-                parsed = _parse_progress(line)
-                if parsed is None:
-                    continue
-                try:
-                    progress_sink(*parsed)
-                except Exception:  # noqa: BLE001
-                    # 下游炸了不能把这条线程带走：线程死了就不再排水，
-                    # 子进程随后被背压卡死，一个播报 bug 升级成挂死。
-                    _log.warning("[pzt] 进度回调抛异常，已忽略", exc_info=True)
+                for parse, sink in routes:
+                    if sink is None:
+                        continue
+                    parsed = parse(line)
+                    if parsed is None:
+                        continue
+                    try:
+                        sink(*parsed)
+                    except Exception:  # noqa: BLE001
+                        # 下游炸了不能把这条线程带走：线程死了就不再排水，
+                        # 子进程随后被背压卡死，一个播报 bug 升级成挂死。
+                        _log.warning("[pzt] 带外消息回调抛异常，已忽略", exc_info=True)
+                    break
         finally:
             try:
                 pipe.close()
