@@ -28,8 +28,9 @@ _SCHEMA_INSTRUCTION = (
     'false), "count" (integer or null, how many final photos the user wants -- only put '
     'a number here if the user actually named a target count, no matter which verb they '
     'used to describe narrowing down: "选5张"/"留5张"/"挑5张"/"筛5张"/"筛选5张"/"筛出5张" '
-    'all mean count=5, and Chinese numerals count too: "选三张"/"留两张" mean count=3 and '
-    "count=2; even when combined with a dedup request in the same sentence (e.g. "
+    'all mean count=5, and Chinese numerals count too: "选一张"/"留两张"/"挑三张" mean count=1, '
+    "count=2 and count=3 -- a request for a single photo is still a count, never null; "
+    "even when combined with a dedup request in the same sentence (e.g. "
     '"去重筛两张"/"去重然后筛选两张"/"去重留两张" all mean dedup_requested=true AND count=2 '
     "-- do not let the dedup mention make you drop the number); if the user only asked to "
     'dedup without naming any count at all, count MUST be null (do not default it to 9 -- '
@@ -50,11 +51,17 @@ _SCHEMA_INSTRUCTION = (
     "deduplication requests, which AI provider to use, how many photos they want (that is "
     'already "count"), greetings and small talk. Do NOT copy the user\'s sentence verbatim '
     "- write the brief yourself, and never invent a preference the user did not state. "
+    "CRITICAL: if the user used ANY word describing the photos themselves -- even a single "
+    'vague adjective like "活泼"/"好看"/"有气氛"/"清爽" -- that description MUST survive into '
+    "the brief. Dropping it and keeping only the destination is the single most common "
+    "mistake here, and it silently changes which photos get picked. "
     'Examples: "挑8张有小孩的、别都是背影，发到ins" -> "发 ins 用，要有小孩的，别都是背影"; '
-    '"去重，然后用 gemini 留5张按时间顺序排" -> "按拍摄时间顺序排"; "选3张发朋友圈" -> '
-    '"发朋友圈用" (the user named a destination but no subject preference, so the brief '
-    'says only that); "帮我筛一下，留9张" -> "" (nothing was said about what kind of photos '
-    "or where they go)."
+    '"去重，然后用 gemini 留5张按时间顺序排" -> "按拍摄时间顺序排"; '
+    '"选一张比较活泼的照片发Facebook" -> "发 Facebook 用，人物表情比较活泼" (short sentence, '
+    "but 比较活泼 describes the photos and must be kept); "
+    '"选3张发朋友圈" -> "发朋友圈用" (the user named a destination but no subject preference, '
+    'so the brief says only that); "帮我筛一下，留9张" -> "" (nothing was said about what kind '
+    "of photos or where they go)."
 )
 
 
