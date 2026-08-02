@@ -130,6 +130,133 @@ def test_classify_gate_reply_unknown_action_raises(monkeypatch):
     assert exc_info.value.code == "unknown_action"
 
 
+# -- 票 11：选片确认阶段改题材要求 --
+
+
+def test_classify_gate_reply_set_selection_brief_becomes_a_curate_delta(monkeypatch):
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    reply = classify_gate_reply(
+        "要活泼一点的", run,
+        http_post=_fake_http_post({"action": "set_selection_brief",
+                                    "selection_brief": "表情活泼、有人的"}),
+    )
+
+    assert reply.action == "adjust"
+    assert reply.delta.stage_name == "Curate"
+    assert reply.delta.params == {"selection_brief": "表情活泼、有人的"}
+
+
+def test_selection_brief_change_leaves_existing_exclude_alone(monkeypatch):
+    # 票 11 决策一：exclude 是对具体某张照片的否定，换题材要求不撤销它。
+    # 这里断言的是 delta 里**没有** exclude 这个 key - PlanDelta 走
+    # params.update()，不放 key 就是"不动它"，放个空列表才是清空。
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"], exclude=["x.jpg"])
+
+    reply = classify_gate_reply(
+        "别都是风景", run,
+        http_post=_fake_http_post({"action": "set_selection_brief",
+                                    "selection_brief": "别都是风景"}),
+    )
+
+    assert "exclude" not in reply.delta.params
+    assert reply.delta.params == {"selection_brief": "别都是风景"}
+
+
+def test_swap_out_and_brief_in_one_sentence_both_take_effect(monkeypatch):
+    # 票 11 验收：一句话里两件事都给了，两件事都生效，且互不擦除。这正是
+    # 决策一选"保留"的理由之一 - 清空的话，同一句话里产生的 exclude 会
+    # 被同一句话里的 brief 变更擦掉，结果取决于两个字段的应用先后。
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"], exclude=["x.jpg"])
+
+    reply = classify_gate_reply(
+        "把第3张换掉，要活泼点的", run,
+        http_post=_fake_http_post({"action": "swap_out", "index": 3,
+                                    "selection_brief": "表情活泼"}),
+    )
+
+    assert reply.delta.params == {"exclude": ["x.jpg", "c.jpg"],
+                                   "selection_brief": "表情活泼"}
+
+
+def test_set_count_and_brief_in_one_sentence_both_take_effect(monkeypatch):
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    reply = classify_gate_reply(
+        "留5张，要有人的", run,
+        http_post=_fake_http_post({"action": "set_count", "count": 5,
+                                    "selection_brief": "要有人的"}),
+    )
+
+    assert reply.delta.params == {"count": 5, "selection_brief": "要有人的"}
+
+
+def test_set_apply_tag_and_brief_in_one_sentence_both_take_effect(monkeypatch):
+    run = _make_run(["a.jpg", "b.jpg"])
+
+    reply = classify_gate_reply(
+        "标签叫ins，要活泼的", run,
+        http_post=_fake_http_post({"action": "set_apply_tag", "apply_tag": "ins",
+                                    "selection_brief": "表情活泼"}),
+    )
+
+    assert reply.delta.params == {"apply_tag": "ins", "selection_brief": "表情活泼"}
+
+
+def test_adjustment_without_a_brief_does_not_touch_the_existing_one(monkeypatch):
+    # 票 11 决策二的边界：没提题材要求的轮次不能把旧简述清空。缺席与
+    # 显式 null 都是"这次没提"，key 整个不放。
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    omitted = classify_gate_reply(
+        "留5张", run, http_post=_fake_http_post({"action": "set_count", "count": 5}))
+    explicit_null = classify_gate_reply(
+        "留5张", run,
+        http_post=_fake_http_post({"action": "set_count", "count": 5, "selection_brief": None}))
+
+    assert omitted.delta.params == {"count": 5}
+    assert explicit_null.delta.params == {"count": 5}
+
+
+def test_empty_brief_is_an_explicit_clear_not_an_omission(monkeypatch):
+    # 空串 = 用户明确要求去掉题材限制（"不用管题材了，随便选"），是一次
+    # 有意的覆盖，key 必须放进去。沿用票 08 在 DedupFollowupReply 上立的
+    # 同一套 None/"" 约定。
+    run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
+
+    reply = classify_gate_reply(
+        "不用管题材了，随便选", run,
+        http_post=_fake_http_post({"action": "set_selection_brief", "selection_brief": ""}),
+    )
+
+    assert reply.delta.params == {"selection_brief": ""}
+
+
+def test_set_selection_brief_without_a_brief_raises(monkeypatch):
+    # 模型挑了这个 action 却没填自己的必填字段。静默产一个空 delta 会把
+    # 旧简述清掉（用户没要求过），宁可报"没听懂"。
+    run = _make_run(["a.jpg"])
+
+    with pytest.raises(AdjustmentError) as exc_info:
+        classify_gate_reply("要活泼点的", run,
+                            http_post=_fake_http_post({"action": "set_selection_brief"}))
+
+    assert exc_info.value.code == "missing_selection_brief"
+
+
+def test_parse_adjustment_does_not_learn_the_new_gate_action(monkeypatch):
+    # 票 11 只扩 gate 那条路径。run_intent 的 parse_adjustment 提示词里
+    # 从没有这个 action，它出现就说明模型在幻觉，仍按未知动作拒掉。
+    run = _make_run(["a.jpg"])
+
+    with pytest.raises(AdjustmentError) as exc_info:
+        parse_adjustment("要活泼点的", run,
+                         http_post=_fake_http_post({"action": "set_selection_brief",
+                                                     "selection_brief": "活泼"}))
+
+    assert exc_info.value.code == "unknown_action"
+
+
 def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monkeypatch):
     current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 

@@ -49,7 +49,7 @@ _SCHEMA_INSTRUCTION = (
 _GATE_SCHEMA_INSTRUCTION = (
     "You are classifying a user's reply about a batch of photos they were just shown "
     "for review, right before final delivery. Respond with a single JSON object "
-    "describing exactly one of these six shapes: "
+    "describing exactly one of these seven shapes: "
     '{"action": "approve"} if the user is satisfied and wants to proceed with delivery, '
     'even if phrased casually or indirectly (for example "挺好的，就这三张吧", "可以了", '
     '"没问题", "just send it"); '
@@ -63,10 +63,29 @@ _GATE_SCHEMA_INSTRUCTION = (
     '(for example "换掉第3张" or "swap out photo #3" means index=3); '
     '{"action": "query"} if the message is just a question about the current status '
     '(for example "选了几张呀？", "how many did you pick?"), not an instruction to '
-    "change anything or proceed."
+    "change anything or proceed; "
+    '{"action": "set_selection_brief", "selection_brief": <string>} if the user is '
+    "asking for a different KIND of photo without changing the count, the tag, or "
+    'naming a position (for example "要活泼一点的", "换成有人的那几张", "别都是风景"). '
+    "Additionally, ANY of the set_count / set_apply_tag / swap_out shapes above may "
+    'carry an extra "selection_brief" field when the same sentence ALSO states what '
+    'kind of photos the user wants (for example "把第3张换掉，要活泼点的" is swap_out '
+    'index=3 WITH selection_brief; "留5张，要有人的" is set_count count=5 WITH '
+    "selection_brief). Write selection_brief as a short Chinese phrase describing the "
+    "subject matter / mood / ordering they asked for, and nothing else -- leave out the "
+    "count, the tag, and the position. Omit the field entirely (or use null) when the "
+    "message says nothing about what kind of photos they want; use an empty string ONLY "
+    'when the user explicitly drops any subject requirement (for example "不用管题材了，'
+    '随便选").'
 )
 
 _ADJUST_ACTIONS = ("set_count", "set_apply_tag", "swap_out")
+
+# 票 11：选片确认阶段多认一个"只改题材要求"的动作。故意不并进
+# `_ADJUST_ACTIONS` - 那个元组还管着 `parse_adjustment`，而
+# `_SCHEMA_INSTRUCTION` 从没提过这个 action，并进去等于让 run_intent 那
+# 条路径接受一个它从不索取的形状。
+_GATE_ADJUST_ACTIONS = _ADJUST_ACTIONS + ("set_selection_brief",)
 
 
 class AdjustmentError(Exception):
@@ -132,23 +151,53 @@ def classify_gate_reply(msg: str, run: RunState, http_post: Optional[HttpPostFn]
     if action == "query":
         return GateReply(action="query")
 
-    if action in _ADJUST_ACTIONS:
+    if action in _GATE_ADJUST_ACTIONS:
         return GateReply(action="adjust", delta=_decision_to_delta(action, decision, run))
 
     raise AdjustmentError("unknown_action", f"unrecognized gate reply action {action!r}")
 
 
+def _brief_override(decision: dict) -> dict:
+    """票 11 决策二：新简述**整体替换**旧简述。返回的是要并进 `PlanDelta`
+    的那部分 params，"这次没提"就返回空 dict。
+
+    缺席 / null / 非字符串都归成"没提"：`PlanDelta` 最终走
+    `spec.params.update()`，key 不出现才是"不动旧值"，放个 None 进去会把
+    旧简述覆盖成 None。空串则相反 - 它是用户明确要求去掉题材限制的一次
+    有意覆盖，必须放进去。这套 None/"" 的区分沿用票 08 在
+    `DedupFollowupReply.selection_brief` 上立的约定，两处不该各有一套。
+    """
+    brief = decision.get("selection_brief")
+    return {"selection_brief": brief} if isinstance(brief, str) else {}
+
+
 def _decision_to_delta(action: str, decision: dict, run: RunState) -> PlanDelta:
+    # 票 11：题材要求可以单独来，也可以搭在另外三个动作上（"把第3张换掉，
+    # 要活泼点的"）。搭车时两件事进同一个 delta 一次 update，谁先谁后不
+    # 影响结果 - 决策一选"exclude 保留"消掉的正是这个顺序歧义。
+    brief = _brief_override(decision)
+
+    if action == "set_selection_brief":
+        if not brief:
+            # 模型挑了这个 action 却没填自己的必填字段。产一个空 delta 会
+            # 把旧简述清掉（用户没要求过），宁可让这句话报"没听懂"。
+            raise AdjustmentError(
+                "missing_selection_brief",
+                "set_selection_brief decision carries no usable selection_brief",
+            )
+        return PlanDelta(stage_name="Curate", params=brief)
+
     if action == "set_count":
-        return PlanDelta(stage_name="Curate", params={"count": decision["count"]})
+        return PlanDelta(stage_name="Curate", params={"count": decision["count"], **brief})
 
     if action == "set_apply_tag":
-        return PlanDelta(stage_name="Curate", params={"apply_tag": decision["apply_tag"]})
+        return PlanDelta(stage_name="Curate",
+                          params={"apply_tag": decision["apply_tag"], **brief})
 
-    return _resolve_swap_out(decision["index"], run)
+    return _resolve_swap_out(decision["index"], run, brief)
 
 
-def _resolve_swap_out(index: int, run: RunState) -> PlanDelta:
+def _resolve_swap_out(index: int, run: RunState, brief: Optional[dict] = None) -> PlanDelta:
     curate_output = run.outputs.get("Curate")
     selected: List[str] = curate_output.data.get("selected", []) if curate_output else []
     if not isinstance(index, int) or index < 1 or index > len(selected):
@@ -164,7 +213,7 @@ def _resolve_swap_out(index: int, run: RunState) -> PlanDelta:
     if target_path not in merged_exclude:
         merged_exclude.append(target_path)
 
-    return PlanDelta(stage_name="Curate", params={"exclude": merged_exclude})
+    return PlanDelta(stage_name="Curate", params={"exclude": merged_exclude, **(brief or {})})
 
 
 _CONFIRMATION_SCHEMA_INSTRUCTION = (

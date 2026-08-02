@@ -53,6 +53,38 @@ def test_adjusting_caption_does_not_rerun_eval_dedup_curate_style(tmp_path):
         assert run.stage_states[untouched] == StageStatus.DONE
 
 
+def test_rerun_stage_leaves_its_own_gate_armed_so_a_later_adjustment_reasks(tmp_path):
+    """钉住**当前**行为，它是一个已知缺陷，见 docs/issues/intent-curation/
+    12-rerun-stage-leaves-its-gate-armed.md（票 11 落地时发现）。
+
+    `rerun_stage` 的契约写的是"闸门已经问过、这次给的就是答案，不需要闸门
+    再问一遍"，但它只跳过**这一次**，`spec.gate` 原封不动。于是"只说去重没
+    给数量"那条流程（Curate `gate="required"`）里，用户之后在选片闸门上做
+    任何一次调整，`apply_adjustment` 把 Curate 重置成 PENDING，下一次
+    `advance()` 又拿 `gate="required"` 把"去重后还剩 N 张，要不要再筛选一
+    下？"问出来 - Curate 压根没重跑（下面 calls 仍是 1）。
+
+    修它要动 `spec.gate` 的生命周期，而那条路还被票 10 的 rewind→rearm_gate
+    和 AG-01 的 Style 重问共用，不适合在票 11 里顺手改。票 12 落地时这个
+    测试应当被**有意**翻过来。
+    """
+    run, stages = make_pipeline_run()
+    curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
+    curate_spec.gate = "required"
+    curate_spec.params["count"] = None
+    driver = Driver(stages=stages, store=RunStore(tmp_path))
+
+    driver.rerun_stage(run, "Curate", {"count": 5})  # 追问答完："留5张"
+    driver.apply_adjustment(  # 选片闸门上改题材要求
+        run, PlanDelta(stage_name="Curate", params={"selection_brief": "表情活泼"}))
+    driver.advance(run)
+
+    assert curate_spec.gate == "required"
+    assert run.status == RunStatus.AWAITING_GATE
+    assert run.gate_state.stage_name == "Curate"
+    assert len(stages["Curate"].calls) == 1  # 没重跑，只是又问了一遍
+
+
 def test_adjustment_then_advance_reruns_only_invalidated_stages(tmp_path):
     run, stages = make_pipeline_run()
     driver = Driver(stages=stages, store=RunStore(tmp_path))

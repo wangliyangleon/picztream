@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # agent/ 根目录
 
-from compose.adjustment_parser import parse_adjustment
+from compose.adjustment_parser import classify_gate_reply, parse_adjustment
 from compose.plan_composer import compose_plan
 from compose.validate import ValidationError, validate_plan
 from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
@@ -56,6 +56,31 @@ ADJUSTMENT_CASES = [
     {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "标签换成 朋友圈投稿"},
 ]
 
+# 票 11：选片确认闸门上的回复。这一组是本票验收标准最后一条的落点 -
+# 本票往 _GATE_SCHEMA_INSTRUCTION 上加了一个 action 和一个可选字段，而
+# 票 08 的真机教训正是"罐头响应永远绿，往 schema 说明上加规则会挤掉别的
+# 字段"。tests/compose 那边注入假 http_post 验的是接线，挤没挤掉只能真
+# 模型跑一遍、人读。每条要看的：
+#   1-3) 纯题材要求要落成 set_selection_brief，简述里不该混进张数/标签；
+#   4-5) 一句话两件事，count/index 与 selection_brief 必须同时出现（新加
+#        的可选字段最容易在这里把原有字段挤掉）；
+#   6-7) 没提题材要求时 selection_brief 必须缺席或 null，绝不能凭空造一
+#        句出来 - 造出来就等于用户没要求却改了题材（决策二下这是静默覆盖）；
+#   8)   明确要求去掉题材限制时才给空串；
+#   9-10) approve/query 不能被新加的 action 抢走。
+GATE_REPLY_CASES = [
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "要活泼一点的"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "换成有人的那几张"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "别都是风景"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "把第3张换掉，要活泼点的"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "留5张，要有人的"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "留2张就行"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "换掉第2张"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "不用管题材了，随便选"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "挺好的，就这三张吧"},
+    {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "选了几张呀？"},
+]
+
 
 def _make_run(selected):
     plan = Plan(stages=[StageSpec(name="Curate", params={"count": len(selected), "apply_tag": "精选"})])
@@ -69,7 +94,10 @@ def _make_run(selected):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="compose_plan/parse_adjustment 离线人工 eval(花真实 API 额度)")
-    parser.add_argument("--provider", default="gemini", choices=["gemini", "claude"])
+    # local 也是一个合法选项：这几个分类器在生产里的默认 meta_provider 就
+    # 是 local(Ollama)，拿云端模型验过的 prompt 不等于本地模型也读得懂 -
+    # 票 08 真机踩的正是本地模型把偏好整个吃掉那一次。
+    parser.add_argument("--provider", default="gemini", choices=["gemini", "claude", "local"])
     args = parser.parse_args()
 
     print("=== compose_plan ===")
@@ -96,6 +124,18 @@ def main() -> None:
             print(f"  解析失败：{e}")
             continue
         print(f"  PlanDelta(stage_name={delta.stage_name!r}, params={delta.params})")
+
+    print("\n=== classify_gate_reply（票 11）===")
+    for case in GATE_REPLY_CASES:
+        run = _make_run(case["selected"])
+        print(f"\n已选：{case['selected']}，闸门回复：{case['msg']!r}")
+        try:
+            reply = classify_gate_reply(case["msg"], run, meta_provider=args.provider)
+        except Exception as e:
+            print(f"  解析失败：{e}")
+            continue
+        params = reply.delta.params if reply.delta is not None else None
+        print(f"  action={reply.action!r}, params={params}")
 
 
 if __name__ == "__main__":

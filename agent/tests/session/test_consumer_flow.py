@@ -1386,6 +1386,60 @@ def test_selection_gate_tolerates_a_payload_without_the_key(tmp_path):
             ) in env.transport.texts()
 
 
+# -- 票 11：选片确认阶段改题材要求 --
+
+
+def _plan_with_brief(brief):
+    def factory():
+        plan = bare_compose_plan()
+        next(s for s in plan.stages if s.name == "Curate").params["selection_brief"] = brief
+        return plan
+    return factory
+
+
+def test_selection_gate_echoes_the_selection_brief_in_effect(tmp_path):
+    # 票 11 决策二绑定的安全网：简述替换是"新的整个盖掉旧的"，用户必须每
+    # 轮都看得见此刻生效的是哪一句，否则替换会变成静默丢失。
+    env = make_consumer(tmp_path)
+    job = to_running(env, plan_factory=_plan_with_brief("表情活泼、有人的"))
+
+    _selection_gate(env, job)
+
+    [text] = [t for t in env.transport.texts() if "选好了 2 张" in t]
+    assert "表情活泼、有人的" in text
+
+
+def test_selection_gate_wording_is_untouched_when_there_is_no_brief(tmp_path):
+    # 没有简述时一个字都不该多（同 ai_fallback_count 那两条的口径）。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+
+    _selection_gate(env, job)
+
+    assert ("选好了 2 张，满意就点\"满意\"，想调整点\"重选\"或直接打字说"
+            ) in env.transport.texts()
+
+
+def test_gate_reply_brief_adjustment_reaches_the_drive_job(tmp_path):
+    # 端到端一小段：闸门上说"要活泼一点的" -> classify 回 adjust delta ->
+    # consumer 把它投成 adjustment DriveJob。driver.apply_adjustment 会把
+    # Curate 连同下游重置成 PENDING 再重跑，所以简述改完就是重选。
+    env = make_consumer(tmp_path)
+    job = to_running(env)
+    _selection_gate(env, job)
+
+    env.push_text("要活泼一点的")
+    env.consumer.step()
+    deliver_classify(env, "gate_reply", GateReply(
+        action="adjust",
+        delta=PlanDelta(stage_name="Curate", params={"selection_brief": "表情活泼"}),
+    ))
+
+    drive = [j for j in env.drain_jobs() if isinstance(j, DriveJob)][-1]
+    assert drive.action == "adjustment"
+    assert drive.args["delta"].params == {"selection_brief": "表情活泼"}
+
+
 def test_gate_curate_followup_narrow_carries_selection_brief_into_rerun_curate(tmp_path):
     # 票 08：追问那一处的引导语现在也举了带题材偏好的例子，用户照着说的话
     # 必须一路走到 rerun_curate 的参数里，否则 core 那边根本收不到。
