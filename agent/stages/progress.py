@@ -24,6 +24,10 @@ _LOCAL_PHASES = {"cluster": PROGRESS_GROUPS}
 def forwarding(client, ctx, ai_enabled: bool):
     """在作用域内把 client 的跨进程进度转成 ctx.on_progress，出去就摘掉。
 
+    票 10 起同一个作用域里还挂开销（ctx.on_cost）：两条布防的时机、范围、
+    摘除条件完全一致（都只覆盖那一次 dedup/curate 调用，不覆盖后面几次
+    tag apply），拆成两个上下文管理器只会让每个调用点都写两层 with。
+
     布防/摘除跟 worker 挂 cancel_event 是同一个套路：挂在 client 实例上，
     stage 内部的 client.call(...) 零改动就吃得到。
 
@@ -48,8 +52,17 @@ def forwarding(client, ctx, ai_enabled: bool):
         if kind is not None:
             ctx.on_progress(done, total, kind)
 
+    def cost_sink(comparisons: int, evaluations: int) -> None:
+        ctx.on_cost(comparisons, evaluations)
+
     client.progress_sink = sink
+    # 关 AI 时压根不挂：core 那一侧的闸门本来就在 `ai_enabled` 里面、一行
+    # 都不会发（`tournament::cluster_and_choose` / `curate_impl`），这里不
+    # 挂是第二道保险 —— 真漏一行出来，用户收到的会是一句凭空的"这一步要
+    # 花钱"，而这条路径上根本没有 AI 调用。
+    client.cost_sink = cost_sink if ai_enabled else None
     try:
         yield
     finally:
         client.progress_sink = None
+        client.cost_sink = None

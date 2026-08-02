@@ -32,6 +32,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    StageCost,
     StageProgress,
     StageStarted,
 )
@@ -739,3 +740,65 @@ def test_cancel_during_dedup_reports_no_partial_work(tmp_path):
     finished = [e for e in env.drain_events() if isinstance(e, RunFinished)][-1]
     assert finished.status == "cancelled"
     assert finished.cancelled_partial is None
+
+
+# -- AI 开销（票 10）--
+
+
+@dataclass
+class _CostingStage:
+    """报一次开销就返回。真 stage 里报开销的是 Dedup/Curate 的 --ai 路
+    径，那要真起子进程；这里只验 worker 这一段接线。"""
+    name: str
+    inputs: List[str] = dc_field(default_factory=list)
+    comparisons: int = 18
+    evaluations: int = 0
+    cost_class: str = "local"
+    criticality: str = "critical"
+
+    def run(self, ctx, params):
+        ctx.on_cost(self.comparisons, self.evaluations)
+        return StageOutput(ok=True)
+
+
+def test_drive_emits_stage_cost_events(tmp_path):
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _CostingStage(name="Dedup", inputs=["Ingest"],
+                                                comparisons=18, evaluations=0)
+    env.put_drive(DriveJob(generation=7, action="start", run_id=run.run_id))
+
+    env.step()
+
+    [cost] = [e for e in env.drain_events() if isinstance(e, StageCost)]
+    assert (cost.stage, cost.comparisons, cost.evaluations) == ("Dedup", 18, 0)
+    assert cost.generation == 7 and cost.run_id == run.run_id
+
+
+def test_cost_sink_is_detached_after_the_drive_job(tmp_path):
+    # 同 progress_sink：留着的话下一个 job 的开销会带着上一代的
+    # generation 混进队列，被 consumer 当过期丢弃。
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _CostingStage(name="Dedup", inputs=["Ingest"])
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    assert env.driver.cost_sink is None
+
+
+def test_cost_sink_is_detached_even_when_the_stage_raises(tmp_path):
+    class _Boom(_CostingStage):
+        def run(self, ctx, params):
+            raise RuntimeError("boom")
+
+    env = make_worker(tmp_path)
+    run = env.make_running_run()
+    env.driver.stages["Dedup"] = _Boom(name="Dedup", inputs=["Ingest"])
+    env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
+
+    env.step()
+
+    assert env.driver.cost_sink is None
+    assert any(isinstance(e, JobCrashed) for e in env.drain_events())

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from .stage import Stage, StageContext, _noop_progress
+from .stage import Stage, StageContext, _noop_cost, _noop_progress
 from .types import (
     GateState,
     Plan,
@@ -28,6 +28,10 @@ class Driver:
         # 的参数，stages 内部的 ctx.on_progress 才能零改动吃到上报能力。
         # Driver 不关心进度送去哪，只负责绑上 stage 名再交给 StageContext。
         self.progress_sink: Optional[Callable[[str, int, int, str], None]] = None
+        # 同一个套路的第二条（票 10）：AI 开跑前的精确开销。跟进度分开是因
+        # 为下游处置不同 - 进度节流后原地编辑一条消息，开销要立刻新发一条
+        # 并带上可取消入口。
+        self.cost_sink: Optional[Callable[[str, int, int], None]] = None
 
     def advance(self, run: RunState) -> RunState:
         if run.status in (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED):
@@ -170,6 +174,14 @@ class Driver:
             return _noop_progress
         return lambda done, total, kind: sink(stage_name, done, total, kind)
 
+    def _cost_for(self, stage_name: str):
+        """同 _progress_for：每次现绑。真机上 Dedup 与 Curate 各报一次，
+        缓存住的话第二条会顶着第一个 stage 的名字。"""
+        sink = self.cost_sink
+        if sink is None:
+            return _noop_cost
+        return lambda comparisons, evaluations: sink(stage_name, comparisons, evaluations)
+
     def _spec_by_name(self, run: RunState, name: str) -> StageSpec:
         for spec in run.plan.stages:
             if spec.name == name:
@@ -180,7 +192,8 @@ class Driver:
         stage = self.stages[spec.name]
         run.stage_states[spec.name] = StageStatus.RUNNING
         ctx = StageContext(run_id=run.run_id, project_id=run.project_id, outputs=run.outputs,
-                            on_progress=self._progress_for(spec.name))
+                            on_progress=self._progress_for(spec.name),
+                            on_cost=self._cost_for(spec.name))
         output = stage.run(ctx, spec.params)
         run.outputs[spec.name] = output
 

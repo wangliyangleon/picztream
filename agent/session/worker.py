@@ -42,6 +42,7 @@ from session.protocol import (
     GateReached,
     JobCrashed,
     RunFinished,
+    StageCost,
     StageProgress,
     StageStarted,
 )
@@ -194,10 +195,16 @@ class SessionWorker:
         self._last_progress = None
         self.driver.progress_sink = lambda stage, done, total, kind: self._on_stage_progress(
             job, stage, done, total, kind)
+        # 票 10：开销跟进度同范围布防、同在 finally 里摘。理由一样 —— 留着
+        # 的话下一个 job 报的开销会带着上一代的 generation 进队列，被
+        # consumer 当过期丢弃，比不报更难查。
+        self.driver.cost_sink = lambda stage, comparisons, evaluations: self.events.put(
+            StageCost(job.generation, job.run_id, stage, comparisons, evaluations))
         try:
             self._execute_drive_inner(job)
         finally:
             self.driver.progress_sink = None
+            self.driver.cost_sink = None
             self._last_progress = None
 
     def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int,
