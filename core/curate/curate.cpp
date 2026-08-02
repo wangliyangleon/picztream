@@ -237,6 +237,10 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
 
   std::vector<project::ImageId> selected;
   bool selection_fallback = false;
+  // 票 07：只有"模型的选择被采纳"那一条分支会填它，其余每条路(关 AI、候选
+  // 不足 count、整批退化)都在这里留空 - 空串就是"没有文案"，见
+  // CurateResult::caption。
+  std::string caption;
 
   // 确定性选择：farthest-point 挑 count 张，再按 by_captured_at_desc 交
   // 付。关 AI 那条路走它，票 06 的整批退化也走它-退化必须落在**同一套**
@@ -326,21 +330,26 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
       //
       // 候选按 winners 的顺序编号，模型只吐 1-based 序号(决策十三)，翻译
       // 回照片靠的就是这个顺序，两者不能错位。
-      std::optional<std::vector<int>> raw_picks;
+      std::optional<ai::SelectionResult> model_answer;
       if (select_fn) {
         std::vector<ai::SelectionCandidate> candidates;
         candidates.reserve(winners.size());
         for (auto id : winners) candidates.push_back(make_selection_candidate(db, id));
-        raw_picks = select_fn(candidates, count);
+        model_answer = select_fn(candidates, count);
       }
 
       std::vector<int> picks;
-      if (raw_picks) {
-        picks = detail::resolve_selection(*raw_picks, static_cast<int>(winners.size()), count);
+      if (model_answer) {
+        picks =
+            detail::resolve_selection(model_answer->picks, static_cast<int>(winners.size()), count);
       }
 
       if (!picks.empty()) {
         for (int index : picks) selected.push_back(winners[static_cast<std::size_t>(index) - 1]);
+        // 票 07：文案只在**模型的选择被采纳时**跟出去。它可能是空串(模型
+        // 没给或给歪了)，那就只是少一段附赠品，跟这里的判断无关 - 决策十五
+        // 的失败隔离在 ai::request_selection 那一层已经兑现完了。
+        caption = model_answer->caption;
       } else {
         // 整批退化：调用失败，或者清洗完的有效序号不足 count。信号独立于
         // ai_fallback_count(决策二十一)，两者对用户说的话不一样。
@@ -373,6 +382,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   CurateResult result{selected, count, static_cast<int>(selected.size()),
                        summary.ai_fallback_count};
   result.ai_selection_fallback = selection_fallback;
+  result.caption = std::move(caption);
   return result;
 }
 
@@ -391,8 +401,10 @@ namespace {
 //   会改变下一次运行的候选集，是一个用户没要求过的副作用。
 // - language 用 request_evaluation 的默认值(中文)。curate 只有 headless
 //   一个入口，core 不认识 cli 的界面语言；content 是给机器读的、不进
-//   TUI，assessment 在这条路径上也不展示给人。票 07 的文案如果需要跟随
-//   界面语言，那时再把语言接进来。
+//   TUI，assessment 在这条路径上也不展示给人。票 07 落地后这条仍然成立：
+//   文案确实要给人看，但它的语言是在提示词里跟着**描述**走的("write it in
+//   the same language as the notes above")，于是自动落在这里定的这一种上，
+//   不需要给 core 接一个语言参数。
 bool evaluate_and_store(db::Database& db, project::ImageId image_id, ai::Provider provider,
                         const ai::LocalModelConfig& local_config) {
   auto info = project::get_image(db, image_id);
@@ -440,11 +452,13 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
       // 张)，简述不是。
       [ai_provider, &local_config, &selection_brief](
           const std::vector<ai::SelectionCandidate>& candidates,
-          int n) -> std::optional<std::vector<int>> {
+          int n) -> std::optional<ai::SelectionResult> {
         auto result = ai::request_selection(candidates, n, ai_provider, selection_brief,
                                              local_config);
         if (!result.ok()) return std::nullopt;
-        return result.value().picks;
+        // 票 07：整个结果原样交上去(序号 + 文案)。文案缺失在这一层已经是空
+        // 串而不是错误，所以这里不需要为它多一个分支。
+        return result.value();
       },
       std::move(on_progress), std::move(on_ai_progress), std::move(on_ai_gate),
       std::move(on_eval_progress), std::move(on_cancel));

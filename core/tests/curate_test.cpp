@@ -904,19 +904,22 @@ TEST_CASE("curate --ai gate reports the cache-adjusted count, not the raw presel
 namespace {
 
 // 记账用的假选择：把模型看到的候选录下来，按需返回一组序号或者汇报调用失
-// 败(nullopt)。
+// 败(nullopt)。票 07 起顺带带一段文案 - reply_caption 默认空串，等价于"模
+// 型没给文案"，既有用例因此一个字都不用改。
 struct FakeSelector {
   std::vector<pzt::core::ai::SelectionCandidate> seen;
   std::optional<std::vector<int>> reply;
+  std::string reply_caption;
   int calls = 0;
   int seen_count = -1;
 
-  std::optional<std::vector<int>> operator()(
+  std::optional<pzt::core::ai::SelectionResult> operator()(
       const std::vector<pzt::core::ai::SelectionCandidate>& candidates, int count) {
     seen = candidates;
     seen_count = count;
     ++calls;
-    return reply;
+    if (!reply) return std::nullopt;
+    return pzt::core::ai::SelectionResult{*reply, reply_caption};
   }
 };
 
@@ -1141,4 +1144,117 @@ TEST_CASE("curate --ai does not consult the model after the caller cancels or de
   CHECK(cancelled.cancelled);
   CHECK(cancel_select.calls == 0);
   CHECK_FALSE(cancelled.ai_selection_fallback);
+}
+
+// ---------------------------------------------------------------------------
+// 票 07：文案端到端（core 这一段）
+// ---------------------------------------------------------------------------
+
+TEST_CASE("curate --ai carries the caption out alongside the selection") {
+  auto fx = make_singletons("caption_happy", 12);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{3, 1};
+  select.reply_caption = "海边的傍晚，和最重要的人一起走过";
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(result.caption == "海边的傍晚，和最重要的人一起走过");
+  // 关键结果不因为多了个附赠品而改变。
+  CHECK(result.selected == std::vector<ImageId>{eval.evaluated[2], eval.evaluated[0]});
+  CHECK_FALSE(result.ai_selection_fallback);
+}
+
+TEST_CASE("curate --ai delivers the selection unchanged when the model gives no caption") {
+  // PRD 决策十五 / 验收 24：附赠品缺席，关键结果一个字不变。
+  auto fx = make_singletons("caption_missing", 12);
+  FakeEvaluator eval;
+  FakeSelector select;
+  select.reply = std::vector<int>{3, 1};  // reply_caption 保持空 = 模型没给文案
+
+  auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                     /*ai_enabled=*/true, Provider::Local,
+                                     pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                     std::ref(select));
+
+  CHECK(result.caption.empty());
+  CHECK(result.returned == 2);
+  CHECK(result.selected == std::vector<ImageId>{eval.evaluated[2], eval.evaluated[0]});
+  CHECK_FALSE(result.ai_selection_fallback);
+}
+
+TEST_CASE("curate --ai drops the caption when the whole selection falls back") {
+  // 本票拍板的边界：整批退化时文案**跟着作废**。它写的是模型挑的那几张，而
+  // 交付的是确定性路径挑的另一批 - 留着就是让一段讲 A 的话配着 B 发出去。
+  // 这与决策十三拒绝"不足时用确定性结果补齐"是同一个立场：不交付两套逻辑拼
+  // 接的结果。
+  auto fx = make_singletons("caption_fallback", 12);
+
+  SUBCASE("too few picks survive cleaning") {
+    FakeEvaluator eval;
+    FakeSelector select;
+    select.reply = std::vector<int>{1, 77};  // 清洗后只剩 1 个，count=2 不够
+    select.reply_caption = "这段话讲的是模型挑的那两张";
+
+    auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                       /*ai_enabled=*/true, Provider::Local,
+                                       pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                       std::ref(select));
+
+    CHECK(result.ai_selection_fallback);
+    CHECK(result.caption.empty());
+    CHECK(result.returned == 2);
+  }
+
+  SUBCASE("the selection call itself fails") {
+    FakeEvaluator eval;
+    FakeSelector select;  // reply 保持 nullopt：连文案带序号一起没有
+    auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                       /*ai_enabled=*/true, Provider::Local,
+                                       pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                       std::ref(select));
+
+    CHECK(result.ai_selection_fallback);
+    CHECK(result.caption.empty());
+  }
+}
+
+TEST_CASE("curate produces no caption on any deterministic path") {
+  // 验收 25（关 AI 不产出文案、不报错）以及"候选不足 count"那条 - 两条路都
+  // 根本不问模型，也就无处拿文案。
+  SUBCASE("ai disabled") {
+    auto fx = make_singletons("caption_ai_off", 6);
+    FakeEvaluator eval;
+    FakeSelector select;
+    select.reply = std::vector<int>{1, 2};
+    select.reply_caption = "不该出现的文案";
+
+    auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
+                                       /*ai_enabled=*/false, Provider::Local,
+                                       pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                       std::ref(select));
+
+    CHECK(select.calls == 0);
+    CHECK(result.caption.empty());
+    CHECK(result.returned == 2);
+  }
+
+  SUBCASE("candidate pool smaller than count") {
+    auto fx = make_singletons("caption_shortfall", 2);
+    FakeEvaluator eval;
+    FakeSelector select;
+    select.reply = std::vector<int>{1};
+    select.reply_caption = "不该出现的文案";
+
+    auto result = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/5, 20, 10, 2.0,
+                                       /*ai_enabled=*/true, Provider::Local,
+                                       pzt::core::ai::LocalModelConfig{}, std::ref(eval),
+                                       std::ref(select));
+
+    CHECK(select.calls == 0);
+    CHECK(result.caption.empty());
+  }
 }

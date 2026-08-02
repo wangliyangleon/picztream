@@ -55,6 +55,20 @@ struct CurateResult {
   // 间挑的，说错了用户会当场发现。两个信号互不干扰：一次运行里可以只有其
   // 中一个为真，也可以两个同时为真。
   bool ai_selection_fallback = false;
+  // 票 07（PRD 决策十五）：一段可以直接发出去的话，跟 selected 是同一次模
+  // 型调用的产物。**空串 = 没有文案**，且这不是异常 - 关 AI、候选不足
+  // count、模型没给或给歪了，几条路都合法地落在空串上，调用方一律"少展示一
+  // 段话"，选片结果不受影响。
+  //
+  // 整批退化(ai_selection_fallback=true)时这里也是空的：文案写的是模型挑的
+  // 那几张，交付的却是确定性路径挑的另一批，留着等于让一段讲 A 的话配着 B
+  // 发出去。这与决策十三拒绝"不足时用确定性结果补齐"是同一个立场 - 不交付
+  // 两套逻辑拼接的结果。
+  //
+  // `{}` 不是多余的：这个结构体在 curate.cpp 里有几处聚合初始化只写前四个
+  // 字段，没有 NSDMI 的话每一处都会挨一条 -Wmissing-field-initializers，同
+  // 上面几个 bool。
+  std::string caption{};
 };
 
 // 票 05：AI 真正开跑前的合并开销闸门。comparison_count 是簇内锦标赛要发
@@ -168,9 +182,14 @@ using EvaluateFn = std::function<bool(db::Database&, project::ImageId)>;
 // 号；调用失败(网络/解析)返回 nullopt。返回值不做清洗，那是
 // resolve_selection 的事。
 //
+// 票 07：返回整个 ai::SelectionResult 而不只是序号数组 - 文案跟序号是同一
+// 次调用的产物(PRD 决策十五)，中途拆成两个返回值只会让这条缝多一个形状。
+// **nullopt 与"有结果但 caption 为空"是两件事**：前者是调用没成功(整批退
+// 化)，后者是调用成功、只是没有附赠品(选片照旧)。
+//
 // production 的 curate 塞的是 ai::request_selection 的薄封装。传 nullptr
 // (测试里的默认)等价于"模型不可用"，走整批退化。
-using SelectFn = std::function<std::optional<std::vector<int>>(
+using SelectFn = std::function<std::optional<ai::SelectionResult>(
     const std::vector<ai::SelectionCandidate>& candidates, int count)>;
 
 // 仅供单元测试使用-evaluate_fn/select_fn 可注入，不需要真的解码 JPEG 或连
