@@ -79,7 +79,8 @@ def test_from_run_planned_fills_plan_summary_and_describe(tmp_path):
 
     view = view_from_run(run, incoming_root=incoming_root)
 
-    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": False}
+    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": False,
+                                  "provider": "local"}
     assert view.describe() == (
         "目前收到 1 张照片，方案是：去重复后留 5 张（按拍摄时间挑），标签叫\"精选\""
     )
@@ -92,7 +93,8 @@ def test_from_run_planned_describe_mentions_ai_when_enabled(tmp_path):
 
     view = view_from_run(run, incoming_root=incoming_root)
 
-    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": True}
+    assert view.plan_summary == {"count": 5, "apply_tag": "精选", "ai_enabled": True,
+                                  "provider": "local"}
     assert "AI 帮你从相似照片里挑更好的" in view.describe()
 
 

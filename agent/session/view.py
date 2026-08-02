@@ -52,6 +52,52 @@ def describe_progress_done(kind: str, total: int) -> str:
     return _PROGRESS_DONE_PHRASINGS.get(kind, "处理完了，共 {n} 项").format(n=total)
 
 
+# 本地模型一次视觉调用的实测量级（票 10 拍板时记的真机数据：40 张照片、
+# 本地 Ollama，一次约 40 秒）。**只给 local 一个数**：云端 provider 每次
+# 调用要多久没有实测过，而在一条"接下来要花多少"的消息里编一个数字，是让
+# 用户从此不再信这条消息的最快办法。云端那条路只报次数，不报时长。
+_LOCAL_SECONDS_PER_AI_CALL = 40
+
+
+def describe_ai_cost(comparisons: int, evaluations: int, provider: str,
+                      first: bool) -> Optional[str]:
+    """AI 开跑之前那条开销告知（票 10 决策一）。
+
+    它不是"要不要跑"的提问 —— headless 那一侧 core 报完数字就继续跑了，
+    这条消息的作用是让用户**知道**接下来几分钟要花什么，并且知道可以停。
+    所以措辞是陈述 + 一句"想停就说"，不是"要跑吗？"。
+
+    两个数分别措辞、不合成一个总数：单位不同（次比较 / 张评估），说成
+    "24 项"用户读不出来那是什么（同 T-8 真机验收推翻"把 phase 压掉"的理
+    由）。
+
+    first=False 时改成接续口吻：真机上 Dedup 先报一次、Curate 再报一次，
+    照抄第一条会读成"怎么又要跑一遍"，而它其实是同一笔账的后半段（决策
+    五：开销这件事对用户是一笔账，不是两笔）。
+
+    两个数都是 0 时返回 None（没有 AI 调用要发，core 也不会报），由调用
+    方整条消息都不发 —— 翻译成一句"接下来要跑 0 次"毫无意义。
+    """
+    parts = []
+    if comparisons > 0:
+        parts.append(f"两两比较 {comparisons} 次")
+    if evaluations > 0:
+        parts.append(f"逐张看 {evaluations} 张照片")
+    if not parts:
+        return None
+
+    what = "、".join(parts)
+    head = f"接下来 AI 要{what}" if first else f"接着还要{what}"
+
+    calls = comparisons + evaluations
+    if provider == "local":
+        minutes = max(1, round(calls * _LOCAL_SECONDS_PER_AI_CALL / 60))
+        head += f"，大概 {minutes} 分钟"
+
+    tail = "，想停随时点下面的按钮" if first else "，同样可以随时停"
+    return head + tail
+
+
 @dataclass
 class SessionView:
     incoming_root: Path
@@ -61,7 +107,7 @@ class SessionView:
     current_stage: Optional[str] = None            # StageStarted 事件更新
     stage_progress: Optional[Tuple[int, int, str]] = None  # (done, total, kind)
     gate_stage: Optional[str] = None               # GateReached 事件更新
-    plan_summary: Optional[dict] = None            # count/apply_tag/ai_enabled
+    plan_summary: Optional[dict] = None            # count/apply_tag/ai_enabled/provider
     selected_count: Optional[int] = None           # GateReached payload / 重建时从 outputs 抄
     drive_active: bool = False                     # DriveJob 入队 True，闸门/终态事件 False
 
@@ -117,6 +163,10 @@ def view_from_run(run: RunState, incoming_root: Path) -> SessionView:
             "count": curate.params.get("count"),
             "apply_tag": curate.params.get("apply_tag"),
             "ai_enabled": curate.params.get("ai_enabled"),
+            # 票 10：开销告知要按 provider 决定报不报时长。跟
+            # _current_plan_params 保持同一组 key，两处构造出来的
+            # plan_summary 形状不该有差别。
+            "provider": curate.params.get("provider", "local"),
         }
     curate_output = run.outputs.get("Curate")
     if curate_output is not None:
