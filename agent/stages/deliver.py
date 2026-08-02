@@ -116,6 +116,16 @@ class DeliverStage:
             self._persist_sent(marker_path, sent)
 
         self.transport.send_text(self.chat_id, f"选好了 {len(selected)} 张")
+        # 票 07：文案单独一条消息、不加任何前缀。Telegram 上复制一整条消息
+        # 是一下的事，掺进"配文："之类的引导语就得手动挑起止，而这段字的全
+        # 部用途就是被原样贴出去。
+        #
+        # 没有文案时什么都不说（PRD 决策十五）：那是附赠品的缺席，不是需要
+        # 报告的事件。.get 不是下标 —— 盘上续跑的老 run 的 Curate 输出里没
+        # 有这个 key。
+        caption = curate_output.data.get("caption", "") if curate_output else ""
+        if caption:
+            self.transport.send_text(self.chat_id, caption)
 
         delivered_paths = [str(run_staging_dir / Path(p).name) for p in selected]
         return StageOutput(ok=True, data={"delivered": delivered_paths, "exported": export_result["exported"]})

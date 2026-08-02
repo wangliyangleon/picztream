@@ -30,6 +30,11 @@ class CurateStage:
         # 去的话，退化时用户拿到的话术跟 AI 真跑通时完全一样。passthrough
         # 分支根本不调 pzt curate，没有退化可言，保持 0。
         ai_fallback_count = 0
+        # 票 07：可以直接发出去的一段话，跟选片是 core 那边同一次模型调用的
+        # 产物。空串 = 没有文案，Deliver 那边就少发一条消息 —— 缺席不是错误
+        # （PRD 决策十五：附赠品坏了不能把关键结果一起拖下水）。passthrough
+        # 分支不调 pzt curate，没有模型调用也就没有文案。
+        caption = ""
         try:
             if count is None:
                 # passthrough：Curate 被跳过聚类，直接把去重后的候选原样
@@ -71,6 +76,9 @@ class CurateStage:
                 # "出现但恒为 0"，见 W2026-07-21 目标二），下标会 KeyError
                 # 把整个 stage 打成失败。
                 ai_fallback_count = result.get("ai_fallback_count", 0)
+                # .get 同上：没有文案时这个 key 整个不出现（cli 那边刻意不
+                # 留空字段），下标会把一个选好了片的 run 打成失败。
+                caption = result.get("caption", "")
 
             self.client.call("tag", "clear", ctx.project_id, apply_tag)
             for path in final_selection:
@@ -83,4 +91,5 @@ class CurateStage:
             "returned": len(final_selection),
             "selected": final_selection,
             "ai_fallback_count": ai_fallback_count,
+            "caption": caption,
         })

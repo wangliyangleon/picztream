@@ -276,3 +276,55 @@ def test_curate_omits_brief_flag_when_there_is_no_selection_brief(tmp_path):
 
     for argv in [argv for argv in call_log if argv[1] == "curate"]:
         assert "--brief" not in argv
+
+
+# -- 文案（票 07 / PRD 决策十五）--
+
+
+def test_caption_survives_into_the_stage_output():
+    # Deliver 读的是 ctx.outputs["Curate"].data，这里丢了文案就永远到不了
+    # 用户（跟 ai_fallback_count 当初蒸发在同一处：run() 重建 dict）。
+    call_log = []
+    client = _make_client({"curate": '{"requested": 2, "returned": 2, '
+                                      '"selected": ["a.jpg", "b.jpg"], '
+                                      '"caption": "海边的傍晚，和最重要的人一起走过"}',
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": 2, "apply_tag": "精选", "ai_enabled": True, "provider": "local"})
+
+    assert output.data["caption"] == "海边的傍晚，和最重要的人一起走过"
+    assert output.data["selected"] == ["a.jpg", "b.jpg"]
+
+
+def test_missing_caption_leaves_the_selection_untouched():
+    # 验收 24：没有文案时这个 key 在 pzt curate 的输出里根本不出现（不是
+    # "出现但为空串"），下标会 KeyError 把整个 stage 打成失败 —— 恰恰是失
+    # 败隔离要防的"附赠品把关键结果拖下水"。
+    call_log = []
+    client = _make_client({"curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": 2, "apply_tag": "精选", "ai_enabled": True, "provider": "local"})
+
+    assert output.ok is True
+    assert output.data["caption"] == ""
+    assert output.data["selected"] == ["a.jpg", "b.jpg"]
+
+
+def test_passthrough_reports_no_caption():
+    # count=None 根本不调 pzt curate，没有模型调用也就没有文案（验收 25 的
+    # 同一形状：不产出，也不因此报错）。
+    call_log = []
+    client = _make_client({"images": json.dumps({"images": [{"path": "a.jpg", "tags": []}]}),
+                            "tag": '{}'}, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选"})
+
+    assert output.ok is True
+    assert output.data["caption"] == ""

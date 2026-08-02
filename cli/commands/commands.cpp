@@ -654,6 +654,11 @@ int cmd_curate(const std::vector<std::string>& args) {
     // 输出逐字节不变。
     out["ai_selection_fallback"] = result.ai_selection_fallback;
   }
+  // 票 07（PRD 决策十五）：文案。**没有文案时这个键整个不出现**，而不是出
+  // 现一个空串 - "键在不在"是单一含义，agent 那边一句 .get("caption", "")
+  // 就够，不用再判空。跟 ai_fallback_count 只在 --ai 时出现是同一个立场：不
+  // 留死字段。core 保证关 AI 时它恒为空，所以这里不需要再判一次 ai_enabled。
+  if (!result.caption.empty()) out["caption"] = result.caption;
   emit_json(out);
   return 0;
 }

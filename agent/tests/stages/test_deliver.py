@@ -30,10 +30,10 @@ class FakeTransport:
         self.sent_texts.append((chat_id, text))
 
 
-def make_curate_output_ctx(selected):
+def make_curate_output_ctx(selected, caption=""):
     return StageContext(
         run_id="run-1", project_id="proj-1",
-        outputs={"Curate": StageOutput(ok=True, data={"selected": selected})},
+        outputs={"Curate": StageOutput(ok=True, data={"selected": selected, "caption": caption})},
     )
 
 
@@ -283,3 +283,58 @@ def test_deliver_retries_transient_send_failure_then_succeeds(tmp_path):
     assert len(transport.sent_files) == 1  # 重试后最终成功发出去一张
     assert transport.remaining_failures == 0
     assert len(list(marker_dir.glob("run-1-*.json"))) == 1  # marker 正常落盘
+
+
+# -- 文案（票 07 / PRD 决策十五、验收 23）--
+
+
+def _stub_export_client():
+    def fake_runner(argv):
+        return subprocess.CompletedProcess(
+            argv, 0, stdout='{"exported": 2, "skipped": [], "created_dir": true}\n', stderr="")
+    return PztClient(pzt_bin="/fake/pzt", runner=fake_runner)
+
+
+def test_deliver_sends_the_caption_as_its_own_message_after_the_photos(tmp_path):
+    # 单独一条消息、不带任何前缀：Telegram 上复制一整条消息是一下的事，掺
+    # 进"配文：xxx"就得手动挑起止，而这段字的全部用途就是被原样贴出去。
+    transport = FakeTransport()
+    stage = DeliverStage(client=_stub_export_client(), transport=transport,
+                          marker_dir=tmp_path / "delivered", staging_dir=tmp_path / "staging")
+    ctx = make_curate_output_ctx(["a.jpg", "b.jpg"], caption="海边的傍晚，和最重要的人一起走过")
+
+    output = stage.run(ctx, {})
+
+    assert output.ok is True
+    texts = [text for _, text in transport.sent_texts]
+    assert texts[-1] == "海边的傍晚，和最重要的人一起走过"
+    # 照片先到，文案在后：文案是对着这几张写的，先出现的话没有指代对象。
+    assert len(transport.sent_files) == 2
+
+
+def test_deliver_says_nothing_extra_when_there_is_no_caption(tmp_path):
+    # 验收 24/25：没有文案时收尾话术与票 07 之前逐字相同，不发空消息、也
+    # 不解释"这次没有文案"——那是拿一句噪音去报告一个附赠品的缺席。
+    transport = FakeTransport()
+    stage = DeliverStage(client=_stub_export_client(), transport=transport,
+                          marker_dir=tmp_path / "delivered", staging_dir=tmp_path / "staging")
+
+    stage.run(make_curate_output_ctx(["a.jpg", "b.jpg"]), {})
+
+    assert [text for _, text in transport.sent_texts] == ["选好了 2 张"]
+
+
+def test_deliver_tolerates_a_curate_output_without_the_caption_key(tmp_path):
+    # 盘上续跑的老 run，outputs 里没有 caption 这个 key（同 payload.get
+    # ("ai_fallback_count") 当初的处置）。下标会把一个已经选好片的 run 打
+    # 成 FAILED。
+    transport = FakeTransport()
+    stage = DeliverStage(client=_stub_export_client(), transport=transport,
+                          marker_dir=tmp_path / "delivered", staging_dir=tmp_path / "staging")
+    ctx = StageContext(run_id="run-1", project_id="proj-1",
+                        outputs={"Curate": StageOutput(ok=True, data={"selected": ["a.jpg"]})})
+
+    output = stage.run(ctx, {})
+
+    assert output.ok is True
+    assert [text for _, text in transport.sent_texts] == ["选好了 1 张"]
