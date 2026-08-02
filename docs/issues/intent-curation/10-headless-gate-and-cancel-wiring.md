@@ -4,7 +4,7 @@
 
 票 05 把开销闸门、取消、以及 `ai_declined`/`cancelled` 两个返回字段都做进了 `core/curate`，也有测试覆盖。但 headless 这一侧没接：
 
-- `cli/commands/commands.cpp` 的 `cmd_curate` 给 `on_ai_gate` 传的是 `nullptr`，`on_cancel` 取默认值 `nullptr`（`pzt dedup --ai` 的 headless 路径同一处置，但 dedup 有 `pzt open` 控制台这个 TUI 入口兜底，curate 按 SPEC §3.2 没有）。
+- `cli/commands/commands.cpp` 的 `cmd_curate` 给 `on_ai_gate` 传的是 `nullptr`，`on_cancel` 取默认值 `nullptr`。`pzt dedup --ai` 的 headless 路径（`commands.cpp:586`）同一处置 - 原以为 `pzt open` 控制台那个 TUI 闸门算兜底，但 agent 走的正是 headless，兜不到，所以两条命令一起进本票范围（拍板决策五）。
 - `CurateResult.ai_declined`/`cancelled` 没有序列化进 `pzt curate` 的 JSON 输出。票 05 的落地记录写明了当时不加的理由：两个钩子都是 `nullptr` 时这两个字段恒为 false，加进去是死字段。
 
 **后果**：真机上 `pzt curate --ai` 不会问任何人就开始花钱，也不能中途叫停。agent 那一侧无从得知用户拒绝过。
@@ -57,19 +57,34 @@ core 在闸门那一刻**不等**任何人，把精确开销（比较次数 + �
 
 不接 `on_cancel`（优雅停 + 正常返回 `cancelled=true`）的理由：SIGTERM 已经能停，多这一层只买到"已评估张数由 core 说而不是从 stderr 进度推断"，而进度行本来就逐张吐、`worker._last_progress` 已经存着这个数。
 
+### 决策五：`pzt dedup --ai` 的 headless 路径同刀做，不单开票
+
+真机场景里 agent 的 Dedup stage 先烧掉十几次调用，Curate 才报数 - 只做 curate 的话，用户看到"18 次"时前面那笔已经花掉了，G5 在这条路径上只覆盖了后半段。**开销这件事对用户是一笔账，不是两笔**，跟决策十七"用户心智里没有簇内簇外的区别"是同一个立场。
+
+（拍板时曾倾向单开一票，理由是 dedup 有 `pzt open` 的阻塞闸门兜底、缺口没 curate 那么裸。被推翻：那个兜底只在 TUI 上，agent 走的是 headless，兜不到。）
+
+**必须拆清楚的两条 dedup 路径**：
+
+- `pzt open` 控制台里的 `/dedup --ai`（`browse.cpp:427`）：阻塞式闸门 + 零写入承诺，**一个字都不动**。
+- `pzt dedup --ai --json` headless（agent 的 Dedup stage 调的那条，`commands.cpp:586` 传 `nullptr` 的地方）：加 cost 事件，与 curate 同一处置。`Dedup` 也早就在 `KILLABLE_STAGES` 里，取消通路现成。
+
+连带影响：决策二要改的 PRD 措辞现在同时牵扯 dedup 既有的零写入承诺 - 改述必须按**入口**（TUI / headless）切，不能按**命令**（dedup / curate）切，否则会把控制台那条已经实现且正确的闸门一起改错。
+
 ### 开工前仍需回答（Eng Design 级，不阻塞拍板）
 
 1. **cost 事件在 stderr 上的形状**。T-8 既定 schema 是 `(phase, done, total)`，而开销不是"完成了几分之几"。是复用一个 `kind` 把两个数塞进 done/total，还是在同一条通道上开一种新事件类型？后者要动 `stages/progress.py` 的解析。
-2. **`pzt dedup --ai` 要不要同样报开销**。本票范围写的是"不受影响"，但真机场景里 agent 的 Dedup stage 先烧掉十几次调用，Curate 才报数 - 用户看到"18 次"时前面那笔已经花掉了。对称扩展是自然的，但会把这一票撑大。
+2. **两条命令的 cost 事件在 agent 侧怎么合成一句话**。Dedup 与 Curate 是两个 stage、两次子进程调用，各报各的。是各发一条消息（用户看到两次"要跑 N 次"），还是攒起来？攒不了 - Curate 的数字要等 Dedup 跑完才知道。倾向各发各的，措辞上让第二条读起来是接续而不是重复。
 
 **Blocked by:** 06（模型选择与排序接进 curate）
 
 **Status:** ready-for-agent（拍板于 2026-08-02，见上）
 
 - [ ] 真机上 `pzt curate --ai` 在开始逐张评估之前，用户收到一条带**精确**开销（比较次数 + 评估张数）与预计时长的消息
-- [ ] 那条消息带可取消入口，点了能真的停下
-- [ ] 取消话术如实说明已评估的那几张留在库里，不谎称零写入
-- [ ] 开销消息只发一次（core 侧 `gate_consulted` 的两个触发点合起来只报一次，行为不变）
-- [ ] `pzt open` 里 `/dedup --ai` 的阻塞式闸门与其零写入承诺不受影响
-- [ ] 关 AI 时不产生 cost 事件
-- [ ] PRD 的 G5 与决策十八改述为 headless 可达的形状，且仍覆盖 TUI 那条阻塞闸门
+- [ ] 真机上 `pzt dedup --ai` 的 headless 路径同样报出精确开销，且用户在 Dedup 烧掉第一次调用之前就收到
+- [ ] 两条消息各自带可取消入口，点了能真的停下（`Dedup`/`Curate` 都已在 `KILLABLE_STAGES` 里）
+- [ ] 第二条消息读起来是接续而不是重复第一条
+- [ ] 取消话术如实说明已评估/已比较的那部分留在库里，不谎称零写入
+- [ ] 每条命令的开销消息只发一次（core 侧 `gate_consulted` 的两个触发点合起来只报一次，行为不变）
+- [ ] `pzt open` 里 `/dedup --ai` 的阻塞式闸门与其零写入承诺**一个字不动**，真机复核过
+- [ ] 关 AI 时两条命令都不产生 cost 事件
+- [ ] PRD 的 G5 与决策十八改述为按**入口**（TUI / headless）切，不按命令切，且仍覆盖 TUI 那条阻塞闸门
