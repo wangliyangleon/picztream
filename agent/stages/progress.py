@@ -52,15 +52,14 @@ def forwarding(client, ctx, ai_enabled: bool):
         if kind is not None:
             ctx.on_progress(done, total, kind)
 
-    def cost_sink(comparisons: int, evaluations: int) -> None:
-        ctx.on_cost(comparisons, evaluations)
-
     client.progress_sink = sink
     # 关 AI 时压根不挂：core 那一侧的闸门本来就在 `ai_enabled` 里面、一行
     # 都不会发（`tournament::cluster_and_choose` / `curate_impl`），这里不
-    # 挂是第二道保险 —— 真漏一行出来，用户收到的会是一句凭空的"这一步要
+    # 挂是第二道保险 - 真漏一行出来，用户收到的会是一句凭空的"这一步要
     # 花钱"，而这条路径上根本没有 AI 调用。
-    client.cost_sink = cost_sink if ai_enabled else None
+    # 直接挂 ctx.on_cost，不裹一层：进度那个 sink 的包装是有活干的（把
+    # phase 翻译成 kind），开销这条一比一透传，包一层只是个 Middle Man。
+    client.cost_sink = ctx.on_cost if ai_enabled else None
     try:
         yield
     finally:

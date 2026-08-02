@@ -82,7 +82,7 @@ _BTN_RESTYLE = "restyle"
 _BTN_CONFIRM_CANCEL = "confirm_cancel"
 # 票 10：AI 开销告知那条消息上的"停下"。它**不是**上面说的那种确认按钮
 # （不跟"好的✅"并排、不挂在闸门上），点它只是打开既有的二次确认，误点
-# 仍然被那一道拦住 —— 危险的是"一下就炸掉整批"，不是"有地方能发起取
+# 仍然被那一道拦住 - 危险的是"一下就炸掉整批"，不是"有地方能发起取
 # 消"。没有这个入口的话，这条消息就只是通知，G5 在 Telegram 上仍然不
 # 可达。
 _BTN_STOP = "stop"
@@ -321,17 +321,36 @@ class SessionConsumer:
                 or (self.view.status == RunStatus.RUNNING and self.view.run_id is not None))
 
     def _prompt_cancel_confirmation(self) -> None:
-        """打字"取消"不立即执行——先弹二次确认。取消会炸掉整批（照片 +
-        处理结果都丢），是危险操作，故意让用户多确认一步（真机反馈）。"""
+        """打字"取消"（或点开销消息上的"停下"）不立即执行 - 先弹二次确认。
+        取消会炸掉整批（照片 + 处理结果都丢），是危险操作，故意让用户多确
+        认一步（真机反馈）。
+
+        票 10：正跑在"写入逐张"的阶段上时，补一句说清哪部分不会作废。用户
+        读到的**决策时刻**是这条，不是事后回执 - 只把回执改诚实、这条仍然
+        说"都会作废"，等于在他做决定的那一刻仍然骗他，而这一票存在的理由
+        正是那个决定要真的可做（G5）。没有要保留的东西时一字不动：
+        Collecting 态和比较段的"都会作废"本来就是准确的。"""
         if not self._has_active_batch():
             self._send("现在没有在处理的批次")
             return
         self._touch_activity()
         self._cancel_confirm_pending = True
-        self._send_buttons(
-            "确定要取消整批吗？取消后这批照片和已处理的结果都会作废。",
-            _CANCEL_CONFIRM_BUTTONS,
-        )
+        text = "确定要取消整批吗？取消后这批照片和已处理的结果都会作废。"
+        preserved = self._preserved_on_cancel()
+        if preserved is not None:
+            text += f"不过{preserved}。"
+        self._send_buttons(text, _CANCEL_CONFIRM_BUTTONS)
+
+    def _preserved_on_cancel(self) -> Optional[str]:
+        """此刻取消的话，哪一部分不会作废；没有就 None。
+
+        判据跟取消回执同一个（worker.PARTIAL_ON_CANCEL_KINDS 按 kind 分），
+        数据来自 view 里那份最近进度 - consumer 手上本来就有，不需要问
+        worker。"""
+        if self.view.stage_progress is None:
+            return None
+        done, total, kind = self.view.stage_progress
+        return describe_cancel_partial(kind, done, total)
 
     def _do_cancel(self) -> None:
         """真正执行取消（已过二次确认）。覆盖 drive 中 / 持有 run / 崩后
@@ -967,7 +986,7 @@ class SessionConsumer:
 
     def _cancel_receipt(self, event: RunFinished) -> str:
         """取消回执。写入逐张的那些阶段被打断时一定留下部分成果，只说"已
-        取消"等于假装什么都没发生 —— 用户回头看到一半照片带滤镜会更困惑，
+        取消"等于假装什么都没发生 - 用户回头看到一半照片带滤镜会更困惑，
         而 curate 的评估段更糟：那几次调用的结果其实留在库里、下次还能
         省钱，不说的话用户以为白花了（票 10 决策二/四）。
 
@@ -1014,7 +1033,7 @@ class SessionConsumer:
         """票 10 决策一：AI 开跑前的开销告知。
 
         独立一条带按钮的新消息，**不进** _stage_progress 那个原地编辑的
-        槽 —— 占了的话接下来第一条进度就会把这条账单改写掉，用户翻回去看
+        槽 - 占了的话接下来第一条进度就会把这条账单改写掉，用户翻回去看
         不到自己被告知过什么。也不节流：它一趟最多两条（Dedup 一条、
         Curate 一条），而且晚发就失去了全部意义。
 

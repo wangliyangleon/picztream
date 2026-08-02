@@ -104,7 +104,7 @@ void emit_json_progress(const char* phase, int done, int total) {
 //
 // 独立的 "cost" key 而不是塞进 progress：开销不是"完成了几分之几"，硬塞
 // 进 done/total 会让下游那句"分母是什么"再多一种含义。上面那段注释里
-// "将来 stderr 上再多一种带外消息时判据不用改"说的就是这一刀——读取方按
+// "将来 stderr 上再多一种带外消息时判据不用改"说的就是这一刀 - 读取方按
 // "有没有 cost 这个 key"分辨，progress 的解析一个字节不用动。
 //
 // 两个数分开而不是加成一个总数：它们的单位不同（次比较 / 张评估），也走
@@ -238,7 +238,7 @@ int cmd_dedup(const std::vector<std::string>& args) {
   // 两个进度回调都无条件传：on_ai_progress 只在 ai_enabled 时才会被 core
   // 调到(见 cluster_and_choose_impl)，不需要在这里判。
   //
-  // 票 10：闸门接上了，但**不阻塞**——报完精确开销无条件返回 true 继续
+  // 票 10：闸门接上了，但**不阻塞** - 报完精确开销无条件返回 true 继续
   // 跑。headless 这一侧没有可以当场问的人（agent 那头的用户不在同一个时
   // 间轴上），而"同步阻塞式闸门 + 单次调用 + 异步聊天界面"三个只能取
   // 两个。取用户真能拒绝那一条：数字先送出去，取消走 agent 已有的 kill
@@ -606,7 +606,7 @@ int cmd_curate(const std::vector<std::string>& args) {
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);
       },
-      // 闸门：跟 cmd_dedup 同一个处置（票 10 决策一、五）——报出精确开销
+      // 闸门：跟 cmd_dedup 同一个处置（票 10 决策一、五） - 报出精确开销
       // 就继续跑，不等任何人。curate 按 SPEC §3.2 不进 TUI，这条是它唯一
       // 的入口，所以"用户可以在 AI 开跑前拒绝"这件事在这里全靠 agent 收
       // 到这行之后立刻告知 + 给可取消入口来兑现。
