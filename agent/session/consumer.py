@@ -469,9 +469,8 @@ class SessionConsumer:
             # AI 可发现性快捷按钮（目标三决策五）：等价于文字里说了"AI帮我
             # 选"，两个 token 效果完全一样，只是两种 Plan 形状下按钮标签不
             # 同（"AI筛选" vs "AI去重"）。
-            curate = next(s for s in self.run.plan.stages if s.name == "Curate")
-            self._apply_confirmed_plan_params(curate.params["count"], curate.params["apply_tag"],
-                                              True, curate.params.get("provider", "local"))
+            self._apply_confirmed_plan_params(
+                {**self._plan_summary(self.run), "ai_enabled": True})
             return
         if action == _BTN_AI_NARROW and self.run.status == RunStatus.AWAITING_GATE:
             # 追问闸门的"AI筛选"快捷按钮：不问具体数字，AI 直接按 remaining
@@ -574,7 +573,7 @@ class SessionConsumer:
         if self.run.status == RunStatus.PLANNED:
             self._submit_classify("refine_plan", text, {
                 "intent_raw": self.run.intent_raw,
-                "current_params": self._current_plan_params(self.run),
+                "current_params": self._plan_summary(self.run),
             })
             return
         if self.run.status == RunStatus.AWAITING_GATE:
@@ -875,8 +874,13 @@ class SessionConsumer:
             return
         # confirmed：更新参数、重新回显确认，不自动开跑（PLANNED 的存在
         # 意义就是"改完参数必须再看一眼"，旧拍板保持）。
-        self._apply_confirmed_plan_params(reply.count, reply.apply_tag,
-                                          reply.ai_enabled, reply.provider)
+        self._apply_confirmed_plan_params({
+            "count": reply.count,
+            "apply_tag": reply.apply_tag,
+            "ai_enabled": reply.ai_enabled,
+            "provider": reply.provider,
+            "selection_brief": reply.selection_brief,
+        })
 
     def _on_gate_reply(self, reply: Any) -> None:
         # 现在只服务 Style 闸门的阶段一（选片确认，真机反馈挪到滤镜之前）—
@@ -1429,25 +1433,17 @@ class SessionConsumer:
         _log.info(f"[consumer] 回复(带按钮): {text!r} buttons={[l for l, _ in actions]}")
         send_buttons(self.chat_id, text, options)
 
-    def _current_plan_params(self, run: RunState) -> dict:
-        curate = next(s for s in run.plan.stages if s.name == "Curate")
-        return {
-            "count": curate.params["count"],
-            "apply_tag": curate.params["apply_tag"],
-            "ai_enabled": curate.params.get("ai_enabled", False),
-            "provider": curate.params.get("provider", "local"),
-        }
-
     def _plan_summary(self, run: RunState) -> dict:
-        """view.describe() 用的展示口径，比 _current_plan_params 多一个选片
-        简述。刻意分成两个方法：_current_plan_params 还喂着 refine_plan 那
-        次分类的提示词，而 PlanConfirmationReply 没有 selection_brief 字段
-        - 把它塞进提示词，模型改不了，只会当噪音读，还可能误以为自己该改。
+        """Plan 里用户可调的那几个字段，一份。
 
-        另一份 plan_summary 由 view.view_from_run 在重启恢复时装配，两边的
-        key 集合本来就不完全一样（那边不抄 provider，describe() 也不读它）。
-        describe() 真正读的 count/apply_tag/ai_enabled/selection_brief 四个
-        必须两边都有。
+        两个消费者：喂 refine_plan 那次分类的提示词（"你之前提出的方案"），
+        以及 view.describe() 的展示口径。票 13 之前这里是两个方法 - 展示那
+        份多一个 selection_brief，喂提示词那份刻意不给，理由是"模型改不了，
+        塞进去只会当噪音读"。票 13 让它可改了，那条理由的前提没了，两份也就
+        不再有差别，合回一个。
+
+        另一份 plan_summary 由 view.view_from_run 在重启恢复时装配，key 集合
+        与这里一致。
         """
         curate = next(s for s in run.plan.stages if s.name == "Curate")
         return {
@@ -1458,18 +1454,31 @@ class SessionConsumer:
             "selection_brief": curate.params.get("selection_brief") or "",
         }
 
-    def _apply_confirmed_plan_params(self, count, apply_tag, ai_enabled, provider) -> None:
-        # ai_enabled/provider 是全局开关，Dedup/Curate 两份拷贝一起改，不是
-        # 共享引用；Dedup 这次可能压根不在 Plan 里（W2026-07-21 目标三"没提
-        # 去重"分支），必须带默认值，否则 StopIteration 会被 _drain_events
-        # 的兜底吞掉、这条回复静默无效。同时被 _on_refine_reply 的 confirmed
-        # 分支和决策五的 ai_curate/ai_dedup 快捷按钮调用，逻辑不重复两份。
+    def _apply_confirmed_plan_params(self, params: dict) -> None:
+        """把一份确认过的可调字段落进 Plan 并重新回显。
+
+        参数是一整份 dict 而不是逐个位置参数（票 13 起五个字段）：两个调用方
+        本来就都是"拿当前这份、改其中一两项"，传 dict 让那件事直接写得出来，
+        也不会在加字段时漏掉某个调用点。
+
+        ai_enabled/provider 是全局开关，Dedup/Curate 两份拷贝一起改，不是共
+        享引用；Dedup 这次可能压根不在 Plan 里（W2026-07-21 目标三"没提去重"
+        分支），必须带默认值，否则 StopIteration 会被 _drain_events 的兜底吞
+        掉、这条回复静默无效。
+        """
+        count = params["count"]
+        ai_enabled = params["ai_enabled"]
+        provider = params["provider"]
         dedup = next((s for s in self.run.plan.stages if s.name == "Dedup"), None)
         curate = next(s for s in self.run.plan.stages if s.name == "Curate")
         curate.params["count"] = count
-        curate.params["apply_tag"] = apply_tag
+        curate.params["apply_tag"] = params["apply_tag"]
         curate.params["ai_enabled"] = ai_enabled
         curate.params["provider"] = provider
+        # 票 13：空串是"明确不要题材限制"，也要落地（不是"没提到"）。会走到
+        # 这里的 params 都已经过 refine_plan_confirmation 的 None/"" 判定，
+        # 这里不再二次解释，None 就是真的没有。
+        curate.params["selection_brief"] = params.get("selection_brief") or ""
         if count is not None:
             # 提前给了数量 = 提前回答了 Dedup 后才会问的追问，解除 Curate 的
             # 待定状态（目标三决策七）。这里直接改 Plan 对象、Driver 还没开

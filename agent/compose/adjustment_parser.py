@@ -223,21 +223,35 @@ _CONFIRMATION_SCHEMA_INSTRUCTION = (
     "The adjustable fields are count (how many photos to keep), apply_tag (the "
     "tag/album/audience name), ai_enabled (boolean, whether to use AI visual comparison "
     "to pick the best photo among similar ones instead of just picking by capture time), "
-    "and provider (string, one of \"local\", \"gemini\", or \"claude\", which AI model to "
-    "use when ai_enabled is true). Respond with a single JSON object in one of five shapes: "
+    "provider (string, one of \"local\", \"gemini\", or \"claude\", which AI model to "
+    "use when ai_enabled is true), and selection_brief (string, WHAT KIND of photos to "
+    "pick -- subject matter, mood, ordering). Respond with a single JSON object in one "
+    "of five shapes: "
     '{"action": "approve"} if the user is satisfied and wants to proceed, even if '
     'phrased casually or indirectly (for example "好的，处理吧", "可以", "没问题"); '
     '{"action": "reject"} if the user wants to abandon this plan entirely (for example '
     '"算了", "不要了", "cancel"); '
     '{"action": "confirmed", "count": <integer>, "apply_tag": <string>, '
-    '"ai_enabled": <boolean>, "provider": <string>} if the reply asks to CHANGE any field. '
-    "Requests to change the number of photos, the tag, or whether AI picks are used are "
-    "ALWAYS 'confirmed', never 'query'. Copy every field from the proposed plan and "
+    '"ai_enabled": <boolean>, "provider": <string>, "selection_brief": <string>} if the '
+    "reply asks to CHANGE any field. "
+    "Requests to change the number of photos, the tag, whether AI picks are used, or "
+    "WHAT KIND of photos to pick are ALWAYS 'confirmed', never 'query' and never "
+    "'clarify'. Copy every field from the proposed plan and "
     'overwrite only what the user asked to change. Examples (proposed count=3): "选六张吧"/'
     '"改成6张"/"要6张" -> count 6; "留9张" -> count 9; "标签叫ins"/"发到ins" -> apply_tag '
     '"ins"; "6张，标签叫朋友圈" -> count 6 and apply_tag "朋友圈"; "AI帮我选"/"用AI挑"/"挑最好'
     '的" -> ai_enabled true; "不用AI了"/"按时间选就行"/"别用AI" -> ai_enabled false; "换成'
     'gemini"/"用gemini" -> provider "gemini"; '
+    # 票 13：真机上"小清新"这类纯题材要求，在没有 selection_brief 这个字段
+    # 可落时会被硬塞进 apply_tag 或 ai_enabled（"画面小清新" -> 静默开了
+    # AI）。所以除了给出字段，还要把"它不是标签、不是开关"写死。
+    'a description of WHAT KIND of photos to pick goes to selection_brief and NOWHERE '
+    'else -- it is NOT a tag name and NOT a request to turn AI on. Examples: "选两张小'
+    '清新一点的吧" -> count 2 and selection_brief "画面小清新"; "要活泼点的" -> '
+    'selection_brief "表情活泼"; "别都是风景" -> selection_brief "别都是风景"; "换成有人'
+    '的" -> selection_brief "要有人物". Leave selection_brief out entirely (or null) when '
+    "the reply says nothing about what kind of photos are wanted; use an empty string "
+    'only when the user explicitly drops any subject requirement ("不用管题材了"); '
     '{"action": "query"} ONLY if the message is purely a question that asks for '
     'information and requests NO change (for example "你收到几张图片了？", "现在留几张？"); '
     'a message that states a new number or tag is NOT a query; '
@@ -255,6 +269,9 @@ class PlanConfirmationReply:
     ai_enabled: Optional[bool] = None
     provider: Optional[str] = None
     question: Optional[str] = None
+    # 票 13：与 count/apply_tag 等四个字段不同，这一个的"没提到"必须靠
+    # isinstance(str) 判，不能靠 .get(k, 默认)，见 refine_plan_confirmation。
+    selection_brief: Optional[str] = None
 
 
 def refine_plan_confirmation(original_intent: str, current_params: dict, followup_message: str,
@@ -286,12 +303,21 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
         return PlanConfirmationReply(action="clarify", question=decision.get("question", "能再说清楚一点吗？"))
 
     if action == "confirmed":
+        # 票 13：brief 不能跟上面四个一样用 `.get(k, 当前值)` 兜底。那个写法
+        # 只在"key 缺席"时回落，而模型回**显式 null** 是常态（用户这一句压根
+        # 没提题材要求），null 会一路盖掉旧简述。改判类型：非字符串一律当"这
+        # 次没提"、保留旧值；空串是"明确不要题材限制"的有意覆盖，留着。这套
+        # None/"" 的区分沿用票 08 立、票 11 复用的同一条约定。
+        brief = decision.get("selection_brief")
+        if not isinstance(brief, str):
+            brief = current_params.get("selection_brief")
         return PlanConfirmationReply(
             action="confirmed",
             count=decision.get("count", current_params.get("count")),
             apply_tag=decision.get("apply_tag", current_params.get("apply_tag")),
             ai_enabled=decision.get("ai_enabled", current_params.get("ai_enabled")),
             provider=decision.get("provider", current_params.get("provider")),
+            selection_brief=brief,
         )
 
     raise AdjustmentError("unknown_action", f"unrecognized confirmation action {action!r}")

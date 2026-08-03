@@ -257,6 +257,69 @@ def test_parse_adjustment_does_not_learn_the_new_gate_action(monkeypatch):
     assert exc_info.value.code == "unknown_action"
 
 
+# -- 票 13：方案确认阶段也能改题材要求 --
+
+
+def test_refine_plan_confirmation_changes_the_selection_brief(monkeypatch):
+    # 真机 2026-08-03：方案回显成"要有景有人的照片"，用户说"选两张小清新一
+    # 点的吧"，题材要求原样不动 - 模型手里根本没有这个可调字段。
+    current_params = {"count": 9, "apply_tag": "ins", "ai_enabled": False,
+                      "provider": "local", "selection_brief": "要有景有人的"}
+
+    reply = refine_plan_confirmation(
+        "选几张发ins", current_params, "选两张小清新一点的吧",
+        http_post=_fake_http_post({"action": "confirmed", "count": 2,
+                                    "selection_brief": "画面小清新"}),
+    )
+
+    assert reply.action == "confirmed"
+    assert reply.count == 2                     # 同一句里的数量也生效
+    assert reply.selection_brief == "画面小清新"
+    assert reply.apply_tag == "ins"             # 用户没提，保留原值
+    assert reply.ai_enabled is False            # 不该被题材要求带翻
+
+
+def test_refine_plan_confirmation_keeps_the_brief_when_not_mentioned(monkeypatch):
+    # 票 11 决策二的同一条边界：没提题材要求的轮次不能把旧简述清空。
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False,
+                      "provider": "local", "selection_brief": "要有景有人的"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "改成6张",
+        http_post=_fake_http_post({"action": "confirmed", "count": 6}),
+    )
+
+    assert reply.selection_brief == "要有景有人的"
+
+
+def test_refine_plan_confirmation_explicit_null_brief_does_not_clear_it(monkeypatch):
+    # 现有 confirmed 分支用的是 decision.get(k, current.get(k))，对**显式
+    # null** 是错的（key 在、值为 null 时会把旧值覆盖成 None）。brief 这一
+    # 路显式判 isinstance(str)，所以 null 等同于"没提"。
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False,
+                      "provider": "local", "selection_brief": "要有景有人的"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "改成6张",
+        http_post=_fake_http_post({"action": "confirmed", "count": 6,
+                                    "selection_brief": None}),
+    )
+
+    assert reply.selection_brief == "要有景有人的"
+
+
+def test_refine_plan_confirmation_empty_brief_is_an_explicit_clear(monkeypatch):
+    current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False,
+                      "provider": "local", "selection_brief": "要有景有人的"}
+
+    reply = refine_plan_confirmation(
+        "帮我选几张发朋友圈", current_params, "不用管题材了",
+        http_post=_fake_http_post({"action": "confirmed", "selection_brief": ""}),
+    )
+
+    assert reply.selection_brief == ""
+
+
 def test_refine_plan_confirmation_returns_clarify_question_for_vague_reply(monkeypatch):
     current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False, "provider": "local"}
 

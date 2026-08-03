@@ -21,6 +21,7 @@
 | [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | **done** |
 | [11](11-adjust-selection-brief-at-gate.md) | 选片确认阶段能改题材要求 | 08 | 已实现，**未收口**（见票 12）|
 | [12](12-rerun-stage-leaves-its-gate-armed.md) | `rerun_stage` 答完的闸门没解除 | 无 | ready-for-agent |
+| [13](13-adjust-selection-brief-at-plan-confirmation.md) | 方案确认阶段也能改题材要求 | 无 | 已实现（待真机复验）|
 
 ## 依赖图
 
@@ -49,6 +50,10 @@
   果"。还差两条：**第一条验收在 deferred 流程上不成立**（被票 12 挡住，那条流程
   里调整会把"要不要再筛选一下"再问一遍而不是重选），以及"重选只花一次文本调用"
   待真机验。**票 12 落地后才能标 done。**
+- **13** 是票 11 真机验证时打出来的：票 11 只堵了**选片确认**（`AWAITING_GATE`）
+  那个入口，用户更早在**方案确认**（`PLANNED`，走 `refine_plan_confirmation`）
+  就会想改题材要求，而那条路的可调字段里没有 `selection_brief`，于是"小清新"被
+  硬塞进 `apply_tag` / `ai_enabled`。票 11 拍的两块板直接沿用，没有新的板要拍。
 - **12** 是票 11 落地时发现的既有缺陷，不是票 11 引入的：`rerun_stage` 答完的
   闸门不解除 `spec.gate`，于是"只说去重没给数量"那条流程里，选片确认闸门上的
   任何一次调整都会把"要不要再筛选一下"再问一遍、Curate 不重跑。对现有三个

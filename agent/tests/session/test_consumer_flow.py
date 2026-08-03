@@ -1386,6 +1386,45 @@ def test_selection_gate_tolerates_a_payload_without_the_key(tmp_path):
             ) in env.transport.texts()
 
 
+# -- 票 13：方案确认阶段改题材要求 --
+
+
+def test_plan_confirmation_applies_a_new_selection_brief_and_echoes_it(tmp_path):
+    # 真机 2026-08-03：方案回显成"…要有景有人的照片"，用户说"选两张小清新一
+    # 点的吧"，简述纹丝不动 - refine_plan 那次分类根本没有这个可调字段。
+    env = make_consumer(tmp_path)
+    run = to_planned(env, plan_factory=_plan_with_brief("要有景有人的"))
+    env.push_text("选两张小清新一点的吧")
+    env.consumer.step()
+
+    [job] = env.drain_jobs()
+    # 旧简述要进提示词，否则模型没有"当前是什么"可抄，改一项就会丢掉其余
+    assert job.context["current_params"]["selection_brief"] == "要有景有人的"
+
+    env.put_event(ClassifyDone(0, "refine_plan", PlanConfirmationReply(
+        action="confirmed", count=2, apply_tag="ins", ai_enabled=False,
+        provider="local", selection_brief="画面小清新")))
+    env.consumer.step()
+
+    curate = next(s for s in env.store.load(run.run_id).plan.stages if s.name == "Curate")
+    assert curate.params["selection_brief"] == "画面小清新"
+    assert "画面小清新" in [t for t in env.transport.texts() if "理解你想" in t][-1]
+
+
+def test_ai_shortcut_button_does_not_drop_the_selection_brief(tmp_path):
+    # 快捷按钮走同一条参数应用路径。票 13 之前它逐个位置传四个字段，多出
+    # 第五个字段时最容易在这里被漏掉、把简述清空。
+    env = make_consumer(tmp_path)
+    run = to_planned(env, plan_factory=_plan_with_brief("要有景有人的"))
+
+    env.push_callback(f"ai_curate:{run.run_id}")
+    env.consumer.step()
+
+    curate = next(s for s in env.store.load(run.run_id).plan.stages if s.name == "Curate")
+    assert curate.params["ai_enabled"] is True
+    assert curate.params["selection_brief"] == "要有景有人的"
+
+
 # -- 票 11：选片确认阶段改题材要求 --
 
 

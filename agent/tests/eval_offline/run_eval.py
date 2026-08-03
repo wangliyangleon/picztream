@@ -21,7 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # agent/ 根目录
 
-from compose.adjustment_parser import classify_gate_reply, parse_adjustment
+from compose.adjustment_parser import (classify_gate_reply, parse_adjustment,
+                                        refine_plan_confirmation)
 from compose.plan_composer import compose_plan
 from compose.validate import ValidationError, validate_plan
 from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
@@ -82,6 +83,29 @@ GATE_REPLY_CASES = [
 ]
 
 
+# 票 13：方案确认阶段（PLANNED / refine_plan）。真机 2026-08-03 打出来的那
+# 两条在这儿：没有 selection_brief 这个可调字段时，"小清新"会被硬塞进
+# apply_tag 或 ai_enabled。每条要看的：
+#   1-2) 纯题材要求 + 数量，两件事都要落到位，且 ai_enabled 不能被带翻；
+#   3)   只改题材要求时其余字段原样保留；
+#   4-5) 没提题材要求的轮次不能凭空造简述、也不能把旧的清掉；
+#   6)   明确不要题材限制时才给空串；
+#   7-8) approve/query 不能被新字段抢走。
+_CONFIRM_CURRENT = {"count": 2, "apply_tag": "ins", "ai_enabled": False,
+                    "provider": "local", "selection_brief": "要有景有人的"}
+
+CONFIRMATION_CASES = [
+    "选两张小清新一点的吧",
+    "选两张画面小清新一点的照片",
+    "要活泼点的",
+    "改成6张",
+    "标签叫朋友圈",
+    "不用管题材了",
+    "好的，处理吧",
+    "现在留几张？",
+]
+
+
 def _make_run(selected):
     plan = Plan(stages=[StageSpec(name="Curate", params={"count": len(selected), "apply_tag": "精选"})])
     return RunState(
@@ -136,6 +160,20 @@ def main() -> None:
             continue
         params = reply.delta.params if reply.delta is not None else None
         print(f"  action={reply.action!r}, params={params}")
+
+    print("\n=== refine_plan_confirmation（票 13）===")
+    print(f"当前方案：{_CONFIRM_CURRENT}")
+    for msg in CONFIRMATION_CASES:
+        print(f"\n用户回复：{msg!r}")
+        try:
+            reply = refine_plan_confirmation("选几张发ins", dict(_CONFIRM_CURRENT), msg,
+                                              meta_provider=args.provider)
+        except Exception as e:
+            print(f"  解析失败：{e}")
+            continue
+        print(f"  action={reply.action!r}, count={reply.count!r}, "
+              f"apply_tag={reply.apply_tag!r}, ai_enabled={reply.ai_enabled!r}, "
+              f"selection_brief={reply.selection_brief!r}")
 
 
 if __name__ == "__main__":
