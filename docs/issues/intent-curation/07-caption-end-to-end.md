@@ -93,8 +93,8 @@
 还有一件事值得记：在**方案确认**闸门上打字是走 `refine_plan`，而
 `PlanConfirmationReply` 没有 `selection_brief` 字段（`_apply_confirmed_plan_params`
 只带 count/apply_tag/ai_enabled/provider），所以那句话里的题材要求进不了简
-述；这次它还被判成了 `approve`，直接开跑。要开 AI 就**点按钮**，别打字。同
-一形状的缺口见票 11。
+述；这次它还被判成了 `approve`，直接开跑。要开 AI 就**点按钮**，别打字。这不
+是本票的缺口，已另行立票：选片确认阶段是票 11，方案确认阶段是票 13。
 
 ### code review 收的两条（都在提示词里）
 
