@@ -43,7 +43,11 @@ text='选两张画面小清新一点的吧'  status=planned  kind=refine_plan
 
 **Blocked by:** 无（票 11 已落地，两块板可直接沿用）
 
-**Status:** ready-for-agent
+**Status:** **done**（2026-08-03，真机复验通过，见文末最后一条验收）
+
+> 注意：标题与正文里的 `PLANNED` 指的是**一次运行的生命周期状态**
+> （`COLLECTING → PLANNED → RUNNING → AWAITING_GATE → DONE`），即"方案回显完、
+> 还没开跑"那个时刻，也就是本票覆盖的入口。它跟本票自己的状态没有关系。
 
 ## 沿用票 11 的拍板，不重新拍
 
