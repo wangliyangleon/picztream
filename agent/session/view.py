@@ -216,7 +216,7 @@ def view_from_run(run: RunState, incoming_root: Path) -> SessionView:
             # 也进 dict 比较的测试断言，两种"没有简述"的表示会让它时灵时不灵。
             "selection_brief": curate.params.get("selection_brief") or "",
             # 票 10：开销告知要按 provider 决定报不报时长。跟
-            # _current_plan_params 保持同一组 key，两处构造出来的
+            # consumer._plan_summary 保持同一组 key，两处构造出来的
             # plan_summary 形状不该有差别。
             "provider": curate.params.get("provider", "local"),
         }
