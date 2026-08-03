@@ -7,11 +7,11 @@ step() 驱动，不起真线程。
 from __future__ import annotations
 
 import threading
-
-import pytest
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import List
+
+import pytest
 
 from compose.adjustment_parser import (
     AdjustmentError,
@@ -515,15 +515,15 @@ def test_drive_rerun_curate_with_count_calls_pzt_curate(tmp_path):
     assert not any(c[0] == "images" for c in env.client.calls)
 
 
-def _deferred_curate_run(env, count=None):
+def _deferred_curate_run(env):
     """"只说去重没给数量"那条流程：Curate 带 required 闸门、count 待定。"""
     run = env.make_running_run()
     curate = next(s for s in run.plan.stages if s.name == "Curate")
     curate.gate = "required"
-    curate.params["count"] = count
+    curate.params["count"] = None
     _mark_ingest_dedup_done(run)
     env.store.save(run)
-    return run, curate
+    return run
 
 
 @pytest.mark.parametrize("delta_params", [
@@ -541,7 +541,7 @@ def test_adjusting_after_an_answered_followup_reruns_curate_instead_of_reasking(
     还剩 N 张，要不要再筛选一下？"再问一遍。四个 adjust action 都要成立。
     """
     env = make_worker(tmp_path)
-    run, curate = _deferred_curate_run(env)
+    run = _deferred_curate_run(env)
     env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
                            args={"params": {"count": 2}}))
     env.step()
@@ -567,7 +567,7 @@ def test_answered_followup_does_not_disable_the_stop_path_reask(tmp_path):
     答完追问之后 `gate` 必须仍是 "required"，否则 consumer 会静默改走
     方案确认、不再重问"要不要用 AI"。"""
     env = make_worker(tmp_path)
-    run, curate = _deferred_curate_run(env)
+    run = _deferred_curate_run(env)
     env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
                            args={"params": {"count": 2}}))
     env.step()

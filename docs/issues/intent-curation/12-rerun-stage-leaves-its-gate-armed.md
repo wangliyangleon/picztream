@@ -104,7 +104,11 @@ Plan 上跑（`worker._execute_compose`、`run_intent.py`），从不校验在�
         端到端跑真 Driver：断言 Curate 真的 started、最后停在 Style 闸门
 - [x] 上面这条对 `set_count`/`set_apply_tag`/`swap_out`/`set_selection_brief`
       四个 action 都成立
-      - 同上，parametrize 四种 delta 形状
+      - 同上，parametrize 四种 delta 形状。**说准一点**：`apply_adjustment` 对
+        params 是不透明的 `spec.params.update(delta.params)`，所以四种 delta 走
+        的是逐字节相同的 driver 代码，这个 parametrize 证明的是"闸门不再拦"，
+        不是"四个 action 各自解析正确"（后者由票 11 的
+        `classify_gate_reply` 测试覆盖，本票没碰那段）。留着四份是文档价值
 - [x] Style 匹配失败后的重问路径（AG-01）行为不变，有测试钉住
       - 既有的 `test_rerun_style_match_failure_reprompts_style_gate` 未改动且仍绿；
         新增 `test_rerun_stage_does_not_answer_the_gate_unless_asked` 钉住"默认

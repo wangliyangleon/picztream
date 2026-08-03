@@ -53,7 +53,7 @@ def test_adjusting_caption_does_not_rerun_eval_dedup_curate_style(tmp_path):
         assert run.stage_states[untouched] == StageStatus.DONE
 
 
-def _deferred_curate_run(tmp_path):
+def _deferred_curate_driver(tmp_path):
     """"只说去重没给数量"那条流程的形状：Curate 带 required 闸门、count 待定。"""
     run, stages = make_pipeline_run()
     curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
@@ -67,7 +67,7 @@ def test_answered_gate_stays_answered_so_a_later_adjustment_actually_reruns(tmp_
     必须真的重跑 Curate，而不是把"去重后还剩 N 张，要不要再筛选一下？"再问
     一遍。这个测试此前钉的是缺陷本身（calls 停在 1、status 回到
     AWAITING_GATE），票 12 把它**有意**翻了过来。"""
-    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+    run, stages, curate_spec, driver = _deferred_curate_driver(tmp_path)
 
     driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)  # 追问答完
     driver.apply_adjustment(  # 选片闸门上改题材要求
@@ -86,7 +86,7 @@ def test_answering_a_gate_does_not_rewrite_its_gate_setting(tmp_path):
     票 10 的 rewind 路径用 `curate.gate != "off"` 判断要不要重问"要不要用
     AI"（consumer.py `_on_run_rewound`），把 `gate` 直接改成 "off" 会静默
     掐掉那条路径。"""
-    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+    run, _, curate_spec, driver = _deferred_curate_driver(tmp_path)
 
     driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)
 
@@ -113,7 +113,7 @@ def test_rerun_stage_does_not_answer_the_gate_unless_asked(tmp_path):
 def test_rearm_gate_reopens_an_already_answered_question(tmp_path):
     """重新挂闸门 = 又要问一遍，之前那个答案不再算数。票 10 的"停下"路径
     正是这个形状：追问答过了，但用户把 Curate 停了，要回到"要不要用 AI"。"""
-    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+    run, _, curate_spec, driver = _deferred_curate_driver(tmp_path)
     driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)
 
     driver.rearm_gate(run, "Curate")
@@ -127,7 +127,7 @@ def test_rearm_gate_reopens_an_already_answered_question(tmp_path):
 def test_gate_answered_survives_a_store_roundtrip(tmp_path):
     """标记落在 StageSpec 上，必须跟着 run 一起持久化 - 否则进程重启后
     闸门又活过来了。"""
-    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+    run, _, _, driver = _deferred_curate_driver(tmp_path)
     store = RunStore(tmp_path)
     driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)
 
