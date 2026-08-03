@@ -7,6 +7,8 @@ step() 驱动，不起真线程。
 from __future__ import annotations
 
 import threading
+
+import pytest
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import List
@@ -20,7 +22,15 @@ from compose.adjustment_parser import (
 )
 from compose.llm_client import LlmRequestError
 from pzt_client import PztCancelledError
-from orchestrator.types import Plan, RunState, RunStatus, StageOutput, StageSpec, StageStatus
+from orchestrator.types import (
+    Plan,
+    PlanDelta,
+    RunState,
+    RunStatus,
+    StageOutput,
+    StageSpec,
+    StageStatus,
+)
 from session.protocol import (
     ClassifyDone,
     ClassifyFailed,
@@ -503,6 +513,69 @@ def test_drive_rerun_curate_with_count_calls_pzt_curate(tmp_path):
 
     assert any(c[0] == "curate" for c in env.client.calls)
     assert not any(c[0] == "images" for c in env.client.calls)
+
+
+def _deferred_curate_run(env, count=None):
+    """"只说去重没给数量"那条流程：Curate 带 required 闸门、count 待定。"""
+    run = env.make_running_run()
+    curate = next(s for s in run.plan.stages if s.name == "Curate")
+    curate.gate = "required"
+    curate.params["count"] = count
+    _mark_ingest_dedup_done(run)
+    env.store.save(run)
+    return run, curate
+
+
+@pytest.mark.parametrize("delta_params", [
+    {"count": 3},                       # set_count
+    {"apply_tag": "ins"},               # set_apply_tag
+    {"exclude": ["c.jpg"]},             # swap_out
+    {"selection_brief": "要活泼点的"},    # set_selection_brief（票 11）
+])
+def test_adjusting_after_an_answered_followup_reruns_curate_instead_of_reasking(
+        tmp_path, delta_params):
+    """票 12 的第一、二条验收，端到端跑真 Driver。
+
+    deferred 流程里追问答完（rerun_curate）之后，用户在选片确认闸门上做调
+    整，Curate 必须真的重跑并回到选片确认（Style 闸门），而不是把"去重后
+    还剩 N 张，要不要再筛选一下？"再问一遍。四个 adjust action 都要成立。
+    """
+    env = make_worker(tmp_path)
+    run, curate = _deferred_curate_run(env)
+    env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
+                           args={"params": {"count": 2}}))
+    env.step()
+    env.drain_events()
+
+    env.put_drive(DriveJob(generation=2, action="adjustment", run_id=run.run_id,
+                           args={"delta": PlanDelta(stage_name="Curate",
+                                                     params=delta_params)}))
+    env.step()
+
+    events = env.drain_events()
+    assert "Curate" in _started_stages(events)  # 真重跑了
+    gate = events[-1]
+    assert isinstance(gate, GateReached)
+    assert gate.stage == "Style"                # 回到选片确认，不是追问
+    saved = env.store.load(run.run_id)
+    for key, value in delta_params.items():
+        assert next(s for s in saved.plan.stages if s.name == "Curate").params[key] == value
+
+
+def test_answered_followup_does_not_disable_the_stop_path_reask(tmp_path):
+    """票 12 第四条验收：票 10 的"停下"路径判据是 `curate.gate != "off"`。
+    答完追问之后 `gate` 必须仍是 "required"，否则 consumer 会静默改走
+    方案确认、不再重问"要不要用 AI"。"""
+    env = make_worker(tmp_path)
+    run, curate = _deferred_curate_run(env)
+    env.put_drive(DriveJob(generation=1, action="rerun_curate", run_id=run.run_id,
+                           args={"params": {"count": 2}}))
+    env.step()
+
+    saved_curate = next(s for s in env.store.load(run.run_id).plan.stages
+                        if s.name == "Curate")
+    assert saved_curate.gate == "required"
+    assert saved_curate.gate_answered is True
 
 
 def test_rerun_curate_cancelled_finishes_run_as_cancelled(tmp_path):

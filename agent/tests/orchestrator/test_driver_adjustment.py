@@ -53,36 +53,89 @@ def test_adjusting_caption_does_not_rerun_eval_dedup_curate_style(tmp_path):
         assert run.stage_states[untouched] == StageStatus.DONE
 
 
-def test_rerun_stage_leaves_its_own_gate_armed_so_a_later_adjustment_reasks(tmp_path):
-    """钉住**当前**行为，它是一个已知缺陷，见 docs/issues/intent-curation/
-    12-rerun-stage-leaves-its-gate-armed.md（票 11 落地时发现）。
-
-    `rerun_stage` 的契约写的是"闸门已经问过、这次给的就是答案，不需要闸门
-    再问一遍"，但它只跳过**这一次**，`spec.gate` 原封不动。于是"只说去重没
-    给数量"那条流程（Curate `gate="required"`）里，用户之后在选片闸门上做
-    任何一次调整，`apply_adjustment` 把 Curate 重置成 PENDING，下一次
-    `advance()` 又拿 `gate="required"` 把"去重后还剩 N 张，要不要再筛选一
-    下？"问出来 - Curate 压根没重跑（下面 calls 仍是 1）。
-
-    修它要动 `spec.gate` 的生命周期，而那条路还被票 10 的 rewind→rearm_gate
-    和 AG-01 的 Style 重问共用，不适合在票 11 里顺手改。票 12 落地时这个
-    测试应当被**有意**翻过来。
-    """
+def _deferred_curate_run(tmp_path):
+    """"只说去重没给数量"那条流程的形状：Curate 带 required 闸门、count 待定。"""
     run, stages = make_pipeline_run()
     curate_spec = next(s for s in run.plan.stages if s.name == "Curate")
     curate_spec.gate = "required"
     curate_spec.params["count"] = None
-    driver = Driver(stages=stages, store=RunStore(tmp_path))
+    return run, stages, curate_spec, Driver(stages=stages, store=RunStore(tmp_path))
 
-    driver.rerun_stage(run, "Curate", {"count": 5})  # 追问答完："留5张"
+
+def test_answered_gate_stays_answered_so_a_later_adjustment_actually_reruns(tmp_path):
+    """票 12：`rerun_stage(mark_gate_answered=True)` 之后，选片闸门上的调整
+    必须真的重跑 Curate，而不是把"去重后还剩 N 张，要不要再筛选一下？"再问
+    一遍。这个测试此前钉的是缺陷本身（calls 停在 1、status 回到
+    AWAITING_GATE），票 12 把它**有意**翻了过来。"""
+    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+
+    driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)  # 追问答完
     driver.apply_adjustment(  # 选片闸门上改题材要求
         run, PlanDelta(stage_name="Curate", params={"selection_brief": "表情活泼"}))
     driver.advance(run)
 
-    assert curate_spec.gate == "required"
+    assert run.gate_state is None
+    assert run.status == RunStatus.RUNNING
+    assert len(stages["Curate"].calls) == 2  # 真的重跑了
+    assert curate_spec.params["selection_brief"] == "表情活泼"
+
+
+def test_answering_a_gate_does_not_rewrite_its_gate_setting(tmp_path):
+    """`gate`（配置）与 `gate_answered`（这问题已经有答案了）必须是两个东西。
+
+    票 10 的 rewind 路径用 `curate.gate != "off"` 判断要不要重问"要不要用
+    AI"（consumer.py `_on_run_rewound`），把 `gate` 直接改成 "off" 会静默
+    掐掉那条路径。"""
+    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+
+    driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)
+
+    assert curate_spec.gate == "required"  # 配置没被改写
+    assert curate_spec.gate_answered is True
+
+
+def test_rerun_stage_does_not_answer_the_gate_unless_asked(tmp_path):
+    """opt-in：默认不动 `gate_answered`。rerun_style 依赖这条 - Style 的闸门
+    在描述没匹配上 preset 时要靠 AG-01 重新问一次。"""
+    run, stages = make_pipeline_run()
+    style_spec = next(s for s in run.plan.stages if s.name == "Style")
+    style_spec.gate = "required"
+    driver = Driver(stages=stages, store=RunStore(tmp_path))
+
+    driver.rerun_stage(run, "Style", {"style_description": "胶片感"})
+
+    assert style_spec.gate_answered is False
+    driver.rearm_gate(run, "Style")
+    assert run.status == RunStatus.AWAITING_GATE
+    assert run.gate_state.stage_name == "Style"
+
+
+def test_rearm_gate_reopens_an_already_answered_question(tmp_path):
+    """重新挂闸门 = 又要问一遍，之前那个答案不再算数。票 10 的"停下"路径
+    正是这个形状：追问答过了，但用户把 Curate 停了，要回到"要不要用 AI"。"""
+    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+    driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)
+
+    driver.rearm_gate(run, "Curate")
+
+    assert curate_spec.gate_answered is False
     assert run.status == RunStatus.AWAITING_GATE
     assert run.gate_state.stage_name == "Curate"
-    assert len(stages["Curate"].calls) == 1  # 没重跑，只是又问了一遍
+    assert run.gate_state.setting == "required"
+
+
+def test_gate_answered_survives_a_store_roundtrip(tmp_path):
+    """标记落在 StageSpec 上，必须跟着 run 一起持久化 - 否则进程重启后
+    闸门又活过来了。"""
+    run, stages, curate_spec, driver = _deferred_curate_run(tmp_path)
+    store = RunStore(tmp_path)
+    driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)
+
+    reloaded = store.load(run.run_id)
+
+    spec = next(s for s in reloaded.plan.stages if s.name == "Curate")
+    assert spec.gate_answered is True
+    assert spec.gate == "required"
 
 
 def test_adjustment_then_advance_reruns_only_invalidated_stages(tmp_path):

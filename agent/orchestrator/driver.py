@@ -45,7 +45,7 @@ class Driver:
             self.store.save(run)
             return run
 
-        if next_spec.gate != "off" and run.gate_state is None:
+        if self.stops_at_gate(run, next_spec):
             run.gate_state = GateState(stage_name=next_spec.name, setting=next_spec.gate)
             run.status = RunStatus.AWAITING_GATE
             self.store.save(run)
@@ -56,10 +56,19 @@ class Driver:
         self.store.save(run)
         return run
 
+    def stops_at_gate(self, run: RunState, spec: StageSpec) -> bool:
+        """advance() 会不会停在 spec 的闸门上而不运行它。
+
+        单独抽出来是因为 worker._drive_to_stop 要用同一个判据决定发不发
+        StageStarted（发早了会紧贴闸门提问自相矛盾，AG-05），此前它是把
+        条件抄了一份、靠注释"判据同 driver.advance"维持同步 - 票 12 往
+        这个判据里加了 gate_answered，正是那种会让抄写走样的改动。"""
+        return spec.gate != "off" and not spec.gate_answered and run.gate_state is None
+
     def peek_next_spec(self, run: RunState) -> StageSpec | None:
         """无副作用地查询接下来会被 advance() 选中的 stage 的 spec，供 worker
-        在运行前判断"这一步会真运行还是会停在闸门"（要读 spec.gate）。复用
-        _next_pending，不重复实现一遍。"""
+        在运行前判断"这一步会真运行还是会停在闸门"（拿到 spec 之后交给
+        stops_at_gate 判）。复用 _next_pending，不重复实现一遍。"""
         return self._next_pending(run)
 
     def peek_next_stage(self, run: RunState) -> str | None:
@@ -87,8 +96,13 @@ class Driver:
         """把一个已经运行过、但需要重新征询用户的 stage 重新挂回它的闸门。
         当前用于 Style：描述没匹配上任何 preset 时退回去重新问（AG-01）——
         stage 已 DONE，但 rerun_stage 直接调 _run_stage、不看 stage 状态，
-        所以重挂闸门后用户再给新描述仍能重跑。"""
+        所以重挂闸门后用户再给新描述仍能重跑。
+
+        清掉 gate_answered（票 12）：重新挂闸门就是"这问题又要问一遍"，之前
+        那个答案不再算数。票 10 的"停下"路径靠这条 - 去重后的追问答过了，
+        但用户把 Curate 停了，得回到"要不要用 AI"重新问。"""
         spec = self._spec_by_name(run, stage_name)
+        spec.gate_answered = False
         run.gate_state = GateState(stage_name=stage_name, setting=spec.gate)
         run.status = RunStatus.AWAITING_GATE
         self.store.save(run)
@@ -112,7 +126,8 @@ class Driver:
         self.store.save(run)
         return run
 
-    def rerun_stage(self, run: RunState, stage_name: str, params: dict) -> RunState:
+    def rerun_stage(self, run: RunState, stage_name: str, params: dict,
+                     mark_gate_answered: bool = False) -> RunState:
         """跳过 stage_name 自己的闸门，直接用新 params 重跑它，并把它的下
         游重置成 PENDING——用于"闸门已经问过、调用方这次给的就是答案，不
         需要闸门再问一遍"的场景（比如 Style 闸门首次拿到风格描述、或者
@@ -120,9 +135,22 @@ class Driver:
         的区别：apply_adjustment 只重置状态、把 gate_state 清空，下一次
         advance() 发现目标 stage 又是 PENDING 且带闸门，会重新触发一次闸
         门；rerun_stage 直接调 _run_stage，不经过 advance() 的闸门检查。
+
+        `mark_gate_answered`（票 12）把"不需要再问"从**这一次**延长到往后
+        每一次。默认关掉、由调用方 opt-in，因为判据是"这道闸门要问的东西
+        已经有答案了吗"，只有调用方知道：
+          - Curate 的追问问"留几张"，count 一旦确定就永远不该再问 -> True
+          - Style 的闸门问"要什么风格"，描述没匹配上 preset 时**确实需要**
+            再问一次（AG-01）-> 保持默认
+
+        不 opt-in 时的后果见票 12：用户之后在选片闸门上做任何一次调整，
+        apply_adjustment 把 Curate 重置成 PENDING，下一次 advance() 又拿
+        `gate="required"` 把追问原样问一遍，而 Curate 根本没重跑。
         """
         spec = self._spec_by_name(run, stage_name)
         spec.params.update(params)
+        if mark_gate_answered:
+            spec.gate_answered = True
 
         for name in self._downstream_of(run.plan, stage_name):
             run.stage_states[name] = StageStatus.PENDING

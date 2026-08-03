@@ -121,6 +121,34 @@ def test_stopping_curate_returns_to_the_dedup_followup_gate(tmp_path):
     assert env.store.load(job.run_id).status == RunStatus.AWAITING_GATE
 
 
+def test_stopping_curate_still_reasks_even_after_the_followup_was_answered(tmp_path):
+    """票 12 第四条验收：答过追问（`gate_answered=True`）不能把票 10 的
+    "停下"路径掐掉。
+
+    这两件事看起来矛盾，其实不是：追问那道闸门同时承载"留几张"和"要不要
+    用 AI"两个问题。"留几张"答过就永远不必再问（票 12 修的就是这个），但
+    用户刚把一个 AI 跑停下，"要不要用 AI"必须重新问 - `rearm_gate` 因此
+    清掉 `gate_answered`。判据靠的是 `curate.gate`（配置）没被改写。"""
+    env, job = _running_env(tmp_path, stage="Curate")
+    run = env.store.load(job.run_id)
+    curate = next(s for s in run.plan.stages if s.name == "Curate")
+    curate.gate = "required"
+    curate.gate_answered = True        # 追问已经答过："留5张"
+    run.stage_states["Dedup"] = StageStatus.DONE
+    env.store.save(run)
+
+    _rewind(env, job, "Curate")
+
+    text = env.transport.sent_buttons[-1][1]
+    assert "要不要再筛选" in text
+    assert "ai_narrow" in env.transport.button_tokens()
+    saved = env.store.load(job.run_id)
+    assert saved.status == RunStatus.AWAITING_GATE
+    assert saved.gate_state.setting == "required"   # 不是想当然，钉住取值
+    assert next(s for s in saved.plan.stages
+                if s.name == "Curate").gate_answered is False
+
+
 def test_stopping_curate_without_a_followup_gate_returns_to_the_plan_confirmation(tmp_path):
     # 张数一开始就说定了那条形状：AI 的选择在方案确认上问过，回那儿。
     env, job = _running_env(tmp_path, stage="Curate")
