@@ -68,7 +68,7 @@ ai::SelectionCandidate make_selection_candidate(db::Database& db, project::Image
 // 了让这个约束是结构上的而不是靠约定。
 //
 // 开 AI 且候选够那条路径不在此列——它走 std::sample，顺序是簇的遍历顺序，
-// 本票不动（票 06 起改由模型决定，见 docs/Intent_Curation_PRD.md 决策十四）。
+// 本票不动（票 06 起改由模型决定，见 docs/history/Intent_Curation_PRD.md 决策十四）。
 bool by_captured_at_desc(const RepInfo& a, const RepInfo& b) {
   auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
   auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());

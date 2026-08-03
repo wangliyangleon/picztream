@@ -27,6 +27,8 @@ PicZTream（简称 PZT）是一个基于终端、全键盘的图片筛选与色�
 `2026-07-31` 再收一条（提案 T-8，归档在 `docs/history/Headless_Observability_*`）：`--ai` 把一次 headless 调用推到分钟级之后，坐在终端前的人那一侧已经连收四刀，Telegram 那一侧一次都没收过 - 确认方案后一句"正在筛选..."然后分钟级沉默，期间不知道跑到哪、能不能停，结束后也分不出结果是 AI 真跑通的还是超时退化的。现在进度走 stderr 的带外通道送到 agent（stdout 的原子性一字节不变，见 §3.2），`pzt_client` 从轮询 `communicate` 改成两个读取线程边跑边读（`communicate` 不流式，不改的话进度全变事后回放；两条线程都无条件排水，只读一条会被管道背压卡死子进程）；`ai_fallback_count` 不再在 Curate 路径上蒸发并进入用户话术；`Style`/`StyleApplyAll` 补进可取消集合，带部分完成回执。真机验收推翻了 PRD"把 phase 压掉、进度只留 (done,total)"的决策：三个来源数的分别是候选簇/比较次数/照片张数，压掉维度之后展示层只能写死一个单位，然后在另外两种情况下说错话（实测原话"已完成 1/1 张"，那其实是 1 个候选簇）。
 
 这一批的来源是 `docs/proposal-2026-07-25.md` 的三视角评审——该文档记录了全部 33 条提案条目与逐条完成状态，当前没有活跃周目标时它就是唯一的待办清单。
+
+`2026-08-03` 收口一次**不属于上述 33 条提案的独立立项**：意图驱动的跨簇选片（PRD 与 13 张票归档在 `docs/history/Intent_Curation_PRD.md` 与 `docs/history/issues/intent-curation/`）。`pzt curate` 的两步里第二步一直是空白 - 开 AI 时选择是字面意义的 `std::sample` 随机抽样（W2026-07-21 的 eval 解耦拿掉 `overall_score` 之后跨簇比较失去了唯一的可比标量，而锦标赛只解决簇内），关 AI 时只按 `captured_at` 散开，而用户意图里最有信息量的"用途"那一维流到 Curate 只被当字符串打了个标签。现在这一步真正吃意图：单张描述加 `content` 字段（画面里发生了什么、有谁、在哪、什么氛围，与 `assessment` 的摄影评语分开），多样性预筛先裁出预选集（`min(ceil(max(1.5, M) · N), 候选集大小)`，M 经 settings 配置、默认 2，于是评估次数与图库大小无关），curate 内部只评估预选集，再由模型读着这些描述、按选片简述一次调用连**选**带**排**（叙事要求会反过来影响选哪几张，拆成"先选再排"会切在错误的地方），顺带产出一条文案随结果送到 Deliver；模型不可用或答案不合法时整批退化到与关 AI 完全同一条确定性路径（关 AI 的交付顺序同时从 farthest-point 的挑选序改成拍摄时间序）。选片简述在方案确认与选片确认两个阶段都能改。开销闸门与两级进度按**入口**接线：TUI 那一侧是阻塞式确认、拒绝零写入，headless 那一侧因为没有可以当场问的人，改成报出精确开销后继续跑、由 agent 立刻转达并给可撤入口。这一刀推翻两处已归档决策：`W2026-07-21_PRD.md` 的"agent 不再整批跑评估"（现在的评估只跑预选集，规模与图库无关，不是把删掉的东西加回来），以及"视觉推理归 core / 语言推理归 agent"那条轴（跨簇选片不看像素只读描述，按旧表述该归 agent，但它推理的对象自始至终是照片；轴已改述为"关于照片的推理归 core"，见 §2.3 与 `docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md`）。实现期还顺手修掉一个共用缺陷：AI 请求的超时此前写死 60 秒，本地跑一次跨簇选择墙钟 45-80 秒、正好骑在上面，同一个项目时好时坏；现改为 settings 旋钮 `ai_request_timeout_seconds`，默认 180，`CONNECTTIMEOUT` 保持 10 秒不跟着变大。
 - **未来/搁置**：M3 剩余能力（自动粗修、自动打标签、AI 自动介入触发）、几何变换（裁切/水平矫正，从 `W2026-07-15` 目标二顺延，见 `docs/Task_Pool.md`）、Apple Vision 语义聚类评估、锦标赛双输判定（两两比较都有硬伤时双输、簇 winner 可空，供 agent 选图用）、手动选片模式（`W2026-07-21` 明确移出范围，未立项）（`docs/Task_Pool.md`）、recipe.json 导入导出与 LLM 辅助生成配方、bottle 预编译与多用户 agent 托管、M5 全托管自动化。
 
 里程碑的完整设计与阶段依赖见 `docs/history/Roadmap.md` 及各里程碑文档；已归档的周目标细节见 `docs/history/W2026-07-15_*` 与 `docs/history/W2026-07-21_*`。
@@ -84,7 +86,7 @@ PZT 对外有两个界面：面向人的 `pzt` CLI 命令，以及面向 agent �
 
 ### 3.2 Headless 命令面（面向 agent，`--json`）
 
-供 agent 层通过子进程驱动的原子命令，每个都输出结构化 JSON：`new --json`（导入）、`eval`（异步 AI 评分）、`dedup`（近似重复检测）、`curate`（多样性选片）、`compare`（两图比较）、`recipe suggest`（看图选风格）、`recipe apply`（应用风格，`set_image_recipe` 的薄壳）、`tag apply`/`tag clear`（打标签/清标签）、`export-images`（导出选中图为字节）。
+供 agent 层通过子进程驱动的原子命令，每个都输出结构化 JSON：`new --json`（导入）、`eval`（异步 AI 评分）、`dedup`（近似重复检测）、`curate`（选片：关 AI 时是多样性选片，开 AI 时先多样性预筛出预选集、评估、再由模型按选片简述连选带排并产出文案）、`compare`（两图比较）、`recipe suggest`（看图选风格）、`recipe apply`（应用风格，`set_image_recipe` 的薄壳）、`tag apply`/`tag clear`（打标签/清标签）、`export-images`（导出选中图为字节）。
 
 契约：每个 headless 命令是一次提交、一次收尾的原子调用；**stdout 上只在跑完时写一个 JSON 对象，不做流式输出**；agent 侧把它当作确定性的子进程边界来编排。命令的具体参数与输出 schema 见对应周/里程碑的 Eng Design。
 
@@ -95,7 +97,7 @@ PZT 对外有两个界面：面向人的 `pzt` CLI 命令，以及面向 agent �
 - **进 3.1（面向人）**：人要逐张判断、要能回退、结果落在标签这类持久状态上的能力。
 - **只留 3.2（agent 独占）**：一次性产出一组最终结果、且依赖对话闸门与"作废重跑换图"来兜底的能力。
 
-已按此规则拍板的一处不对称：`dedup`（含 `--ai` 的 AI 锦标赛）两面都接，`curate` 只留在 headless、**不进 `pzt open` 控制台**。理由有三：锦标赛的实现是 `cluster_and_choose` 一个入口，dedup 与 curate 共用同一套分簇、`CompareFn` 与 bracket 推进，人工路径经 `/dedup --ai` 已足以验证锦标赛本身（这正是 §1 那条"自动化必须先被人工使用验证"所要求的）；curate 相对 dedup 只多出"凑够 N 张"的采样层，那不是需要人工验证的选片智能；而该采样目前不可复现（`std::mt19937` + `random_device`，见提案 T-26），agent 侧有闸门与 `exclude` 换图兜着，TUI 侧没有对应机制，接进去等于把不可复现暴露在最没有兜底的地方。
+已按此规则拍板的一处不对称：`dedup`（含 `--ai` 的 AI 锦标赛）两面都接，`curate` 只留在 headless、**不进 `pzt open` 控制台**。理由有三：锦标赛的实现是 `cluster_and_choose` 一个入口，dedup 与 curate 共用同一套分簇、`CompareFn` 与 bracket 推进，人工路径经 `/dedup --ai` 已足以验证锦标赛本身（这正是 §1 那条"自动化必须先被人工使用验证"所要求的）；curate 相对 dedup 只多出"凑够 N 张"的采样层，那不是需要人工验证的选片智能；而该采样目前不可复现（`std::mt19937` + `random_device`，见提案 T-26），agent 侧有闸门与 `exclude` 换图兜着，TUI 侧没有对应机制，接进去等于把不可复现暴露在最没有兜底的地方。**第三条理由已于 2026-08-03 失效**：意图驱动的跨簇选片把开 AI 那条路的 `std::sample` 换成了模型调用（`temperature=0`），`core/curate` 里已无任何 RNG，提案 T-26 描述的成因随之消失（该条目本身还挂在 `docs/proposal-2026-07-25.md` 上，未复核）。**拍板本身不变**，前两条理由独立成立。
 
 headless 命令不进 `usage_main()`，也不对人承诺可发现性。**当前有两个历史残留不满足上述规则**：`eval` 与 `compare` 已无任何消费者（`Evaluate` Stage 在 W2026-07-21 目标三被删，锦标赛改为进程内直调 `ai::request_comparison`），它们是遗留而非本规则的反例，去留见 `docs/proposal-2026-07-25.md` 的 T-22。
 

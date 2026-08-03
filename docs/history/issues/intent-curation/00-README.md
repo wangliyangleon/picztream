@@ -1,6 +1,8 @@
 # 意图驱动的跨簇选片 - 任务拆解
 
-- **对应 PRD**：`docs/Intent_Curation_PRD.md`
+> **归档说明（2026-08-03）**：13 张票全部收口，本系列连同 PRD 于同日从 `docs/` 移入 `docs/history/`。票内的拍板与落地记录是这一批改动"当初为什么这么定"的唯一出处，倒查时从下面的一览表进。
+
+- **对应 PRD**：`docs/history/Intent_Curation_PRD.md`
 - **相关 ADR**：`docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md`
 - **术语**：见 `CONTEXT.md`
 - **拆法**：tracer-bullet 纵切，每张票自带阻塞边。一票一文件，编号即依赖序（阻塞者在前）。

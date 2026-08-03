@@ -40,7 +40,7 @@ def forwarding(client, ctx, ai_enabled: bool):
     倒退这个顾虑没有消失，是**挪到了 consumer**：换 phase 时先把上一条进
     度收尾成终态，评估另起一条消息，两个数字不再挤在同一条里原地跳。代价
     是 Curate 期间占两条进度消息，明确偏离 AG-16.3"进度只占一条"，理由见
-    docs/issues/intent-curation/09-agent-progress-rendering.md。
+    docs/history/issues/intent-curation/09-agent-progress-rendering.md。
 
     仍然不转发本地分簇：开 AI 时它相对是一瞬，且 stderr 上三个 phase 都
     在，需要时查日志。

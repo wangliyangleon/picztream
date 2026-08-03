@@ -132,13 +132,13 @@ using EvalProgressFn = std::function<void(int done, int total)>;
 // 动。这一刀同时兑现了上一版这里写死的那条约束-补 on_ai_gate/on_cancel
 // 的同时给 CurateResult 补上了 ai_declined/cancelled，否则那句
 // `if (summary.clusters.empty())` 会把"用户拒绝"和"候选池本来就是空的"折
-// 叠成同一个返回值。见 docs/Intent_Curation_PRD.md 决策十八、十九。
+// 叠成同一个返回值。见 docs/history/Intent_Curation_PRD.md 决策十八、十九。
 // preselect_multiplier（票 04 的 M）：选片之前先把候选集(每簇一张代表)
 // 按时间多样性裁成预选集，规模 = min(ceil(max(1.5, M) · count), 候选集
 // 大小)，选择逻辑本身不变、只是面对一个更小的池子。跟
 // time_window_seconds/hash_threshold 同一个约定 - curate 不读 Settings，
 // 由调用方从 Settings.curate_preselect_multiplier 显式传入。默认 2 与
-// Settings 的默认值一致。见 docs/Intent_Curation_PRD.md 决策十至十二：
+// Settings 的默认值一致。见 docs/history/Intent_Curation_PRD.md 决策十至十二：
 // 这一刀跑在(将来的)评估之前，因此多样性只沿 captured_at 衡量，也因此评
 // 估次数由构造保证有界、与图库大小无关。候选集不足 count 时整条裁剪不参
 // 与(那时没有"选"这个动作)。
