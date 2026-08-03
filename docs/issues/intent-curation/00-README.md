@@ -21,7 +21,7 @@
 | [10](10-headless-gate-and-cancel-wiring.md) | headless 的开销闸门与取消接线 | 06 | **done** |
 | [11](11-adjust-selection-brief-at-gate.md) | 选片确认阶段能改题材要求 | 08 | 已实现，**未收口**（见票 12）|
 | [12](12-rerun-stage-leaves-its-gate-armed.md) | `rerun_stage` 答完的闸门没解除 | 无 | ready-for-agent |
-| [13](13-adjust-selection-brief-at-plan-confirmation.md) | 方案确认阶段也能改题材要求 | 无 | 已实现（待真机复验）|
+| [13](13-adjust-selection-brief-at-plan-confirmation.md) | 方案确认阶段也能改题材要求 | 无 | **done** |
 
 ## 依赖图
 
