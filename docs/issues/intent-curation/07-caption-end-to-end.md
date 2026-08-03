@@ -12,14 +12,14 @@
 
 **Blocked by:** 06（模型选择与排序接进 curate）
 
-**Status:** done（真机验证那一条待用户跑）
+**Status:** done（含真机验证，2026-08-03）
 
 - [x] 开 AI 且模型返回合法文案时，文案随选片结果经 headless 输出、agent 携带、最终展示给用户
 - [x] 模型未返回文案时，选片结果完全不受影响，仅缺文案
 - [x] 模型返回的文案不合法时，同上，且不抛错、不重试
 - [x] 关 AI 时不产出文案，流程不报错
 - [x] 文案的语气/平台适配跟随用户意图里的用途
-- [ ] 真机验证：文案基于画面内容而非摄影评语，可直接使用（需要 Ollama，agent 未跑）
+- [x] 真机验证：文案基于画面内容而非摄影评语，可直接使用（2026-08-03，用户跑）
 
 ## 落地记录
 
@@ -69,15 +69,32 @@
 
 ### 验证
 
-- core 388 + cli 69，Debug 与 Release 两套都跑过
+- core 379（3834 断言）+ cli 69（299 断言），Debug 与 Release 两套都跑过
 - agent 527 passed
 - `pzt curate --json` 不带 `--ai` 的输出与 main **逐字节相同**（6 张图的临
   时项目，两个 release 二进制对跑 `diff`）
-- 未做真机 `--ai`（需要 Ollama）。风险二（文案会不会写成摄影评语）因此仍未
-  被证伪 - 提示词里已经明写 "never critique or mention the photography
-  itself -- this is the user's own post, not a review"，但这一类问题**只有
-  真模型能发现**，注入假 `http_post` 的用例喂的是罐头答案（同票 08 真机验收
-  的结论）。
+- 真机验证 2026-08-03 由用户跑完，**风险二未成真**：文案落在画面内容上，没
+  有写成摄影评语。核心路径（`pzt curate --ai --provider local`）与 Telegram
+  端到端两条都过。
+
+### 真机验证时踩的坑：怎么判断"这一跑到底开没开 AI"
+
+第一次跑 Telegram 端到端时看到"结果里没有文案"，差点当成本票的 bug。实际是
+那一跑**全程没开 AI**，于是验的其实是验收第 4 条（关 AI 不产出文案、不报
+错），它过了。三个互相独立的判据，日志里都看得到：
+
+1. 方案回显是"帮你选择 N 张"而不是"**使用AI**帮你选择"（`consumer.py`
+   `_send_plan_confirmation` 按 `ai_enabled` 二选一）。
+2. 按钮里还挂着 `AI筛选 🤖` - 这个按钮只在 `ai_enabled` 为假时追加，它出现
+   本身就等于开关是关的。
+3. Curate 阶段**几秒就跑完**。开 AI 要先评估预选集，本地模型是分钟级；同一
+   跑里一次 `refine_plan` 分类都要几十秒。
+
+还有一件事值得记：在**方案确认**闸门上打字是走 `refine_plan`，而
+`PlanConfirmationReply` 没有 `selection_brief` 字段（`_apply_confirmed_plan_params`
+只带 count/apply_tag/ai_enabled/provider），所以那句话里的题材要求进不了简
+述；这次它还被判成了 `approve`，直接开跑。要开 AI 就**点按钮**，别打字。同
+一形状的缺口见票 11。
 
 ### code review 收的两条（都在提示词里）
 

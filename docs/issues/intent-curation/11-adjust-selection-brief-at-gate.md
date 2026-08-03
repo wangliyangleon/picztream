@@ -46,6 +46,23 @@ PRD 风险一的同一条边界，不是本票的缺陷，但**用户话术不�
 已有的 `exclude` 是保留还是清空？保留意味着"我不要那张"这个否定一直有效；清
 空意味着"换了要求就重新来过"。两种都讲得通，实现前定一个并写进票。
 
+## 同一形状的缺口还有一处：方案确认闸门（2026-08-03 发现）
+
+票 07 真机验证时撞到的：在**方案确认**闸门（`PLANNED`，还没开跑）上打字走的
+是 `refine_plan`，而 `PlanConfirmationReply` **没有 `selection_brief` 字段** -
+`_apply_confirmed_plan_params` 只带 count/apply_tag/ai_enabled/provider
+（`consumer.py` 里那条注释是明写的，不是疏漏）。于是用户在开跑前说"选三张画
+面风格比较活泼、小清新的照片"，题材要求整句蒸发。
+
+所以 `selection_brief` 今天只有两个入口：初始意图 compose
+（`plan_composer.py`）和去重后的追问闸门（`adjustment_parser.py` →
+`_curate_narrow_pending`）。本票补的是第三个（选片确认），**方案确认这个是第
+四个**。
+
+要不要一起做由开工的人定：两处的分类器不同（`refine_plan` vs
+`classify_gate_reply`），但"把一句自然语言里的题材要求抽成简述"这件事是同一
+个，分两次做等于把同一段提示词工程做两遍。
+
 ## 验收标准
 
 - [ ] 选片确认阶段说"要活泼一点的"/"换成有人的那几张"/"别都是风景"，能改到
