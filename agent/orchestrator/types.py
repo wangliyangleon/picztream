@@ -35,6 +35,12 @@ class StageSpec:
     params: dict[str, Any] = field(default_factory=dict)
     gate: GateSetting = "off"
     gate_on_timeout: GateDecision = "proceed"
+    # 票 12：这道闸门要问的东西**已经有答案了**，advance() 因此不再挂它。
+    # 跟 `gate` 分成两个字段是刻意的：`gate` 是配置（这一步该不该征询），
+    # 它同时被别人当判据读 - consumer 的 rewind 路径用
+    # `curate.gate != "off"` 判断要不要重问"要不要用 AI"，rearm_gate 用它
+    # 构造 GateState.setting。把答案写回 `gate` 会静默改掉那两条路径。
+    gate_answered: bool = False
 
 
 @dataclass

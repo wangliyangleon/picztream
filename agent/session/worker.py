@@ -290,7 +290,11 @@ class SessionWorker:
             self.events.put(StageStarted(job.generation, run.run_id, "Curate"))
             with self._armed("Curate", job):
                 try:
-                    self.driver.rerun_stage(run, "Curate", job.args["params"])
+                    # mark_gate_answered（票 12）：这条追问问的是"留几张"，
+                    # 手上这个答案永久有效。不标的话，用户之后在选片确认闸
+                    # 门上做任何一次调整，都会被这道闸门原样拦一遍。
+                    self.driver.rerun_stage(run, "Curate", job.args["params"],
+                                             mark_gate_answered=True)
                 except PztCancelledError:
                     # 不 return：跟 _drive_to_stop 循环里的取消处理一样，落到
                     # 方法尾部共享的 _report_stop 才会真的发事件。
@@ -307,11 +311,13 @@ class SessionWorker:
                 return
             next_spec = self.driver.peek_next_spec(run)
             # 只为"这一轮真的会运行"的 stage 发 StageStarted。带闸门且闸门未
-            # 开的 stage，advance() 只会停在闸门不运行它（判据同 driver.advance），
-            # 此时发"正在交付..."会紧贴闸门提问自相矛盾（AG-05）——闸门放行后的
-            # 实际运行由 _execute_drive 在 resolve_gate/rerun_style 前补发。
+            # 开的 stage，advance() 只会停在闸门不运行它，此时发"正在交付..."
+            # 会紧贴闸门提问自相矛盾（AG-05）- 闸门放行后的实际运行由
+            # _execute_drive 在 resolve_gate/rerun_style 前补发。判据向
+            # driver 借（票 12）：此前这里抄了一份条件、靠注释维持同步，而
+            # 票 12 恰好往判据里加了 gate_answered。
             stops_at_gate = (next_spec is not None
-                             and next_spec.gate != "off" and run.gate_state is None)
+                             and self.driver.stops_at_gate(run, next_spec))
             if next_spec is not None and not stops_at_gate:
                 _log.info(f"[worker] run={run.run_id} 运行 stage={next_spec.name}")
                 self.events.put(StageStarted(job.generation, run.run_id, next_spec.name))
