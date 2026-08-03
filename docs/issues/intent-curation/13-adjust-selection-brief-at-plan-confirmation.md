@@ -55,15 +55,56 @@ text='选两张画面小清新一点的吧'  status=planned  kind=refine_plan
   `decision.get(k, current_params.get(k))`，这个写法对**显式 null** 是错的（key
   在、值为 null 时会把旧值覆盖成 None），brief 这一路要显式判 `isinstance(str)`。
 
+## 落地记录（2026-08-03）
+
+**踩了票 08 那条教训一次，而且是被真模型当场抓住的。** 第一版把新规则写成独立
+一段、带四个例子，`_CONFIRMATION_SCHEMA_INSTRUCTION` 从 1914 字符涨到 2596
+（+36%）。本地模型的反应不是"漏个字段"，是**把整个返回结构改成了嵌套**：
+
+```
+旧提示词  '改成6张' -> {'action': 'confirmed', 'count': 6, 'apply_tag': 'ins', ...}
+第一版新的 '改成6张' -> {'confirmed': {'count': 6, 'apply_tag': 'ins', ...}}
+```
+
+`action` 字段整个消失，`refine_plan_confirmation` 抛 `unknown_action`，连"改成6
+张""标签叫朋友圈"这种**改动前好好的**用例一起坏掉。定位方式是把同一批用例分别打
+到 `git show main:` 取出的旧提示词和新提示词上，直接对比 - 光看新的那一侧只会以
+为是模型抽风。
+
+修法是把新规则挤进**既有的那个紧凑例子列表**、用同一种格式（`"X" -> field;`），
+不另起一段，长度收到 2268。**后来者往这个提示词加东西时照此办理。**
+
+## 真模型结果（本地 Ollama，2026-08-03，精简后）
+
+8 条用例 7 条如预期，含真机报的那两条原话：
+
+| 输入 | 结果 |
+|---|---|
+| `选两张小清新一点的吧` | `count=2`、`brief='小清新'`、`ai=False`、`tag` 不动 |
+| `选两张画面小清新一点的照片` | `count=2`、`brief='画面小清新一点'`、`ai=False` |
+| `要活泼点的` | `brief='要活泼点的'`，其余不动 |
+| `改成6张` | `count=6`，`brief` 保留 |
+| `标签叫朋友圈` | `tag='朋友圈'`，`brief` 保留 |
+| `不用管题材了` | **`brief` 仍是旧值**，应为空串清除 |
+| `好的，处理吧` | `approve` |
+| `现在留几张？` | `query` |
+
+没到位的仍是空串清除，跟票 11 那条同一个性质、同一个原因（本地模型不往空串那条
+分支走）。失败模式是 no-op（保留旧简述），无害。代码与单测都在，等更强的 meta
+provider 或下一次 prompt 迭代。
+
 ## 验收标准
 
-- [ ] 方案确认阶段说"选两张小清新一点的吧"，`selection_brief` 被改掉并回显新的
-- [ ] 同一句里的数量也生效（"选两张…"要同时改到 `count=2`）
-- [ ] 不再把题材要求误当成 `apply_tag` 或 `ai_enabled`（真机那两条日志是判据）
-- [ ] 没提题材要求的轮次（"改成6张"）不清空已有简述
-- [ ] `_current_plan_params` 与 `_plan_summary` 合并回一个，docstring 里那条已翻
+- [x] 方案确认阶段说"选两张小清新一点的吧"，`selection_brief` 被改掉并回显新的
+- [x] 同一句里的数量也生效（"选两张…"要同时改到 `count=2`）
+- [x] 不再把题材要求误当成 `apply_tag` 或 `ai_enabled`（真机那两条日志是判据）
+- [x] 没提题材要求的轮次（"改成6张"）不清空已有简述
+- [x] `_current_plan_params` 与 `_plan_summary` 合并回一个，docstring 里那条已翻
       转的论证一并改掉
-- [ ] AI 快捷按钮（`_BTN_AI_CURATE` / `_BTN_AI_DEDUP`）走同一条参数应用路径，不
-      因为多了一个字段而把简述弄丢
-- [ ] 用真模型验过，不只是注入假 `http_post`（同票 11：这次又往
+- [x] AI 快捷按钮（`_BTN_AI_CURATE` / `_BTN_AI_DEDUP`）走同一条参数应用路径，不
+      因为多了一个字段而把简述弄丢（改成收一份 dict，调用点写作
+      `{**_plan_summary(run), "ai_enabled": True}`，加字段不会再漏调用点；有测试）
+- [x] 用真模型验过，不只是注入假 `http_post`（同票 11：这次又往
       `_CONFIRMATION_SCHEMA_INSTRUCTION` 上加了字段，正是票 08 教训点名的风险）
+      - 见上面两节。这条这次**真的抓到了东西**，不是走过场
+- [ ] 真机复验一次（本票是真机反馈驱动的，最终判据仍是那条 Telegram 链路）
