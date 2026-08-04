@@ -3,6 +3,107 @@
 > 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
 > 发布与生成流程见 `scripts/release.sh`。
 
+## v2026.8.4 - 2026-08-04
+
+
+### 📝 文档
+- Docs: 意图驱动的跨簇选片收口归档,清理现场
+- Docs: 索引并入 main 的票 07 收口，13 张票全部完成
+- Docs: 票 11 真机验收通过，11/12/13 全部收口
+- Docs: 票 13 的本地模型结果表标为一次性观测（复现不出来），验收依据以真机为准
+- Docs: 补上票 13 漏改的 Status（收口时只改了 README），并澄清 PLANNED 是运行状态不是票状态
+- Docs: 决策二放宽为"让模型决定"合并还是替换 (票 11 修订 / 票 13 收口)
+- Docs: 票 10 收口真机验收,票 11 拍板 exclude 与简述叠加语义
+- Docs: 撤掉写重的那一节,方案确认阶段的缺口已是票 13
+- Docs: 票 07 真机验证通过,风险二未成真
+- Docs: 票 07 收口,真机验证(风险二)留给用户跑
+- Docs: M 默认值调优进任务池,PRD 风险一给出去处
+- Docs: 票 08 收口真机验收,选片确认阶段改题材要求单独成票 11
+- Docs: 票 10 收口 - PRD 的 G5/决策十八按入口改述,SPEC 补上 cost 带外消息
+- Docs: 票 10 追加决策五 - dedup 的 headless 路径同刀做
+- Docs: 票 10 拍板 - headless 闸门改成告知加可撤
+- Docs: 票 08 标记完成，记录提示词编偏好那个坑与两处顺带修的缺陷
+- Docs: 票 06 记下真机验证 - 云端通,本地卡在 60 秒 curl 超时
+- Docs: 票 09 记下真机验收,含'换 phase 要刻意构造场景'这个坑
+- Docs: AGENTS.md 补上 worktree 要自带 release 构建物
+- Docs: 票 09 标记完成,记录转发按 phase 查表与那个只在发送失败后显形的缺陷
+- Docs: AGENTS.md 补一条改动落地方式的约定
+- Docs: 票 09 补上 phase 共存的拍板,缺口二成票 10
+- Docs: 票 05 标记完成,记录闸门两处触发点与两处未接线
+- Docs: 票 04 标记完成
+- Docs: 票 02 标记完成
+- Docs: 票 01 标记完成
+- Docs: 多样性子集选择与 VLM 能力边界的文献调研
+- Docs: 意图驱动跨簇选片的任务拆解(9 张票)
+- Docs: AI 分层轴改述为"关于照片 vs 关于用户"(ADR-0001)
+- Docs: 建立项目术语表 CONTEXT.md
+- Docs: T-8 收口归档
+- Docs: headless 的 stderr 带外通道写进 SPEC 契约 (T-8 E.3)
+
+### 🔩 其它
+- agent: 收 code review 的意见 (票 12)
+- agent: rerun_stage 答完的闸门不再复活 (票 12)
+- agent: 精简 confirmation 提示词的新增部分,修掉自己引入的回归 (票 13)
+- agent: 方案确认阶段也能改题材要求 (票 13)
+- review: 收 code review 的意见 + 真模型复跑的结果 (票 11)
+- agent: 选片确认阶段能改题材要求 (票 11)
+- review: 收 code review 的三条 (票 07)
+- cli+agent: 文案经 headless 输出、agent 携带,在交付时单独发一条
+- core(curate): 文案带出 CurateResult,整批退化时跟着作废
+- core(ai): 文案与选择同一次调用产出,缺失或不合法时只丢文案
+- agent: 停下改成回退这一步,不再作废整批 (票 10 真机反馈)
+- review: 收 code review 的三条 (票 10)
+- agent: 取消回执如实说明已评估的那几张留在库里 (票 10)
+- agent(consumer): AI 开跑前把精确开销告知用户,带可取消入口 (票 10)
+- agent: 开销从子进程一路接到 StageCost 事件 (票 10)
+- agent(client): stderr 带外通道认第二种消息 - 开销行 (票 10)
+- cli: dedup/curate 的 headless 路径在 AI 开跑前报出精确开销 (票 10)
+- agent: 笼统形容词不再被简述吃掉,"选一张"不再解成 null
+- agent: 确认文案不再说"按拍摄时间"
+- agent: 状态查询也带上选片简述
+- agent: 方案确认里显示选片简述
+- review: 收 code review 的三条 (票 08)
+- fix(agent): 自己那次 LLM 调用的超时 60 -> 180 秒
+- fix(agent): 模型显式回 null 的 apply_tag 不再打挂整次方案组装
+- agent: 从意图里抽出选片简述，一路传到 pzt curate --brief (票 08)
+- core(curate): 选片简述经 --brief 传抵模型的选择提示词 (票 08)
+- core(ai): AI 请求超时改成可配,默认 60 -> 180 秒
+- review: 收 code review 的三条 (票 06)
+- core(curate): 选择与排序改由模型决定,不再随机抽样 (票 06)
+- core(ai): 新开纯文本 request_json 路径与 selection 模块 (票 06)
+- review: 收 code review 的两条 (票 09)
+- agent: 评估进度渲染成人话,换 phase 时另起一条消息 (票 09)
+- review: 收 code review 的四条 (票 05)
+- core(curate): 内部评估预选集,补上闸门/进度/取消三件事 (票 05)
+- core(ai): image_evaluations 的写入抽成 store_evaluation (票 05)
+- core(tournament): 闸门载荷改成 AiCost 结构体,带上候选集大小 (票 05)
+- chore: 忽略 clangd 的本地索引缓存 .cache/
+- curate: 收 code review 的四条 (票 04)
+- curate: 选片前把候选集裁成预选集，倍率 M 进 settings (票 04)
+- review: 破折号改成普通短横,ticket 收口
+- cli(eval): headless 输出带上 content
+- core(eval): content 落库与读回,老记录退化为空串
+- core(eval): 描述新增 content 字段,与 assessment 分离
+- refactor(agent): 意图引导示例文案收成单一来源 (票 02)
+- core: curate 关 AI 时按拍摄时间交付 (票 01)
+- PRD: 意图驱动的跨簇选片
+- agent: 进度要有个终态，不再停在半截 (T-8 真机反馈返工)
+- agent: 进度带上"数的是什么"，不再一律说"张" (T-8 真机反馈返工)
+- agent: dedup/curate 把跨进程进度接到 stage 上 (T-8 A.5)
+- agent: pzt_client 边跑边读 stderr (T-8 A.4)
+- cli: pzt curate 也吐运行期进度 (T-8 A.3)
+- core: curate 补上两个进度回调 (T-8 A.2)
+- cli: pzt dedup 在 stderr 上吐运行期进度 (T-8 A.1)
+- Eng Design: headless 长运行的进度通道
+- agent: Style / StyleApplyAll 也能中途取消了 (T-8 D)
+- agent: 选片闸门说清哪几组不是 AI 挑的 (T-8 C.2)
+- agent: ai_fallback_count 不再在 Curate 路径上蒸发 (T-8 C.1)
+- agent: StyleApplyAll 报出套到第几张了 (T-8 B.1b)
+- agent: stage 运行到一半能上报进度了 (T-8 B.1a)
+- PRD: headless 长运行的进度、降级信号与取消 (T-8)
+
+### 🚀 部署与分发
+- Deploy: 回填 pzt/pzt-agent formula 到 v2026.7.31 (sha256)
 ## v2026.7.31 - 2026-07-31
 
 
@@ -25,6 +126,7 @@
 - Docs: slim-plan 分析快照收口，归档进 history
 
 ### 🔩 其它
+- Release v2026.7.31
 - agent: Ollama 地址可经环境变量覆盖
 - cli: 终端提示改在进备用屏幕之前拦一下 (T-10 真机反馈)
 - agent: 启动时就把环境问题说清楚 (T-10 D.2/D.3 + META_PROVIDER)
