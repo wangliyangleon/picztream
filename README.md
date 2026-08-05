@@ -68,12 +68,19 @@ pzt export trip --all-keep ~/Photos/out    # 导出没被标废片的图
 
 ## AI 评估（可选）
 
-看图点评(`pzt eval`)、去重/选片的两两比较(`pzt dedup` / `pzt curate` 内部调用 `pzt compare`)
-需要一个模型。两条路：
+看图点评、去重时的两两比较都需要一个模型。两条路：
 
 - **本地(推荐,免配额)**：装 [Ollama](https://ollama.com)、`ollama pull gemma4:e2b`,
-  然后 `pzt eval <项目> --provider local`。
-- **云端**：设好 `ANTHROPIC_API_KEY` 或 `GEMINI_API_KEY`,用 `--provider claude` / `--provider gemini`。
+  不用改配置,`ai_provider` 默认就是 `local`。
+- **云端**：设好 `ANTHROPIC_API_KEY` 或 `GEMINI_API_KEY`,并在 `~/.config/pzt/config.json`
+  里把 `ai_provider` 设成 `claude` / `gemini`。
+
+配好之后在 `pzt open` 里用:
+
+- `:` 进控制台、`/ai_eval *` 批量点评(`/ai_eval #标签名` 只评某个标签下的,
+  `/ai_eval` 不带范围就只评当前这张)，`/tasks` 看进度。
+- `/dedup <范围> --ai` 近似重复检测,簇内由 AI 两两比较挑保留哪张(开跑前会
+  报出精确的比较次数等你确认,跑起来之后可以按 Ctrl-C 取消)。
 
 半自动的 Telegram 闭环见 [`agent/README.md`](agent/README.md)。
 
