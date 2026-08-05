@@ -97,7 +97,9 @@ std::string usage_main() {
            "  pzt export <project_name> --all-keep <output_folder>  (导出全部,"
            "默认排除废片/重复)\n"
            "  pzt tag list <project_name>\n"
-           "  pzt recipe list\n";
+           "  pzt recipe list\n"
+           "  pzt --help\n"
+           "  pzt --version\n";
   } else {
     return "usage:\n"
            "  pzt new <project_name> [folder_path]\n"
@@ -126,7 +128,9 @@ std::string usage_main() {
            "  pzt export <project_name> --all-keep <output_folder>  (export "
            "everything, excluding reject/duplicate by default)\n"
            "  pzt tag list <project_name>\n"
-           "  pzt recipe list\n";
+           "  pzt recipe list\n"
+           "  pzt --help\n"
+           "  pzt --version\n";
   }
 }
 

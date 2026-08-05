@@ -55,7 +55,7 @@ pzt export trip --all-keep ~/Photos/out    # 导出没被标废片的图
 | `r` | 应用 / 清除 / 新建 / 删除风格；`r v` 临时看原图 |
 | `q` | 退出 |
 
-其它命令用 `pzt`（不带参数）查看完整 usage：`pzt list` / `pzt archive` / `pzt unarchive` /
+其它命令用 `pzt --help` 查看完整 usage：`pzt list` / `pzt archive` / `pzt unarchive` /
 `pzt delete` / `pzt rescan` / `pzt tag list` / `pzt recipe list` 等。
 
 ## 数据位置

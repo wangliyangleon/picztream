@@ -125,7 +125,7 @@ else:
 }
 
 # assert_help_ok <desc> <args...>
-# T-18：`pzt --help` 曾走到"未知子命令"分支——报错到 stderr、退出码 1，把一次
+# T-18：`pzt --help` 曾走到"未知子命令"分支 - 报错到 stderr、退出码 1，把一次
 # 正常的求助当成用错。断言的是退出码 0 且 usage 走 stdout(可以 `| less`、可以
 # 重定向)，这是它跟错误路径唯一的可观察区别。
 #

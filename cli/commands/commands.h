@@ -8,7 +8,7 @@
 // browse.cpp(`pzt open` 浏览主循环)里。
 namespace pzt::cli::commands {
 
-// 用错命令时打的 usage,走 stderr——它是错误输出的一部分,不该混进被管道
+// 用错命令时打的 usage,走 stderr - 它是错误输出的一部分,不该混进被管道
 // 消费的 stdout。用户主动求助请用 print_help()。
 void print_usage();
 
