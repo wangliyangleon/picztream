@@ -61,7 +61,7 @@ std::optional<pzt::core::ProjectId> resolve_project(const std::string& cmd,
   return id;
 }
 
-// M4：headless 命令(`pzt images`/`eval`/`dedup`/`tag apply`/
+// M4：headless 命令(`pzt images`/`dedup`/`curate`/`tag apply`/
 // `export-images`)统一的 JSON 输出约定——成功一个 JSON 对象打到 stdout
 // (换行结尾)，失败非零退出 + stderr 一行 JSON 错误对象，见
 // docs/history/M4_Eng_Design.md"headless 命令面设计"一节。这些命令是给
