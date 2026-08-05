@@ -254,66 +254,12 @@ assert_json_has "$out" "j['exported'] == 1" \
 assert_nonzero_exit_with_error "export-images: unknown image path fails with JSON error" \
   "$PZT" export-images smoke nope.jpg "$WORKDIR/out3" --json
 
-# --- pzt eval ---
-# 计划原本设想用"已经全部评估过"的 fixture 测 submitted==0，但要造出
-# "已评估"状态要么真的发一次网络请求、要么直接戳库，都不是黑盒 smoke
-# 测试该干的事。这里换一个同样不碰真网络、但覆盖面更大的路径：a/b/c
-# 都是不可解码的假字节，process_request 里 decode_preview_file 这一步
-# 就会失败(EvaluationError::ImageUnavailable)，根本走不到真正调用
-# evaluation_fn_(真实 AI 请求)那一步——照样测到了完整的提交/轮询/收
-# 尾归类逻辑，不是只测"跳过"这条最短路径。
-out="$("$PZT" eval smoke --scope '*' --provider gemini --json)"
-assert_json_has "$out" "j['submitted'] == 3" "eval: submits all unevaluated images in scope"
-assert_json_has "$out" "len(j['evaluated']) == 0" "eval: none succeed (fixtures aren't real jpegs)"
-# 三个都在解码这一步失败，理由通常是 image_unavailable；但
-# take_last_failure() 只保留"最近一次"失败，三个都在毫秒级内几乎同时
-# 完成时，有极小概率某一个的失败原因在被取走前就被下一个覆盖，兜底归
-# 类成 unknown(cmd_eval 里有详细说明)——两者都算测试通过，不接受任何
-# 图片被漏报或者错误地进了 evaluated。
-assert_json_has "$out" \
-  "len(j['failed']) == 3 and all(f['error'] in ('image_unavailable', 'unknown') for f in j['failed'])" \
-  "eval: undecodable fixtures fail at decode, not at the network call"
-
-assert_nonzero_exit_with_error "eval: unknown provider fails with JSON error" \
-  "$PZT" eval smoke --scope '*' --provider bogus --json
-
-assert_nonzero_exit_with_error "eval: unknown tag scope fails with JSON error" \
-  "$PZT" eval smoke --scope '#不存在的标签' --provider gemini --json
-
-# --auto-reject 是 agent 侧的策略参数，显式传参、不读/改全局
-# Settings.auto_ai_reject(见 docs/history/M4_PRD.md P6 物理隔离)。这里跑一次
-# 带 --auto-reject 的 eval，对比 Settings 落盘文件调用前后是否一字不
-# 差，锁住这条隔离性，不只靠代码审查。
-SETTINGS_FILE="$XDG_CONFIG_HOME/pzt/config.json"
-settings_before="$(cat "$SETTINGS_FILE" 2>/dev/null || echo "__missing__")"
-"$PZT" eval smoke --scope '*' --provider gemini --auto-reject --json >/dev/null
-settings_after="$(cat "$SETTINGS_FILE" 2>/dev/null || echo "__missing__")"
-if [ "$settings_before" = "$settings_after" ]; then
-  pass_count=$((pass_count + 1))
-  echo "PASS: eval --auto-reject does not modify global Settings"
-else
-  fail_count=$((fail_count + 1))
-  echo "FAIL: eval --auto-reject modified global Settings (before=$settings_before after=$settings_after)"
-fi
-
-# --provider local 走跟 gemini/claude 完全相同的提交/解码/归类路径——
-# fixture 是解码不了的假字节，三个 provider 在这一步都会失败，用来验
-# 证 "local" 是合法值、能走到网络调用之前的那一整段逻辑，不用真的连
-# Ollama，也不会因为 Ollama 没跑起来而报错误的失败原因。
-out="$("$PZT" eval smoke --scope '*' --provider local --json)"
-assert_json_has "$out" "j['submitted'] == 3" "eval: --provider local is accepted, submits all unevaluated images"
-assert_json_has "$out" "len(j['evaluated']) == 0" "eval: --provider local also fails at decode (fixtures aren't real jpegs)"
-assert_json_has "$out" \
-  "len(j['failed']) == 3 and all(f['error'] in ('image_unavailable', 'unknown') for f in j['failed'])" \
-  "eval: --provider local fails at decode, not at some provider-specific code path"
-
-# --- pzt eval：成功路径的输出形状(content 字段) ---
-# 上面那几条断言的是失败路径，evaluated 恒为空，覆盖不到"评估成功之后
-# 输出长什么样"。要覆盖到得同时满足两件事：图片真能解码，以及不发真的
-# AI 请求。所以这里单开一个项目，塞一张真的(1x1)JPEG，再用
-# PZT_FAKE_EVAL 把 EvaluationFn 换成固定返回的假函数 - 那个开关本来就
-# 是为这个场景存在的(见 cmd_eval 里的说明)。不动上面 a/b/c 那三个假字
-# 节 fixture：export-images/dedup/curate 的断言都建立在它们身上。
+# --- 可解码的 JPEG fixture ---
+# a/b/c 那三个 fixture 是解码不了的假字节，够用来测参数校验与失败归
+# 类，但凡需要"真的能解出一张图"的断言(下面 dedup 开销行那一段要能成
+# 簇)都得有一张真的。1x1 baseline JPEG 内联成 base64，免得往仓库里塞
+# 二进制资源。不动 a/b/c：export-images/dedup/curate 的断言建立在它们
+# 身上。
 REAL_PHOTOS="$WORKDIR/real_photos"
 mkdir -p "$REAL_PHOTOS"
 python3 -c "
@@ -333,14 +279,6 @@ sys.stdout.buffer.write(base64.b64decode(
   'hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk'
   '5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q=='))
 " > "$REAL_PHOTOS/real.jpg"
-"$PZT" new evalshape "$REAL_PHOTOS" >/dev/null
-out="$(PZT_FAKE_EVAL=1 "$PZT" eval evalshape --scope '*' --provider gemini --json)"
-assert_json_has "$out" "len(j['evaluated']) == 1 and len(j['failed']) == 0" \
-  "eval: a decodable image plus PZT_FAKE_EVAL actually succeeds"
-assert_json_has "$out" "all('content' in e for e in j['evaluated'])" \
-  "eval: every evaluated entry carries a content field"
-assert_json_has "$out" "j['evaluated'][0]['content'] != ''" \
-  "eval: the content field is non-empty (round-trips through result_json and back)"
 
 # --- pzt curate ---
 # W2026-07-21：curate 从目标一起不再看评估状态，只按标签排除(废片/重
@@ -456,9 +394,8 @@ assert_nonzero_exit_with_error "tag clear: unknown project fails with JSON error
 # --- pzt recipe suggest / pzt recipe apply ---
 # 目标三：Style Stage 用的两个 headless 命令。suggest 是"看图选风格"，
 # apply 是纯 set_image_recipe 包壳，两者独立可测。a.jpg 是不可解码的假
-# 字节(跟 eval 段同一批 fixture)，suggest 在解码这一步就会失败，走不到
-# 真正的网络调用，跟 eval 段"undecodable fixtures fail at decode"是同
-# 一个测试哲学——覆盖提交前的整段逻辑，不碰真网络。
+# 字节，suggest 在解码这一步就会失败，走不到真正的网络调用 - 覆盖提交
+# 前的整段逻辑，不碰真网络。
 assert_nonzero_exit_with_error "recipe suggest: unknown provider fails with JSON error" \
   "$PZT" recipe suggest smoke a.jpg --provider bogus --json
 

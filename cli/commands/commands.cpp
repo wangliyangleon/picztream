@@ -1,14 +1,12 @@
 #include "cli/commands/commands.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,11 +20,8 @@
 #include "cli/term/cbreak_mode.h"
 #include "cli/text/text.h"
 #include "cli/ui/ui.h"
-#include "core/ai/compare.h"
-#include "core/ai/evaluation.h"
 #include "core/ai/style.h"
 #include "core/api.h"
-#include "core/db/database.h"
 
 // cmd_export 里用到 expand_home_path(cli/text),用 using-directive 让搬过
 // 来的函数体保持逐字不变(.cpp 里用 using,头文件里绝不用)。print_usage
@@ -131,17 +126,18 @@ std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& proj
 }
 
 // 前向声明：完整定义(含注释)在 tag_apply 附近，cmd_curate 也要用，物理
-// 位置在这里只是因为 cmd_curate 放在 cmd_eval 后面、定义处更靠后。
+// 位置在这里只是因为 cmd_curate 的定义处比 tag_apply 更靠前。
 std::optional<pzt::core::TagId> resolve_or_create_tag(pzt::core::ProjectId project_id,
                                                         const std::string& name);
 
-// M4：`pzt dedup`/`pzt eval` 共用的批量范围解析——跟
+// M4：`pzt dedup` 的批量范围解析（当初 `pzt eval` 也共用这一份，T-22 把
+// 那条孤儿命令删掉之后只剩一个调用方）- 跟
 // cli/commands/browse.cpp 里 resolve_console_scope 同一个语义(`*` 整
 // 个项目、`#标签名` 带指定标签)，但那个函数在匿名命名空间里锁死、不
 // 对外暴露，这里为 headless 命令重写一份，错误走 error_code/error_msg
 // 而不是 i18n 人读文案。scope_tag 记录"范围本身就是这个标签"，供以后
-// 需要"目标本身是废片/重复不排除"这类对称例外的命令使用(这一版
-// dedup/eval 暂不需要，先留着字段)。
+// 需要"目标本身是废片/重复不排除"这类对称例外的命令使用(dedup 暂不需
+// 要，先留着字段)。
 struct ScopeResult {
   std::vector<pzt::core::ImageId> ids;
   std::optional<pzt::core::TagId> scope_tag;
@@ -189,7 +185,7 @@ ScopeResult resolve_scope(pzt::core::ProjectId project_id, const std::string& sc
 // W2026-07-21 目标二：新增可选 --ai --provider <gemini|claude|local>——
 // 不带 --ai 时调用路径、参数、JSON 输出逐字节不变(ai_fallback_count 这
 // 个 key 都不出现，不是"出现但恒为 0")；--provider 只在 --ai 出现时才
-// 校验/生效，解析规则跟 cmd_eval/cmd_compare 同一套三选一。
+// 校验/生效，解析规则跟 cmd_curate、recipe suggest 同一套三选一。
 int cmd_dedup(const std::vector<std::string>& args) {
   bool json = false;
   bool ai_enabled = false;
@@ -342,182 +338,6 @@ int cmd_export_images(const std::vector<std::string>& args) {
   return 0;
 }
 
-// M4：EvaluationError 转成稳定的机读标识符，跟 skip_reason_str 同样的
-// 理由(headless JSON 契约，不走 i18n 人读文案)。
-const char* evaluation_error_str(pzt::core::EvaluationError error) {
-  switch (error) {
-    case pzt::core::EvaluationError::MissingApiKey:
-      return "missing_api_key";
-    case pzt::core::EvaluationError::NetworkError:
-      return "network_error";
-    case pzt::core::EvaluationError::HttpError:
-      return "http_error";
-    case pzt::core::EvaluationError::ParseError:
-      return "parse_error";
-    case pzt::core::EvaluationError::ImageUnavailable:
-      return "image_unavailable";
-    case pzt::core::EvaluationError::StorageFailed:
-      return "storage_failed";
-    case pzt::core::EvaluationError::DatabaseUnavailable:
-      return "database_unavailable";
-  }
-  return "unknown";
-}
-
-// M4：同步批量评估，供 agent 的 Evaluate Stage 用——headless 批处理场景
-// 没有交互式重绘循环持续 poll，这里直接忙等到全部提交的请求都落地再
-// 一次性输出，不像交互路径那样异步返回。auto_reject 是显式参数(A6)，
-// 不读/改 Settings.auto_ai_reject，见 docs/history/M4_PRD.md P6"物理隔离"。
-//
-// 收尾用 queue_status() 判断"是否全部处理完"，不能靠
-// consume_new_result() 的世代号计数——世代号只回答"有没有新结果"，不
-// 是"发生了几次"；如果好几个请求在两次 poll 之间就都处理完了(比如全
-// 都在解码这一步就失败，不用等真实网络延迟，处理得飞快)，世代号只会
-// 被观测成一次变化，用它当计数器数"还剩几个没完成"会数少，永远等不
-// 到 0，卡死。queue_status() 直接查队列/处理中标志这个当下状态，不依
-// 赖计数，没有这个问题。
-//
-// EvaluationWorker::take_last_failure() 只保留"最近一次"失败(交互路径
-// 一次只处理一张图，不需要更多)。这里在每次循环都顺手取一次，尽量不
-// 丢失中间失败；确认队列已空之后再补取一次(防止最后一个失败恰好夹在
-// "取失败"和"查队列状态"这两步中间)。就算这样仍然漏掉了某次失败(理
-// 论上限：poll 间隔内连续完成两个以上失败请求)，收尾时会对没能在
-// evaluated/failed 任何一边找到记录的图片兜底计入 failed、理由标
-// "unknown"，保证每张图精确落在 evaluated/failed 之一，不会被静默漏
-// 报，也不会两边都算。
-int cmd_eval(const std::vector<std::string>& args) {
-  bool json = false;
-  bool auto_reject = false;
-  std::string scope;
-  std::string provider_str;
-  std::vector<std::string> positional;
-  for (std::size_t i = 0; i < args.size(); ++i) {
-    if (args[i] == "--json") {
-      json = true;
-    } else if (args[i] == "--auto-reject") {
-      auto_reject = true;
-    } else if (args[i] == "--scope") {
-      if (i + 1 >= args.size()) return emit_json_error("usage", "--scope requires a value");
-      scope = args[++i];
-    } else if (args[i] == "--provider") {
-      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
-      provider_str = args[++i];
-    } else {
-      positional.push_back(args[i]);
-    }
-  }
-  pzt::core::Provider provider;
-  if (provider_str == "gemini") {
-    provider = pzt::core::Provider::Gemini;
-  } else if (provider_str == "claude") {
-    provider = pzt::core::Provider::Claude;
-  } else if (provider_str == "local") {
-    provider = pzt::core::Provider::Local;
-  } else {
-    return emit_json_error(
-        "usage",
-        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude|local> [--auto-reject] --json");
-  }
-  if (positional.empty() || scope.empty() || !json) {
-    return emit_json_error(
-        "usage",
-        "usage: pzt eval <project> --scope <*|#tag> --provider <gemini|claude|local> [--auto-reject] --json");
-  }
-
-  auto project_id = resolve_project_json(positional[0]);
-  if (!project_id) return 1;
-
-  auto resolved = resolve_scope(*project_id, scope);
-  if (!resolved.error_code.empty()) {
-    return emit_json_error(resolved.error_code.c_str(), resolved.error_msg);
-  }
-
-  std::unordered_map<pzt::core::ImageId, std::string> path_by_id;
-  for (const auto& ref : pzt::core::list_images(*project_id)) path_by_id[ref.id] = ref.file_path;
-
-  auto evaluated_before = pzt::core::evaluated_image_ids(resolved.ids);
-  std::vector<pzt::core::ImageId> to_evaluate;
-  for (auto id : resolved.ids) {
-    if (!evaluated_before.count(id)) to_evaluate.push_back(id);
-  }
-
-  // PZT_FAKE_EVAL：纯测试用逃生舱，不打真实 AI 请求，直接落一份固定通
-  // 过的评估——给 agent/ 真机端到端测试用(watch-folder 跑真 Ingest/
-  // Dedup/Curate/Deliver，唯独 Evaluate 这一步不想打真 Gemini/Claude、
-  // 不想被限流拖垮)。EvaluationWorker::EvaluationFn 本来就是给测试注入
-  // 假函数用的口子(core/ai/evaluation_worker.h)，这里是把同一个口子在
-  // 编译好的二进制里也接上，不是新造机制。core 本身完全不知道这个开
-  // 关的存在——只有 cli 这一层在读环境变量、决定传哪个 EvaluationFn，
-  // 不下渗进 core。
-  std::optional<pzt::core::EvaluationWorker> worker_storage;
-  if (std::getenv("PZT_FAKE_EVAL")) {
-    std::fprintf(stderr,
-                  "[pzt eval] PZT_FAKE_EVAL is set: skipping real AI calls, storing canned "
-                  "passing scores instead\n");
-    pzt::core::EvaluationWorker::EvaluationFn fake_fn =
-        [](const pzt::core::decode::DecodedImage&, const std::string&, pzt::core::Provider,
-           pzt::core::Language, const pzt::core::LocalModelConfig&) {
-          pzt::core::ai::EvaluationResult result;
-          result.assessment = "fake evaluation (PZT_FAKE_EVAL set, no real AI call made)";
-          result.unusable = false;
-          result.content = "fake content description (PZT_FAKE_EVAL set, no real AI call made)";
-          return pzt::core::Result<pzt::core::ai::EvaluationResult, pzt::core::EvaluationError>::Ok(
-              std::move(result));
-        };
-    worker_storage.emplace(pzt::core::db::default_db_path(), fake_fn);
-  } else {
-    worker_storage.emplace();
-  }
-  // Provider::Local 才会真正用到 local_config，但读一次 Settings 的成
-  // 本可以忽略——跟 browse.cpp 里 auto_reject 的现读现传是同一个先例，
-  // 不为了"只有 local 才需要"这一点单独分支。
-  auto eval_settings = pzt::core::load_settings();
-  pzt::core::LocalModelConfig local_config{eval_settings.ollama_base_url, eval_settings.ollama_model};
-
-  // extra_guidance 恒为 ""，assessment 语言用当前界面语言(g_lang，见 init_lang)。
-  pzt::core::Language language = pzt::cli::i18n::g_lang == pzt::cli::i18n::Lang::en
-                                     ? pzt::core::Language::English
-                                     : pzt::core::Language::Chinese;
-  pzt::core::EvaluationWorker& worker = *worker_storage;
-  for (auto id : to_evaluate) worker.request(id, provider, "", auto_reject, language, local_config);
-
-  std::unordered_map<pzt::core::ImageId, pzt::core::EvaluationError> failure_by_id;
-  while (true) {
-    if (auto failure = worker.take_last_failure()) failure_by_id[failure->image_id] = failure->error;
-    auto status = worker.queue_status();
-    if (status.queued == 0 && !status.processing) {
-      if (auto trailing = worker.take_last_failure()) {
-        failure_by_id[trailing->image_id] = trailing->error;
-      }
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
-
-  nlohmann::json evaluated_out = nlohmann::json::array();
-  nlohmann::json failed_out = nlohmann::json::array();
-  for (auto id : to_evaluate) {
-    const std::string& path = path_by_id[id];
-    auto info = pzt::core::get_image(id);
-    if (info && info->evaluation) {
-      // content 是画面内容描述，给看不见照片的 agent 用；assessment 仍然不
-      // 出现在这一面(它是给坐在 TUI 前的人看的，headless 这边没有消费者)。
-      evaluated_out.push_back({{"path", path},
-                                {"unusable", info->evaluation->unusable},
-                                {"content", info->evaluation->content}});
-    } else {
-      auto it = failure_by_id.find(id);
-      std::string error_code = it != failure_by_id.end() ? evaluation_error_str(it->second) : "unknown";
-      failed_out.push_back({{"path", path}, {"error", error_code}});
-    }
-  }
-
-  emit_json({{"submitted", static_cast<int>(to_evaluate.size())},
-             {"evaluated", std::move(evaluated_out)},
-             {"failed", std::move(failed_out)}});
-  return 0;
-}
-
 // M4：策展挑图，见 docs/history/M4_Eng_Design.md 第三节。--tag 是候选范围限定
 // (可选，缺省整个项目)，跟 --apply-tag(落到入选图上的标签，可选，默
 // 认"精选")是两个独立的标签概念，不要混淆——前者是"从哪些图里选"，后
@@ -664,95 +484,6 @@ int cmd_curate(const std::vector<std::string>& args) {
   // 留死字段。core 保证关 AI 时它恒为空，所以这里不需要再判一次 ai_enabled。
   if (!result.caption.empty()) out["caption"] = result.caption;
   emit_json(out);
-  return 0;
-}
-
-// decode_image_for_ai 定义在下面(靠近 recipe_suggest)，cmd_compare 在它之
-// 前，前向声明一下。
-std::optional<pzt::core::DecodedImage> decode_image_for_ai(pzt::core::ImageId image_id);
-
-// W2026-07-21：CompareError 转成稳定的机读标识符，同 evaluation_error_str/
-// style_error_str 的理由(headless JSON 契约，不走 i18n 人读文案)。
-const char* compare_error_str(pzt::core::ai::CompareError error) {
-  switch (error) {
-    case pzt::core::ai::CompareError::MissingApiKey:
-      return "missing_api_key";
-    case pzt::core::ai::CompareError::NetworkError:
-      return "network_error";
-    case pzt::core::ai::CompareError::HttpError:
-      return "http_error";
-    case pzt::core::ai::CompareError::ParseError:
-      return "parse_error";
-    case pzt::core::ai::CompareError::InvalidWinner:
-      return "invalid_winner";
-  }
-  return "unknown";
-}
-
-// headless：pairwise 视觉比较——发两张图给 AI，返回哪张更好 + 一句理由。
-// 目标二 agent 侧的锦标赛会逐对调用这个命令；本身只负责一场比较，不做
-// bracket 编排。winner 回的是胜者的原始路径(winner=0→pathA、1→pathB)，
-// agent 侧直接拿到胜者路径，不用自己映射 a/b。见
-// docs/history/W2026-07-21_Eval_Eng_Design.md。
-int cmd_compare(const std::vector<std::string>& args) {
-  bool json = false;
-  std::string provider_str;
-  std::vector<std::string> positional;
-  for (std::size_t i = 0; i < args.size(); ++i) {
-    if (args[i] == "--json") {
-      json = true;
-    } else if (args[i] == "--provider") {
-      if (i + 1 >= args.size()) return emit_json_error("usage", "--provider requires a value");
-      provider_str = args[++i];
-    } else {
-      positional.push_back(args[i]);
-    }
-  }
-  pzt::core::Provider provider;
-  if (provider_str == "gemini") {
-    provider = pzt::core::Provider::Gemini;
-  } else if (provider_str == "claude") {
-    provider = pzt::core::Provider::Claude;
-  } else if (provider_str == "local") {
-    provider = pzt::core::Provider::Local;
-  } else {
-    return emit_json_error("usage",
-                            "usage: pzt compare <project> <image_a> <image_b> --provider "
-                            "<gemini|claude|local> --json");
-  }
-  if (positional.size() != 3 || !json) {
-    return emit_json_error("usage",
-                            "usage: pzt compare <project> <image_a> <image_b> --provider "
-                            "<gemini|claude|local> --json");
-  }
-
-  auto project_id = resolve_project_json(positional[0]);
-  if (!project_id) return 1;
-
-  auto image_a_id = pzt::core::find_image_by_path(*project_id, positional[1]);
-  if (!image_a_id) return emit_json_error("image_not_found", "image not found: " + positional[1]);
-  auto image_b_id = pzt::core::find_image_by_path(*project_id, positional[2]);
-  if (!image_b_id) return emit_json_error("image_not_found", "image not found: " + positional[2]);
-
-  auto decoded_a = decode_image_for_ai(*image_a_id);
-  if (!decoded_a) {
-    return emit_json_error("image_unavailable", "failed to decode image: " + positional[1]);
-  }
-  auto decoded_b = decode_image_for_ai(*image_b_id);
-  if (!decoded_b) {
-    return emit_json_error("image_unavailable", "failed to decode image: " + positional[2]);
-  }
-
-  auto settings = pzt::core::load_settings();
-  pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
-
-  auto result = pzt::core::ai::request_comparison(*decoded_a, *decoded_b, provider, local_config);
-  if (!result.ok()) {
-    return emit_json_error(compare_error_str(result.error()), "comparison failed");
-  }
-
-  const std::string& winner_path = result.value().winner == 0 ? positional[1] : positional[2];
-  emit_json({{"winner", winner_path}, {"reasoning", result.value().reasoning}});
   return 0;
 }
 
@@ -1384,7 +1115,7 @@ std::optional<pzt::core::DecodedImage> decode_image_for_ai(pzt::core::ImageId im
   return decoded.ok() ? std::optional(decoded.value()) : std::nullopt;
 }
 
-// M4：StyleError 转成稳定的机读标识符，同 evaluation_error_str 的理由
+// M4：StyleError 转成稳定的机读标识符，同 skip_reason_str 的理由
 // (headless JSON 契约，不走 i18n 人读文案)。
 const char* style_error_str(pzt::core::ai::StyleError error) {
   switch (error) {

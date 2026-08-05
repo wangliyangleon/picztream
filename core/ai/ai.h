@@ -23,7 +23,7 @@ enum class Provider { Claude, Gemini, Local };
 // 本地 Provider（Ollama）的连接信息——base_url/model 是"可调行为参数"，
 // 不是 get_api_key() 那种"秘密"，走 Settings（core/settings/settings.h
 // 新增的 ollama_base_url/ollama_model 字段）而不是环境变量。这里只放
-// 默认值当占位，真正生效的值由调用方（cmd_eval/resolve_ai_provider）
+// 默认值当占位，真正生效的值由调用方（cmd_curate/resolve_ai_provider）
 // 读一次 Settings 后显式构造传入，core::ai 内部不直接读 Settings。
 struct LocalModelConfig {
   std::string base_url = "http://localhost:11434";

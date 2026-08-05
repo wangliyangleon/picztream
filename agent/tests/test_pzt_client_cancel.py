@@ -83,10 +83,10 @@ def test_armed_but_never_cancelled_call_returns_parsed_stdout():
     client = _client(holder, stdout='{"submitted": 3}')
     client.cancel_event = threading.Event()  # 布防但从不置位
 
-    result = client.call("eval", "proj-1")
+    result = client.call("dedup", "proj-1")
 
     assert result == {"submitted": 3}
-    assert holder["popen"].argv == ["/fake/pzt", "eval", "proj-1", "--json"]
+    assert holder["popen"].argv == ["/fake/pzt", "dedup", "proj-1", "--json"]
     assert not holder["popen"].terminated
 
 
@@ -97,7 +97,7 @@ def test_cancel_terminates_subprocess_and_raises_cancelled():
     client.cancel_event.set()
 
     with pytest.raises(PztCancelledError):
-        client.call("eval", "proj-1")
+        client.call("dedup", "proj-1")
 
     assert holder["popen"].terminated
     assert not holder["popen"].killed
@@ -111,7 +111,7 @@ def test_stubborn_subprocess_gets_killed_after_grace():
     client.cancel_event.set()
 
     with pytest.raises(PztCancelledError):
-        client.call("eval", "proj-1")
+        client.call("dedup", "proj-1")
 
     assert holder["popen"].terminated
     assert holder["popen"].killed
@@ -131,7 +131,7 @@ def test_armed_call_with_nonzero_exit_still_raises_command_error():
     client.cancel_event = threading.Event()
 
     with pytest.raises(PztCommandError):
-        client.call("eval", "missing-proj")
+        client.call("dedup", "missing-proj")
 
 
 def test_unarmed_call_never_touches_popen_factory():

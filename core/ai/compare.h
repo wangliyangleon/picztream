@@ -10,8 +10,12 @@
 // 更好。core::ai::request_json 通用层的第三个消费者(前两个是 evaluation.h /
 // style.h)，跟它们同一个模式：新文件、新 schema、新结果结构体，调用同一个
 // request_json(这次走多图重载)。涉及质量比较的选择(dedup 保留哪张、curate
-// 选哪几张)走锦标赛，pairwise 是锦标赛的一场比较——bracket 编排在 agent，
-// 这一层只负责"发两张图、返回胜者"。见 docs/history/W2026-07-21_Eval_Eng_Design.md。
+// 选哪几张)走锦标赛，pairwise 是锦标赛的一场比较——bracket 编排在 core 的
+// tournament 模块里(见 core/tournament/tournament.h，规划阶段就推翻了"放
+// agent"的设想)，这一层只负责"发两张图、返回胜者"。唯一调用方是
+// tournament，进程内直调；曾经有过一条 `pzt compare` headless 命令做同
+// 一件事，因为始终没有消费者，已随提案 T-22 删除。
+// 见 docs/history/W2026-07-21_Eval_Eng_Design.md。
 namespace pzt::core::ai {
 
 enum class CompareError { MissingApiKey, NetworkError, HttpError, ParseError, InvalidWinner };

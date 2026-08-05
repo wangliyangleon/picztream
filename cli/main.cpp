@@ -63,9 +63,7 @@ int main(int argc, char** argv) {
     if (subcommand == "images") return cmd_images(args);
     if (subcommand == "dedup") return cmd_dedup(args);
     if (subcommand == "export-images") return cmd_export_images(args);
-    if (subcommand == "eval") return cmd_eval(args);
     if (subcommand == "curate") return cmd_curate(args);
-    if (subcommand == "compare") return cmd_compare(args);
   } catch (const pzt::core::SchemaTooNewError& e) {
     // 必须排在下面那条 catch (const std::exception&) 之前:SchemaTooNewError
     // 继承自 std::exception,handler 按源码顺序匹配,放在基类后面就是死代码。
