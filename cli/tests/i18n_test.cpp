@@ -415,6 +415,37 @@ TEST_CASE("usage_main advertises f as the filter key, not g") {
   g_lang = Lang::zh;  // 还原
 }
 
+// T-18：`:` 控制台是 /dedup(近似重复检测的唯一交互入口)、/ai_eval、/filter、
+// /tasks 的唯一入口，此前在 usage 里一个字都没有——只看 usage 的人不会知道
+// 去重功能存在。这条钉住"入口本身可发现"，不钉具体命令清单的排版。
+TEST_CASE("usage_main advertises the : console and the commands behind it") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto usage = usage_main();
+    CHECK(usage.find(":") != std::string::npos);
+    CHECK(usage.find("/dedup") != std::string::npos);
+    CHECK(usage.find("/ai_eval") != std::string::npos);
+    CHECK(usage.find("/filter") != std::string::npos);
+    CHECK(usage.find("/tasks") != std::string::npos);
+    CHECK(usage.find("/help") != std::string::npos);
+  }
+  g_lang = Lang::zh;  // 还原
+}
+
+// T-18：这句空标签提示曾把用户指向 `pzt tag create`，而 cmd_tag 只 dispatch
+// list/apply/clear——那个命令从来不存在。标签只能在 `pzt open` 里建(space 进
+// 标签菜单、c 新建)，提示必须指向真实存在的路径。
+TEST_CASE("msg_tag_list_empty points at a path that actually exists") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto msg = msg_tag_list_empty();
+    CHECK(msg.find("tag create") == std::string::npos);
+    CHECK(msg.find("pzt open") != std::string::npos);
+    CHECK(msg.find("space") != std::string::npos);
+  }
+  g_lang = Lang::zh;  // 还原
+}
+
 TEST_CASE("err_db_schema_too_new carries both versions and follows language") {
   g_lang = Lang::zh;
   auto zh_text = err_db_schema_too_new(2, 1);

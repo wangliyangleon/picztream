@@ -8,7 +8,13 @@
 // browse.cpp(`pzt open` 浏览主循环)里。
 namespace pzt::cli::commands {
 
+// 用错命令时打的 usage,走 stderr——它是错误输出的一部分,不该混进被管道
+// 消费的 stdout。用户主动求助请用 print_help()。
 void print_usage();
+
+// `pzt --help` / `pzt -h` / `pzt help`:同一份 usage,但走 stdout 且调用方
+// 返回 0。求助不是用错,退出码必须是成功,输出也要能 `| less`、能重定向。
+void print_help();
 
 // `pzt --version` / `pzt version`:打印 PZT_VERSION 到 stdout。版本号是语言
 // 无关的,不走 i18n。

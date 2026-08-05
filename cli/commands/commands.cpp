@@ -39,6 +39,10 @@ void print_usage() {
   std::fprintf(stderr, "%s", pzt::cli::i18n::usage_main().c_str());
 }
 
+void print_help() {
+  std::printf("%s", pzt::cli::i18n::usage_main().c_str());
+}
+
 void print_version() {
   std::printf("pzt %s\n", PZT_VERSION);
 }

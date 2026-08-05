@@ -29,9 +29,16 @@ int main(int argc, char** argv) {
   std::string subcommand = argv[1];
   std::vector<std::string> args(argv + 2, argv + argc);
 
-  // 版本查询是无副作用的即时命令,不进下面的子命令 try 块。
+  // 版本查询与求助都是无副作用的即时命令,不进下面的子命令 try 块。
   if (subcommand == "--version" || subcommand == "version") {
     print_version();
+    return 0;
+  }
+  // 三种写法都接:`--help` 是 GNU 惯例,`-h` 是短写,`help` 是子命令式。此前
+  // 一种都不认,全部落到最后那句"未知子命令"上——报错 + 退出码 1,把求助当
+  // 成用错。
+  if (subcommand == "--help" || subcommand == "-h" || subcommand == "help") {
+    print_help();
     return 0;
   }
 

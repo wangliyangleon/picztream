@@ -81,9 +81,12 @@ std::string usage_main() {
            "  pzt list\n"
            "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
            "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,e 导出,f 筛选,"
-           "r 应用/清除/新建/删除风格,r v 临时预览原图,"
+           "r 应用/清除/新建/删除风格,r v 临时预览原图,: 控制台,"
            "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
            "不显示也不产生这些日志)\n"
+           "      控制台(在 pzt open 里按 : 进入):/dedup <范围> [--ai] "
+           "近似重复检测,/ai_eval [范围] AI 评估,/filter <条件> 二级筛选,"
+           "/tasks 评估队列状态,/help [命令] 详情\n"
            "  pzt archive <project_name>\n"
            "  pzt unarchive <project_name>\n"
            "  pzt delete <project_name>\n"
@@ -104,8 +107,13 @@ std::string usage_main() {
            "e Export, f Filter, "
            "r Apply/Clear/Create/Delete recipe, r v Temporarily preview "
            "original, "
+           ": Console, "
            "q Quit; --debug displays internal logs in an area below the image, "
            "hidden and disabled by default)\n"
+           "      Console (press : inside pzt open): /dedup <scope> [--ai] "
+           "near-duplicate detection, /ai_eval [scope] AI evaluation, "
+           "/filter <criterion> narrow the view, /tasks evaluation queue, "
+           "/help [command] details\n"
            "  pzt archive <project_name>\n"
            "  pzt unarchive <project_name>\n"
            "  pzt delete <project_name>\n"
@@ -372,9 +380,13 @@ std::string err_tag_list_missing_name() {
 
 std::string msg_tag_list_empty() {
   if (g_lang == Lang::zh) {
-    return "(还没有任何标签,用 pzt tag create 创建一个)\n";
+    // 标签只能在应用内建:pzt open 里 space 进标签菜单、c 新建。此前这里写
+    // 的是"用 pzt tag create 创建一个",而 cmd_tag 只 dispatch list/apply/
+    // clear,那个命令从来没存在过。
+    return "(还没有任何标签,在 pzt open 里按 space 进标签菜单、按 c 新建)\n";
   } else {
-    return "(No tags yet. Create one with 'pzt tag create')\n";
+    return "(No tags yet. Inside pzt open, press space for the tag menu, "
+           "then c to create one)\n";
   }
 }
 

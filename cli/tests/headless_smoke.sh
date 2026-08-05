@@ -124,6 +124,37 @@ else:
   fi
 }
 
+# assert_help_ok <desc> <args...>
+# T-18：`pzt --help` 曾走到"未知子命令"分支——报错到 stderr、退出码 1，把一次
+# 正常的求助当成用错。断言的是退出码 0 且 usage 走 stdout(可以 `| less`、可以
+# 重定向)，这是它跟错误路径唯一的可观察区别。
+#
+# 这几条不是 headless 命令，但入口行为同样只在真二进制上可观察(usage 文本本身
+# 由 cli_tests 覆盖，退出码与流向只有跑一次进程才测得到)，而这个脚本是仓库里
+# 唯一的黑盒二进制 harness，就近放这里，不为三条断言另起一个脚本。
+assert_help_ok() {
+  local desc="$1"
+  shift
+  if ! "$@" >/tmp/headless_smoke_out 2>/tmp/headless_smoke_stderr; then
+    echo "FAIL: $desc (expected exit 0)"
+    cat /tmp/headless_smoke_stderr >&2
+    fail_count=$((fail_count + 1))
+    return
+  fi
+  if ! grep -q "usage:" /tmp/headless_smoke_out; then
+    echo "FAIL: $desc (usage not on stdout)"
+    fail_count=$((fail_count + 1))
+    return
+  fi
+  echo "PASS: $desc"
+  pass_count=$((pass_count + 1))
+}
+
+# --- pzt --help / -h / help (T-18) ---
+assert_help_ok "--help: exits 0 with usage on stdout" "$PZT" --help
+assert_help_ok "-h: exits 0 with usage on stdout" "$PZT" -h
+assert_help_ok "help: exits 0 with usage on stdout" "$PZT" help
+
 # --- fixtures ---
 printf 'x%.0s' {1..30} > "$PHOTOS/a.jpg"
 printf 'x%.0s' {1..30} > "$PHOTOS/b.jpg"
