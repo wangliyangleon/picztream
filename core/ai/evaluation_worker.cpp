@@ -122,10 +122,18 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
     return EvaluationError::ImageUnavailable;
   }
 
+  // T-23：这几行是 `--debug` 面板看到的东西。原来一律只打 image_id，而
+  // 用户手上只有文件名 - 跟状态行那条裸 ID 是同一个毛病，只是在另一条
+  // 通道上(而且 browse.cpp 的 poll 逻辑在 debug_mode 下刻意不弹状态行，
+  // 理由正是"面板里已经看得到"，于是开着 --debug 时反倒只剩裸 ID)。
+  // image_id 保留：它是 `/ai_eval` 去重与 in_flight_ 的键，排队问题要靠
+  // 它对照。取到图片记录之后的每一行都补上 file=。
   auto project_summary = project::open_project(db, info->project_id);
   if (!project_summary.ok()) {
-    std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld project_id=%lld not found\n",
-                 static_cast<long long>(req.image_id), static_cast<long long>(info->project_id));
+    std::fprintf(stderr,
+                 "[pzt ai] evaluation worker: image_id=%lld file=%s project_id=%lld not found\n",
+                 static_cast<long long>(req.image_id), info->file_name.c_str(),
+                 static_cast<long long>(info->project_id));
     return EvaluationError::ImageUnavailable;
   }
 
@@ -133,8 +141,8 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
                                                  info->kind, info->preview_cache_path);
   auto decoded = media::decode_preview_file(path);
   if (!decoded.ok()) {
-    std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld decode failed path=%s\n",
-                 static_cast<long long>(req.image_id), path.c_str());
+    std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld file=%s decode failed path=%s\n",
+                 static_cast<long long>(req.image_id), info->file_name.c_str(), path.c_str());
     return EvaluationError::ImageUnavailable;
   }
 
@@ -145,8 +153,9 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
     // 记录——旧结果仍然是有效信息，一次失败的重新评估不该把之前成功的
     // 结果抹掉。见 docs/history/M3_Eng_Design.md"core/ai/evaluation_worker.h/.cpp"
     // 一节。
-    std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld evaluation request failed\n",
-                 static_cast<long long>(req.image_id));
+    std::fprintf(stderr,
+                 "[pzt ai] evaluation worker: image_id=%lld file=%s evaluation request failed\n",
+                 static_cast<long long>(req.image_id), info->file_name.c_str());
     return result.error();
   }
 
@@ -158,13 +167,14 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   auto stored = store_evaluation(db, req.image_id, r, req.extra_guidance, req.provider,
                                   req.auto_reject);
   if (!stored.ok()) {
-    std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld failed to save evaluation result\n",
-                 static_cast<long long>(req.image_id));
+    std::fprintf(
+        stderr, "[pzt ai] evaluation worker: image_id=%lld file=%s failed to save evaluation result\n",
+        static_cast<long long>(req.image_id), info->file_name.c_str());
     return stored.error();
   }
 
-  std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld unusable=%d\n",
-               static_cast<long long>(req.image_id), r.unusable ? 1 : 0);
+  std::fprintf(stderr, "[pzt ai] evaluation worker: image_id=%lld file=%s unusable=%d\n",
+               static_cast<long long>(req.image_id), info->file_name.c_str(), r.unusable ? 1 : 0);
   return std::nullopt;
 }
 

@@ -1422,21 +1422,27 @@ int cmd_open(const std::vector<std::string>& args) {
               if (!evaluation_worker.consume_new_result(ai_last_seen_generation)) {
                 continue;
               }
-              // F-03：确认拿到新结果(不是超时空转)之后,顺带看一眼这次
-              // 落地的请求是不是失败的——失败之前只打 stderr,不开
-              // --debug 时用户完全看不到,提交之后要么等到结果、要么永
-              // 远等不到也不知道为什么。debug 模式下失败已经能从 debug
-              // 面板的日志流看到,不在这里重复弹一次提示。
-              if (auto failure = evaluation_worker.take_failure_report()) {
-                // T-23：报文件名而不是裸数据库 ID。查库只在真的失败了才
-                // 走一次(不是每轮 poll)，量级可以忽略；查不到就传
-                // nullopt，由 i18n 回落到 ID。
-                auto info = pzt::core::get_image(failure->last_image_id);
-                std::optional<std::string> file_name;
-                if (info) file_name = info->file_name;
-                status_override = pzt::cli::i18n::msg_ai_evaluation_failed(
-                    file_name, failure->last_image_id, failure->last_error, failure->total_failed);
-              }
+            }
+            // F-03：确认拿到新结果(不是超时空转)之后,顺带看一眼这次落
+            // 地的请求是不是失败的 - 失败之前只打 stderr,不开 --debug
+            // 时用户完全看不到,提交之后要么等到结果、要么永远等不到也
+            // 不知道为什么。
+            // T-23：这段原来整个包在 `!debug_mode` 里，理由是"debug 模
+            // 式下失败已经能从面板的日志流看到"。那条理由只覆盖了"什么
+            // 原因"，不覆盖"一共挂了多少张" - 面板是逐条明细，一屏就那
+            // 么几行，滚过去就没了，恰恰给不出本条要的那个总数信号。改
+            // 成两种模式都报：take_failure_report() 没有新失败时返回
+            // nullopt，自己就是门，debug 模式每轮 poll 都重画也不会重复
+            // 弹同一条。
+            if (auto failure = evaluation_worker.take_failure_report()) {
+              // 报文件名而不是裸数据库 ID。查库只在真的失败了才走一次
+              // (不是每轮 poll)，量级可以忽略；查不到就传 nullopt，由
+              // i18n 回落到 ID。
+              auto info = pzt::core::get_image(failure->last_image_id);
+              std::optional<std::string> file_name;
+              if (info) file_name = info->file_name;
+              status_override = pzt::cli::i18n::msg_ai_evaluation_failed(
+                  file_name, failure->last_image_id, failure->last_error, failure->total_failed);
             }
             timed_out = true;
             break;
