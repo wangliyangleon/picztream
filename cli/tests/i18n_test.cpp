@@ -468,20 +468,87 @@ TEST_CASE("err_db_schema_too_new carries both versions and follows language") {
   g_lang = Lang::zh;  // 还原
 }
 
-TEST_CASE("msg_ai_evaluation_failed includes the image id and a reason, follows language") {
+// T-23：文案原来只有裸数据库 ID("图 47")，而用户手上只有文件名，界面
+// 其它每一处也都用 file_name 展示,那个数字无从对照。现在优先报文件名，
+// 只在图片记录查不到(比如"图片已不存在"这类失败本身)时才回落到 ID。
+TEST_CASE("msg_ai_evaluation_failed reports the file name and a reason, follows language") {
   g_lang = Lang::zh;
-  auto zh_text = msg_ai_evaluation_failed(42, pzt::core::EvaluationError::NetworkError);
-  CHECK(zh_text.find("42") != std::string::npos);
+  auto zh_text =
+      msg_ai_evaluation_failed("IMG_0042.JPG", 42, pzt::core::EvaluationError::NetworkError, 1);
+  CHECK(zh_text.find("IMG_0042.JPG") != std::string::npos);
   CHECK(zh_text.find("网络") != std::string::npos);
 
-  auto zh_missing_key = msg_ai_evaluation_failed(1, pzt::core::EvaluationError::MissingApiKey);
-  auto zh_unavailable = msg_ai_evaluation_failed(1, pzt::core::EvaluationError::ImageUnavailable);
+  auto zh_missing_key =
+      msg_ai_evaluation_failed("a.jpg", 1, pzt::core::EvaluationError::MissingApiKey, 1);
+  auto zh_unavailable =
+      msg_ai_evaluation_failed("a.jpg", 1, pzt::core::EvaluationError::ImageUnavailable, 1);
   CHECK(zh_missing_key != zh_unavailable);  // 不同错误类型给出不同的原因文案
 
   g_lang = Lang::en;
-  auto en_text = msg_ai_evaluation_failed(42, pzt::core::EvaluationError::NetworkError);
-  CHECK(en_text.find("42") != std::string::npos);
+  auto en_text =
+      msg_ai_evaluation_failed("IMG_0042.JPG", 42, pzt::core::EvaluationError::NetworkError, 1);
+  CHECK(en_text.find("IMG_0042.JPG") != std::string::npos);
   CHECK(en_text.find("network") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// 文件名查不到时不能把这条提示整个吞掉 - 回落到 ID 至少还能对照
+// `pzt images` 的输出，比什么都不说强。
+TEST_CASE("msg_ai_evaluation_failed falls back to the image id when the file name is unknown") {
+  g_lang = Lang::zh;
+  auto zh_text =
+      msg_ai_evaluation_failed(std::nullopt, 47, pzt::core::EvaluationError::ImageUnavailable, 1);
+  CHECK(zh_text.find("47") != std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_text =
+      msg_ai_evaluation_failed(std::nullopt, 47, pzt::core::EvaluationError::ImageUnavailable, 1);
+  CHECK(en_text.find("47") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// T-23 的另一半：一次批量评估里失败不止一条时，光报最近那一条会让用户
+// 以为只错了一张。累计失败张数要出现在文案里，那才是"值得停下来检查环
+// 境"的信号；最近一条仍然报出来，因为它带着具体原因。
+TEST_CASE("msg_ai_evaluation_failed reports the running total when more than one has failed") {
+  g_lang = Lang::zh;
+  auto zh_many =
+      msg_ai_evaluation_failed("IMG_0042.JPG", 42, pzt::core::EvaluationError::NetworkError, 37);
+  CHECK(zh_many.find("37") != std::string::npos);
+  CHECK(zh_many.find("IMG_0042.JPG") != std::string::npos);
+  CHECK(zh_many.find("网络") != std::string::npos);
+  auto zh_one =
+      msg_ai_evaluation_failed("IMG_0042.JPG", 42, pzt::core::EvaluationError::NetworkError, 1);
+  CHECK(zh_many != zh_one);
+  CHECK(zh_one.find("37") == std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_many =
+      msg_ai_evaluation_failed("IMG_0042.JPG", 42, pzt::core::EvaluationError::NetworkError, 37);
+  CHECK(en_many.find("37") != std::string::npos);
+  CHECK(en_many.find("IMG_0042.JPG") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// `/tasks` 原来只报排队/处理中，失败过多少张一处都查不到 - 状态行是一
+// 次性的，错过就没了。累计失败数挂在这里，用户任何时候都能回看。
+TEST_CASE("msg_ai_tasks_status mentions the cumulative failure count only when there is one") {
+  g_lang = Lang::zh;
+  auto zh_clean = msg_ai_tasks_status(3, true, 0);
+  CHECK(zh_clean.find("3") != std::string::npos);
+  auto zh_failed = msg_ai_tasks_status(3, true, 12);
+  CHECK(zh_failed.find("12") != std::string::npos);
+  CHECK(zh_failed.find("失败") != std::string::npos);
+
+  g_lang = Lang::en;
+  auto en_clean = msg_ai_tasks_status(3, true, 0);
+  auto en_failed = msg_ai_tasks_status(3, true, 12);
+  CHECK(en_failed.find("12") != std::string::npos);
+  CHECK(en_failed.find("failed") != std::string::npos);
+  CHECK(en_clean != en_failed);
 
   g_lang = Lang::zh;  // 还原
 }

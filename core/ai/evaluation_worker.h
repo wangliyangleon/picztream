@@ -65,9 +65,15 @@ class EvaluationWorker {
   // `/tasks` 用：排队中有几个、有没有正在处理中的一个。不展示具体是哪
   // 几张图片，只要数量和状态，见 docs/history/M3_PRD.md"批量评估与任务状态"一
   // 节。
+  // T-23：加上 failed——本 worker 存续期间(即这一次 `pzt open`)累计失败
+  // 了几张。它跟 take_failures() 的 count 是两个不同的问题：那个是"上次
+  // 报过之后又失败了几张"，报完就清零，服务于一次性的状态行；这个从不
+  // 清零，服务于"我刚才好像瞟到几条失败,到底挂了多少张"这种事后回看。
+  // 只有累计值放得进 `/tasks`,因为状态行错过了就没了。
   struct QueueStatus {
     std::size_t queued;
     bool processing;
+    std::size_t failed;
   };
   // processing 靠 in_flight_.size() > queue_.size() 推出来，不需要单独
   // 一个"当前正在处理哪一个"的状态——worker_loop 是单线程的，任意时刻最
@@ -79,15 +85,24 @@ class EvaluationWorker {
   // ——图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug
   // 时用户完全看不到，提交之后要么等到结果、要么永远等不到也不知道为
   // 什么。跟 generation_ 用途不同：generation_ 只回答"有没有新结果落
-  // 地"(成功/失败都算)，这个回答"最近一次落地的结果是不是失败的、失
-  // 败的是哪张图、什么原因"。取走即清空(跟 consume_new_result 的"消费
-  // 一次"精神一致)，调用方(browse.cpp 的 poll 逻辑)只在确认有新结果
-  // 落地之后才取一次，不会重复弹同一条失败提示。
-  struct LastFailure {
-    project::ImageId image_id;
-    EvaluationError error;
+  // 地"(成功/失败都算)，这个回答"上次报过之后失败了几张、最近失败的是
+  // 哪张图、什么原因"。取走即清空(跟 consume_new_result 的"消费一次"
+  // 精神一致)，调用方(browse.cpp 的 poll 逻辑)只在确认有新结果落地之
+  // 后才取一次，不会重复弹同一条失败提示。
+  //
+  // T-23：原来这里只留最后一条(`last_failure_` 无条件覆盖)。批量评估
+  // 全批失败时,后台线程处理请求的速度远快于 300ms 一次的 poll，前面那
+  // 些失败在被取走之前就被后面的盖掉了——用户看到的是零星几条互不相干
+  // 的提示,既不知道失败了多少张，也没有"该停下来检查环境"的信号(而这
+  // 类失败恰恰高度相关:key 没配、Ollama 没起来，一挂就是整批)。所以只
+  // 加一个计数:失败具体是哪几张不值得逐条列出来(状态行只有一行)，"这
+  // 一批挂了 37 张"才是用户真正需要的那个数字。
+  struct FailureReport {
+    project::ImageId last_image_id;
+    EvaluationError last_error;
+    int count;  // 自上次取走以来失败了几张(至少是 1，否则不返回值)
   };
-  std::optional<LastFailure> take_last_failure();
+  std::optional<FailureReport> take_failures();
 
  private:
   struct PendingRequest {
@@ -101,7 +116,7 @@ class EvaluationWorker {
 
   void worker_loop(std::stop_token stop);
   // 返回 nullopt 表示这次请求成功；否则携带失败原因，worker_loop 负责
-  // 把它记进 last_failure_(process_request 本身不碰 mu_ 保护的状态，
+  // 把它记进 pending_failure_(process_request 本身不碰 mu_ 保护的状态，
   // 维持它原来"纯粹是 db I/O + 网络调用"的定位）。
   std::optional<EvaluationError> process_request(const PendingRequest& req);
   // 真正干活的那一半。拆出来是为了让 process_request 只剩一层 catch-all：
@@ -118,7 +133,10 @@ class EvaluationWorker {
   std::vector<PendingRequest> queue_;
   std::unordered_set<project::ImageId> in_flight_;
   std::uint64_t generation_ = 0;
-  std::optional<LastFailure> last_failure_;
+  // 还没被 take_failures() 取走的那一批(取走即清空)，与从不清零的累计
+  // 值 failed_total_ 分开，理由见 FailureReport / QueueStatus 的注释。
+  std::optional<FailureReport> pending_failure_;
+  std::size_t failed_total_ = 0;
 
   // 声明在最后，保证析构时先于其它成员被销毁——它的析构自动
   // request_stop()+join()，worker 线程在其它成员真正被销毁之前已经彻底

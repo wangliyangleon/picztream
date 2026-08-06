@@ -536,7 +536,7 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
 // `/tasks`——查看评估队列的状态，不需要参数。
 std::string handle_tasks_command(pzt::core::EvaluationWorker& evaluation_worker) {
   auto status = evaluation_worker.queue_status();
-  return pzt::cli::i18n::msg_ai_tasks_status(status.queued, status.processing);
+  return pzt::cli::i18n::msg_ai_tasks_status(status.queued, status.processing, status.failed);
 }
 
 // F-09：控制台 `/filter <criterion>` 二级筛选——在当前 f 筛选结果之上
@@ -1427,9 +1427,15 @@ int cmd_open(const std::vector<std::string>& args) {
               // --debug 时用户完全看不到,提交之后要么等到结果、要么永
               // 远等不到也不知道为什么。debug 模式下失败已经能从 debug
               // 面板的日志流看到,不在这里重复弹一次提示。
-              if (auto failure = evaluation_worker.take_last_failure()) {
-                status_override =
-                    pzt::cli::i18n::msg_ai_evaluation_failed(failure->image_id, failure->error);
+              if (auto failure = evaluation_worker.take_failures()) {
+                // T-23：报文件名而不是裸数据库 ID。查库只在真的失败了才
+                // 走一次(不是每轮 poll)，量级可以忽略；查不到就传
+                // nullopt，由 i18n 回落到 ID。
+                auto info = pzt::core::get_image(failure->last_image_id);
+                std::optional<std::string> file_name;
+                if (info) file_name = info->file_name;
+                status_override = pzt::cli::i18n::msg_ai_evaluation_failed(
+                    file_name, failure->last_image_id, failure->last_error, failure->count);
               }
             }
             timed_out = true;

@@ -1053,12 +1053,24 @@ std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
   return g_lang == Lang::zh ? "未知错误" : "unknown error";  // 不可达，安抚 -Wreturn-type
 }
 
-std::string msg_ai_evaluation_failed(pzt::core::ImageId image_id, pzt::core::EvaluationError error) {
+std::string msg_ai_evaluation_failed(const std::optional<std::string>& file_name,
+                                      pzt::core::ImageId image_id,
+                                      pzt::core::EvaluationError error, int failure_count) {
   std::string reason = ai_evaluation_error_reason(error);
   if (g_lang == Lang::zh) {
-    return " 图 " + std::to_string(image_id) + " 评估失败: " + reason + " ";
+    std::string subject = file_name ? *file_name : ("图 " + std::to_string(image_id));
+    if (failure_count > 1) {
+      return " " + std::to_string(failure_count) + " 张评估失败，最近: " + subject + " - " + reason +
+             " ";
+    }
+    return " " + subject + " 评估失败: " + reason + " ";
   } else {
-    return " image " + std::to_string(image_id) + " evaluation failed: " + reason + " ";
+    std::string subject = file_name ? *file_name : ("image " + std::to_string(image_id));
+    if (failure_count > 1) {
+      return " " + std::to_string(failure_count) + " images failed evaluation, latest: " + subject +
+             " - " + reason + " ";
+    }
+    return " " + subject + " evaluation failed: " + reason + " ";
   }
 }
 
@@ -1174,15 +1186,18 @@ std::string msg_ai_eval_submitted(int count) {
   }
 }
 
-std::string msg_ai_tasks_status(std::size_t queued, bool processing) {
+std::string msg_ai_tasks_status(std::size_t queued, bool processing, std::size_t failed) {
   if (g_lang == Lang::zh) {
     std::string line = " 排队中: " + std::to_string(queued) + " 张";
-    line += processing ? "，有一张正在处理 " : "，当前没有正在处理的 ";
-    return line;
+    line += processing ? "，有一张正在处理" : "，当前没有正在处理的";
+    // T-23：一张都没挂过时整句不提失败，不引入这个概念。
+    if (failed > 0) line += "，已失败 " + std::to_string(failed) + " 张";
+    return line + " ";
   } else {
     std::string line = " Queued: " + std::to_string(queued);
-    line += processing ? ", one in progress " : ", nothing in progress ";
-    return line;
+    line += processing ? ", one in progress" : ", nothing in progress";
+    if (failed > 0) line += ", " + std::to_string(failed) + " failed";
+    return line + " ";
   }
 }
 

@@ -87,7 +87,7 @@ using EvaluationInfo = ai::EvaluationInfo;
 using Provider = ai::Provider;
 using LocalModelConfig = ai::LocalModelConfig;
 using Language = ai::Language;
-// F-03：EvaluationWorker::take_last_failure() 把失败原因带出来给 cli
+// F-03：EvaluationWorker::take_failures() 把失败原因带出来给 cli
 // 展示，cli 层需要能叫出这个类型的名字。
 using EvaluationError = ai::EvaluationError;
 // T-7：库的 schema 版本比这个二进制新时开库会抛这个类型。cli 的顶层

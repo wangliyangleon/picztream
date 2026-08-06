@@ -42,13 +42,13 @@ bool EvaluationWorker::consume_new_result(std::uint64_t& last_seen_generation) c
 
 EvaluationWorker::QueueStatus EvaluationWorker::queue_status() const {
   std::lock_guard<std::mutex> lock(mu_);
-  return QueueStatus{queue_.size(), in_flight_.size() > queue_.size()};
+  return QueueStatus{queue_.size(), in_flight_.size() > queue_.size(), failed_total_};
 }
 
-std::optional<EvaluationWorker::LastFailure> EvaluationWorker::take_last_failure() {
+std::optional<EvaluationWorker::FailureReport> EvaluationWorker::take_failures() {
   std::lock_guard<std::mutex> lock(mu_);
-  auto result = last_failure_;
-  last_failure_.reset();
+  auto result = pending_failure_;
+  pending_failure_.reset();
   return result;
 }
 
@@ -71,12 +71,18 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
 
     lock.lock();
     in_flight_.erase(req.image_id);
-    // F-03：记下这次是不是失败的，供 take_last_failure() 取用——之前失
-    // 败只打 stderr，不开 --debug 时用户完全看不到，见头文件里
-    // LastFailure 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，
-    // process_request 本身不碰这些受 mu_ 保护的状态。
+    // F-03：记下这次是不是失败的，供 take_failures() 取用——之前失败只
+    // 打 stderr，不开 --debug 时用户完全看不到，见头文件里 FailureReport
+    // 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，process_request
+    // 本身不碰这些受 mu_ 保护的状态。
+    // T-23：累加而不是覆盖。图片与原因取最近这一次(它带着用户当下最该
+    // 看到的具体原因)，次数从上一条累计上来——上一条还没被取走就说明用
+    // 户还没看到过它，直接盖掉就是原来那个"800 张全失败只看到零星几条"
+    // 的成因。
     if (failure) {
-      last_failure_ = LastFailure{req.image_id, *failure};
+      int previous = pending_failure_ ? pending_failure_->count : 0;
+      pending_failure_ = FailureReport{req.image_id, *failure, previous + 1};
+      ++failed_total_;
     }
     ++generation_;
     lock.unlock();

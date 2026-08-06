@@ -17,7 +17,7 @@ namespace pzt::core::ai {
 // "还没走到真正发起 AI 请求这一步就失败"的几种情况(图片记录/项目找不
 // 到、预览图解码失败)——这几种失败原来只打 stderr，用户完全看不到；跟
 // request_evaluation 本身可能失败的几种原因（网络/key/解析）合并成同一
-// 个错误类型，方便 EvaluationWorker::LastFailure 统一携带，不需要为
+// 个错误类型，方便 EvaluationWorker::FailureReport 统一携带，不需要为
 // "发请求之前" vs "发请求之后"两类失败分别设计上报通道。
 // StorageFailed：F-17 新增，覆盖"AI 已经给出结果，但落库这一步失败"
 // (磁盘满、库损坏这类不该发生的场景)——原来这里的 sqlite3_step 返回值
