@@ -1414,35 +1414,41 @@ int cmd_open(const std::vector<std::string>& args) {
       // 顶层没有。
       char unknown_key = 0;
       while (true) {
+        // T-23：这条检查刻意放在 stdin_ready 阻塞读键之前、不依赖
+        // has_pending()/poll_active。原因：has_pending() 只有在 worker
+        // 还没处理完排队里的东西时才是 true，而"连不上本地 Ollama"这类
+        // 失败是瞬时的(连接被拒绝，不会真的发出请求、不会等超时)。一
+        // 批评估提交后，worker 线程可能在主循环第一次算出 poll_active
+        // 之前就已经把整批处理完、in_flight_/queue_ 都清空了 - 这种情
+        // 况下 poll_active 从一开始就是 false，直接掉进下面"纯浏览态"
+        // 分支(只关心 resize)，永远没有机会去看 evaluation worker 的
+        // 状态，状态栏因此永远不出现，真机反馈只能靠 --debug(它是后台
+        // 线程直接写 stderr，跟这整套轮询逻辑无关)才看得到。这里不管这
+        // 一轮打不打算轮询 AI 状态，先无条件查一遍：便宜(一次带锁的
+        // optional 判断)，查到就立刻跳出去重画，还没读 stdin 不会吞任
+        // 何按键；查不到时开销可以忽略，跟以前一样往下走。
+        if (auto failure = evaluation_worker.take_failure_report()) {
+          // 报文件名而不是裸数据库 ID。查库只在真的失败了才走一次(不
+          // 是每轮 poll)，量级可以忽略；查不到就传 nullopt，由 i18n 回
+          // 落到 ID。
+          auto info = pzt::core::get_image(failure->last_image_id);
+          std::optional<std::string> file_name;
+          if (info) file_name = info->file_name;
+          status_override = pzt::cli::i18n::msg_ai_evaluation_failed(
+              file_name, failure->last_image_id, failure->last_error, failure->total_failed);
+          timed_out = true;
+          break;
+        }
+
         bool poll_active = debug_mode || evaluation_worker.has_pending();
         int poll_ms = poll_active ? 300 : 250;  // 纯浏览态 250ms 仅用于察觉 resize
         if (!stdin_ready(poll_ms)) {
           if (poll_active) {
-            if (!debug_mode) {
-              if (!evaluation_worker.consume_new_result(ai_last_seen_generation)) {
-                continue;
-              }
-            }
-            // F-03：确认拿到新结果(不是超时空转)之后,顺带看一眼这次落
-            // 地的请求是不是失败的 - 失败之前只打 stderr,不开 --debug
-            // 时用户完全看不到,提交之后要么等到结果、要么永远等不到也
-            // 不知道为什么。
-            // T-23：这段原来整个包在 `!debug_mode` 里，理由是"debug 模
-            // 式下失败已经能从面板的日志流看到"。那条理由只覆盖了"什么
-            // 原因"，不覆盖"一共挂了多少张" - 面板是逐条明细，一屏就那
-            // 么几行，滚过去就没了，恰恰给不出本条要的那个总数信号。改
-            // 成两种模式都报：take_failure_report() 没有新失败时返回
-            // nullopt，自己就是门，debug 模式每轮 poll 都重画也不会重复
-            // 弹同一条。
-            if (auto failure = evaluation_worker.take_failure_report()) {
-              // 报文件名而不是裸数据库 ID。查库只在真的失败了才走一次
-              // (不是每轮 poll)，量级可以忽略；查不到就传 nullopt，由
-              // i18n 回落到 ID。
-              auto info = pzt::core::get_image(failure->last_image_id);
-              std::optional<std::string> file_name;
-              if (info) file_name = info->file_name;
-              status_override = pzt::cli::i18n::msg_ai_evaluation_failed(
-                  file_name, failure->last_image_id, failure->last_error, failure->total_failed);
+            // F-03：确认拿到新结果(不是超时空转)才值得重画 - 上面那段
+            // 已经处理完失败的情况，这里只剩"有没有新的成功结果落地"要
+            // 看(debug 模式下重画由面板日志驱动，不需要这次确认)。
+            if (!debug_mode && !evaluation_worker.consume_new_result(ai_last_seen_generation)) {
+              continue;
             }
             timed_out = true;
             break;
