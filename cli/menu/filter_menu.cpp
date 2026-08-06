@@ -23,13 +23,14 @@ namespace pzt::cli::menu {
 // 才会调用到这个函数）。
 FKeyDecision handle_f_key_prompt(pzt::core::TagId reject_tag_id,
                                   std::optional<pzt::core::TagId> duplicate_tag_id,
-                                  const std::vector<pzt::core::TagSummary>& tags, int banner_row,
-                                  int start_col, int content_cols) {
+                                  const MenuTags& menu, int banner_row, int start_col,
+                                  int content_cols) {
+  const auto& tags = menu.shown;
   // 标签一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
   // 作,见 prompt_and_read_key_2line 的说明。
   char c = prompt_and_read_key_2line(
       pzt::cli::i18n::filter_menu_options_line(tags, duplicate_tag_id.has_value()),
-      pzt::cli::i18n::filter_menu_actions_line(), banner_row, start_col, content_cols);
+      pzt::cli::i18n::filter_menu_actions_line(menu.hidden), banner_row, start_col, content_cols);
   if (c == 'f') return {FKeyAction::ClearFilter, {}, "", ""};
   if (c == '0') {
     return {FKeyAction::ApplyFilter, reject_tag_id, pzt::cli::i18n::reject_tag_label(), ""};

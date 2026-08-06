@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "cli/menu/tag_menu.h"  // MenuTags:两个菜单共用同一套编号
 #include "core/api.h"
 
 // `f` 前缀键的筛选菜单。见 docs/history/M0_Eng_Design.md increment 6.4.6/6.6。
@@ -33,12 +34,14 @@ struct FKeyDecision {
 };
 
 // f 键入口:显示筛选/清除选项,返回一个"意图"(FKeyDecision)交给
-// cmd_open 执行。tags 由调用方(cmd_open)用 tags_for_menu 构好后传入。
+// cmd_open 执行。menu 由调用方(cmd_open)用 tags_for_menu 构好后整个传
+// 入,不拆成"列表 + hidden"两个参数:T-24 之后这两半必须来自同一次查询,
+// 拆开传迟早会在某个调用点对不上。
 // F-01：duplicate_tag_id 为空表示项目还没有"重复"系统标签,`9` 不出现
 // 在菜单里、按了也不响应,跟 handle_space_key 同样的处理方式。
 FKeyDecision handle_f_key_prompt(pzt::core::TagId reject_tag_id,
                                  std::optional<pzt::core::TagId> duplicate_tag_id,
-                                 const std::vector<pzt::core::TagSummary>& tags, int banner_row,
-                                 int start_col, int content_cols);
+                                 const MenuTags& menu, int banner_row, int start_col,
+                                 int content_cols);
 
 }  // namespace pzt::cli::menu

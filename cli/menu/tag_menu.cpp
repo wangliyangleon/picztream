@@ -1,8 +1,10 @@
 #include "cli/menu/tag_menu.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cli/ui/ui.h"
@@ -81,8 +83,20 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // increment 6.4.4.5:space c 新建标签。跟其它菜单不同,这里需要读入一个
 // 完整的标签名(多字符文本),用 read_text_line;上限和是否排序两个后续问
 // 题分别用文本输入/单字节是否处理。
-std::string handle_create_tag_flow(pzt::core::ProjectId project_id, int banner_row, int start_col,
-                                    int content_cols) {
+std::string handle_create_tag_flow(pzt::core::ProjectId project_id, bool at_limit, int banner_row,
+                                    int start_col, int content_cols) {
+  // T-24:菜单只认 kMaxMenuTags 个动态标签,建到上限还继续建的话,新标签在
+  // space/f 菜单里根本选不到:以前既不挡也不说,第 9 个标签就此成了只有
+  // `pzt tag list` 看得见、只有 `pzt export` 用得了的幽灵。跟
+  // recipe_menu.cpp 里 version 的 9 个上限同样处理:在创建入口挡住并说明出
+  // 路,而不是让它建成之后再被静默丢掉。挡在问名字之前,不让用户白填一遍
+  // 名字/cap/排序三个问题才被拒。at_limit 由调用方传进来而不是在这里重查
+  // 一次——handle_space_key 每轮本来就查了,而门面每次调用都要开一次库(见
+  // 提案 T-30),按键路径上不必要的第二次开库能省则省。
+  if (at_limit) {
+    return pzt::cli::i18n::tag_menu_limit_reached(static_cast<int>(kMaxMenuTags));
+  }
+
   auto name = read_text_line(pzt::cli::i18n::tag_menu_new_name_prompt(), banner_row, start_col, content_cols);
   if (!name) return "";  // Esc,静默取消
   if (name->empty()) {
@@ -163,17 +177,25 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // 要按标签创建顺序(tag id 升序)固定,不然新建一个名字靠前的标签会让所有
 // 已有标签的数字悄悄错位。不改 `list_tags` 本身,这里对结果客户端重排序。
 // increment 6.4.5:系统标签("废片")固定占硬编码的 `0`,不参与这个动态序
-// 列,先过滤掉。F-01:动态标签只截断到 8 个(不是 9)——数字 `9` 现在固
-// 定留给"重复"系统标签(见 handle_space_key/handle_f_key_prompt 里
-// duplicate_tag_id 参数的用法),动态列表不能再占用它。
-std::vector<pzt::core::TagSummary> tags_for_menu(pzt::core::ProjectId project_id) {
+// 列,先过滤掉-顺带也意味着系统标签不占 kMaxMenuTags 的额度,不然跑过
+// 一次 /dedup 建出"重复"之后,能建的标签数会凭空少一个。F-01:动态标签只
+// 截断到 8 个(不是 9)——数字 `9` 现在固定留给"重复"系统标签(见
+// handle_space_key/handle_f_key_prompt 里 duplicate_tag_id 参数的用法),
+// 动态列表不能再占用它。
+// T-24:截断保留(老项目可能已经有 8 个以上标签),但截掉多少要报出去。
+MenuTags tags_for_menu(pzt::core::ProjectId project_id) {
   auto tags = pzt::core::list_tags(project_id);
   tags.erase(std::remove_if(tags.begin(), tags.end(), [](const auto& t) { return t.is_system; }),
              tags.end());
   std::sort(tags.begin(), tags.end(),
             [](const auto& a, const auto& b) { return a.id < b.id; });
-  if (tags.size() > 8) tags.resize(8);
-  return tags;
+
+  MenuTags menu;
+  menu.at_limit = tags.size() >= kMaxMenuTags;
+  menu.hidden = tags.size() > kMaxMenuTags ? tags.size() - kMaxMenuTags : 0;
+  if (tags.size() > kMaxMenuTags) tags.resize(kMaxMenuTags);
+  menu.shown = std::move(tags);
+  return menu;
 }
 
 // increment 6.4.5:数字加标签的分支和 `x` 快捷键共用同一段结果处理逻
@@ -213,15 +235,18 @@ std::string handle_space_key(pzt::core::ProjectId project_id, pzt::core::TagId r
   // 被退回一级菜单还得重新按一次 space。其它分支(加/摘/删标签)维持原
   // 样,做完就返回,不留在这个循环里。
   while (true) {
-    auto tags = tags_for_menu(project_id);  // 每轮重新查,加/摘/删三个分支共用
+    auto menu = tags_for_menu(project_id);  // 每轮重新查,加/摘/删三个分支共用
+    const auto& tags = menu.shown;
 
     // 标签一多,单行拼不下,拆成两行:第一行编号选项,第二行固定字母操
     // 作,见 prompt_and_read_key_2line 的说明。
     char c = prompt_and_read_key_2line(
         pzt::cli::i18n::tag_menu_options_line(tags, duplicate_tag_id.has_value()),
-        pzt::cli::i18n::tag_menu_actions_line(), banner_row, start_col, content_cols);
+        pzt::cli::i18n::tag_menu_actions_line(menu.at_limit, menu.hidden), banner_row, start_col,
+        content_cols);
     if (c == 'c') {
-      std::string result = handle_create_tag_flow(project_id, banner_row, start_col, content_cols);
+      std::string result =
+          handle_create_tag_flow(project_id, menu.at_limit, banner_row, start_col, content_cols);
       if (!result.empty()) {
         // 跟 cmd_open 里 status_override 的处理逻辑一致:消息自带尾随空
         // 格,先去掉再拼"，按任意键继续"，不然中间会留一大段空白。

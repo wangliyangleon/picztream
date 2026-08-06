@@ -302,6 +302,9 @@ std::string tag_menu_delete_confirm(const std::string& name, long long count);
 std::string tag_menu_deleted(const std::string& name);
 std::string tag_menu_delete_failed();
 std::string tag_menu_add_failed();
+// T-24：动态标签数已达菜单上限时,`space c` 直接被挡住,这句话说明上限是
+// 多少、以及怎么才能继续建。
+std::string tag_menu_limit_reached(int limit);
 // space 顶层菜单拆成两行(见 prompt_and_read_key_2line):第一行带编号的
 // 标签选项(0:废片 + 1-8 动态标签 + 9:重复[条件性]),第二行是固定的字
 // 母操作。标签一多,单行版本会把第二行这几个操作挤到看不见的地方。
@@ -309,7 +312,14 @@ std::string tag_menu_add_failed();
 // 个系统标签时才显示)。
 std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,
                                    bool show_duplicate);
-std::string tag_menu_actions_line();
+// T-24：at_limit 为真时给 `c` 加一个"已满"标记,让用户在按下去之前就知道
+// 建不了。选项本身不拿掉-拿掉的话,按 c 得到一句解释这条路径也没了。
+// hidden 是超出菜单上限、编号行里选不到的标签数量(老项目可能在"建到上限
+// 就挡住"之前已经建了 8 个以上),非 0 时在行尾标出来。这两条注记都挂在
+// 操作行而不是编号行:编号行排满 8 个标签就要 100 列开外,而 content_cols
+// 只有终端宽度的 70%,pad_to 从尾部截-挂在那一行的话,恰恰在标签最多、
+// 最该提示的时候第一个被切掉。操作行固定三四个字母选项,不会溢出。
+std::string tag_menu_actions_line(bool at_limit, std::size_t hidden);
 
 // Filter Menu
 // `e` 键的二级子菜单提示,始终弹出，filter_active 只决定要不要把
@@ -325,7 +335,9 @@ std::string filter_menu_export_success(int count, const std::string& path, bool 
 // show_duplicate 见 tag_menu_options_line 的说明,同一条 F-01 规则。
 std::string filter_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,
                                       bool show_duplicate);
-std::string filter_menu_actions_line();
+// hidden 见 tag_menu_actions_line 的说明,两个菜单共用同一套编号、被截断的
+// 也是同一批标签,注记同样挂在不会溢出的操作行。
+std::string filter_menu_actions_line(std::size_t hidden);
 
 // Recipe Menu
 std::string recipe_menu_select_preset_prefix();

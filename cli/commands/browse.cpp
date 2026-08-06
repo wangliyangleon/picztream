@@ -1578,12 +1578,12 @@ int cmd_open(const std::vector<std::string>& args) {
         // 到只浏览该标签下图片的筛选视图,f + f 清除筛选回到完整项目,数
         // 字编号复用跟 space 菜单同一套 tags_for_menu。
         highlight_active_menu_key('f', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-        auto tags = tags_for_menu(*id);
+        auto menu = tags_for_menu(*id);
         // F-01：跟 space 分支同样的现查逻辑,见那边的说明。
         auto duplicate_tag_id =
             pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
         auto decision =
-            handle_f_key_prompt(reject_tag_id, duplicate_tag_id, tags, banner_row, start_col, content_cols);
+            handle_f_key_prompt(reject_tag_id, duplicate_tag_id, menu, banner_row, start_col, content_cols);
 
         if (decision.action == FKeyAction::ApplyFilter) {
           // 真机测试反馈 f + 数字筛选有明显卡顿,查出来是 image_tags 按

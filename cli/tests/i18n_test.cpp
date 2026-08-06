@@ -68,10 +68,12 @@ TEST_CASE("i18n localized text strings") {
 // 0.7) - 2,80 列终端上只有 54 列,而 pad_to 超宽是静默 truncate。终端提示
 // 那条原本也有个 banner 短版,真机验收之后改成进备用屏幕之前打(见
 // warn_terminal_detail 的注释),现在还走 banner 的就是 B.1 这两条。
+// 80 列终端 -> content_cols 54。留两列余量,这个预算的意义是"以后谁想给这
+// 些走 banner 的文案加内容,先过这一关"。T-24 又加了两个使用点,提到文件作
+// 用域共用一份。
+const std::size_t kNarrowestBanner = 52;
+
 TEST_CASE("messages that go through the banner fit the narrowest common terminal") {
-  // 80 列终端 -> content_cols 54。留两列余量,这条断言的意义是"以后谁想给
-  // 这两句加内容,先过这一关"。
-  const std::size_t kNarrowestBanner = 52;
   auto banner_width = [](std::string s) {
     // 这两条自带结尾换行(原本是 fprintf 用的),browse.cpp 进 banner 前会剥
     // 掉,这里按剥掉之后的宽度量。
@@ -480,6 +482,75 @@ TEST_CASE("msg_ai_evaluation_failed includes the image id and a reason, follows 
   auto en_text = msg_ai_evaluation_failed(42, pzt::core::EvaluationError::NetworkError);
   CHECK(en_text.find("42") != std::string::npos);
   CHECK(en_text.find("network") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// T-24：超出上限的标签在菜单里选不到,以前是完全静默的。截断本身保留(老项
+// 目可能已经有 8 个以上),但必须报出被藏起来的数量。
+TEST_CASE("tag/filter 菜单在有标签被截断时报出隐藏数量,没截断时不加噪音") {
+  for (Lang lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+
+    CHECK(tag_menu_actions_line(/*at_limit=*/false, /*hidden=*/0).find("(+") == std::string::npos);
+    CHECK(tag_menu_actions_line(/*at_limit=*/true, /*hidden=*/2).find("+2") != std::string::npos);
+
+    CHECK(filter_menu_actions_line(/*hidden=*/0).find("(+") == std::string::npos);
+    CHECK(filter_menu_actions_line(/*hidden=*/2).find("+2") != std::string::npos);
+  }
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// T-24：这两条注记必须挂在操作行,不能挂在编号行。编号行排满 8 个标签就要
+// 100 列开外,而 content_cols 只有终端宽度的 70%(120 列的终端上是 82),
+// pad_to 从尾部截,挂在编号行的话恰恰在标签最多、最该提示的时候第一个被切
+// 掉。这条用例守的就是这件事:操作行连同注记必须能在窄终端里放下。
+TEST_CASE("菜单操作行连同 T-24 的注记一起,在窄终端里放得下") {
+  for (Lang lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    // 最坏情况:已满标记和隐藏数量同时出现,数量取两位数。
+    CHECK(pzt::cli::text::display_width(tag_menu_actions_line(true, 12)) <= kNarrowestBanner);
+    CHECK(pzt::cli::text::display_width(filter_menu_actions_line(12)) <= kNarrowestBanner);
+  }
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// T-24：`c` 新建在已满时会被挡住,菜单上就得先说清楚,不能让用户按下去才
+// 知道-跟 recipe_menu 那条 version 上限一样的处理。
+TEST_CASE("tag_menu_actions_line 在已满时标记 c,未满时不标记") {
+  for (Lang lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto normal = tag_menu_actions_line(/*at_limit=*/false, /*hidden=*/0);
+    auto full = tag_menu_actions_line(/*at_limit=*/true, /*hidden=*/0);
+    CHECK(normal != full);
+    // 两种状态下 c/d/Esc 三个键位都还在,已满只是加标记,不是把选项拿掉
+    // -键位消失会让"按 c 得到一句解释"这条路径自己先没了。
+    for (const auto& line : {normal, full}) {
+      CHECK(line.find("c") != std::string::npos);
+      CHECK(line.find("d") != std::string::npos);
+      CHECK(line.find("Esc") != std::string::npos);
+    }
+  }
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// T-24：挡住之后必须说清楚上限是多少、怎么才能继续建,否则只是把静默截断
+// 换成一句静默拒绝。
+TEST_CASE("tag_menu_limit_reached 报出上限数字并指出出路") {
+  g_lang = Lang::zh;
+  auto zh = tag_menu_limit_reached(8);
+  CHECK(zh.find("8") != std::string::npos);
+  CHECK(zh.find("d") != std::string::npos);  // 指向 space d 删除标签定义
+  CHECK(pzt::cli::text::display_width(zh) <= kNarrowestBanner);
+
+  g_lang = Lang::en;
+  auto en = tag_menu_limit_reached(8);
+  CHECK(en.find("8") != std::string::npos);
+  CHECK(en.find("d") != std::string::npos);
+  CHECK(pzt::cli::text::display_width(en) <= kNarrowestBanner);
 
   g_lang = Lang::zh;  // 还原
 }

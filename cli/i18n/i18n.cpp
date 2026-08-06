@@ -74,6 +74,21 @@ std::string menu_item(const std::string &key, const std::string &label) {
   return key + ":[" + label + "]";
 }
 
+namespace {
+
+// T-24：动态标签超出菜单能寻址的数量时,行尾这句注记说明"还有几个在这里
+// 选不到"。space 和 f 两个菜单共用同一套编号、被截断的是同一批标签,所以
+// 这句话也共用一份。没有超出时返回空串,不给正常情况添噪音。
+// 分隔只用一个空格(菜单里其它项之间是两个):这是一句注记不是一个可按的
+// 选项,而且操作行是有硬预算的-英文版加上"已满"标记之后正好骑在 80 列
+// 终端的 content_cols 上,省下来的这一列是真的需要。
+std::string hidden_tags_suffix(std::size_t hidden) {
+  if (hidden == 0) return "";
+  return " (+" + std::to_string(hidden) + (g_lang == Lang::zh ? " 未显示)" : " more)");
+}
+
+}  // namespace
+
 std::string usage_main() {
   if (g_lang == Lang::zh) {
     return "usage:\n"
@@ -1417,6 +1432,18 @@ std::string tag_menu_created(const std::string &name) {
   }
 }
 
+// T-24：跟 recipe_menu_custom_full 同一类提示-上限是交互层的输入端约
+// 束(单个数字键只能寻址这么多),core 不限标签数量,`pzt tag list` /
+// `pzt export` 也不受影响,所以话里只说菜单建不了、指向 d 这条出路。
+std::string tag_menu_limit_reached(int limit) {
+  if (g_lang == Lang::zh) {
+    return " 标签已满(最多 " + std::to_string(limit) + " 个),先按 d 删掉一个再新建 ";
+  } else {
+    return " Tag list is full (max " + std::to_string(limit) +
+           "), delete one with d first ";
+  }
+}
+
 std::string tag_menu_no_deletable() {
   if (g_lang == Lang::zh) {
     return " 没有可删除的标签 ";
@@ -1501,13 +1528,13 @@ tag_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool show_
   return line;
 }
 
-std::string tag_menu_actions_line() {
+std::string tag_menu_actions_line(bool at_limit, std::size_t hidden) {
   if (g_lang == Lang::zh) {
-    return " " + menu_item("c", "新建") + "  " + menu_item("d", "删除") + "  " +
-           menu_item("Esc", "取消");
+    return " " + menu_item("c", at_limit ? "新建(已满)" : "新建") + "  " +
+           menu_item("d", "删除") + "  " + menu_item("Esc", "取消") + hidden_tags_suffix(hidden);
   } else {
-    return " " + menu_item("c", "New") + "  " + menu_item("d", "Delete") + "  " +
-           menu_item("Esc", "Cancel");
+    return " " + menu_item("c", at_limit ? "New(full)" : "New") + "  " +
+           menu_item("d", "Delete") + "  " + menu_item("Esc", "Cancel") + hidden_tags_suffix(hidden);
   }
 }
 
@@ -1609,16 +1636,18 @@ filter_menu_options_line(const std::vector<pzt::core::TagSummary> &tags, bool sh
   return line;
 }
 
-std::string filter_menu_actions_line() {
+std::string filter_menu_actions_line(std::size_t hidden) {
   // 点 1：g+e"挑任意标签导出"这条路径已经退休(交互起来太诡异)——`e`
   // 键的导出入口挪到顶层 `e`(见 msg_export_submenu_prompt 的说明)。
   // 点 3：筛选菜单入口键从 g 改成 f(g 容易让人以为是 Group)，"再按一
   // 次同一个键清除筛选"这个既有约定(以前 g+g)也跟着变成 f+f，保持内
   // 部一致。
   if (g_lang == Lang::zh) {
-    return " " + menu_item("f", "清除筛选") + "  " + menu_item("Esc", "取消");
+    return " " + menu_item("f", "清除筛选") + "  " + menu_item("Esc", "取消") +
+           hidden_tags_suffix(hidden);
   } else {
-    return " " + menu_item("f", "Clear Filter") + "  " + menu_item("Esc", "Cancel");
+    return " " + menu_item("f", "Clear Filter") + "  " + menu_item("Esc", "Cancel") +
+           hidden_tags_suffix(hidden);
   }
 }
 
