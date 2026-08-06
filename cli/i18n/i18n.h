@@ -185,18 +185,18 @@ std::string msg_ai_processing_submitted();
 // F-03：评估请求失败(网络/key/解析，或者请求还没真正发出去就失败,
 // 图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug 时用
 // 户完全看不到。poll 逻辑检测到有新结果落地时顺带查一次
-// EvaluationWorker::take_failures()，非空就用这条文案当
+// EvaluationWorker::take_failure_report()，非空就用这条文案当
 // status_override 显示一次，不需要用户主动去 --debug 面板里找原因。
-// T-23：两个参数是那次改动加的。file_name 优先于 image_id——用户手上
+// T-23：两个参数是那次改动加的。file_name 优先于 image_id - 用户手上
 // 只有文件名，界面其它每一处也都用 file_name 展示(browse.cpp 的信息
 // 栏)，裸数据库 ID 无从对照；查不到记录(比如失败原因本身就是"图片记录
-// 找不到")时才回落到 ID，那总比整条提示消失强。failure_count 是"上次
-// 报过之后又失败了几张"，>1 时文案要报出这个数字：批量评估的失败高度
-// 相关(key 没配、Ollama 没起来，一挂就是整批)，只报最近一条会让用户
-// 以为只错了一张，那个数字才是"值得停下来检查环境"的信号。
+// 找不到")时才回落到 ID，那总比整条提示消失强。total_failed 是本次
+// `pzt open` 累计失败的张数，>1 时文案要报出这个数字：批量评估的失败
+// 高度相关(key 没配、Ollama 没起来，一挂就是整批)，只报最近一条会让用
+// 户以为只错了一张，那个数字才是"值得停下来检查环境"的信号。
 std::string msg_ai_evaluation_failed(const std::optional<std::string>& file_name,
                                       pzt::core::ImageId image_id,
-                                      pzt::core::EvaluationError error, int failure_count);
+                                      pzt::core::EvaluationError error, std::size_t total_failed);
 // 输入为空、或者非空但不以 `/` 开头时统一显示,控制台不再有"裸文本=当
 // 前图片额外指引"这条隐藏路径，用户忘了打 `/` 不会被无声当成提交了一次
 // 评估请求（这是本轮改动明确要解决的误触发风险）。Esc 依然是唯一真正的

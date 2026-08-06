@@ -1427,7 +1427,7 @@ int cmd_open(const std::vector<std::string>& args) {
               // --debug 时用户完全看不到,提交之后要么等到结果、要么永
               // 远等不到也不知道为什么。debug 模式下失败已经能从 debug
               // 面板的日志流看到,不在这里重复弹一次提示。
-              if (auto failure = evaluation_worker.take_failures()) {
+              if (auto failure = evaluation_worker.take_failure_report()) {
                 // T-23：报文件名而不是裸数据库 ID。查库只在真的失败了才
                 // 走一次(不是每轮 poll)，量级可以忽略；查不到就传
                 // nullopt，由 i18n 回落到 ID。
@@ -1435,7 +1435,7 @@ int cmd_open(const std::vector<std::string>& args) {
                 std::optional<std::string> file_name;
                 if (info) file_name = info->file_name;
                 status_override = pzt::cli::i18n::msg_ai_evaluation_failed(
-                    file_name, failure->last_image_id, failure->last_error, failure->count);
+                    file_name, failure->last_image_id, failure->last_error, failure->total_failed);
               }
             }
             timed_out = true;

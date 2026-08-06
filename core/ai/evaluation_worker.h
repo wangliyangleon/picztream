@@ -65,11 +65,10 @@ class EvaluationWorker {
   // `/tasks` 用：排队中有几个、有没有正在处理中的一个。不展示具体是哪
   // 几张图片，只要数量和状态，见 docs/history/M3_PRD.md"批量评估与任务状态"一
   // 节。
-  // T-23：加上 failed——本 worker 存续期间(即这一次 `pzt open`)累计失败
-  // 了几张。它跟 take_failures() 的 count 是两个不同的问题：那个是"上次
-  // 报过之后又失败了几张"，报完就清零，服务于一次性的状态行；这个从不
-  // 清零，服务于"我刚才好像瞟到几条失败,到底挂了多少张"这种事后回看。
-  // 只有累计值放得进 `/tasks`,因为状态行错过了就没了。
+  // T-23：加上 failed - 本 worker 存续期间(即这一次 `pzt open`)累计失败
+  // 了几张，从不清零。状态行错过了就没了，`/tasks` 是唯一能事后回看
+  // "刚才那几条失败到底挂了多少张"的地方。跟 FailureReport 报的是同一
+  // 个数字，只是那边顺带带上最近一次的图片与原因。
   struct QueueStatus {
     std::size_t queued;
     bool processing;
@@ -82,27 +81,33 @@ class EvaluationWorker {
   QueueStatus queue_status() const;
 
   // F-03：评估请求失败(网络/key/解析，或者请求真正发出去之前就失败
-  // ——图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug
+  // - 图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug
   // 时用户完全看不到，提交之后要么等到结果、要么永远等不到也不知道为
   // 什么。跟 generation_ 用途不同：generation_ 只回答"有没有新结果落
-  // 地"(成功/失败都算)，这个回答"上次报过之后失败了几张、最近失败的是
-  // 哪张图、什么原因"。取走即清空(跟 consume_new_result 的"消费一次"
-  // 精神一致)，调用方(browse.cpp 的 poll 逻辑)只在确认有新结果落地之
-  // 后才取一次，不会重复弹同一条失败提示。
+  // 地"(成功/失败都算)，这个回答"有没有新的失败要报、最近失败的是哪张
+  // 图、什么原因、到这一刻一共挂了几张"。有新失败才返回值,取走即清空
+  // (跟 consume_new_result 的"消费一次"精神一致)，调用方(browse.cpp 的
+  // poll 逻辑)只在确认有新结果落地之后才取一次,不会重复弹同一条提示。
   //
   // T-23：原来这里只留最后一条(`last_failure_` 无条件覆盖)。批量评估
   // 全批失败时,后台线程处理请求的速度远快于 300ms 一次的 poll，前面那
-  // 些失败在被取走之前就被后面的盖掉了——用户看到的是零星几条互不相干
+  // 些失败在被取走之前就被后面的盖掉了 - 用户看到的是零星几条互不相干
   // 的提示,既不知道失败了多少张，也没有"该停下来检查环境"的信号(而这
-  // 类失败恰恰高度相关:key 没配、Ollama 没起来，一挂就是整批)。所以只
-  // 加一个计数:失败具体是哪几张不值得逐条列出来(状态行只有一行)，"这
-  // 一批挂了 37 张"才是用户真正需要的那个数字。
+  // 类失败恰恰高度相关:key 没配、Ollama 没起来，一挂就是整批)。
+  //
+  // total_failed 刻意是**累计值**而不是"自上次取走以来的增量"。增量看
+  // 着更贴合"这次要报什么",但它解决不了原问题:失败一条一条落地时(网
+  // 络超时那种,每条都要烧掉一次超时,落地间隔远大于 poll 周期)，每次取
+  // 走都只增了 1,状态行就退化回"IMG_x 评估失败"刷屏、一个总数都看不
+  // 到 - 正是 U-12 点名的场景。累计值在同一条路径上会一路涨到 37,那才
+  // 是"值得停下来检查环境"的信号。失败具体是哪几张不值得逐条列出来
+  // (状态行只有一行),最近那一条带着具体原因就够了。
   struct FailureReport {
     project::ImageId last_image_id;
     EvaluationError last_error;
-    int count;  // 自上次取走以来失败了几张(至少是 1，否则不返回值)
+    std::size_t total_failed;  // 本次 pzt open 累计失败张数,跟 QueueStatus::failed 同源
   };
-  std::optional<FailureReport> take_failures();
+  std::optional<FailureReport> take_failure_report();
 
  private:
   struct PendingRequest {
@@ -133,8 +138,9 @@ class EvaluationWorker {
   std::vector<PendingRequest> queue_;
   std::unordered_set<project::ImageId> in_flight_;
   std::uint64_t generation_ = 0;
-  // 还没被 take_failures() 取走的那一批(取走即清空)，与从不清零的累计
-  // 值 failed_total_ 分开，理由见 FailureReport / QueueStatus 的注释。
+  // pending_failure_ 只回答"有没有新失败还没报给用户"(取走即清空)，失
+  // 败张数本身一律从 failed_total_ 读,那个从不清零。理由见 FailureReport
+  // 上的注释。
   std::optional<FailureReport> pending_failure_;
   std::size_t failed_total_ = 0;
 

@@ -45,7 +45,7 @@ EvaluationWorker::QueueStatus EvaluationWorker::queue_status() const {
   return QueueStatus{queue_.size(), in_flight_.size() > queue_.size(), failed_total_};
 }
 
-std::optional<EvaluationWorker::FailureReport> EvaluationWorker::take_failures() {
+std::optional<EvaluationWorker::FailureReport> EvaluationWorker::take_failure_report() {
   std::lock_guard<std::mutex> lock(mu_);
   auto result = pending_failure_;
   pending_failure_.reset();
@@ -71,18 +71,16 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
 
     lock.lock();
     in_flight_.erase(req.image_id);
-    // F-03：记下这次是不是失败的，供 take_failures() 取用——之前失败只
-    // 打 stderr，不开 --debug 时用户完全看不到，见头文件里 FailureReport
-    // 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，process_request
-    // 本身不碰这些受 mu_ 保护的状态。
-    // T-23：累加而不是覆盖。图片与原因取最近这一次(它带着用户当下最该
-    // 看到的具体原因)，次数从上一条累计上来——上一条还没被取走就说明用
-    // 户还没看到过它，直接盖掉就是原来那个"800 张全失败只看到零星几条"
-    // 的成因。
+    // F-03：记下这次是不是失败的，供 take_failure_report() 取用 - 之前
+    // 失败只打 stderr，不开 --debug 时用户完全看不到，见头文件里
+    // FailureReport 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，
+    // process_request 本身不碰这些受 mu_ 保护的状态。
+    // T-23：图片与原因取最近这一次(它带着用户当下最该看到的具体原因)，
+    // 张数报累计值 - 原来那版无条件覆盖、连"之前还挂过几张"都不留，是
+    // "800 张全失败只看到零星几条"的直接成因。
     if (failure) {
-      int previous = pending_failure_ ? pending_failure_->count : 0;
-      pending_failure_ = FailureReport{req.image_id, *failure, previous + 1};
       ++failed_total_;
+      pending_failure_ = FailureReport{req.image_id, *failure, failed_total_};
     }
     ++generation_;
     lock.unlock();

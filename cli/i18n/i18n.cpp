@@ -1055,20 +1055,20 @@ std::string ai_evaluation_error_reason(pzt::core::EvaluationError error) {
 
 std::string msg_ai_evaluation_failed(const std::optional<std::string>& file_name,
                                       pzt::core::ImageId image_id,
-                                      pzt::core::EvaluationError error, int failure_count) {
+                                      pzt::core::EvaluationError error, std::size_t total_failed) {
   std::string reason = ai_evaluation_error_reason(error);
   if (g_lang == Lang::zh) {
     std::string subject = file_name ? *file_name : ("图 " + std::to_string(image_id));
-    if (failure_count > 1) {
-      return " " + std::to_string(failure_count) + " 张评估失败，最近: " + subject + " - " + reason +
-             " ";
+    if (total_failed > 1) {
+      return " 已有 " + std::to_string(total_failed) + " 张评估失败，最近: " + subject + " - " +
+             reason + " ";
     }
     return " " + subject + " 评估失败: " + reason + " ";
   } else {
     std::string subject = file_name ? *file_name : ("image " + std::to_string(image_id));
-    if (failure_count > 1) {
-      return " " + std::to_string(failure_count) + " images failed evaluation, latest: " + subject +
-             " - " + reason + " ";
+    if (total_failed > 1) {
+      return " " + std::to_string(total_failed) + " images failed evaluation so far, latest: " +
+             subject + " - " + reason + " ";
     }
     return " " + subject + " evaluation failed: " + reason + " ";
   }

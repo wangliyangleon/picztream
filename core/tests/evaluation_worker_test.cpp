@@ -169,10 +169,10 @@ TEST_CASE("a failed request leaves no evaluation row") {
 }
 
 // F-03：失败原因原来只打 stderr，用户在 --debug 之外完全看不到。
-// take_failures() 把它暴露出来，一次取走就清空,避免同一次失败被
+// take_failure_report() 把它暴露出来，一次取走就清空,避免同一次失败被
 // 反复报出来（跟 consume_new_result 的"消费一次"精神一致）。
-TEST_CASE("a failed request is recorded in take_failures, consumed exactly once") {
-  Fixture fx("evaluation_worker_last_failure");
+TEST_CASE("a failed request is recorded in take_failure_report, consumed exactly once") {
+  Fixture fx("evaluation_worker_failure_report");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
                              Provider, Language, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::NetworkError);
@@ -184,17 +184,17 @@ TEST_CASE("a failed request is recorded in take_failures, consumed exactly once"
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
 
-  auto failure = worker.take_failures();
+  auto failure = worker.take_failure_report();
   REQUIRE(failure.has_value());
   CHECK(failure->last_image_id == fx.image_id);
   CHECK(failure->last_error == EvaluationError::NetworkError);
-  CHECK(failure->count == 1);
+  CHECK(failure->total_failed == 1);
 
-  CHECK(!worker.take_failures().has_value());  // 取走之后清空，不会重复报
+  CHECK(!worker.take_failure_report().has_value());  // 取走之后清空，不会重复报
 }
 
-TEST_CASE("a successful request leaves take_failures empty") {
-  Fixture fx("evaluation_worker_last_failure_success");
+TEST_CASE("a successful request leaves take_failure_report empty") {
+  Fixture fx("evaluation_worker_failure_report_success");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
                              Provider, Language, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
     return Result<EvaluationResult, EvaluationError>::Ok(make_evaluation_result());
@@ -206,16 +206,14 @@ TEST_CASE("a successful request leaves take_failures empty") {
   std::uint64_t generation = 0;
   REQUIRE(wait_for_result(worker, generation));
 
-  CHECK(!worker.take_failures().has_value());
+  CHECK(!worker.take_failure_report().has_value());
 }
 
 // T-23：原来只留最后一条失败(`last_failure_ = ...` 无条件覆盖)，一次
 // `/ai_eval *` 全批失败时，前面那些在下一次 poll 取走之前就被后面的盖
 // 掉了，用户只看到零星几条、既不知道失败了多少张，也没有"该停下来检
-// 查环境"的信号。现在两件事分开记：take_failures() 报"自上次取走以来"
-// 的失败次数(给一次性的状态行)，queue_status().failed 是本次 pzt open
-// 内的累计值(给 `/tasks` 事后回看，取走失败不清它)。
-TEST_CASE("failures accumulate into a count instead of overwriting one another") {
+// 查环境"的信号。现在张数报的是累计值。
+TEST_CASE("failures accumulate into a total instead of overwriting one another") {
   Fixture fx("evaluation_worker_failure_count");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
                              Provider, Language, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
@@ -223,7 +221,7 @@ TEST_CASE("failures accumulate into a count instead of overwriting one another")
   };
   EvaluationWorker worker(fx.db_path, fake_evaluation);
 
-  // 同一张图连着提交三次(每次都等落地,绕开 in_flight_ 去重)——失败不
+  // 同一张图连着提交三次(每次都等落地,绕开 in_flight_ 去重) - 失败不
   // 写评估结果，所以重复提交同一张跟提交三张不同的图在这里是等价的。
   std::uint64_t generation = 0;
   for (int i = 0; i < 3; ++i) {
@@ -231,16 +229,40 @@ TEST_CASE("failures accumulate into a count instead of overwriting one another")
     REQUIRE(wait_for_result(worker, generation));
   }
 
-  auto failure = worker.take_failures();
+  auto failure = worker.take_failure_report();
   REQUIRE(failure.has_value());
-  CHECK(failure->count == 3);  // 三次全部计入，不是只剩最后一条
+  CHECK(failure->total_failed == 3);  // 三次全部计入，不是只剩最后一条
   CHECK(failure->last_image_id == fx.image_id);
   CHECK(failure->last_error == EvaluationError::NetworkError);
 
-  // 取走只清"自上次取走以来"的那一份，累计值是给 /tasks 用的，不跟着清。
+  // 取走只清"有没有新失败要报"这一位，张数从不清零。
   CHECK(worker.queue_status().failed == 3);
-  CHECK(!worker.take_failures().has_value());
+  CHECK(!worker.take_failure_report().has_value());
   CHECK(worker.queue_status().failed == 3);
+}
+
+// T-23 的关键约束，单独立一条：报出去的张数必须是累计值，不能是"自上
+// 次取走以来的增量"。失败一条一条落地时(网络超时那种,每条都要烧掉一
+// 次超时，落地间隔远大于 poll 周期)，增量语义下每次都只增了 1，状态行
+// 退化成"某某评估失败"刷屏、一个总数都看不到 - 正是 U-12 点名的场景，
+// 也是本条要修的东西。这里用"取走 -> 再失败一次 -> 再取走"精确复现那
+// 个节奏。
+TEST_CASE("the reported total keeps climbing across takes, one failure at a time") {
+  Fixture fx("evaluation_worker_failure_total_across_takes");
+  auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
+                             Provider, Language, const LocalModelConfig&) -> Result<EvaluationResult, EvaluationError> {
+    return Result<EvaluationResult, EvaluationError>::Err(EvaluationError::NetworkError);
+  };
+  EvaluationWorker worker(fx.db_path, fake_evaluation);
+
+  std::uint64_t generation = 0;
+  for (std::size_t expected = 1; expected <= 3; ++expected) {
+    CHECK(worker.request(fx.image_id, Provider::Claude, "", false));
+    REQUIRE(wait_for_result(worker, generation));
+    auto failure = worker.take_failure_report();  // 每一条都当场取走
+    REQUIRE(failure.has_value());
+    CHECK(failure->total_failed == expected);  // 1、2、3，不是一直停在 1
+  }
 }
 
 TEST_CASE("queue_status reports no failures when everything succeeds") {
@@ -320,7 +342,7 @@ TEST_CASE("auto_reject leaves unusable evaluations untagged when false") {
 // F-17：process_request 落库那一步以前不检查 sqlite3_step 的返回值,
 // AI 已经给出结果，但写库失败(磁盘满/库损坏)时会静默发生，generation_
 // 照样 +1 触发一次什么都没变的空重绘。这里用真实的只读文件权限强迫写
-// 入失败(而不是伪造返回码)，验证这条路径现在会被 take_failures()
+// 入失败(而不是伪造返回码)，验证这条路径现在会被 take_failure_report()
 // 捕获成 StorageFailed，跟其它失败路径统一走 F-03 建的通道，不 throw
 // (process_request 跑在后台 jthread 上，未捕获异常会 std::terminate)。
 TEST_CASE("a DB write failure after a successful AI response is reported as StorageFailed") {
@@ -343,7 +365,7 @@ TEST_CASE("a DB write failure after a successful AI response is reported as Stor
   restore_perms();  // 不管断言接下来会不会失败，先把权限还原掉，不影响其它测试
   REQUIRE(got_result);
 
-  auto failure = worker.take_failures();
+  auto failure = worker.take_failure_report();
   REQUIRE(failure.has_value());
   CHECK(failure->last_image_id == fx.image_id);
   CHECK(failure->last_error == EvaluationError::StorageFailed);
@@ -498,7 +520,7 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
 
   // F-03：请求真正发出去之前(图片记录都找不到)的失败,也要走同一条
   // 失败通道,不是只有"AI 请求本身失败"才算数。
-  auto failure = worker.take_failures();
+  auto failure = worker.take_failure_report();
   REQUIRE(failure.has_value());
   CHECK(failure->last_image_id == 999999);
   CHECK(failure->last_error == EvaluationError::ImageUnavailable);
@@ -529,7 +551,7 @@ TEST_CASE("a request against an unopenable database fails instead of terminating
   REQUIRE(wait_for_result(worker, generation));
   CHECK(!worker.has_pending());
 
-  auto failure = worker.take_failures();
+  auto failure = worker.take_failure_report();
   REQUIRE(failure.has_value());
   CHECK(failure->last_image_id == 1);
   CHECK(failure->last_error == EvaluationError::DatabaseUnavailable);
