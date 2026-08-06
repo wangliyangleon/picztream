@@ -675,49 +675,8 @@ int cmd_list(const std::vector<std::string>& args) {
     return 0;
   }
   for (const auto& p : projects) {
-    std::printf("%s", pzt::cli::i18n::msg_project_item(p.name, p.image_count, p.root_path, p.archived).c_str());
+    std::printf("%s", pzt::cli::i18n::msg_project_item(p.name, p.image_count, p.root_path).c_str());
   }
-  return 0;
-}
-
-
-int cmd_archive(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_archive_missing_name().c_str());
-    print_usage();
-    return 1;
-  }
-  const std::string& name = args[0];
-  auto id = pzt::core::find_project_by_name(name);
-  if (!id) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found("pzt archive", name).c_str());
-    return 1;
-  }
-  if (!pzt::core::archive_project(*id).ok()) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_archive_failed(name).c_str());
-    return 1;
-  }
-  std::printf("%s", pzt::cli::i18n::msg_project_archived(name).c_str());
-  return 0;
-}
-
-int cmd_unarchive(const std::vector<std::string>& args) {
-  if (args.empty()) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_unarchive_missing_name().c_str());
-    print_usage();
-    return 1;
-  }
-  const std::string& name = args[0];
-  auto id = pzt::core::find_project_by_name(name);
-  if (!id) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_project_not_found("pzt unarchive", name).c_str());
-    return 1;
-  }
-  if (!pzt::core::unarchive_project(*id).ok()) {
-    std::fprintf(stderr, "%s", pzt::cli::i18n::err_unarchive_failed(name).c_str());
-    return 1;
-  }
-  std::printf("%s", pzt::cli::i18n::msg_project_unarchived(name).c_str());
   return 0;
 }
 
@@ -1249,7 +1208,8 @@ std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& pre
 // 的写法不一样。increment 2:版本编号只发给未软删除的(按 id 升序排位,
 // 跟 `r` 菜单看到的编号一致,也是 pzt recipe rename/delete 寻址语法里
 // <version_number> 的定义);已删除的不给编号(不再是能被寻址的目标),
-// 单独标"[已删除]",直接复用 M0 pzt list 展示归档项目的既有模式。
+// 单独标"[已删除]"。这个"行尾挂一个方括号状态后缀"的写法当初是照着 M0
+// pzt list 标注归档项目来的,那个标注已随 T-32 删掉,这里是仅存的一处。
 int recipe_list(const std::vector<std::string>& args) {
   if (!args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_list_no_args().c_str());

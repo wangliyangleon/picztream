@@ -69,12 +69,6 @@ std::string msg_project_created_simple(const std::string& name);
 // cli/commands/commands.cpp 的 cmd_new，非 tty(脚本调用)时不会显示这
 // 条、也不会阻塞等按键。
 std::string msg_new_press_any_key_to_open();
-std::string err_archive_missing_name();
-std::string err_archive_failed(const std::string& name);
-std::string msg_project_archived(const std::string& name);
-std::string err_unarchive_missing_name();
-std::string err_unarchive_failed(const std::string& name);
-std::string msg_project_unarchived(const std::string& name);
 std::string err_delete_missing_name();
 std::string msg_delete_warn_prompt(const std::string& name);
 std::string msg_delete_confirm_input();
@@ -85,7 +79,7 @@ std::string err_tag_list_missing_name();
 std::string msg_tag_list_empty();
 std::string msg_tag_item(const std::string& name, long long count, std::optional<std::int64_t> cap, bool is_ordered, bool is_system);
 std::string msg_project_list_empty();
-std::string msg_project_item(const std::string& name, long long image_count, const std::string& root_path, bool archived);
+std::string msg_project_item(const std::string& name, long long image_count, const std::string& root_path);
 std::string err_rescan_missing_name();
 std::string err_rescan_unknown_arg(const std::string& arg);
 std::string err_rescan_failed(const std::string& name);

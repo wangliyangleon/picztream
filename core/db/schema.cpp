@@ -16,6 +16,13 @@ void exec(sqlite3* conn, const char* sql) {
   }
 }
 
+// T-32：archived_at 是**故意留下的死列**，不是漏删。归档能力(pzt archive /
+// unarchive)整条删掉了,它全部的效果只是让项目在 pzt list 里沉底并挂一个
+// [已归档] 后缀，两个命令换一个排序键不值这个命令面。列本身没有跟着删：
+// 删列要 bump kSchemaVersion，而版本闸门是单向的(见下面 SchemaTooNewError)，
+// 用户一旦用新版开过库就再也回不去 brew 上的旧版 pzt，为一个 NULL 列付这个
+// 代价不成比例。留着是纯粹的零成本:没有任何代码读它，新建项目让它保持
+// NULL。将来真要清理，跟着下一次因功能需要而发生的 bump 一起走。
 constexpr const char* kCreateProjects = R"sql(
 CREATE TABLE IF NOT EXISTS projects (
   id            INTEGER PRIMARY KEY,

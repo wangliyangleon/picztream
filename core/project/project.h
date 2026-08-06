@@ -34,7 +34,6 @@ struct ProjectSummary {
   std::string name;
   std::string root_path;
   std::int64_t image_count;
-  bool archived;
   bool support_raw;  // 见 docs/RAW_Support.md：默认关闭的 opt-in 标记，一旦打开不会自动关闭
   std::optional<ImageId> last_image_id;  // F-24 会话续点：上次浏览到的那张图,无则 nullopt
 };
@@ -61,7 +60,8 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db,
                                                       bool support_raw = false,
                                                       ScanProgressFn on_progress = nullptr);
 
-// 未归档项目在前，归档项目排最后；同组内按名字排序。
+// 按名字排序。T-32 之前这里还有一层"未归档在前、归档排最后"的分组，随归
+// 档能力一起删了。
 std::vector<ProjectSummary> list_projects(db::Database& db);
 
 enum class ProjectNotFoundError {
@@ -74,14 +74,6 @@ std::optional<ProjectId> find_project_by_root_path(db::Database& db, const std::
 // "打开"这个 increment 里只是重新查一遍摘要返回给 cli 打印，不产生真正的
 // 浏览会话状态——那是浏览模块（increment 4）要引入的东西。
 Result<ProjectSummary, ProjectNotFoundError> open_project(db::Database& db, ProjectId id);
-
-// 幂等：对已归档项目重复调用只是更新时间戳，不当错误处理。
-Result<void, ProjectNotFoundError> archive_project(db::Database& db, ProjectId id);
-
-// archive_project 的对称逆操作：把 archived_at 清回 NULL。幂等（对未归档项
-// 目重复调用也是成功的 no-op），id 不存在时返回 NotFound——判据跟
-// archive_project 一致（UPDATE 命中 0 行）。
-Result<void, ProjectNotFoundError> unarchive_project(db::Database& db, ProjectId id);
 
 // 级联清除该项目的 images/tags/image_tags（靠 schema 的 ON DELETE CASCADE），
 // 不触碰磁盘上的原始文件。

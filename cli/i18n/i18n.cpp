@@ -87,8 +87,6 @@ std::string usage_main() {
            "      控制台(在 pzt open 里按 : 进入):/dedup <范围> [--ai] "
            "近似重复检测,/ai_eval [范围] AI 评估,/filter <条件> 二级筛选,"
            "/tasks 评估队列状态,/help [命令] 详情\n"
-           "  pzt archive <project_name>\n"
-           "  pzt unarchive <project_name>\n"
            "  pzt delete <project_name>\n"
            "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
            "文件记录,连带清掉其标签;对着可能暂时没挂载完整的存储位置跑时,"
@@ -116,8 +114,6 @@ std::string usage_main() {
            "near-duplicate detection, /ai_eval [scope] AI evaluation, "
            "/filter <criterion> narrow the view, /tasks evaluation queue, "
            "/help [command] details\n"
-           "  pzt archive <project_name>\n"
-           "  pzt unarchive <project_name>\n"
            "  pzt delete <project_name>\n"
            "  pzt rescan <project_name> [--no-prune]  (Clears missing file "
            "records "
@@ -275,54 +271,6 @@ std::string msg_new_press_any_key_to_open() {
   }
 }
 
-std::string err_archive_missing_name() {
-  if (g_lang == Lang::zh) {
-    return "pzt archive: 缺少 <project_name>\n";
-  } else {
-    return "pzt archive: missing <project_name>\n";
-  }
-}
-
-std::string err_archive_failed(const std::string &name) {
-  if (g_lang == Lang::zh) {
-    return "pzt archive: 找不到项目 '" + name + "'\n";
-  } else {
-    return "pzt archive: project '" + name + "' not found\n";
-  }
-}
-
-std::string msg_project_archived(const std::string &name) {
-  if (g_lang == Lang::zh) {
-    return "已归档项目 '" + name + "'\n";
-  } else {
-    return "Project '" + name + "' archived\n";
-  }
-}
-
-std::string err_unarchive_missing_name() {
-  if (g_lang == Lang::zh) {
-    return "pzt unarchive: 缺少 <project_name>\n";
-  } else {
-    return "pzt unarchive: missing <project_name>\n";
-  }
-}
-
-std::string err_unarchive_failed(const std::string &name) {
-  if (g_lang == Lang::zh) {
-    return "pzt unarchive: 找不到项目 '" + name + "'\n";
-  } else {
-    return "pzt unarchive: project '" + name + "' not found\n";
-  }
-}
-
-std::string msg_project_unarchived(const std::string &name) {
-  if (g_lang == Lang::zh) {
-    return "已恢复项目 '" + name + "'\n";
-  } else {
-    return "Project '" + name + "' unarchived\n";
-  }
-}
-
 std::string err_delete_missing_name() {
   if (g_lang == Lang::zh) {
     return "pzt delete: 缺少 <project_name>\n";
@@ -420,15 +368,14 @@ std::string msg_project_list_empty() {
 }
 
 std::string msg_project_item(const std::string &name, long long image_count,
-                             const std::string &root_path, bool archived) {
+                             const std::string &root_path) {
   char buf[512];
   if (g_lang == Lang::zh) {
-    std::snprintf(buf, sizeof(buf), "%-20s %8lld 张  %s%s\n", name.c_str(),
-                  image_count, root_path.c_str(), archived ? "  [已归档]" : "");
+    std::snprintf(buf, sizeof(buf), "%-20s %8lld 张  %s\n", name.c_str(),
+                  image_count, root_path.c_str());
   } else {
-    std::snprintf(buf, sizeof(buf), "%-20s %8lld images  %s%s\n", name.c_str(),
-                  image_count, root_path.c_str(),
-                  archived ? "  [Archived]" : "");
+    std::snprintf(buf, sizeof(buf), "%-20s %8lld images  %s\n", name.c_str(),
+                  image_count, root_path.c_str());
   }
   return buf;
 }

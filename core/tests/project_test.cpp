@@ -11,8 +11,6 @@
 
 namespace fs = std::filesystem;
 using pzt::core::db::Database;
-using pzt::core::project::archive_project;
-using pzt::core::project::unarchive_project;
 using pzt::core::project::create_project;
 using pzt::core::project::CreateProjectError;
 using pzt::core::project::delete_project;
@@ -244,29 +242,59 @@ TEST_CASE("create_project rejects a duplicate project name") {
   CHECK(second.error() == CreateProjectError::NameAlreadyExists);
 }
 
-TEST_CASE("list_projects sorts archived projects last") {
-  auto db = Database::open_at(fresh_db_path("archived_sort"));
-  auto photos_a = fresh_photo_dir("archived_sort_a");
-  auto photos_b = fresh_photo_dir("archived_sort_b");
+// T-32：归档能力删掉之后 ORDER BY 只剩名字这一项。这个用例特意留着一个
+// 曾经会被归档态顶到后面去的名字组合(aaa 建得晚、zzz 建得早)，钉住"现在
+// 纯按名字排、插入顺序和 archived_at 都不再影响结果"。
+TEST_CASE("list_projects sorts by name") {
+  auto db = Database::open_at(fresh_db_path("name_sort"));
+  auto photos_a = fresh_photo_dir("name_sort_a");
+  auto photos_b = fresh_photo_dir("name_sort_b");
   touch(photos_a / "a.jpg");
   touch(photos_b / "b.jpg");
 
-  REQUIRE(create_project(db, "zzz_active", photos_a.string()).ok());
-  REQUIRE(create_project(db, "aaa_archived", photos_b.string()).ok());
-
-  // archive_project() has its own dedicated test below - this one exercises
-  // the ORDER BY logic directly against the schema in isolation.
-  char* err = nullptr;
-  sqlite3_exec(db.handle(), "UPDATE projects SET archived_at = 1 WHERE name = 'aaa_archived';",
-               nullptr, nullptr, &err);
-  REQUIRE(err == nullptr);
+  REQUIRE(create_project(db, "zzz_second", photos_a.string()).ok());
+  REQUIRE(create_project(db, "aaa_first", photos_b.string()).ok());
 
   auto projects = list_projects(db);
   REQUIRE(projects.size() == 2);
-  CHECK(projects[0].name == "zzz_active");
-  CHECK(!projects[0].archived);
-  CHECK(projects[1].name == "aaa_archived");
-  CHECK(projects[1].archived);
+  CHECK(projects[0].name == "aaa_first");
+  CHECK(projects[1].name == "zzz_second");
+}
+
+// T-32：archived_at 作为死列保留(理由见 core/db/schema.cpp)，代价是老库里
+// 真的存着非 NULL 的值:凡是在删除归档能力之前 pzt archive 过的项目都是。
+// 这个用例走的就是那条升级路径：把列填上，然后确认它对 list_projects 与
+// get_project_summary 都不再有任何影响。这同时是"没有任何代码读它"这句话
+// 的哨兵，将来谁把它重新接回查询，这里会红。
+TEST_CASE("a populated archived_at no longer affects listing or summary") {
+  auto db = Database::open_at(fresh_db_path("vestigial_archived_at"));
+  auto photos_a = fresh_photo_dir("vestigial_a");
+  auto photos_b = fresh_photo_dir("vestigial_b");
+  touch(photos_a / "a.jpg");
+  touch(photos_b / "b.jpg");
+
+  auto aaa = create_project(db, "aaa_first", photos_a.string());
+  REQUIRE(aaa.ok());
+  REQUIRE(create_project(db, "zzz_second", photos_b.string()).ok());
+
+  // 模拟一个在 T-32 之前被 pzt archive 过的老项目。
+  char* err = nullptr;
+  sqlite3_exec(db.handle(), "UPDATE projects SET archived_at = 1 WHERE name = 'aaa_first';",
+               nullptr, nullptr, &err);
+  REQUIRE(err == nullptr);
+
+  // 旧行为是把它顶到最后；现在纯按名字排，它仍然排第一。
+  auto projects = list_projects(db);
+  REQUIRE(projects.size() == 2);
+  CHECK(projects[0].name == "aaa_first");
+  CHECK(projects[1].name == "zzz_second");
+
+  // 摘要这一半必须查被填了值的那个项目(aaa_first)才有意义：拿 zzz_second
+  // 去查的话它的 archived_at 还是 NULL，断言恒真，哨兵就是空的。
+  auto opened = open_project(db, aaa.value());
+  REQUIRE(opened.ok());
+  CHECK(opened.value().name == "aaa_first");
+  CHECK(opened.value().image_count == 1);
 }
 
 TEST_CASE("find_project_by_name hits and misses") {
@@ -309,48 +337,8 @@ TEST_CASE("open_project returns the project summary or NotFound") {
   REQUIRE(opened.ok());
   CHECK(opened.value().name == "trip");
   CHECK(opened.value().image_count == 2);
-  CHECK(!opened.value().archived);
 
   auto missing = open_project(db, created.value() + 999);
-  REQUIRE(!missing.ok());
-  CHECK(missing.error() == ProjectNotFoundError::NotFound);
-}
-
-TEST_CASE("archive_project sets archived_at and is idempotent") {
-  auto db = Database::open_at(fresh_db_path("archive_project"));
-  auto photos = fresh_photo_dir("archive_project");
-  touch(photos / "a.jpg");
-  auto created = create_project(db, "trip", photos.string());
-  REQUIRE(created.ok());
-
-  REQUIRE(archive_project(db, created.value()).ok());
-  CHECK(open_project(db, created.value()).value().archived);
-
-  // Archiving an already-archived project is a no-op success, not an error.
-  REQUIRE(archive_project(db, created.value()).ok());
-
-  auto missing = archive_project(db, created.value() + 999);
-  REQUIRE(!missing.ok());
-  CHECK(missing.error() == ProjectNotFoundError::NotFound);
-}
-
-TEST_CASE("unarchive_project clears archived_at and is idempotent") {
-  auto db = Database::open_at(fresh_db_path("unarchive_project"));
-  auto photos = fresh_photo_dir("unarchive_project");
-  touch(photos / "a.jpg");
-  auto created = create_project(db, "trip", photos.string());
-  REQUIRE(created.ok());
-
-  REQUIRE(archive_project(db, created.value()).ok());
-  REQUIRE(open_project(db, created.value()).value().archived);
-
-  REQUIRE(unarchive_project(db, created.value()).ok());
-  CHECK(!open_project(db, created.value()).value().archived);
-
-  // Unarchiving an already-unarchived project is a no-op success, not an error.
-  REQUIRE(unarchive_project(db, created.value()).ok());
-
-  auto missing = unarchive_project(db, created.value() + 999);
   REQUIRE(!missing.ok());
   CHECK(missing.error() == ProjectNotFoundError::NotFound);
 }

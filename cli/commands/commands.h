@@ -23,8 +23,6 @@ void print_version();
 int cmd_new(const std::vector<std::string>& args);
 int cmd_list(const std::vector<std::string>& args);
 int cmd_open(const std::vector<std::string>& args);
-int cmd_archive(const std::vector<std::string>& args);
-int cmd_unarchive(const std::vector<std::string>& args);
 int cmd_delete(const std::vector<std::string>& args);
 int cmd_rescan(const std::vector<std::string>& args);
 int cmd_export(const std::vector<std::string>& args);

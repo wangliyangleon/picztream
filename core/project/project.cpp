@@ -179,7 +179,7 @@ std::optional<ProjectId> find_id_by(sqlite3* db, const char* where_clause,
 
 std::optional<ProjectSummary> get_project_summary(sqlite3* db, ProjectId id) {
   Stmt stmt(db,
-            "SELECT p.id, p.name, p.root_path, p.archived_at, COUNT(i.id), p.support_raw, "
+            "SELECT p.id, p.name, p.root_path, COUNT(i.id), p.support_raw, "
             "p.last_image_id "
             "FROM projects p LEFT JOIN images i ON i.project_id = p.id "
             "WHERE p.id = ? "
@@ -191,11 +191,10 @@ std::optional<ProjectSummary> get_project_summary(sqlite3* db, ProjectId id) {
   s.id = sqlite3_column_int64(stmt.get(), 0);
   s.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
   s.root_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
-  s.archived = sqlite3_column_type(stmt.get(), 3) != SQLITE_NULL;
-  s.image_count = sqlite3_column_int64(stmt.get(), 4);
-  s.support_raw = sqlite3_column_int64(stmt.get(), 5) != 0;
-  if (sqlite3_column_type(stmt.get(), 6) != SQLITE_NULL) {
-    s.last_image_id = sqlite3_column_int64(stmt.get(), 6);
+  s.image_count = sqlite3_column_int64(stmt.get(), 3);
+  s.support_raw = sqlite3_column_int64(stmt.get(), 4) != 0;
+  if (sqlite3_column_type(stmt.get(), 5) != SQLITE_NULL) {
+    s.last_image_id = sqlite3_column_int64(stmt.get(), 5);
   }
   return s;
 }
@@ -345,10 +344,10 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
 
 std::vector<ProjectSummary> list_projects(db::Database& db) {
   Stmt stmt(db.handle(),
-            "SELECT p.id, p.name, p.root_path, p.archived_at, COUNT(i.id), p.support_raw "
+            "SELECT p.id, p.name, p.root_path, COUNT(i.id), p.support_raw "
             "FROM projects p LEFT JOIN images i ON i.project_id = p.id "
             "GROUP BY p.id "
-            "ORDER BY (p.archived_at IS NULL) DESC, p.name ASC;");
+            "ORDER BY p.name ASC;");
 
   std::vector<ProjectSummary> out;
   while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -356,9 +355,8 @@ std::vector<ProjectSummary> list_projects(db::Database& db) {
     s.id = sqlite3_column_int64(stmt.get(), 0);
     s.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
     s.root_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
-    s.archived = sqlite3_column_type(stmt.get(), 3) != SQLITE_NULL;
-    s.image_count = sqlite3_column_int64(stmt.get(), 4);
-    s.support_raw = sqlite3_column_int64(stmt.get(), 5) != 0;
+    s.image_count = sqlite3_column_int64(stmt.get(), 3);
+    s.support_raw = sqlite3_column_int64(stmt.get(), 4) != 0;
     out.push_back(std::move(s));
   }
   return out;
@@ -388,33 +386,6 @@ void set_last_image_id(db::Database& db, ProjectId id, ImageId image_id) {
   if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
     throw std::runtime_error(std::string("set_last_image_id failed: ") + sqlite3_errmsg(conn));
   }
-}
-
-Result<void, ProjectNotFoundError> archive_project(db::Database& db, ProjectId id) {
-  sqlite3* conn = db.handle();
-  Stmt stmt(conn, "UPDATE projects SET archived_at = ? WHERE id = ?;");
-  sqlite3_bind_int64(stmt.get(), 1, now_unix());
-  sqlite3_bind_int64(stmt.get(), 2, id);
-  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-    throw std::runtime_error(std::string("archive failed: ") + sqlite3_errmsg(conn));
-  }
-  if (sqlite3_changes(conn) == 0) {
-    return Result<void, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
-  }
-  return Result<void, ProjectNotFoundError>::Ok();
-}
-
-Result<void, ProjectNotFoundError> unarchive_project(db::Database& db, ProjectId id) {
-  sqlite3* conn = db.handle();
-  Stmt stmt(conn, "UPDATE projects SET archived_at = NULL WHERE id = ?;");
-  sqlite3_bind_int64(stmt.get(), 1, id);
-  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-    throw std::runtime_error(std::string("unarchive failed: ") + sqlite3_errmsg(conn));
-  }
-  if (sqlite3_changes(conn) == 0) {
-    return Result<void, ProjectNotFoundError>::Err(ProjectNotFoundError::NotFound);
-  }
-  return Result<void, ProjectNotFoundError>::Ok();
 }
 
 Result<void, ProjectNotFoundError> delete_project(db::Database& db, ProjectId id) {

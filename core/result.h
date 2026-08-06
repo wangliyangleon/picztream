@@ -63,8 +63,8 @@ class [[nodiscard]] Result {
   std::variant<T, E> data_;
 };
 
-// Specialization for operations with no success payload (archive_project,
-// delete_project, remove_tag, ...).
+// Specialization for operations with no success payload (delete_project,
+// remove_tag, ...).
 template <typename E>
 class [[nodiscard]] Result<void, E> {
  public:

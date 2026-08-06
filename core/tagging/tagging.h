@@ -111,7 +111,7 @@ enum class DeleteTagError {
 //
 // 跟 remove_tag 的幂等语义不同：remove_tag 删的是"一张图和一个标签的关联"
 // 这一行，不存在也不算错；delete_tag 删的是标签这个实体本身，tag_id 不存
-// 在是错误（TagNotFound），跟 delete_project/archive_project 现有的"实体
+// 在是错误（TagNotFound），跟 delete_project 现有的"实体
 // 级删除，找不到就报错"约定一致，不是新规则，不是幂等操作。
 //
 // 系统标签在这一层也拒绝删除（SystemTagProtected），不指望"cli 的 space d
