@@ -92,7 +92,7 @@
   <header>
     <div class="logo mono">PicZTream</div>
     <h1><span class="prompt mono">$</span> pzt</h1>
-    <p class="tagline">终端里的全键盘照片筛选与色彩处理工具。零延迟选片，高性能本地色彩流水线。</p>
+    <p class="tagline">选片成本 = 单次决策延迟 × 决策次数。终端全键盘把第一个因子压到零，AI 替你减少第二个。</p>
     <div class="badges">
       <span class="badge">macOS</span>
       <span class="badge">Apple Silicon</span>
@@ -107,27 +107,37 @@
 
   <div class="callout">
     <b>仅支持 macOS / Apple Silicon（M 系列芯片）。</b> 依赖 CoreGraphics/ImageIO 系统框架，
-    色彩流水线针对 arm64 调优；Intel Mac 与其它平台暂不支持。
+    色彩流水线针对 arm64 调优；Intel Mac 与其它平台暂不支持。<br>
+    <b>输入格式：</b>目前支持 JPEG；RAW 需在建项目时显式带 <code>--support-raw</code>；
+    iPhone 默认拍摄的 HEIC <b>暂不支持</b>。
   </div>
+
+  <section id="thesis">
+    <h2>为什么是终端</h2>
+    <p class="steps">旅行回来面对几百张照片，真正吃时间的不是精修那几张，是「筛选」这个动作本身。
+    它的成本是一个乘式：<b>单次决策延迟 × 决策次数</b>。系统相册、Lightroom、Capture One 都是为
+    鼠标和缩略图网格设计的，切图延迟和 UI 响应链路把第一个因子撑得很大；而第二个因子直接等于
+    照片张数，没人替你减。<code>pzt</code> 两个因子分别打。</p>
+  </section>
 
   <section id="features">
     <h2>它能做什么</h2>
     <div class="features">
       <div class="feature">
-        <h3>零延迟选片</h3>
-        <p><code>h</code>/<code>l</code> 翻页、<code>space</code> 打标签、<code>x</code> 标废片，配合预取缓存做到按键即出图（Ghostty + Kitty 图像协议）。</p>
+        <h3>因子一 · 把延迟压到零</h3>
+        <p>纯终端、全键盘，在终端里直接看物理分辨率的大图（Ghostty + Kitty 图像协议）。<code>h</code>/<code>l</code> 翻页按键即出图（预取缓存），<code>space</code> 打标签、<code>x</code> 标废片，手不离键盘，心流不断。</p>
+      </div>
+      <div class="feature">
+        <h3>因子二 · 减少决策次数</h3>
+        <p>近似重复检测把连拍收成一簇，簇内用<b>两两比较</b>挑该留的那张 - 不是各自打分再横向比，因为单张独立打出来的分跨图比大小并不可靠。在配套的 Telegram bot 里再说一句「挑 9 张有景有人的、发朋友圈」，它读着每张照片的描述替你<b>跨簇选片、排好顺序</b>，顺带写一段配文。模型可以是本地 Ollama（免配额）或云端 Claude/Gemini。整块可选，关掉不影响零延迟主路径，AI 也不占核心执行路径。</p>
+      </div>
+      <div class="feature">
+        <h3>RAW 旁路选片</h3>
+        <p>RAW 的解码成本，对「看一眼就该淘汰」的照片是纯粹负担 - 这正是想用 RAW 却嫌麻烦而放弃的根因。选片时只读相机 ISP 已经渲染好的内嵌 JPEG，绕开 RAW 解码；只有你标记要精修的那几张才真正走 LibRaw 重路径。目前是 opt-in。</p>
       </div>
       <div class="feature">
         <h3>本地色彩流水线</h3>
-        <p>一组「城市+年份」recipe 预设，可在预设上自建 version 微调（对比度/饱和度/白平衡/颗粒…），实时预览。</p>
-      </div>
-      <div class="feature">
-        <h3>AI 辅助（可选）</h3>
-        <p>看图点评（文字 + 硬伤标记，不打分）、去重/选片用 AI 锦标赛式两两比较。本地 Ollama（免配额）或云端 Claude/Gemini，不占核心执行路径。</p>
-      </div>
-      <div class="feature">
-        <h3>Telegram agent</h3>
-        <p>发照片 → 一句话说想怎么弄 → 收成品。收图、按需去重、AI 比较选片、套风格、交付的半自动闭环。</p>
+        <p>一组「城市+年份」recipe 预设，可在预设上自建 version 微调（对比度/饱和度/白平衡/颗粒…），实时预览。全程本地计算，不联网。</p>
       </div>
     </div>
   </section>
