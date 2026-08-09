@@ -50,15 +50,21 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 
 ---
 
-## 本仓库的偏离（重要，与 skill 默认行为不同）
+## 重申一条默认（不是本仓库的特例）
 
 ### ADR 永远留在仓库，不进 issue
 
 **`docs/adr/` 是 ADR 的唯一住所。** 不要把 ADR 发成 issue。
 
-理由：ADR 的语义是"永不关闭的既定事实"，issue 的语义是"待办、会关"，放进 issue 是类型错误。且 `docs/SPEC.md` §2.3/§4.3 与 `AGENTS.md` 都按路径引用 ADR。位置见 `docs/agents/domain.md`。
+这**不是**本仓库的偏离，而是 skill 体系本来的默认：本文件的 GitHub 模板原文只说 "Issues and **PRDs** live as GitHub issues"，ADR 不在其中；`docs/agents/domain.md` 与 `/domain-modeling` 都把 `docs/adr/` 当作仓库内文件。之所以在这里再写一遍，是因为切到 GitHub 之后容易顺手把"所有设计文档"一起搬走。
 
-### PRD 正在**渐进迁移**，两处并存是当前的正常状态
+底层理由：ADR 的语义是"永不关闭的既定事实"，issue 的语义是"待办、会关"，放进 issue 是类型错误。且 `docs/SPEC.md` §2.3/§4.3 与 `AGENTS.md` 都按路径引用 ADR。
+
+---
+
+## 本仓库的偏离（与 skill 默认行为不同，共两条）
+
+### 其一：PRD 正在**渐进迁移**，两处并存是当前的正常状态
 
 2026-08-09 之前，这个项目的 PRD 一律是仓库文件（`docs/<Name>_PRD.md`，收口后移进 `docs/history/`），票是 `docs/issues/<feature>/` 下的编号 markdown。自该日起改为 **PRD 与票都上 GitHub Issues**，但**存量不批量迁移**，一条条来。
 
@@ -72,9 +78,11 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 
 **仍在仓库里的存量**（不完整列举，以 `docs/` 与 `docs/history/` 实际内容为准）：`docs/history/Intent_Curation_PRD.md`、`docs/history/Dedup_Cancel_PRD.md`、`docs/history/Dedup_AI_Console_PRD.md`、`docs/history/Env_Preflight_*`、`docs/history/Headless_Observability_*`、各里程碑与周目标的 PRD/Eng Design。**`docs/SPEC.md` 里有几十处按路径引用这些文件，迁移任何一份时必须同时改掉它的入边**，否则审计链断掉。
 
-**已收口的票不迁移**：`docs/history/issues/intent-curation/` 那 13 张原样留档。补建 closed issue 不产生价值，反而丢掉归档说明。
+### 其二：已收口的票不迁移
 
-### 迁移一份 PRD 的步骤
+`docs/history/issues/intent-curation/` 那 13 张原样留档。补建 closed issue 不产生价值，反而丢掉归档说明。
+
+### 迁移一份存量 PRD 的步骤（承其一）
 
 1. `grep -rn "<PRD 文件名>" --include="*.md" .` 找全入边
 2. `gh issue create --title "<名字>" --label ready-for-agent --body-file <文件>`（去掉与 issue 标题重复的 H1）
