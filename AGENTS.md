@@ -67,6 +67,20 @@ cmake --build build_release
 
 `agent/tests/test_pzt_client.py::test_default_pzt_bin_points_at_repo_build_release_cli_pzt` 就是这件事的哨兵：它在 worktree 里红，说的就是"此刻解析到的不是仓库构建物"，别当成环境噪音跳过。
 
+## Agent skills
+
+### Issue tracker
+
+票与 PRD 都在 GitHub Issues（`wangliyangleon/picztream`，用 `gh` CLI）；**ADR 永远留在仓库**，存量 PRD 正在渐进迁移、两处并存是当前的正常状态，找 PRD 前先查已迁清单。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+沿用五个规范 label（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`），全部已存在于仓库。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单 context：根 `CONTEXT.md` + `docs/adr/`，无 `CONTEXT-MAP.md`。注意 `docs/SPEC.md` 仍是每个 session 唯一必读、且先于这两者。见 `docs/agents/domain.md`。
+
 ## 行为准则
 
 Agent 在本仓库中回应时保持客观、严格、简洁、逻辑导向，不做无依据的功能扩展，不引入超出当前里程碑范围的抽象设计，遇到需求不明确或与文档冲突的情况先提出问题，不擅自假设。
