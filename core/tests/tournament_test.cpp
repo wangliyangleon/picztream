@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -142,6 +143,22 @@ std::string path_for(const Fixture& fx, char name) {
   return fx.root_path + "/" + std::string(1, name) + ".jpg";
 }
 
+// 包一层 hash_map_decoder，对 fail_path 这一个路径的第二次调用返回解码失
+// 败、其它调用(含 fail_path 自己的第一次)照常成功。用来模拟"分簇阶段解码
+// 过一次、锦标赛阶段重新解码时才失败"——分簇用的是同一个 decode_fn，第一
+// 次调用不能失败，否则这张图在分簇阶段就被跳过，根本进不了要测的簇。
+dedup::detail::PreviewDecodeFn decoder_failing_second_call(std::unordered_map<std::string, ImageHash> by_path,
+                                                             std::string fail_path) {
+  auto base = hash_map_decoder(std::move(by_path));
+  auto calls = std::make_shared<int>(0);
+  return [base = std::move(base), calls, fail_path = std::move(fail_path)](const std::string& path) {
+    if (path == fail_path && ++*calls == 2) {
+      return Result<DecodedImage, DecodeError>::Err(DecodeError::DecodeFailed);
+    }
+    return base(path);
+  };
+}
+
 bool has_duplicate_tag(Database& db, ImageId id, TagId duplicate_tag_id) {
   for (const auto& t : tags_for_image(db, id)) {
     if (t.id == duplicate_tag_id) return true;
@@ -226,6 +243,79 @@ TEST_CASE("cluster_and_choose with ai enabled: bracket advances to a single winn
   CHECK(result.value().clusters[0].winner == fx.images[4]);
   CHECK(fake_compare.calls == 4);  // 5 个成员，N-1 = 4 次比较
   CHECK(result.value().ai_fallback_count == 0);
+}
+
+// T-28：锦标赛不该在开赛前把整簇一次性解码完，峰值内存应该是常数级，不
+// 是 O(簇大小)。没有解码结果的析构钩子可以直接测峰值内存，但可以钉住一
+// 个更强的必要条件：解码跟比较必须逐对交替、以严格的
+// "decode,decode,compare" 三元组重复出现，不能"先把 N 张全解码完，再发起
+// N-1 次比较"——旧版恰好是后者(round 在进入淘汰赛循环前就把全部成员解码
+// 进一个存活到结束的 vector)。8 个成员共 7 次比较，每次比较固定解码 2
+// 张(配对逐轮不变，见 run_bracket 的说明)，所以锦标赛阶段总解码次数是
+// 2*7=14，不是 8。
+TEST_CASE("cluster_and_choose: decoding interleaves with comparing, not fully upfront (T-28)") {
+  auto fx = make_fixture("t28_interleave", 8);
+  for (int i = 0; i < 8; ++i) set_captured_at(fx.db, fx.images[i], 1000 + i);
+
+  // 8 张哈希只在低 3 位不同(0..7)，两两距离都在阈值内，全部聚成一簇。
+  std::unordered_map<std::string, ImageHash> by_path;
+  for (int i = 0; i < 8; ++i) {
+    by_path[path_for(fx, static_cast<char>('a' + i))] = static_cast<ImageHash>(i);
+  }
+
+  std::vector<std::string> timeline;
+  auto tracking_decoder = [base = hash_map_decoder(by_path), &timeline](const std::string& path) {
+    timeline.push_back("decode");
+    return base(path);
+  };
+  auto tracking_compare = [&timeline](const DecodedImage& a, const DecodedImage& b, Provider p,
+                                       const LocalModelConfig& cfg) {
+    timeline.push_back("compare");
+    FakeCompare inner;
+    return inner(a, b, p, cfg);
+  };
+
+  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
+                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
+                                                 LocalModelConfig{}, tracking_decoder, tracking_compare);
+  REQUIRE(result.ok());
+  REQUIRE(result.value().clusters.size() == 1);
+  REQUIRE(result.value().clusters[0].members.size() == 8);
+
+  // 分簇阶段(算 dHash)先把 8 张全解码一次，这部分必然是"decode"连续出
+  // 现——真正要钉住的是分簇之后、锦标赛这一段：找到分簇产生的那 8 次
+  // decode 之后剩下的 timeline，应该是 7 个 (decode,decode,compare) 三元
+  // 组严格重复，而不是把 14 次 decode(锦标赛按对重新解码)全排在最前面。
+  auto bracket_timeline = std::vector<std::string>(timeline.begin() + 8, timeline.end());
+  REQUIRE(bracket_timeline.size() == 2 * 7 + 7);  // 7 次比较，每次 2 解码 + 1 比较
+  for (std::size_t triple = 0; triple < 7; ++triple) {
+    CHECK(bracket_timeline[triple * 3 + 0] == "decode");
+    CHECK(bracket_timeline[triple * 3 + 1] == "decode");
+    CHECK(bracket_timeline[triple * 3 + 2] == "compare");
+  }
+}
+
+TEST_CASE("cluster_and_choose: a decode failure during the bracket (not clustering) degrades that cluster") {
+  auto fx = make_fixture("t28_decode_fail_in_bracket", 3);
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+  set_captured_at(fx.db, fx.images[2], 1004);  // 最新，退化后应该是 winner
+
+  ImageHash h = 0x3333333333333333ULL;
+  auto decoder = decoder_failing_second_call(
+      {{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}, {path_for(fx, 'c'), h}}, path_for(fx, 'b'));
+  FakeCompare fake_compare;
+
+  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
+                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
+                                                 LocalModelConfig{}, decoder, std::ref(fake_compare));
+  REQUIRE(result.ok());
+  REQUIRE(result.value().clusters.size() == 1);
+  CHECK(result.value().clusters[0].members.size() == 3);
+  // 分簇阶段(第一次解码 b)成功，b 正常入簇；锦标赛阶段重新解码 b(第二次
+  // 调用)失败，整簇退化成 keep_id(captured_at 最新的 c)，不崩溃、不中断。
+  CHECK(result.value().clusters[0].winner == fx.images[2]);
+  CHECK(result.value().ai_fallback_count == 1);
 }
 
 TEST_CASE("cluster_and_choose: singleton candidates become their own trivial cluster, no AI call") {

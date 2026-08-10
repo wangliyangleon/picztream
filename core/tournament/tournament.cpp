@@ -33,11 +33,38 @@ std::optional<decode::DecodedImage> decode_member(db::Database& db, const std::s
 // 较、奇数个时最后一个轮空直接晋级，直到只剩一个。任意一步解码失败或
 // compare_fn 返回 Err 都视为"这一簇 AI 失败"，返回 nullopt 让调用方退化
 // 成 keep_id，不中断其它簇。N 个成员恰好 N-1 次比较，不管轮空怎么分布。
+// 配对规则(哪个位置跟哪个位置比、轮空落在哪)逐轮不变，改动前后一字未
+// 动——compare_fn 是 AI 判断，不保证传递性(A 赢 B、B 赢 C，不代表 A 赢
+// C)，换一种配对方式可能真的换出一个不同的赢家；这不是纯内部实现细节，
+// 换配对等于换了这个函数对外可观察的行为，T-28 只该修峰值内存，不该顺带
+// 改这个。
 //
-// on_comparison_start 在每次 compare_fn 之前调一次，参数是这一簇内的第几
-// 次比较(1-based)。簇内比较是串行网络调用、每次可能几十秒，没有这个钩子
-// 的话调用方最细只能报到簇粒度，大簇期间画面完全静止。轮空不算一次比
-// 较——它不发请求，报了会让计数虚高、对不上 AiGateFn 给用户看的总数。
+// 解码是逐对惰性做的，不是开赛前把整簇一次性解码完——跟
+// dedup.cpp::find_duplicates_impl 逐张解码、用完就让局部变量出作用域释放
+// 是同一个模式(T-28)。round 全程只存 ImageId 不存解码结果，一对成员只在
+// 真的要送进 compare_fn 前才解码，解码结果是 for 循环体内的局部变量，比
+// 较完这对就跟着出作用域释放，峰值内存从 O(簇大小)降到常数(同一时刻最多
+// 两张解码图片存活，不管簇有多大)。代价是晋级的赢家在下一轮会被重新解码
+// 一次(round 只在轮次之间传 ImageId，不传已经解出来的图片)：每次比较固
+// 定解码 2 张，N 个成员共 N-1 次比较，总解码次数恒为 2*(N-1)，相对"每张
+// 只解一次"的下限最多多 2 倍且不随簇大小继续变大(1.6x@N=5、1.9x@N=32、
+// 2.0x@N→∞)——不是 O(簇大小×log 簇大小) 那种会随簇变大而变大的开销。用
+// 这最多 2 倍、封顶的重复解码换峰值内存从 O(N) 砍到 O(1)，且不碰配对顺序
+// 半个字，是这里权衡下来的选择。
+//
+// 另一个代价：旧版把整簇解码完才开始比较，所以任何一张解码失败都是"零成
+// 本失败"(退化前一次 compare_fn 都没发生过)；现在解码跟比较交替进行，
+// 靠后的成员解码失败时，前面几轮的真实 AI 比较已经发生过、结果被这次退
+// 化整个扔掉。终态不变(仍然是这一簇整体退化成 keep_id)，变的只是"退化前
+// 已经花掉的网络调用数"这个不影响正确性的成本细节。
+//
+// on_comparison_start 在每次 compare_fn 之前(且在这对的解码之前)调一次，
+// 参数是这一簇内的第几次比较(1-based)。簇内比较是串行网络调用、每次可能
+// 几十秒，没有这个钩子的话调用方最细只能报到簇粒度，大簇期间画面完全静
+// 止。轮空不算一次比较——它不发请求，报了会让计数虚高、对不上 AiGateFn 给
+// 用户看的总数。放在解码之前调用是为了让挂在这个钩子里的取消检查能在解码
+// 这对成员的开销发生之前生效，跟 dedup.cpp"取消检查放在解码之前"同一个理
+// 由。
 //
 // 返回 false = 别比了，直接收手(返回 nullopt)。这是取消唯一能插进来的地
 // 方：比较边界。用返回值而不是再加一个 CancelFn 参数，是因为"在每次比较
@@ -52,37 +79,29 @@ std::optional<project::ImageId> run_bracket(db::Database& db, const std::string&
                                              const dedup::detail::PreviewDecodeFn& decode_fn,
                                              const detail::CompareFn& compare_fn,
                                              const ComparisonStartFn& on_comparison_start = nullptr) {
-  struct Contestant {
-    project::ImageId id;
-    decode::DecodedImage image;
-  };
-
-  std::vector<Contestant> round;
-  round.reserve(members.size());
-  for (auto id : members) {
-    auto img = decode_member(db, root_path, id, decode_fn);
-    if (!img) return std::nullopt;
-    round.push_back(Contestant{id, std::move(*img)});
-  }
+  std::vector<project::ImageId> round(members.begin(), members.end());
 
   int comparisons_done = 0;
   while (round.size() > 1) {
-    std::vector<Contestant> next_round;
+    std::vector<project::ImageId> next_round;
     next_round.reserve((round.size() + 1) / 2);
     for (std::size_t i = 0; i < round.size(); i += 2) {
       if (i + 1 < round.size()) {
         if (on_comparison_start && !on_comparison_start(++comparisons_done)) return std::nullopt;
-        auto result = compare_fn(round[i].image, round[i + 1].image, provider, local_config);
+        auto left = decode_member(db, root_path, round[i], decode_fn);
+        if (!left) return std::nullopt;
+        auto right = decode_member(db, root_path, round[i + 1], decode_fn);
+        if (!right) return std::nullopt;
+        auto result = compare_fn(*left, *right, provider, local_config);
         if (!result.ok()) return std::nullopt;
-        std::size_t winner_idx = result.value().winner == 0 ? i : i + 1;
-        next_round.push_back(std::move(round[winner_idx]));
+        next_round.push_back(result.value().winner == 0 ? round[i] : round[i + 1]);
       } else {
-        next_round.push_back(std::move(round[i]));  // 奇数个，轮空直接晋级
+        next_round.push_back(round[i]);  // 奇数个，轮空直接晋级，不解码
       }
     }
     round = std::move(next_round);
   }
-  return round.front().id;
+  return round.front();
 }
 
 }  // namespace
