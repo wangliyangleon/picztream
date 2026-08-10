@@ -51,10 +51,9 @@ LLM（包括 Claude Code 本身）在本项目中的角色严格限定为算法�
 
 ### 改动在哪儿落地
 
-判据是**这次改动有没有走 `implement` skill**，与改的是代码还是文档无关：
+沿用 Claude Code 自身的判据（前台交互 session 在 `main` 上直接改，后台/云端 session 开 worktree），不额外区分是否走了 `implement` skill，也不分代码还是文档：
 
-* 经 `implement` skill 实现功能、修改代码或文档时，**默认先开一个 worktree**（`EnterWorktree`），在隔离分支上完成，收口时再合回 `main`
-* 用户直接要求实现某个功能、没有进 `implement` skill 时，**直接在本地 `main` 分支上改**，不开 worktree
+* 后台/云端 session 实现功能、修改代码或文档时，**先开一个 worktree**（`EnterWorktree`），在隔离分支上完成，收口时再合回 `main`
 
 开 worktree 之后**先建一次 release 构建物**，哪怕这次改动根本不碰 C++：
 
