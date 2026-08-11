@@ -170,6 +170,31 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
                                                         RecipeId recipe_id,
                                                         unsigned thread_count = 1);
 
+// T-29:拿"某个预设的底子"配上"一组还没落库的草稿参数"渲染。`render` 只吃
+// 已经存在于库里的 recipe_id(参数靠 resolve_recipe 查出来),而自建 version
+// 的向导要在用户填完每一个字段之后就重渲染一次预览,那时这组参数还没有、
+// 也不该有 recipe_id:预览不是一次保存,中途取消不该在库里留下任何东西。
+//
+// 与 `render` 的关系是**同一段合成逻辑、参数来源不同**,两者共用一个内部
+// 实现,于是有这条等价性:传预设 id 时,render_preview(preset, draft) 与"先
+// create_version(preset, draft) 再 render(那个 id)"逐字节相同。这是这个函
+// 数存在的全部意义(用户按着预览调出来的参数,存下来必须还是那张图),也是
+// 它的主要用例所钉住的。
+//
+// 等价性只在传预设 id 时成立,原因是那也是 create_version 唯一接受的输入
+// (给它一个 version id 会得到 PresetNotFound),那种输入下"另一条路径"根本
+// 不存在,无从比较。这里仍然接受 version id 而不报错:底子照样解析到它的父
+// 预设,它自己那份参数被草稿整个取代,结果等价于传父预设的 id。调用方(向
+// 导)本来就只会传预设,不值得为此单设一个错误取值。
+//
+// 颗粒来自预设行、草稿覆盖不了,与 VersionParams 本身的语义一致(见
+// resolve_recipe 上方关于 grain_amount 的说明)。
+Result<decode::DecodedImage, RenderRecipeError> render_preview(db::Database& db,
+                                                                const decode::DecodedImage& src,
+                                                                RecipeId preset_id,
+                                                                VersionParams draft,
+                                                                unsigned thread_count = 1);
+
 // 仅供单元测试直接验证每个旋钮的效果——真正的调用方是 recipe.cpp 内部
 // ensure_default_presets 给 9 个内置预设烘焙 LUT,不是面向 core/api 的公开
 // 接口。照抄 core::ai::detail::downscale_for_upload 的先例(core/ai/ai.h)。

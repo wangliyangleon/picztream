@@ -487,6 +487,125 @@ TEST_CASE("render reports RecipeNotFound for a nonexistent id") {
   CHECK(result.error() == RenderRecipeError::RecipeNotFound);
 }
 
+// T-29:自建 version 的向导要在每个字段填完之后就重渲染一次预览,而那时这
+// 组参数还没有落库、没有 recipe_id 可传给 render。下面这组用例钉住的是
+// render_preview 与"先 create_version 再 render"的**等价性**:不是"效果差
+// 不多",是逐字节相同。预览与保存之后看到的必须是同一张图,否则用户按着预
+// 览调出来的参数存下来是另一个样子,这个功能就没有意义。等价性可以精确断
+// 言,是因为这条路径上唯一的非线性来源 apply_grain 也是确定性的
+// (grain_noise 是像素位置的纯函数,不是 RNG)。
+namespace {
+
+// 这条不变量在下面几个场景(带 LUT / 没有 LUT / 带颗粒)里各验一遍,抽出来
+// 让"预览 == 保存之后"只写一处、也让每个用例只剩下它自己那个场景的设置。
+void check_preview_matches_saved(Database& db, const pzt::core::decode::DecodedImage& src,
+                                  RecipeId preset_id, const VersionParams& draft) {
+  auto preview = render_preview(db, src, preset_id, draft);
+  REQUIRE(preview.ok());
+
+  auto created = create_version(db, preset_id, std::nullopt, draft);
+  REQUIRE(created.ok());
+  auto saved = render(db, src, created.value());
+  REQUIRE(saved.ok());
+
+  CHECK(preview.value().rgba == saved.value().rgba);
+  CHECK(preview.value().width == saved.value().width);
+  CHECK(preview.value().height == saved.value().height);
+}
+
+}  // namespace
+
+TEST_CASE("render_preview matches creating the version first and rendering it, byte for byte") {
+  auto db = Database::open_at(temp_db_path("recipe_preview_equivalence"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[1].id;  // 带 LUT 的预设,让 apply_lut 那一步真的跑起来
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 2;
+  src.height = 2;
+  src.rgba = {10, 200, 50, 255, 0, 0, 0, 255, 128, 128, 128, 255, 250, 5, 90, 255};
+
+  check_preview_matches_saved(db, src, preset_id,
+                               VersionParams{/*highlights=*/20, /*shadows=*/-15,
+                                             /*wb_shift_r=*/8, /*wb_shift_b=*/-6,
+                                             /*contrast=*/30, /*saturation=*/25,
+                                             /*blacks=*/-10, /*whites=*/12});
+}
+
+TEST_CASE("render_preview on a preset with no LUT skips it, staying equivalent to the saved path") {
+  auto db = Database::open_at(temp_db_path("recipe_preview_origin"));
+  ensure_default_presets(db);
+  auto origin_id = list_presets(db)[0].id;  // Origin,没有 base_lut
+  REQUIRE_FALSE(resolve_recipe(db, origin_id)->lut.has_value());  // 前提:这个预设确实没有 LUT
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 2;
+  src.height = 1;
+  src.rgba = {10, 200, 50, 255, 0, 0, 0, 255};
+  auto src_copy = src.rgba;
+
+  // 草稿全零 = 既没有 LUT 也没有调整,两步都该被跳过,像素基本原样穿过去
+  // (容差 1 与上面 "render applies the resolved recipe to a copy" 一致)。
+  auto neutral = render_preview(db, src, origin_id, VersionParams{});
+  REQUIRE(neutral.ok());
+  for (std::size_t i = 0; i < src_copy.size(); ++i) {
+    CHECK(std::abs(static_cast<int>(neutral.value().rgba[i]) - static_cast<int>(src_copy[i])) <= 1);
+  }
+
+  // 草稿非零时调整照样生效,且仍然与保存之后的结果逐字节相同。
+  VersionParams draft{0, 0, 0, 0, /*contrast=*/80, 0, 0, 0};
+  auto preview = render_preview(db, src, origin_id, draft);
+  REQUIRE(preview.ok());
+  CHECK(preview.value().rgba != src_copy);
+
+  check_preview_matches_saved(db, src, origin_id, draft);
+}
+
+TEST_CASE("render_preview carries the preset's grain, which a draft cannot override") {
+  auto db = Database::open_at(temp_db_path("recipe_preview_grain"));
+  ensure_default_presets(db);
+  detail::seed_preset(db.handle(), "PreviewGrain", 5, detail::make_graded_lut(5, {}),
+                       /*grain_amount=*/1.0);
+  auto preset_id = list_presets(db).back().id;
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 8;
+  src.height = 8;
+  src.rgba.assign(static_cast<std::size_t>(8) * 8 * 4, 128);
+
+  // 颗粒来自预设行、草稿里根本没有这一项,两条路径必须拿到同一份。
+  check_preview_matches_saved(db, src, preset_id, VersionParams{0, 0, 0, 0, /*contrast=*/40, 0, 0, 0});
+}
+
+TEST_CASE("render_preview leaves the source image untouched") {
+  auto db = Database::open_at(temp_db_path("recipe_preview_src_untouched"));
+  ensure_default_presets(db);
+  auto preset_id = list_presets(db)[1].id;
+
+  pzt::core::decode::DecodedImage src;
+  src.width = 2;
+  src.height = 1;
+  src.rgba = {10, 200, 50, 255, 0, 0, 0, 255};
+  auto src_copy = src.rgba;
+
+  auto preview = render_preview(db, src, preset_id, VersionParams{0, 0, 0, 0, 50, 0, 0, 0});
+  REQUIRE(preview.ok());
+  CHECK(src.rgba == src_copy);
+}
+
+TEST_CASE("render_preview reports RecipeNotFound for a nonexistent preset id") {
+  auto db = Database::open_at(temp_db_path("recipe_preview_missing"));
+  ensure_default_presets(db);
+  pzt::core::decode::DecodedImage src;
+  src.width = 1;
+  src.height = 1;
+  src.rgba = {0, 0, 0, 255};
+
+  auto result = render_preview(db, src, 999999, VersionParams{});
+  REQUIRE(!result.ok());
+  CHECK(result.error() == RenderRecipeError::RecipeNotFound);
+}
+
 TEST_CASE("make_graded_lut with all-zero params is the identity mapping") {
   auto lut = detail::make_graded_lut(5, detail::GradeParams{});
   // 网格点 (4,2,0) -> (1.0, 0.5, 0.0)，全零参数应该原样映回自己
