@@ -2,9 +2,11 @@ add_executable(cli_tests
   debug_log_test.cpp
   i18n_test.cpp
   kitty_test.cpp
+  recipe_menu_test.cpp
   signal_restore_test.cpp
   tag_menu_test.cpp
   text_test.cpp
+  ui_test.cpp
 )
 
 target_include_directories(cli_tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party/doctest)

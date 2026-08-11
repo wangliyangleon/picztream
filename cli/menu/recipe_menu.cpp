@@ -138,6 +138,10 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
 // 试——这几个参数是低风险的元数据，填错了大不了删掉重建，跟标签 cap 解
 // 析失败时的处理哲学一致。创建之后不会自动应用到当前图片，对齐
 // `space c` 建标签之后也不会自动打到当前图片上这个既有约定。
+//
+// issue #19:9 个字段从一次性问完的线性问答改成可前进/后退的向导(导航循
+// 环见 run_field_wizard)。"静默归零"这条哲学不变:有了字段级回退,填错了
+// 直接退回去改,不需要再叠一层拒绝/重提示。
 std::string handle_r_create_flow(int banner_row, int start_col, int content_cols) {
   std::string message;
   auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols, &message);
@@ -153,55 +157,56 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
     return pzt::cli::i18n::recipe_menu_custom_full(preset->name);
   }
 
-  auto parse_double_or_zero = [](const std::optional<std::string>& s) -> double {
-    if (!s || s->empty()) return 0.0;
+  auto parse_double_or_zero = [](const std::string& s) -> double {
+    if (s.empty()) return 0.0;
     try {
       std::size_t consumed = 0;
-      double v = std::stod(*s, &consumed);
-      if (consumed == s->size()) return v;
+      double v = std::stod(s, &consumed);
+      if (consumed == s.size()) return v;
     } catch (const std::exception&) {
       // 解析失败,落到下面的 0.0
     }
     return 0.0;
   };
 
-  auto highlights_text =
-      read_text_line(pzt::cli::i18n::recipe_menu_input_highlights(), banner_row, start_col, content_cols);
-  if (!highlights_text) return "";  // Esc 中止整个流程
-  auto shadows_text = read_text_line(pzt::cli::i18n::recipe_menu_input_shadows(), banner_row, start_col, content_cols);
-  if (!shadows_text) return "";
-  auto wb_r_text =
-      read_text_line(pzt::cli::i18n::recipe_menu_input_wb_r(), banner_row, start_col, content_cols);
-  if (!wb_r_text) return "";
-  auto wb_b_text =
-      read_text_line(pzt::cli::i18n::recipe_menu_input_wb_b(), banner_row, start_col, content_cols);
-  if (!wb_b_text) return "";
-  auto contrast_text = read_text_line(pzt::cli::i18n::recipe_menu_input_contrast(), banner_row,
-                                       start_col, content_cols);
-  if (!contrast_text) return "";
-  auto saturation_text = read_text_line(pzt::cli::i18n::recipe_menu_input_saturation(), banner_row,
-                                         start_col, content_cols);
-  if (!saturation_text) return "";
-  auto blacks_text =
-      read_text_line(pzt::cli::i18n::recipe_menu_input_blacks(), banner_row, start_col, content_cols);
-  if (!blacks_text) return "";
-  auto whites_text =
-      read_text_line(pzt::cli::i18n::recipe_menu_input_whites(), banner_row, start_col, content_cols);
-  if (!whites_text) return "";
-  auto name_text =
-      read_text_line(pzt::cli::i18n::recipe_menu_input_name(), banner_row, start_col, content_cols);
-  if (!name_text) return "";
+  // 9 个字段的提示文案,顺序即向导顺序,也即下面取值的下标顺序。
+  const std::vector<std::string> prompts = {
+      pzt::cli::i18n::recipe_menu_input_highlights(), pzt::cli::i18n::recipe_menu_input_shadows(),
+      pzt::cli::i18n::recipe_menu_input_wb_r(),       pzt::cli::i18n::recipe_menu_input_wb_b(),
+      pzt::cli::i18n::recipe_menu_input_contrast(),   pzt::cli::i18n::recipe_menu_input_saturation(),
+      pzt::cli::i18n::recipe_menu_input_blacks(),     pzt::cli::i18n::recipe_menu_input_whites(),
+      pzt::cli::i18n::recipe_menu_input_name()};
+
+  auto values = run_field_wizard(
+      prompts.size(), [&](std::size_t index, const std::string& current) {
+        const bool can_go_back = index > 0;
+        // "第几步/共几步 + 能不能退"是这个向导唯一的可发现性来源:Backspace
+        // 回退没有任何视觉痕迹,不写在提示里用户不会知道它存在。
+        std::string prompt =
+            pzt::cli::i18n::recipe_menu_wizard_step_prefix(index + 1, prompts.size(), can_go_back) +
+            prompts[index];
+        // 第一个字段上关掉回退,而不是靠 run_field_wizard 那边"index 为 0
+        // 就不动"兜着:那样这一格会被重新读一次,回填的是这个字段上次提交
+        // 的值,用户刚删空的内容会原地长回来,那是"产生了效果",正是验收
+        // 标准里说不该发生的事。两边都判一次不是重复:这里管的是这一格的
+        // 按键语义,那边管的是导航不越界(读取方是参数,不保证不返回 Back)。
+        return read_text_line_for_wizard(prompt, current, can_go_back, banner_row, start_col,
+                                          content_cols);
+      });
+  if (!values) return "";  // Esc 中止整个流程,不写入任何 version
 
   pzt::core::VersionParams params;
-  params.highlights = parse_double_or_zero(highlights_text);
-  params.shadows = parse_double_or_zero(shadows_text);
-  params.wb_shift_r = parse_double_or_zero(wb_r_text);
-  params.wb_shift_b = parse_double_or_zero(wb_b_text);
-  params.contrast = parse_double_or_zero(contrast_text);
-  params.saturation = parse_double_or_zero(saturation_text);
-  params.blacks = parse_double_or_zero(blacks_text);
-  params.whites = parse_double_or_zero(whites_text);
-  std::optional<std::string> name = name_text->empty() ? std::nullopt : name_text;
+  params.highlights = parse_double_or_zero((*values)[0]);
+  params.shadows = parse_double_or_zero((*values)[1]);
+  params.wb_shift_r = parse_double_or_zero((*values)[2]);
+  params.wb_shift_b = parse_double_or_zero((*values)[3]);
+  params.contrast = parse_double_or_zero((*values)[4]);
+  params.saturation = parse_double_or_zero((*values)[5]);
+  params.blacks = parse_double_or_zero((*values)[6]);
+  params.whites = parse_double_or_zero((*values)[7]);
+  const std::string& name_text = (*values)[8];
+  std::optional<std::string> name =
+      name_text.empty() ? std::nullopt : std::optional<std::string>(name_text);
 
   auto result = pzt::core::create_version(preset->id, name, params);
   if (!result.ok()) return pzt::cli::i18n::recipe_menu_create_failed();
@@ -209,6 +214,33 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
 }
 
 }  // namespace
+
+// 向导的导航循环(契约见头文件)。values 全程按下标存"该字段最近一次提交
+// 的值",回退时原样交回给读取方当初值,前进时也不清空后面已经填过的字
+// 段:用户改的是前面某一格,后面填好的内容没有理由消失。
+std::optional<std::vector<std::string>> run_field_wizard(
+    std::size_t field_count,
+    const std::function<pzt::cli::ui::WizardLineResult(std::size_t, const std::string&)>&
+        read_field) {
+  std::vector<std::string> values(field_count);
+  std::size_t index = 0;
+  while (index < field_count) {
+    auto result = read_field(index, values[index]);
+    switch (result.action) {
+      case pzt::cli::ui::WizardLineAction::Cancelled:
+        return std::nullopt;
+      case pzt::cli::ui::WizardLineAction::Back:
+        // 第一个字段没有上一格,停在原地重问,不是退出向导。
+        if (index > 0) --index;
+        break;
+      case pzt::cli::ui::WizardLineAction::Submitted:
+        values[index] = result.text;
+        ++index;
+        break;
+    }
+  }
+  return values;
+}
 
 // 预设一多，单行装不下——把编号选项按"整个 N:[名字] 不拆行"的原则铺到两
 // 行(第一行装不下的整个单元挪到第二行)，操作图例(r/c/d/esc)右对齐贴在第二

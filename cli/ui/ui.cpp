@@ -123,10 +123,29 @@ void flush_pending_input() { tcflush(STDIN_FILENO, TCIFLUSH); }
 // 哪个字节真正到达不能只看代码确定)返回目前的缓冲区内容(可能是空字符
 // 串,调用方决定空值是否合法)。退格(DEL `0x7F` 或 BS `0x08`,两个都处
 // 理)整个删掉最后一个 UTF-8 码点,不是只删一个字节——因为 `ICANON` 关了,
-// 内核不会自动处理退格。
+// 内核不会自动处理退格。以上是下面这一整块读行机制的总说明,不只是紧跟
+// 着的这一个函数。
+
+// issue #19:退格这一步从 read_line_edit_step 里抽出来单独成函数,一是让
+// 向导能区分"空 buffer 上的退格"(回退)与"删了个字符",二是这段"往回找到
+// 一个完整 UTF-8 码点的起始字节"的逻辑值得不带 tty 地测(见
+// cli/tests/ui_test.cpp)。行为跟抽出来之前逐字一致。
+bool apply_backspace(std::string& buffer, std::size_t& cursor) {
+  if (buffer.empty()) return true;
+  if (cursor == 0) return false;  // 有内容,只是光标在开头:没东西可删,不是回退
+  std::size_t pos = cursor - 1;
+  while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
+  buffer.erase(pos, cursor - pos);
+  cursor = pos;
+  return false;
+}
+
 namespace {
 
-enum class LineEditResult { Continue, Submit, Cancel };
+// BackspaceOnEmpty 是 issue #19 加的第四态:退格落在空 buffer 上。对
+// read_text_line/read_text_line_with_placeholder 而言它等价于 Continue
+// (原本就是无事发生),只有分步向导把它读成"回退到上一个字段"。
+enum class LineEditResult { Continue, Submit, Cancel, BackspaceOnEmpty };
 
 // 光标感知的单步编辑：读一个字节(方向键要为了跟裸 Esc 消歧再多读几
 // 个)，更新 buffer/cursor，返回这一步的结果。read_text_line/
@@ -169,14 +188,9 @@ LineEditResult read_line_edit_step(std::string& buffer, std::size_t& cursor, int
   }
   if (c == '\r' || c == '\n') return LineEditResult::Submit;
   if (c == 0x7F || c == 0x08) {
-    if (cursor > 0) {
-      std::size_t pos = cursor - 1;
-      while (pos > 0 && (static_cast<unsigned char>(buffer[pos]) & 0xC0) == 0x80) --pos;
-      buffer.erase(pos, cursor - pos);
-      cursor = pos;
-    }
+    bool on_empty = apply_backspace(buffer, cursor);
     pending_needed = 0;
-    return LineEditResult::Continue;
+    return on_empty ? LineEditResult::BackspaceOnEmpty : LineEditResult::Continue;
   }
   if (static_cast<unsigned char>(c) < 0x20) return LineEditResult::Continue;  // 其它控制字节,忽略
 
@@ -192,12 +206,15 @@ LineEditResult read_line_edit_step(std::string& buffer, std::size_t& cursor, int
   return LineEditResult::Continue;
 }
 
-}  // namespace
-
-std::optional<std::string> read_text_line(const std::string& prompt, int banner_row,
-                                           int start_col, int content_cols) {
-  std::string buffer;
-  std::size_t cursor = 0;
+// issue #19:read_text_line 与 read_text_line_for_wizard 只差两处(初值、
+// 空 buffer 退格算不算回退),渲染与循环完全一样,所以共用这一个实现,两个
+// 对外函数都是它的薄壳。allow_back=false 时 BackspaceOnEmpty 退化成
+// Continue,也就是这个函数抽出来之前的行为。
+WizardLineResult read_prompt_line_impl(const std::string& prompt, const std::string& initial,
+                                        bool allow_back, int banner_row, int start_col,
+                                        int content_cols) {
+  std::string buffer = initial;
+  std::size_t cursor = buffer.size();  // 回填的初值光标停在末尾,接着改
   int pending_needed = 0;  // 还差几个续字节才能凑成当前码点
 
   // F-42：超宽内容会用到第二行(见下面 redraw 的换行处理),而 banner_row+1
@@ -240,14 +257,34 @@ std::optional<std::string> read_text_line(const std::string& prompt, int banner_
     auto result = read_line_edit_step(buffer, cursor, pending_needed);
     if (result == LineEditResult::Cancel) {
       write_stdout("\x1b[?25l");
-      return std::nullopt;
+      return {WizardLineAction::Cancelled, ""};
     }
     if (result == LineEditResult::Submit) {
       write_stdout("\x1b[?25l");
-      return buffer;
+      return {WizardLineAction::Submitted, buffer};
+    }
+    if (result == LineEditResult::BackspaceOnEmpty && allow_back) {
+      write_stdout("\x1b[?25l");
+      return {WizardLineAction::Back, ""};
     }
     if (pending_needed == 0) redraw();
   }
+}
+
+}  // namespace
+
+std::optional<std::string> read_text_line(const std::string& prompt, int banner_row,
+                                           int start_col, int content_cols) {
+  auto result = read_prompt_line_impl(prompt, /*initial=*/"", /*allow_back=*/false, banner_row,
+                                       start_col, content_cols);
+  if (result.action == WizardLineAction::Cancelled) return std::nullopt;
+  return result.text;
+}
+
+WizardLineResult read_text_line_for_wizard(const std::string& prompt, const std::string& initial,
+                                            bool allow_back, int banner_row, int start_col,
+                                            int content_cols) {
+  return read_prompt_line_impl(prompt, initial, allow_back, banner_row, start_col, content_cols);
 }
 
 // M3：跟 read_text_line 共用 read_line_edit_step，唯一的区别是 redraw：

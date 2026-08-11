@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -59,6 +60,35 @@ void flush_pending_input();
 // 返回缓冲区内容(可能是空串,调用方决定空值是否合法)。
 std::optional<std::string> read_text_line(const std::string& prompt, int banner_row, int start_col,
                                            int content_cols);
+
+// 删掉光标前的一个完整 UTF-8 码点(`ICANON` 关了,内核不替我们做这件事),
+// 光标跟着回退到那个码点的起始字节。返回 true 表示这次退格落在一个空
+// buffer 上:read_text_line 里无事发生,分步向导用它当"回退到上一个字段"
+// 的信号(issue #19)。光标已经在开头但 buffer 非空时返回 false:那是既有
+// 的"没东西可删,无事发生",不是回退。
+bool apply_backspace(std::string& buffer, std::size_t& cursor);
+
+// 分步向导里读一行的结果。比 read_text_line 的 optional<string> 多一态
+// (Back),所以单开一个类型而不是给那个函数加第三态:read_text_line 的每
+// 一处调用点(标签名/标签 cap/两处导出路径)都没有"上一个字段"可回退,让
+// 它们各自多处理一个永远走不到的分支不值得(issue #17 决策一)。
+enum class WizardLineAction { Submitted, Back, Cancelled };
+struct WizardLineResult {
+  WizardLineAction action;
+  std::string text;
+};
+
+// 向导专用的读行:跟 read_text_line 共用同一套编辑状态机与渲染,两处不
+// 同 - buffer 以 initial 起手(回填上次为这个字段提交的值,光标停在末
+// 尾),以及 buffer 为空时按 Backspace 返回 Back。Esc 仍然是 Cancelled
+// (取消整个向导),Enter 是 Submitted。
+//
+// allow_back=false 时空 buffer 上的退格无事发生(退化成 read_text_line
+// 的行为),给的是向导第一个字段:它没有上一格,这一下按键必须什么都不做,
+// 包括不把已经删空的内容重新画回来。
+WizardLineResult read_text_line_for_wizard(const std::string& prompt, const std::string& initial,
+                                            bool allow_back, int banner_row, int start_col,
+                                            int content_cols);
 
 // buffer 为空时整行显示 placeholder，用户一开始输入(buffer 非空)
 // placeholder 就整个让位给 buffer 本身，不像 read_text_line 那样有个常

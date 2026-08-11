@@ -1812,6 +1812,15 @@ std::string recipe_menu_input_name() {
   }
 }
 
+std::string recipe_menu_wizard_step_prefix(std::size_t step, std::size_t total, bool can_go_back) {
+  const std::string counter = std::to_string(step) + "/" + std::to_string(total);
+  if (g_lang == Lang::zh) {
+    return can_go_back ? " [" + counter + " Backspace 回上一步]" : " [" + counter + "]";
+  } else {
+    return can_go_back ? " [" + counter + " Backspace: back]" : " [" + counter + "]";
+  }
+}
+
 std::string recipe_menu_create_failed() {
   if (g_lang == Lang::zh) {
     return " 创建失败,请重试 ";

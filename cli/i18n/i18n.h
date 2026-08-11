@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -370,6 +371,11 @@ std::string recipe_menu_input_saturation();
 std::string recipe_menu_input_blacks();
 std::string recipe_menu_input_whites();
 std::string recipe_menu_input_name();
+// issue #19：`r c` 分步向导每个字段提示的前缀:第几步/共几步，以及(非首
+// 个字段上)Backspace 能回退这件事:回退没有任何视觉痕迹,不写在提示里用
+// 户不会知道它存在。前缀之后紧跟 recipe_menu_input_* 那几条(它们各自自
+// 带前导空格)。
+std::string recipe_menu_wizard_step_prefix(std::size_t step, std::size_t total, bool can_go_back);
 std::string recipe_menu_create_failed();
 std::string recipe_menu_create_success(const std::string& preset_name);
 // r 顶层菜单的操作图例(r/c/d/v/esc)。编号选项的铺行由 cli/menu/recipe_menu
