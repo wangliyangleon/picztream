@@ -422,25 +422,26 @@ std::optional<ResolvedRecipe> resolve_recipe(db::Database& db, RecipeId recipe_i
   return ResolvedRecipe{look.lut, params, look.grain_amount};
 }
 
-Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
-                                                        const decode::DecodedImage& src,
-                                                        RecipeId recipe_id,
-                                                        unsigned thread_count) {
-  auto resolved = resolve_recipe(db, recipe_id);
-  if (!resolved) {
-    return Result<decode::DecodedImage, RenderRecipeError>::Err(RenderRecipeError::RecipeNotFound);
-  }
+namespace {
 
+// 把一份已经解析好的 recipe 套到一张图上。`render` 与 `render_preview` 的
+// 唯一区别是 `params` 从哪儿来 - 前者是 resolve_recipe 从库里查出来的,后
+// 者被调用方给的草稿整个替换掉 - 别的(LUT、颗粒)完全一样,所以这段合成逻
+// 辑抽出来两者共用,而不是各写一遍。这不只是省重复:render_preview 的全部
+// 意义就是"预览与保存之后是同一张图",让两条路径走同一段代码,这个等价性
+// 就是构造上成立的,不需要靠两处实现保持同步来维持。
+decode::DecodedImage apply_resolved(const decode::DecodedImage& src, const ResolvedRecipe& resolved,
+                                     unsigned thread_count) {
+  const VersionParams& p = resolved.params;  // 下面那串非零判断逐字段点名,借个短名字
   decode::DecodedImage out = src;  // 拷贝一份工作缓冲区,不修改调用方传入的原图
   // 没有 LUT(比如 Origin)就跳过这一步,不做一次没有意义的恒等插值——省
   // 掉的是真实的逐像素 8 次查表计算量,不只是省一次函数调用。
-  if (resolved->lut) {
-    color::apply_lut(out, *resolved->lut, thread_count);
+  if (resolved.lut) {
+    color::apply_lut(out, *resolved.lut, thread_count);
   }
   // 同样的道理对调整参数也成立:八个参数全零(比如 Origin 预设本身)时,
   // apply_adjustments 算出来的 delta 恒为 0、增益恒为 1,是个不折不扣的
   // 无意义计算——之前漏掉了这一半的优化,只跳过了 LUT。
-  const auto& p = resolved->params;
   bool has_adjustments = p.highlights != 0 || p.shadows != 0 || p.wb_shift_r != 0 ||
                           p.wb_shift_b != 0 || p.contrast != 0 || p.saturation != 0 ||
                           p.blacks != 0 || p.whites != 0;
@@ -452,10 +453,41 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
   // grain_amount<=0 时完全跳过——跟"Origin 没有 LUT 就跳过 apply_lut"是
   // 同一个优化精神,不做无意义的整图遍历。apply_grain 内部也有同样的判
   // 断,这里是省"要不要走进 core::color 这一层"的调用开销。
-  if (resolved->grain_amount > 0) {
-    color::apply_grain(out, static_cast<float>(resolved->grain_amount), thread_count);
+  if (resolved.grain_amount > 0) {
+    color::apply_grain(out, static_cast<float>(resolved.grain_amount), thread_count);
   }
-  return Result<decode::DecodedImage, RenderRecipeError>::Ok(std::move(out));
+  return out;
+}
+
+}  // namespace
+
+Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
+                                                        const decode::DecodedImage& src,
+                                                        RecipeId recipe_id,
+                                                        unsigned thread_count) {
+  auto resolved = resolve_recipe(db, recipe_id);
+  if (!resolved) {
+    return Result<decode::DecodedImage, RenderRecipeError>::Err(RenderRecipeError::RecipeNotFound);
+  }
+  return Result<decode::DecodedImage, RenderRecipeError>::Ok(
+      apply_resolved(src, *resolved, thread_count));
+}
+
+Result<decode::DecodedImage, RenderRecipeError> render_preview(db::Database& db,
+                                                                const decode::DecodedImage& src,
+                                                                RecipeId preset_id,
+                                                                VersionParams draft,
+                                                                unsigned thread_count) {
+  auto resolved = resolve_recipe(db, preset_id);
+  if (!resolved) {
+    return Result<decode::DecodedImage, RenderRecipeError>::Err(RenderRecipeError::RecipeNotFound);
+  }
+  // 查出来那份 params 整个让位给草稿:传预设时它本来就是全零,传 version
+  // 时它是那一行自己存的值,两种情况下该生效的都是用户此刻正在填的这组。
+  // 底子(LUT 与颗粒)照用解析结果,那才是"预设"这一层贡献的东西。
+  resolved->params = draft;
+  return Result<decode::DecodedImage, RenderRecipeError>::Ok(
+      apply_resolved(src, *resolved, thread_count));
 }
 
 }  // namespace pzt::core::recipe
