@@ -1724,11 +1724,21 @@ int cmd_open(const std::vector<std::string>& args) {
           pzt::cli::menu::PreviewFn preview = [&](pzt::core::RecipeId preset_id,
                                                    const pzt::core::VersionParams& draft) {
             preview_drawn = true;
+            auto preview_start = std::chrono::steady_clock::now();
             // 解码失败时 draw_image_frame 什么都不画并返回 DecodeFailed,
             // 向导照常走完——预览是辅助,不是创建 version 的前置条件。这里
             // 不报文案:主循环画同一张图时已经报过,再报一次只是重复。
             (void)draw_image_frame(prefetch, current_ref->id, mode, kImageId, frame_layout,
                                     DraftStyle{preset_id, draft}, frame);
+            // SPEC 4.4:这一刀把渲染从"每次导航一次"改成了"每按一次 Enter 一
+            // 次",是延迟敏感路径上的改动,得留下可量的东西。跟 key-to-render
+            // 同一条 stderr 通道、同一个前缀风格,--debug 面板里直接能看到。
+            // 量的是整条路(取解码结果 + 降采样 + 开库套参数 + 传给终端),不
+            // 只是套参数那一步——多出来的开销正是在前后两头。
+            std::fprintf(stderr, "[pzt open] recipe-preview %.2fms\n",
+                          std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - preview_start)
+                              .count());
           };
           auto outcome =
               handle_r_key(current_ref->id, banner_row, start_col, content_cols, preview);

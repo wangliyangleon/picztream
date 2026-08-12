@@ -162,7 +162,8 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
     return pzt::cli::i18n::recipe_menu_custom_full(preset->name);
   }
 
-  // 9 个字段的提示文案,顺序即向导顺序,也即下面取值的下标顺序。
+  // 9 个字段的提示文案,顺序即向导顺序,也即下面取值的下标顺序。前 8 格是
+  // 数值(params_from_wizard_fields 只认这 8 格),最后一格是名字。
   const std::vector<std::string> prompts = {
       pzt::cli::i18n::recipe_menu_input_highlights(), pzt::cli::i18n::recipe_menu_input_shadows(),
       pzt::cli::i18n::recipe_menu_input_wb_r(),       pzt::cli::i18n::recipe_menu_input_wb_b(),
@@ -196,7 +197,11 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
 
   // 跟每一帧预览用的是同一份映射,不在这里重写一遍(见 params_from_wizard_fields)。
   pzt::core::VersionParams params = params_from_wizard_fields(*values);
-  const std::string& name_text = (*values)[8];
+  // 名字是唯一不进 VersionParams 的字段,只能在这里按下标取。写成常量而不是
+  // 裸 8,是因为字段表哪天加一格的话,裸下标读到的会是错的那一格(或者越界),
+  // 而两处都写 8 的时候编译器一句话都不会说。
+  const std::size_t kNameFieldIndex = prompts.size() - 1;
+  const std::string& name_text = (*values)[kNameFieldIndex];
   std::optional<std::string> name =
       name_text.empty() ? std::nullopt : std::optional<std::string>(name_text);
 
