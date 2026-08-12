@@ -143,9 +143,10 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
 // 环见 run_field_wizard)。"静默归零"这条哲学不变:有了字段级回退,填错了
 // 直接退回去改,不需要再叠一层拒绝/重提示。
 //
-// issue #20:每提交一格就调一次 preview,把当前已知的完整参数组合套到正在
-// 浏览的这张图上。preview 可以是空的(当前图片解码失败),那时向导退化成纯
-// 文字流程、照常能建出 version。
+// issue #20:选完预设、问第一个字段之前先调一次 preview(画出这个预设的中
+// 性状态),之后每提交一格再调一次,套的都是当前已知的完整参数组合。preview
+// 可以是空的(当前图片解码失败),那时向导退化成纯文字流程、照常能建出
+// version。
 std::string handle_r_create_flow(int banner_row, int start_col, int content_cols,
                                   const PreviewFn& preview) {
   std::string message;
@@ -187,9 +188,10 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
         return read_text_line_for_wizard(prompt, current, can_go_back, banner_row, start_col,
                                           content_cols);
       },
-      // issue #20:每提交一格就把当前已知的完整组合套到正在浏览的这张图上重
-      // 画一次。preview 为空(当前图片解码不出来)时向导照常走完,只是没有画
-      // 面——预览是这个流程的辅助,不是它的前置条件。
+      // issue #20:把当前已知的完整组合套到正在浏览的这张图上重画一次。进
+      // 门先来一次(全空 = 这个预设的中性状态),之后每提交一格一次,触发点见
+      // run_field_wizard 的契约。preview 为空(当前图片解码不出来)时向导照常
+      // 走完,只是没有画面——预览是这个流程的辅助,不是它的前置条件。
       [&](const std::vector<std::string>& current_values) {
         if (preview) preview(preset->id, params_from_wizard_fields(current_values));
       });
@@ -222,6 +224,11 @@ std::optional<std::vector<std::string>> run_field_wizard(
     const std::function<void(const std::vector<std::string>&)>& on_values_changed) {
   std::vector<std::string> values(field_count);
   std::size_t index = 0;
+  // 问第一个字段之前先交出一次全空的初始状态。真机反馈:不先画的话,用户填
+  // 第一格时屏幕上还是这张图原来的风格,没有参照物;而且第一格填 0(0 的语义
+  // 是"不调整")按 Enter 会突然重渲染一次,看起来像是输入 0 产生了效果,实际
+  // 变的是从旧风格切到了这个预设的底子。
+  if (on_values_changed) on_values_changed(values);
   while (index < field_count) {
     auto result = read_field(index, values[index]);
     switch (result.action) {

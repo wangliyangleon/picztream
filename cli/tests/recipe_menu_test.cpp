@@ -105,6 +105,23 @@ TEST_CASE("run_field_wizard: 连退两格再往前走,后面已填的字段原�
 // 那一刻手上的字段值是什么",预览本身怎么画是 browse.cpp 的事,不在这里。
 // ---------------------------------------------------------------------------
 
+TEST_CASE("run_field_wizard: 问第一个字段之前先交出一次全空的初始状态") {
+  // 真机反馈:不先画一次的话,用户填第一个字段时屏幕上还是这张图原来的风
+  // 格,没有参照物;而且第一格填 0(=不调整)按 Enter 反而会突然重渲染一次,
+  // 看起来像是"输入 0 产生了效果"——实际变的是从旧风格切到了预设的底子。
+  ScriptedReader reader{{cancel()}};
+  std::vector<std::vector<std::string>> seen;
+
+  run_field_wizard(
+      3, [&](std::size_t i, const std::string& cur) { return reader(i, cur); },
+      [&](const std::vector<std::string>& v) { seen.push_back(v); });
+
+  // 一个字段都还没问,就已经通知过一次,内容是全空(= 预设的中性状态)。
+  REQUIRE(seen.size() == 1);
+  CHECK(seen[0] == std::vector<std::string>{"", "", ""});
+  CHECK(reader.asked.size() == 1);  // 通知发生在第一次读字段之前
+}
+
 TEST_CASE("run_field_wizard: 每次提交都把当前全部字段值交出去一次") {
   ScriptedReader reader{{submit("10"), submit("20")}};
   std::vector<std::vector<std::string>> seen;
@@ -116,9 +133,10 @@ TEST_CASE("run_field_wizard: 每次提交都把当前全部字段值交出去一
   REQUIRE(values.has_value());
   // 每一次都是"当前已知的完整组合",没填的字段是空串而不是缺位——预览要
   // 的正是这个:未填字段按 0 参与渲染。
-  REQUIRE(seen.size() == 2);
-  CHECK(seen[0] == std::vector<std::string>{"10", ""});
-  CHECK(seen[1] == std::vector<std::string>{"10", "20"});
+  REQUIRE(seen.size() == 3);
+  CHECK(seen[0] == std::vector<std::string>{"", ""});  // 进门那一次
+  CHECK(seen[1] == std::vector<std::string>{"10", ""});
+  CHECK(seen[2] == std::vector<std::string>{"10", "20"});
 }
 
 TEST_CASE("run_field_wizard: 回退不改变任何字段值,因此不额外通知一次") {
@@ -134,9 +152,9 @@ TEST_CASE("run_field_wizard: 回退不改变任何字段值,因此不额外通�
       [&](const std::vector<std::string>& v) { seen.push_back(v); });
 
   CHECK(!values.has_value());  // 末尾取消,这条测试只看通知次数与内容
-  REQUIRE(seen.size() == 3);
-  CHECK(seen[1] == std::vector<std::string>{"10", "20", ""});
-  CHECK(seen[2] == std::vector<std::string>{"10", "22", ""});  // 回退后重填,值变了才通知
+  REQUIRE(seen.size() == 4);                                   // 进门 1 次 + 3 次提交,回退不占
+  CHECK(seen[2] == std::vector<std::string>{"10", "20", ""});
+  CHECK(seen[3] == std::vector<std::string>{"10", "22", ""});  // 回退后重填,值变了才通知
 }
 
 TEST_CASE("run_field_wizard: 取消不通知(那一步没有产生新的参数组合)") {
@@ -148,7 +166,7 @@ TEST_CASE("run_field_wizard: 取消不通知(那一步没有产生新的参数�
       [&](const std::vector<std::string>& v) { seen.push_back(v); });
 
   CHECK(!values.has_value());
-  CHECK(seen.size() == 1);
+  CHECK(seen.size() == 2);  // 进门 1 次 + 那一次提交,取消本身不通知
 }
 
 TEST_CASE("run_field_wizard: 不传回调时照常工作") {

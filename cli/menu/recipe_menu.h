@@ -48,10 +48,15 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
 // 这个循环里"回退到哪、回填什么值、第一个字段会不会越界"才是容易写错的
 // 部分,而它一个终端字节都不需要碰。
 //
-// issue #20：on_values_changed 在每次**值真的变了**之后被调一次(即提交,
-// 见下),拿到的是当前全部字段。回退只挪 index、不动任何值,所以回退之后
-// 屏幕上那一帧预览已经就是"回到的那一步对应的参数组合",不需要也不值得
-// 再花一次渲染画出一模一样的东西。可以不传。
+// issue #20：on_values_changed 交出"用户此刻该看到的那一组值",拿到的是当
+// 前全部字段(没填的是空串)。触发点有两个:
+//   1. 问第一个字段之前一次,值全空 —— 用户填第一格时得有参照物,而且第一
+//      格填 0(语义是"不调整")按 Enter 不该突然重渲染一次,那看起来像是输
+//      入 0 产生了效果,实际变的是从旧风格切到了预设的底子(真机反馈);
+//   2. 每次提交之后一次。
+// 回退不在其中:回退只挪 index、不动任何值,所以回退之后屏幕上那一帧已经就
+// 是"回到的那一步对应的组合",不需要也不值得再花一次渲染画一模一样的东
+// 西。可以不传。
 std::optional<std::vector<std::string>> run_field_wizard(
     std::size_t field_count,
     const std::function<pzt::cli::ui::WizardLineResult(std::size_t, const std::string&)>&
