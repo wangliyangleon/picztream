@@ -142,7 +142,12 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
 // issue #19:9 个字段从一次性问完的线性问答改成可前进/后退的向导(导航循
 // 环见 run_field_wizard)。"静默归零"这条哲学不变:有了字段级回退,填错了
 // 直接退回去改,不需要再叠一层拒绝/重提示。
-std::string handle_r_create_flow(int banner_row, int start_col, int content_cols) {
+//
+// issue #20:每提交一格就调一次 preview,把当前已知的完整参数组合套到正在
+// 浏览的这张图上。preview 可以是空的(当前图片解码失败),那时向导退化成纯
+// 文字流程、照常能建出 version。
+std::string handle_r_create_flow(int banner_row, int start_col, int content_cols,
+                                  const PreviewFn& preview) {
   std::string message;
   auto preset = handle_pick_preset_prompt(banner_row, start_col, content_cols, &message);
   if (!preset) return message;  // Esc 时 message 是空的,静默；无效选择时带一句反馈
@@ -156,18 +161,6 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
   if (live_versions_for_menu(preset->id).size() >= 9) {
     return pzt::cli::i18n::recipe_menu_custom_full(preset->name);
   }
-
-  auto parse_double_or_zero = [](const std::string& s) -> double {
-    if (s.empty()) return 0.0;
-    try {
-      std::size_t consumed = 0;
-      double v = std::stod(s, &consumed);
-      if (consumed == s.size()) return v;
-    } catch (const std::exception&) {
-      // 解析失败,落到下面的 0.0
-    }
-    return 0.0;
-  };
 
   // 9 个字段的提示文案,顺序即向导顺序,也即下面取值的下标顺序。
   const std::vector<std::string> prompts = {
@@ -192,18 +185,17 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
         // 按键语义,那边管的是导航不越界(读取方是参数,不保证不返回 Back)。
         return read_text_line_for_wizard(prompt, current, can_go_back, banner_row, start_col,
                                           content_cols);
+      },
+      // issue #20:每提交一格就把当前已知的完整组合套到正在浏览的这张图上重
+      // 画一次。preview 为空(当前图片解码不出来)时向导照常走完,只是没有画
+      // 面——预览是这个流程的辅助,不是它的前置条件。
+      [&](const std::vector<std::string>& current_values) {
+        if (preview) preview(preset->id, params_from_wizard_fields(current_values));
       });
   if (!values) return "";  // Esc 中止整个流程,不写入任何 version
 
-  pzt::core::VersionParams params;
-  params.highlights = parse_double_or_zero((*values)[0]);
-  params.shadows = parse_double_or_zero((*values)[1]);
-  params.wb_shift_r = parse_double_or_zero((*values)[2]);
-  params.wb_shift_b = parse_double_or_zero((*values)[3]);
-  params.contrast = parse_double_or_zero((*values)[4]);
-  params.saturation = parse_double_or_zero((*values)[5]);
-  params.blacks = parse_double_or_zero((*values)[6]);
-  params.whites = parse_double_or_zero((*values)[7]);
+  // 跟每一帧预览用的是同一份映射,不在这里重写一遍(见 params_from_wizard_fields)。
+  pzt::core::VersionParams params = params_from_wizard_fields(*values);
   const std::string& name_text = (*values)[8];
   std::optional<std::string> name =
       name_text.empty() ? std::nullopt : std::optional<std::string>(name_text);
@@ -221,7 +213,8 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
 std::optional<std::vector<std::string>> run_field_wizard(
     std::size_t field_count,
     const std::function<pzt::cli::ui::WizardLineResult(std::size_t, const std::string&)>&
-        read_field) {
+        read_field,
+    const std::function<void(const std::vector<std::string>&)>& on_values_changed) {
   std::vector<std::string> values(field_count);
   std::size_t index = 0;
   while (index < field_count) {
@@ -236,10 +229,43 @@ std::optional<std::vector<std::string>> run_field_wizard(
       case pzt::cli::ui::WizardLineAction::Submitted:
         values[index] = result.text;
         ++index;
+        // 提交是唯一会改动 values 的分支,所以也是唯一需要通知的分支(见头
+        // 文件里关于回退为什么不通知的说明)。
+        if (on_values_changed) on_values_changed(values);
         break;
     }
   }
   return values;
+}
+
+pzt::core::VersionParams params_from_wizard_fields(const std::vector<std::string>& values) {
+  auto parse_double_or_zero = [](const std::string& s) -> double {
+    if (s.empty()) return 0.0;
+    try {
+      std::size_t consumed = 0;
+      double v = std::stod(s, &consumed);
+      if (consumed == s.size()) return v;
+    } catch (const std::exception&) {
+      // 解析失败,落到下面的 0.0
+    }
+    return 0.0;
+  };
+  // 向导中途 values 里靠后的字段还是空串,越界时同样按空串处理——两种情况
+  // 归零的理由是同一个,不值得分开写。
+  auto field = [&](std::size_t i) -> double {
+    return i < values.size() ? parse_double_or_zero(values[i]) : 0.0;
+  };
+
+  pzt::core::VersionParams params;
+  params.highlights = field(0);
+  params.shadows = field(1);
+  params.wb_shift_r = field(2);
+  params.wb_shift_b = field(3);
+  params.contrast = field(4);
+  params.saturation = field(5);
+  params.blacks = field(6);
+  params.whites = field(7);
+  return params;
 }
 
 // 预设一多，单行装不下——把编号选项按"整个 N:[名字] 不拆行"的原则铺到两
@@ -291,7 +317,7 @@ std::pair<std::string, std::string> build_recipe_menu_lines(
 }
 
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
-                         int content_cols) {
+                         int content_cols, const PreviewFn& preview) {
   // `c` 新建 version 之后留在这个循环里,不管成功/失败/中途 Esc 取消都回
   // 到预设列表重新显示(跟 handle_space_key 的 `c` 分支同一个理由:建完
   // 一个新 version,大概率是想紧接着把它应用上去,不该被退回一级菜单)。
@@ -319,7 +345,7 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
       return {RKeyAction::Toggled, ""};
     }
     if (c == 'c') {
-      std::string result = handle_r_create_flow(banner_row, start_col, content_cols);
+      std::string result = handle_r_create_flow(banner_row, start_col, content_cols, preview);
       if (!result.empty()) {
         // 跟 cmd_open 里 status_override 的处理逻辑一致:消息自带尾随空
         // 格,先去掉再拼"，按任意键继续"，不然中间会留一大段空白。

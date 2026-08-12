@@ -309,4 +309,11 @@ std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id);
 Result<DecodedImage, RenderRecipeError> render(const DecodedImage& src, RecipeId recipe_id,
                                                 unsigned thread_count = 1);
 
+// T-29:拿"某个预设的底子"配上一组还没落库的草稿参数渲染,给 `r c` 向导做
+// 逐字段实时预览用——那时这组参数还没有 recipe_id,中途取消也不该在库里留
+// 下任何东西。语义与等价性保证见 core/recipe/recipe.h。
+Result<DecodedImage, RenderRecipeError> render_preview(const DecodedImage& src, RecipeId preset_id,
+                                                        VersionParams draft,
+                                                        unsigned thread_count = 1);
+
 }  // namespace pzt::core

@@ -22,8 +22,21 @@ struct RKeyOutcome {
   std::string status;
 };
 
+// issue #20：`r c` 向导每前进一步就要拿"当前已知的完整参数组合"把正在浏览
+// 的这张图重画一次。怎么画只有 browse.cpp 知道(它握着解码结果、降采样尺
+// 寸和 kitty 的绘制参数),所以这里只收一个回调,不让 cli/menu 反向依赖
+// cli/kitty 与 core/decode(issue #17 决策三)。
+//
+// 带预设 id 是因为预览要的是"这个预设的底子 + 这组草稿",而预设是在
+// handle_r_create_flow 内部选的,调用方注入回调时还不知道是哪一个。
+//
+// 空的 std::function 表示"这次不需要预览"(当前图片没解码出来、或者调用方
+// 根本不画图),向导照常走完,只是不显示画面。
+using PreviewFn =
+    std::function<void(pzt::core::RecipeId preset_id, const pzt::core::VersionParams& draft)>;
+
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
-                         int content_cols);
+                         int content_cols, const PreviewFn& preview = {});
 
 // issue #19：`r c` 分步向导的导航循环。按下标依次问 field_count 个字段，
 // read_field(下标, 该字段当前值) 返回提交/回退/取消：提交前进一格，回退
@@ -34,9 +47,26 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
 // 是为了让导航本身能不带 tty 地测(见 cli/tests/recipe_menu_test.cpp):
 // 这个循环里"回退到哪、回填什么值、第一个字段会不会越界"才是容易写错的
 // 部分,而它一个终端字节都不需要碰。
+//
+// issue #20：on_values_changed 在每次**值真的变了**之后被调一次(即提交,
+// 见下),拿到的是当前全部字段。回退只挪 index、不动任何值,所以回退之后
+// 屏幕上那一帧预览已经就是"回到的那一步对应的参数组合",不需要也不值得
+// 再花一次渲染画出一模一样的东西。可以不传。
 std::optional<std::vector<std::string>> run_field_wizard(
     std::size_t field_count,
     const std::function<pzt::cli::ui::WizardLineResult(std::size_t, const std::string&)>&
-        read_field);
+        read_field,
+    const std::function<void(const std::vector<std::string>&)>& on_values_changed = {});
+
+// issue #20：把向导的字段文本映射成一组完整的调整参数。前 8 格按向导顺序
+// (高光/暗光/白平衡红/白平衡蓝/对比度/饱和度/黑色/白色)对应 VersionParams
+// 的 8 个旋钮,第 9 格是名字、不参与;空串、解析不出数字、以及尾部有残渣的
+// (如 "12abc")一律当 0——"静默归零"这条既有哲学不变(见 handle_r_create_flow)。
+// values 短于 8 格时缺的那些也是 0,向导中途正是这个形状。
+//
+// 单独抽出来是因为预览与最终 create_version 必须走同一份映射:两边各写一
+// 遍的话,顺序错一格就变成"照着预览调出来的参数,存下来不是那张图",而那
+// 恰恰是实时预览这个功能的全部意义。
+pzt::core::VersionParams params_from_wizard_fields(const std::vector<std::string>& values);
 
 }  // namespace pzt::cli::menu

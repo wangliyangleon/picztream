@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <unistd.h>
@@ -725,6 +726,105 @@ void highlight_active_menu_key(char key, const std::vector<pzt::cli::i18n::MenuL
   }
 }
 
+// 图片那一格的绘制几何。全部来自主循环每帧重算的布局变量,打包成一个结构
+// 体只是为了不让 draw_image_frame 拖着六个 int 参数走,没有别的语义。
+struct ImageFrameLayout {
+  int start_col = 0;
+  int image_top_row = 0;
+  int image_cols = 0;
+  int top_rows = 0;
+  int cell_px_w = 0;
+  int cell_px_h = 0;
+};
+
+// issue #20:一组还没落库的草稿参数 + 它挂在哪个预设底下。
+struct DraftStyle {
+  pzt::core::RecipeId preset_id = 0;
+  pzt::core::VersionParams params;
+};
+
+// 这一帧的像素要套什么色彩参数:
+// - monostate  = 什么都不套(Origin,或者用户按 `r v` 切到了原图)
+// - RecipeId   = 图片自己存着的那个 recipe(主循环的常规情况)
+// - DraftStyle = 一组还没落库的草稿(issue #20,`r c` 向导的逐字段预览)
+using FrameStyle = std::variant<std::monostate, pzt::core::RecipeId, DraftStyle>;
+
+enum class FrameDrawResult { Drawn, DecodeFailed, RenderFailed };
+
+// "清掉上一帧的图 -> 取解码结果 -> 降采样 -> 套色彩参数 -> 交给 kitty 画"
+// 这一整套。issue #20 之前这段就长在主循环里,现在 `r c` 向导每提交一格也
+// 要走同一条路(只是色彩参数换成草稿),抽出来共用而不是照抄一份——照抄的
+// 代价是"预览画得跟浏览不一样",那种偏差只能靠真机发现。
+//
+// 失败只报回去、不在这里出文案:主循环那边有"一次会话只报一次"的闸门(见
+// render_failure_reported),而向导预览里失败就是不显示画面、不打断流程,
+// 两个调用方对失败的处理本来就不一样。
+FrameDrawResult draw_image_frame(pzt::core::PrefetchCache& prefetch, pzt::core::ImageId image_id,
+                                  const pzt::cli::kitty::TerminalMode& mode, int placement_id,
+                                  const ImageFrameLayout& layout, const FrameStyle& style,
+                                  std::size_t& frame) {
+  // 每次先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的关键一
+  // 步,没有它,旧 placement 不会自动消失。失败(比如 WriteFailed)这里不特
+  // 殊处理——下面马上要写新的 placement 覆盖同一个 id,没有比"继续往下走"
+  // 更好的补救动作,显式 (void) 丢弃而不是让 [[nodiscard]] 警告挂着没人
+  // 处理(F-19)。
+  (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, placement_id);
+
+  auto decoded = prefetch.get(image_id);
+  if (!decoded.ok()) return FrameDrawResult::DecodeFailed;
+
+  // F-14：decoded.value() 是 shared_ptr(指向缓存里那份不可变像素),decoded
+  // 在这个作用域内一直存活、持有引用,解引用得到的 img 引用在整段渲染期间
+  // 有效。
+  const auto& img = *decoded.value();
+  // 让图片在面板里居中、四周留一点空隙,而不是贴着左边框/上边框——
+  // fit_within 只保证"不超出"这个框,不保证"居中",长宽比跟面板不完全匹配
+  // 时(几乎总是这样)不作处理的话,多出来的空白会全部堆在右边/下边,图片贴
+  // 着另外两条边。先从可用区域里减掉一份固定 padding 再传给 fit_within,
+  // 保证贴得最紧的那个维度也留有空隙;再用算出来的目标尺寸相对完整的
+  // image_cols x top_rows 框计算居中偏移,把剩余的宽松空间平均分到两侧。
+  const int kImagePaddingCols = 2;  // 终端 cell 不是正方形,横向
+  const int kImagePaddingRows = 1;  // 留白数值上比纵向大一点,视觉才均衡
+  int avail_cols = std::max(1, layout.image_cols - kImagePaddingCols * 2);
+  int avail_rows = std::max(1, layout.top_rows - kImagePaddingRows * 2);
+  auto fit = pzt::cli::kitty::fit_within(img.width, img.height, avail_cols * layout.cell_px_w,
+                                          avail_rows * layout.cell_px_h);
+  int target_cols = std::max(1, fit.width / layout.cell_px_w);
+  int target_rows = std::max(1, fit.height / layout.cell_px_h);
+  int offset_cols = (layout.image_cols - target_cols) / 2;
+  int offset_rows = (layout.top_rows - target_rows) / 2;
+
+  // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)整个丢给
+  // 终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的实际来源——即便我
+  // 们这边 prefetch 已经命中、解码耗时为 0。先在这边缩小到面板大致能显示
+  // 的尺寸,大幅减少终端侧要处理的数据量。
+  auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
+  const auto& downsampled = resized.ok() ? resized.value() : img;
+
+  // M1 increment 5:在降采样之后、发给终端之前应用 recipe。thread_count=1
+  // 同步执行——Phase 0 spike 已经验证过预览分辨率下这一步足够便宜
+  // (10-22ms),不需要额外的后台线程或缓存。渲染失败(比如引用了一个数据损
+  // 坏的 recipe_id)时静默回退到未处理的画面,不阻断浏览,跟"图片解码失
+  // 败,跳过"是同一种防御精神。
+  std::optional<pzt::core::DecodedImage> styled;
+  if (const auto* recipe_id = std::get_if<pzt::core::RecipeId>(&style)) {
+    auto render_result = pzt::core::render(downsampled, *recipe_id, 1);
+    if (render_result.ok()) styled = std::move(render_result.value());
+  } else if (const auto* draft = std::get_if<DraftStyle>(&style)) {
+    auto render_result = pzt::core::render_preview(downsampled, draft->preset_id, draft->params, 1);
+    if (render_result.ok()) styled = std::move(render_result.value());
+  }
+  const auto& to_render = styled ? *styled : downsampled;
+
+  move_cursor(layout.image_top_row + offset_rows, layout.start_col + 1 + offset_cols);
+  std::string tmp_path =
+      pzt::cli::kitty::make_tmp_path(std::to_string(getpid()) + "_" + std::to_string(frame++));
+  auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(STDOUT_FILENO, mode, to_render,
+                                                            placement_id, tmp_path, target_cols,
+                                                            target_rows);
+  return rendered.ok() ? FrameDrawResult::Drawn : FrameDrawResult::RenderFailed;
+}
+
 }  // namespace
 
 // increment 6.4.2:三面板固定布局(图片区左上约 80% 宽、信息栏右上、
@@ -1007,6 +1107,12 @@ int cmd_open(const std::vector<std::string>& args) {
       int top_rows = std::max(1, total_rows - fixed_rows);
 
       int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
+
+      // 画图那一格用得到的全部几何,打包一次给 draw_image_frame——主循环末
+      // 尾画当前帧要用,`r c` 向导的逐字段预览(issue #20)也要用同一份,那时
+      // 已经在按键处理里、离这些变量的计算处隔了几百行。
+      ImageFrameLayout frame_layout{start_col,  image_top_row, image_cols,
+                                     top_rows,   cell_px_w,     cell_px_h};
 
       // 右侧面板纵向分成两个 block:上半 metadata、下半菜单(顶层按键提
       // 示,一行一条),中间一条横线分隔——左右宽度比例(图片:信息栏)不
@@ -1291,80 +1397,28 @@ int cmd_open(const std::vector<std::string>& args) {
       // 一帧最前面(信息栏绘制之前)已经算过、`show_original` 也已经在
       // 那里重置过,这里直接复用,不重新算一遍。
       if (navigated || style_toggled || size_changed) {
-        // 每帧先清掉上一帧的图,再画新的——这是修复 6.4.1 重叠残留问题的
-        // 关键一步,没有它,旧 placement 不会自动消失。失败(比如
-        // WriteFailed)这里不特殊处理——下面马上要写新的 placement 覆盖
-        // 同一个 id,没有比"继续往下走"更好的补救动作,显式 (void) 丢弃
-        // 而不是让 [[nodiscard]] 警告挂着没人处理(F-19)。
-        (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+        // 套什么参数在这里决定(这是主循环的业务:这张图存了哪个 recipe、用
+        // 户有没有按 `r v` 切到原图),怎么画交给 draw_image_frame——`r c` 向
+        // 导的预览走的是同一个函数,只是这个 style 换成一组草稿。
+        FrameStyle style;
+        auto recipe_id = pzt::core::get_image_recipe(current_id);
+        if (recipe_id && !show_original) style = *recipe_id;
 
-        auto decoded = prefetch.get(current_id);
-        if (decoded.ok()) {
-          // F-14：decoded.value() 是 shared_ptr(指向缓存里那份不可变像素),
-          // decoded 在这个块作用域内一直存活、持有引用,解引用得到的 img 引
-          // 用在整段渲染期间有效。
-          const auto& img = *decoded.value();
-          // 让图片在面板里居中、四周留一点空隙,而不是贴着左边框/上边
-          // 框——fit_within 只保证"不超出"这个框,不保证"居中",长宽比
-          // 跟面板不完全匹配时(几乎总是这样)不作处理的话,多出来的空白
-          // 会全部堆在右边/下边,图片贴着另外两条边。先从可用区域里减掉
-          // 一份固定 padding 再传给 fit_within,保证贴得最紧的那个维度
-          // 也留有空隙;再用算出来的目标尺寸相对完整的 image_cols x
-          // top_rows 框计算居中偏移,把剩余的宽松空间平均分到两侧。
-          const int kImagePaddingCols = 2;  // 终端 cell 不是正方形,横向
-          const int kImagePaddingRows = 1;  // 留白数值上比纵向大一点,视觉才均衡
-          int avail_cols = std::max(1, image_cols - kImagePaddingCols * 2);
-          int avail_rows = std::max(1, top_rows - kImagePaddingRows * 2);
-          auto fit = pzt::cli::kitty::fit_within(img.width, img.height, avail_cols * cell_px_w,
-                                                  avail_rows * cell_px_h);
-          int target_cols = std::max(1, fit.width / cell_px_w);
-          int target_rows = std::max(1, fit.height / cell_px_h);
-          int offset_cols = (image_cols - target_cols) / 2;
-          int offset_rows = (top_rows - target_rows) / 2;
-
-          // 真机测试确认过:每帧把原始分辨率的 RGBA(可能几 MB 到近十 MB)
-          // 整个丢给终端,终端自己读临时文件+解码+缩放显示,是切图卡顿的
-          // 实际来源——即便我们这边 prefetch 已经命中、解码耗时为 0。先
-          // 在这边缩小到面板大致能显示的尺寸,大幅减少终端侧要处理的数
-          // 据量。
-          auto resized = pzt::core::resize_rgba(img, fit.width, fit.height);
-          const auto& downsampled = resized.ok() ? resized.value() : img;
-
-          // M1 increment 5:在降采样之后、发给终端之前应用 recipe。
-          // thread_count=1 同步执行——Phase 0 spike 已经验证过预览分辨率
-          // 下这一步足够便宜(10-22ms),不需要额外的后台线程或缓存;这个
-          // if 块本来就只在导航或 `r v` 切换时才跑,不会每帧都重算。
-          // show_original 为真时(用户按了 r v 切到原图预览)跳过渲染。
-          std::optional<pzt::core::DecodedImage> styled;
-          auto recipe_id = pzt::core::get_image_recipe(current_id);
-          if (recipe_id && !show_original) {
-            auto render_result = pzt::core::render(downsampled, *recipe_id, 1);
-            if (render_result.ok()) styled = std::move(render_result.value());
-            // render 失败(比如引用了一个数据损坏的 recipe_id)时静默回退
-            // 到未处理的画面,不阻断浏览,跟"图片解码失败,跳过"是同一种
-            // 防御精神。
-          }
-          const auto& to_render = styled ? *styled : downsampled;
-
-          move_cursor(image_top_row + offset_rows, start_col + 1 + offset_cols);
-          std::string tmp_path = pzt::cli::kitty::make_tmp_path(
-              std::to_string(getpid()) + "_" + std::to_string(frame++));
-          auto rendered = pzt::cli::kitty::render_rgba_via_tmpfile(
-              STDOUT_FILENO, mode, to_render, kImageId, tmp_path, target_cols, target_rows);
-          if (!rendered.ok() && !render_failure_reported) {
-            // B.1：以前这里是 fprintf 到 stderr,而 DebugLogRedirect 默认把
-            // stderr 整个丢掉,这条文案在默认路径上永远看不见。改走 notice
-            // 通道。
-            //
-            // 一次会话只报一次:渲染失败不是一次性事件,终端不对时每换一张
-            // 图就会再失败一次,不设闸门就是每帧刷屏。而且 notice 是在这一
-            // 帧的 banner 画完之后才入队的(banner 先画、图片后画),所以它显
-            // 示在下一帧;真的是最后一帧才失败的话,退出后那次重打兜底。
-            render_failure_reported = true;
-            std::string text = without_trailing_newline(pzt::cli::i18n::err_open_render_failed());
-            notices.push_back({text, text});
-          }
-        } else if (!decode_failure_reported) {
+        auto drawn = draw_image_frame(prefetch, current_id, mode, kImageId, frame_layout, style,
+                                       frame);
+        if (drawn == FrameDrawResult::RenderFailed && !render_failure_reported) {
+          // B.1：以前这里是 fprintf 到 stderr,而 DebugLogRedirect 默认把
+          // stderr 整个丢掉,这条文案在默认路径上永远看不见。改走 notice
+          // 通道。
+          //
+          // 一次会话只报一次:渲染失败不是一次性事件,终端不对时每换一张
+          // 图就会再失败一次,不设闸门就是每帧刷屏。而且 notice 是在这一
+          // 帧的 banner 画完之后才入队的(banner 先画、图片后画),所以它显
+          // 示在下一帧;真的是最后一帧才失败的话,退出后那次重打兜底。
+          render_failure_reported = true;
+          std::string text = without_trailing_newline(pzt::cli::i18n::err_open_render_failed());
+          notices.push_back({text, text});
+        } else if (drawn == FrameDrawResult::DecodeFailed && !decode_failure_reported) {
           decode_failure_reported = true;
           std::string text = without_trailing_newline(pzt::cli::i18n::err_open_decode_failed());
           notices.push_back({text, text});
@@ -1657,12 +1711,27 @@ int cmd_open(const std::vector<std::string>& args) {
       } else if (c == 'r') {
         // increment 6:完整的 `r` 前缀键交互,见 handle_r_key。应用/清除
         // 需要重新走一遍渲染(recipe_id 变了或者切到原图预览),交给
-        // style_toggled 触发;创建/删除不影响当前图片的 recipe_id,不需
-        // 要强制重画。
+        // style_toggled 触发;删除不影响当前图片的 recipe_id,不需要强制
+        // 重画。新建(`r c`)以前也在"不需要重画"那一类里,issue #20 之后不
+        // 是了——见下面 preview_drawn。
         if (current_ref) {
           highlight_active_menu_key('r', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
+          // issue #20:`r c` 向导每提交一格就回调一次,把当前已知的完整草稿
+          // 套到正在浏览的这张图上重画。回调注入在这里而不是写进 cli/menu,
+          // 是因为解码结果、降采样尺寸、kitty 绘制参数全在这一层(issue #17
+          // 决策三)。这一帧纯粹是看的:不落库,也不动这张图的 recipe_id。
+          bool preview_drawn = false;
+          pzt::cli::menu::PreviewFn preview = [&](pzt::core::RecipeId preset_id,
+                                                   const pzt::core::VersionParams& draft) {
+            preview_drawn = true;
+            // 解码失败时 draw_image_frame 什么都不画并返回 DecodeFailed,
+            // 向导照常走完——预览是辅助,不是创建 version 的前置条件。这里
+            // 不报文案:主循环画同一张图时已经报过,再报一次只是重复。
+            (void)draw_image_frame(prefetch, current_ref->id, mode, kImageId, frame_layout,
+                                    DraftStyle{preset_id, draft}, frame);
+          };
           auto outcome =
-              handle_r_key(current_ref->id, banner_row, start_col, content_cols);
+              handle_r_key(current_ref->id, banner_row, start_col, content_cols, preview);
           status_override = outcome.status;
           if (outcome.action == RKeyAction::Applied || outcome.action == RKeyAction::Cleared) {
             show_original = false;
@@ -1671,6 +1740,12 @@ int cmd_open(const std::vector<std::string>& args) {
             show_original = !show_original;
             style_toggled = true;
           }
+          // 向导在屏幕上留下的最后一帧是草稿预览,而这张图自己的 recipe_id
+          // 一个字节都没变(不管最后是建成了、还是 Esc 取消了)。不强制重画
+          // 的话画面会一直停在那帧草稿上,跟信息栏显示的风格对不上——而
+          // navigated 为假,光靠导航检测触发不了。show_original 刻意不动:
+          // 要恢复的是用户进向导之前的那个视图。
+          if (preview_drawn) style_toggled = true;
         }
       } else if (c == 'e') {
         // 顶层导出快捷键。二级菜单始终弹出(不再区分有没有 active

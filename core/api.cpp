@@ -274,4 +274,11 @@ Result<DecodedImage, RenderRecipeError> render(const DecodedImage& src, RecipeId
   return recipe::render(db, src, recipe_id, thread_count);
 }
 
+Result<DecodedImage, RenderRecipeError> render_preview(const DecodedImage& src, RecipeId preset_id,
+                                                        VersionParams draft,
+                                                        unsigned thread_count) {
+  db::Database db = db::Database::open_default();
+  return recipe::render_preview(db, src, preset_id, std::move(draft), thread_count);
+}
+
 }  // namespace pzt::core
