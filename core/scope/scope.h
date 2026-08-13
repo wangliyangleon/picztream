@@ -42,6 +42,15 @@ enum class ScopeError {
   FilterFailed,         // 底层按标签过滤失败
 };
 
+struct ScopeFailure {
+  ScopeError error;
+  // TagNotFound / SystemTagNotAllowed 时是解析出的 canonical 标签名，其它
+  // 错误时为空。两个表现层的文案都要它（交互层的 err_console_tag_not_found
+  // 与 headless 的 "tag not found: <name>"），而它们都不该为了拿这个名字
+  // 再解析一遍 scope 字符串 —— 那正是本模块要消灭的东西。
+  std::string tag_name;
+};
+
 struct Scope {
   std::vector<ImageId> image_ids;
   // 范围本身就是哪个标签，`*` 时为空。调用方用它判断 F-26 的对称例外
@@ -75,8 +84,8 @@ enum class SystemTagPolicy { Allow, Reject };
 // SystemTagPolicy::Reject 的判定在**查库之前**、按 canonical 名字做：范围
 // 写的是系统标签但项目里还没建过这个标签时，报 SystemTagNotAllowed 比报
 // TagNotFound 更贴近用户真正做错的事。
-Result<Scope, ScopeError> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
-                                   SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow);
+Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
+                                     SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow);
 
 // 从 image_ids 里剔除带 exclude_tag_names 里任一标签的图片，保持输入顺序。
 //

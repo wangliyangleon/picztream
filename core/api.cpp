@@ -114,6 +114,19 @@ TagId ensure_reject_tag(ProjectId project_id) {
   return tagging::ensure_reject_tag(db, project_id);
 }
 
+Result<Scope, ScopeFailure> resolve_scope(ProjectId project_id, const std::string& scope,
+                                           SystemTagPolicy system_tag_policy) {
+  db::Database db = db::Database::open_default();
+  return scope::resolve(db, project_id, scope, system_tag_policy);
+}
+
+std::vector<ImageId> exclude_by_tags(ProjectId project_id, const std::vector<ImageId>& image_ids,
+                                      const std::vector<std::string>& exclude_tag_names,
+                                      std::optional<TagId> scope_tag) {
+  db::Database db = db::Database::open_default();
+  return scope::exclude_by_tags(db, project_id, image_ids, exclude_tag_names, scope_tag);
+}
+
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds,
     int hash_threshold, dedup::DedupProgressFn on_progress, bool ai_enabled, Provider provider,

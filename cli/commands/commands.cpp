@@ -130,51 +130,25 @@ std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& proj
 std::optional<pzt::core::TagId> resolve_or_create_tag(pzt::core::ProjectId project_id,
                                                         const std::string& name);
 
-// M4：`pzt dedup` 的批量范围解析（当初 `pzt eval` 也共用这一份，T-22 把
-// 那条孤儿命令删掉之后只剩一个调用方）- 跟
-// cli/commands/browse.cpp 里 resolve_console_scope 同一个语义(`*` 整
-// 个项目、`#标签名` 带指定标签)，但那个函数在匿名命名空间里锁死、不
-// 对外暴露，这里为 headless 命令重写一份，错误走 error_code/error_msg
-// 而不是 i18n 人读文案。scope_tag 记录"范围本身就是这个标签"，供以后
-// 需要"目标本身是废片/重复不排除"这类对称例外的命令使用(dedup 暂不需
-// 要，先留着字段)。
-struct ScopeResult {
-  std::vector<pzt::core::ImageId> ids;
-  std::optional<pzt::core::TagId> scope_tag;
-  std::string error_code;
-  std::string error_msg;
-};
-
-ScopeResult resolve_scope(pzt::core::ProjectId project_id, const std::string& scope) {
-  ScopeResult result;
-  if (scope == "*") {
-    for (const auto& ref : pzt::core::list_images(project_id)) result.ids.push_back(ref.id);
-    return result;
+// T-16：scope 解析已经收进 core::scope，headless 与 `pzt open` 控制台共用
+// 那一份（在此之前这里是有意重写的第二份，两者已经分叉：交互那份认
+// `#Reject` 英文别名、这份不认，于是 `pzt dedup --scope '#Reject'` 报
+// tag_not_found 而 `/dedup #Reject` 可用。收编之后这处分叉消失，headless
+// 侧因此获得别名支持）。留在这一层的只有"结构化错误 -> error_code"这一步
+// 映射，跟交互层映射成 i18n 文案是同一个位置的两种表现，不是重复实现。
+int emit_scope_error(const pzt::core::ScopeFailure& failure) {
+  switch (failure.error) {
+    case pzt::core::ScopeError::TagNotFound:
+      return emit_json_error("tag_not_found", "tag not found: " + failure.tag_name);
+    case pzt::core::ScopeError::FilterFailed:
+      return emit_json_error("filter_failed", "failed to filter by tag");
+    case pzt::core::ScopeError::SystemTagNotAllowed:
+      // 本票的调用点用默认的 SystemTagPolicy::Allow，这一支到不了。#27 给
+      // dedup 接上 Reject 策略时会连同专属 error_code 一起补进来。
+    case pzt::core::ScopeError::InvalidSyntax:
+      return emit_json_error("invalid_scope", "scope must be * or #tag");
   }
-  if (scope.empty() || scope[0] != '#') {
-    result.error_code = "invalid_scope";
-    result.error_msg = "scope must be * or #tag";
-    return result;
-  }
-  std::string tag_name = scope.substr(1);
-  if (tag_name.size() >= 2 && tag_name.front() == '"' && tag_name.back() == '"') {
-    tag_name = tag_name.substr(1, tag_name.size() - 2);
-  }
-  auto tag_id = pzt::core::find_tag_by_name(project_id, tag_name);
-  if (!tag_id) {
-    result.error_code = "tag_not_found";
-    result.error_msg = "tag not found: " + tag_name;
-    return result;
-  }
-  result.scope_tag = *tag_id;
-  auto filtered = pzt::core::filter_by_tag(*tag_id);
-  if (!filtered.ok()) {
-    result.error_code = "filter_failed";
-    result.error_msg = "failed to filter by tag";
-    return result;
-  }
-  for (const auto& ref : filtered.value()) result.ids.push_back(ref.id);
-  return result;
+  return emit_json_error("invalid_scope", "scope must be * or #tag");
 }
 
 // M4：批量去重，走 Settings 的 dedup_time_window_seconds/
@@ -228,10 +202,9 @@ int cmd_dedup(const std::vector<std::string>& args) {
   auto project_id = resolve_project_json(positional[0]);
   if (!project_id) return 1;
 
-  auto resolved = resolve_scope(*project_id, scope);
-  if (!resolved.error_code.empty()) {
-    return emit_json_error(resolved.error_code.c_str(), resolved.error_msg);
-  }
+  auto scope_result = pzt::core::resolve_scope(*project_id, scope);
+  if (!scope_result.ok()) return emit_scope_error(scope_result.error());
+  auto resolved = std::move(scope_result.value());
 
   auto settings = pzt::core::load_settings();
   pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
@@ -246,7 +219,7 @@ int cmd_dedup(const std::vector<std::string>& args) {
   // `pzt open` 控制台里那道阻塞式闸门（browse.cpp）不受影响，它有人可
   // 问，也仍然承诺零写入。见票 10 决策一、五。
   auto result = pzt::core::find_and_tag_duplicates(
-      *project_id, resolved.ids, settings.dedup_time_window_seconds,
+      *project_id, resolved.image_ids, settings.dedup_time_window_seconds,
       settings.dedup_hash_threshold,
       [](int done, int total) { emit_json_progress("cluster", done, total); },
       ai_enabled, provider, local_config,

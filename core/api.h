@@ -17,6 +17,7 @@
 #include "core/project/project.h"
 #include "core/recipe/recipe.h"
 #include "core/result.h"
+#include "core/scope/scope.h"
 #include "core/settings/settings.h"
 #include "core/tagging/tagging.h"
 
@@ -47,6 +48,12 @@ using DeleteTagError = tagging::DeleteTagError;
 using RescanSummary = project::RescanSummary;
 using ImageRef = browse::ImageRef;
 using BrowseTagError = browse::BrowseTagError;
+
+// T-16：`一批图片的作用域 + 排除规则`的唯一实现，见 core/scope/scope.h。
+using Scope = scope::Scope;
+using ScopeError = scope::ScopeError;
+using ScopeFailure = scope::ScopeFailure;
+using SystemTagPolicy = scope::SystemTagPolicy;
 
 // 预取/缓存环形缓冲区,见 core/browse/prefetch.h increment 6.3。跟
 // ProjectSummary/ImageRef 这些纯数据类型不同,这是一个单次进程运行内持有
@@ -234,6 +241,17 @@ std::optional<ImageId> next_untagged(const std::vector<ImageRef>& images,
 std::optional<ImageId> prev_untagged(const std::vector<ImageRef>& images,
                                       std::optional<ImageId> current_id);
 Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
+
+// T-16：`*` / `#标签名` / `#"带空格的标签名"` 的解析，交互与 headless 两个
+// 入口共用这一份。错误是结构化的，两层各自映射成 i18n 文案 / error_code。
+Result<Scope, ScopeFailure> resolve_scope(ProjectId project_id, const std::string& scope,
+                                           SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow);
+
+// T-16：按标签名剔除，保持输入顺序。scope_tag 非空且在排除列表里时那个标
+// 签不参与排除（F-26 对称例外）。开关留在调用方，core 不认识 Settings。
+std::vector<ImageId> exclude_by_tags(ProjectId project_id, const std::vector<ImageId>& image_ids,
+                                      const std::vector<std::string>& exclude_tag_names,
+                                      std::optional<TagId> scope_tag = std::nullopt);
 
 // M2：on_progress 汇报 RAW 图片全量解码的进度（纯 JPEG 批次不触发），见
 // core/export/export.h。RawDecodeFn 不在门面层暴露——那是测试用的依赖注

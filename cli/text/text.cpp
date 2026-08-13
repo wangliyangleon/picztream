@@ -199,9 +199,12 @@ std::pair<std::string, std::string> split_console_command(const std::string& inp
 // 引号的标签名整体当一个 token,引号内的空格不算分界——输入语法照抄 tag_token
 // (browse.cpp 顶部,信息栏展示标签用的那个)的输出语法,用户不需要为"怎么打带
 // 空格的标签名"另外学一套写法。返回值保留开头的 `#` 和引号,解引号交给
-// resolve_console_scope(browse.cpp)。没有找到闭合引号时(用户漏打了后一个引号)
-// 放弃引号语义,退化成普通按空格切,交给 resolve_console_scope 报"范围写法不对",
-// 不是这个函数的职责。
+// core::scope::resolve(T-16 之前是 browse.cpp 的 resolve_console_scope)。没有
+// 找到闭合引号时(用户漏打了后一个引号)放弃引号语义,退化成普通按空格切,交给
+// core::scope::resolve 报"范围写法不对",不是这个函数的职责。
+//
+// 这一步留在 cli 而不是跟着解析一起进 core:它切的是控制台整行输入,而 headless
+// 的 `--scope` 拿到的本来就是切好的单个参数,两边不共用这一层。
 std::pair<std::string, std::string> take_scope_token(const std::string& s) {
   std::size_t start = s.find_first_not_of(' ');
   if (start == std::string::npos) return {"", ""};

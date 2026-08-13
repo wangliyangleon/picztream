@@ -38,16 +38,16 @@ bool is_system_tag_name(const std::string& canonical) {
 
 }  // namespace
 
-Result<Scope, ScopeError> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
-                                   SystemTagPolicy system_tag_policy) {
-  using R = Result<Scope, ScopeError>;
+Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
+                                     SystemTagPolicy system_tag_policy) {
+  using R = Result<Scope, ScopeFailure>;
 
   if (scope == "*") {
     Scope result;
     for (const auto& ref : browse::list_images(db, project_id)) result.image_ids.push_back(ref.id);
     return R::Ok(std::move(result));
   }
-  if (scope.empty() || scope[0] != '#') return R::Err(ScopeError::InvalidSyntax);
+  if (scope.empty() || scope[0] != '#') return R::Err(ScopeFailure{ScopeError::InvalidSyntax, ""});
 
   std::string tag_name = scope.substr(1);
   if (tag_name.size() >= 2 && tag_name.front() == '"' && tag_name.back() == '"') {
@@ -57,14 +57,14 @@ Result<Scope, ScopeError> resolve(db::Database& db, ProjectId project_id, const 
 
   // 查库之前先判策略，理由见头文件。
   if (system_tag_policy == SystemTagPolicy::Reject && is_system_tag_name(tag_name)) {
-    return R::Err(ScopeError::SystemTagNotAllowed);
+    return R::Err(ScopeFailure{ScopeError::SystemTagNotAllowed, tag_name});
   }
 
   auto tag_id = tagging::find_tag_by_name(db, project_id, tag_name);
-  if (!tag_id) return R::Err(ScopeError::TagNotFound);
+  if (!tag_id) return R::Err(ScopeFailure{ScopeError::TagNotFound, tag_name});
 
   auto filtered = browse::filter_by_tag(db, *tag_id);
-  if (!filtered.ok()) return R::Err(ScopeError::FilterFailed);
+  if (!filtered.ok()) return R::Err(ScopeFailure{ScopeError::FilterFailed, tag_name});
 
   Scope result;
   result.scope_tag = *tag_id;

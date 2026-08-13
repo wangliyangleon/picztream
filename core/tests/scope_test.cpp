@@ -164,7 +164,7 @@ TEST_CASE("resolve rejects a scope that is neither * nor #tag") {
   for (const auto& written : {"", "精选", "**", "tag"}) {
     auto result = resolve(fx.db, fx.project_id, written);
     REQUIRE(!result.ok());
-    CHECK(result.error() == ScopeError::InvalidSyntax);
+    CHECK(result.error().error == ScopeError::InvalidSyntax);
   }
 }
 
@@ -173,7 +173,21 @@ TEST_CASE("resolve reports a missing tag distinctly from bad syntax") {
 
   auto result = resolve(fx.db, fx.project_id, "#不存在的标签");
   REQUIRE(!result.ok());
-  CHECK(result.error() == ScopeError::TagNotFound);
+  CHECK(result.error().error == ScopeError::TagNotFound);
+  // 两个表现层的文案都要这个名字，不该为了拿它再解析一遍 scope 字符串。
+  CHECK(result.error().tag_name == "不存在的标签");
+}
+
+TEST_CASE("failure carries the canonical tag name, not what the user typed") {
+  auto fx = make_fixture("failname", 1);
+
+  // 引号被剥掉
+  CHECK(resolve(fx.db, fx.project_id, "#\"foo bar\"").error().tag_name == "foo bar");
+  // 别名归一到存储名 - headless 的 error_msg 因此说的是库里真实的名字
+  CHECK(resolve(fx.db, fx.project_id, "#Reject", SystemTagPolicy::Reject).error().tag_name ==
+        kRejectTagName);
+  // 语法错误时没有标签名可言
+  CHECK(resolve(fx.db, fx.project_id, "乱写").error().tag_name.empty());
 }
 
 // #27 (D-2) 会用到：dedup 要拒绝系统标签范围，eval/export 仍然允许。参数
@@ -196,7 +210,7 @@ TEST_CASE("resolve can be told to refuse a system tag as the scope") {
     for (const auto& written : {"#废片", "#Reject", "#重复", "#Duplicate"}) {
       auto result = resolve(fx.db, fx.project_id, written, SystemTagPolicy::Reject);
       REQUIRE(!result.ok());
-      CHECK(result.error() == ScopeError::SystemTagNotAllowed);
+      CHECK(result.error().error == ScopeError::SystemTagNotAllowed);
     }
   }
 

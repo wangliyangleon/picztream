@@ -183,90 +183,34 @@ std::string handle_export_filtered_flow(pzt::core::ProjectId project_id,
                                                      r.created_output_folder, r.skipped.size());
 }
 
-// ASCII 大小写不敏感比较——只用来判断"这段英文是不是 Reject/Duplicate
-// 的某种大小写拼法"，跟 core::tagging 里 COLLATE NOCASE 是同一个不敏感
-// 范围(只影响 A-Z/a-z，中文不受影响)，这里不复用那条 SQL 路径是因为
-// 比较的是常量字符串，不需要真的去查库。
-bool equals_ascii_case_insensitive(const std::string& a, const std::string& b) {
-  if (a.size() != b.size()) return false;
-  for (std::size_t i = 0; i < a.size(); ++i) {
-    if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
-      return false;
+// T-16：scope 解析本身已经收进 core::scope（`*` / `#标签名` /
+// `#"带空格的标签名"`，含系统标签的 #Reject/#Duplicate 别名），交互与
+// headless 两个入口共用那一份。留在这一层的只有"结构化错误 -> 人读文案"
+// 这一步映射——它要跟着 g_lang 走，是货真价实的展示逻辑，不是重复实现。
+std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
+  switch (failure.error) {
+    case pzt::core::ScopeError::TagNotFound:
+      return pzt::cli::i18n::err_console_tag_not_found(failure.tag_name);
+    case pzt::core::ScopeError::FilterFailed:
+      return pzt::cli::i18n::err_filter_failed();
+    case pzt::core::ScopeError::SystemTagNotAllowed:
+      // 本票的两个调用点都用默认的 SystemTagPolicy::Allow，这一支到不了。
+      // #27 给 dedup 接上 Reject 策略时会连同专属文案一起补进来。
+    case pzt::core::ScopeError::InvalidSyntax:
+      return pzt::cli::i18n::err_console_invalid_scope();
   }
-  return true;
+  return pzt::cli::i18n::err_console_invalid_scope();
 }
 
-// 系统标签(废片/重复)在数据库里永远存中文名(见 kRejectTagName/
-// kDuplicateTagName 的说明)，但展示层的名字跟着当前 UI 语言走——英文
-// 界面下用户在信息栏/菜单里看到的是"Reject"/"Duplicate"，很自然地会
-// 拿这个词去打 `#Reject`(或者 `#REJECT`/`#reject`，跟标签大小写不敏
-// 感是同一个便利性诉求)，如果只按存库的中文名精确匹配就会得到"标签
-// 不存在"，语言相关的行为反而成了 bug。这里两种拼法(含任意大小写)都
-// 认，不管当前 g_lang 是什么；普通用户自己建的标签不受这条特判影响，
-// 仍然走 find_tag_by_name 本身的(大小写不敏感、但不做语言别名)匹配。
-std::optional<pzt::core::TagId> resolve_tag_name_language_independent(pzt::core::ProjectId project_id,
-                                                                       const std::string& name) {
-  if (name == pzt::core::tagging::kRejectTagName || equals_ascii_case_insensitive(name, "Reject")) {
-    return pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName);
-  }
-  if (name == pzt::core::tagging::kDuplicateTagName ||
-      equals_ascii_case_insensitive(name, "Duplicate")) {
-    return pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kDuplicateTagName);
-  }
-  return pzt::core::find_tag_by_name(project_id, name);
-}
-
-// `/dedup`/`/ai_eval` 共用的批量范围解析：`*` 整个项目、`#标签名` 带指
-// 定标签的图片，标签名带空格时用 `#"标签名"` 包起来——两边统一用同一
-// 套写法，不各自维护一套解析和错误文案。scope 不是 `*` 也不以 `#` 开
-// 头时，error_message 给一条"范围写法不对"的提示，不静默当成标签名。
-struct ScopeResolution {
-  std::vector<pzt::core::ImageId> image_ids;
-  std::string error_message;  // 非空表示解析失败，caller 直接把它当结果返回
-  // F-26：范围标签本身的 id，`*` 时为空。用来判断"范围本身就是废片/
-  // 重复"这个对称例外——这种情况下用户已经显式要求处理它，不再排除。
-  std::optional<pzt::core::TagId> scope_tag_id;
-};
-
-ScopeResolution resolve_console_scope(pzt::core::ProjectId project_id, const std::string& scope) {
-  ScopeResolution result;
-  if (scope == "*") {
-    for (const auto& ref : pzt::core::list_images(project_id)) result.image_ids.push_back(ref.id);
-    return result;
-  }
-  if (scope.empty() || scope[0] != '#') {
-    result.error_message = pzt::cli::i18n::err_console_invalid_scope();
-    return result;
-  }
-  std::string tag_name = scope.substr(1);
-  if (tag_name.size() >= 2 && tag_name.front() == '"' && tag_name.back() == '"') {
-    tag_name = tag_name.substr(1, tag_name.size() - 2);
-  }
-  auto tag_id = resolve_tag_name_language_independent(project_id, tag_name);
-  if (!tag_id) {
-    result.error_message = pzt::cli::i18n::err_console_tag_not_found(tag_name);
-    return result;
-  }
-  result.scope_tag_id = *tag_id;
-  auto filtered = pzt::core::filter_by_tag(*tag_id);
-  if (!filtered.ok()) {
-    result.error_message = pzt::cli::i18n::err_filter_failed();
-    return result;
-  }
-  for (const auto& ref : filtered.value()) result.image_ids.push_back(ref.id);
-  return result;
-}
-
-// F-26：从 resolved.image_ids 里剔除带 reject_tag_id 这个标签的图片，除
-// 非范围本身就是这个标签(对称例外)——eval/dedup 的批量范围各自受一个
-// 独立开关控制(settings.eval_reject/dedup_reject)，共用这一份过滤逻
-// 辑。reject_tag_id 为空(项目里还没有对应系统标签)时直接跳过，不当错
-// 误处理。
-void exclude_scope_by_tag(ScopeResolution& resolved, std::optional<pzt::core::TagId> exclude_tag_id) {
-  if (!exclude_tag_id || resolved.scope_tag_id == *exclude_tag_id) return;
-  auto matched = pzt::core::images_with_tag(resolved.image_ids, *exclude_tag_id);
+// F-26：从 scope.image_ids 里剔除带 exclude_tag_id 这个标签的图片，除非
+// 范围本身就是这个标签(对称例外)——eval/dedup 的批量范围各自受一个独立
+// 开关控制(settings.eval_reject/dedup_reject)，共用这一份过滤逻辑。
+// exclude_tag_id 为空(项目里还没有对应系统标签)时直接跳过，不当错误处理。
+void exclude_scope_by_tag(pzt::core::Scope& scope, std::optional<pzt::core::TagId> exclude_tag_id) {
+  if (!exclude_tag_id || scope.scope_tag == *exclude_tag_id) return;
+  auto matched = pzt::core::images_with_tag(scope.image_ids, *exclude_tag_id);
   if (matched.empty()) return;
-  auto& ids = resolved.image_ids;
+  auto& ids = scope.image_ids;
   ids.erase(std::remove_if(ids.begin(), ids.end(), [&](auto id) { return matched.count(id) > 0; }),
             ids.end());
 }
@@ -382,8 +326,9 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     return pzt::cli::i18n::err_dedup_bad_args();
   }
 
-  auto resolved = resolve_console_scope(project_id, scope);
-  if (!resolved.error_message.empty()) return resolved.error_message;
+  auto scope_result = pzt::core::resolve_scope(project_id, scope);
+  if (!scope_result.ok()) return scope_error_message(scope_result.error());
+  auto resolved = std::move(scope_result.value());
 
   // F-12/F-26：一次读全,时间窗/哈希阈值(F-08)和废片排除开关都来自
   // 同一份 Settings,现读不缓存,跟 resolve_ai_provider() 同一个先例。
@@ -509,8 +454,9 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worker,
                                     pzt::core::ProjectId project_id, const std::string& scope,
                                     const std::string& extra_guidance) {
-  auto resolved = resolve_console_scope(project_id, scope);
-  if (!resolved.error_message.empty()) return resolved.error_message;
+  auto scope_result = pzt::core::resolve_scope(project_id, scope);
+  if (!scope_result.ok()) return scope_error_message(scope_result.error());
+  auto resolved = std::move(scope_result.value());
 
   // F-26：同上，默认排除废片，除非范围本身就是 #废片。
   if (!pzt::core::load_settings().eval_reject) {
