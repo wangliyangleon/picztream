@@ -67,8 +67,10 @@ ai::SelectionCandidate make_selection_candidate(db::Database& db, project::Image
 // 不够而交出方向相反的两种排列。提成具名函数而不是各写一遍 lambda，是为
 // 了让这个约束是结构上的而不是靠约定。
 //
-// 开 AI 且候选够那条路径不在此列——它走 std::sample，顺序是簇的遍历顺序，
-// 本票不动（票 06 起改由模型决定，见 docs/history/Intent_Curation_PRD.md 决策十四）。
+// 开 AI 且候选够那条路径不在此列：票 06 起由模型一次调用连选带排，顺序由
+// 模型给（见 docs/history/Intent_Curation_PRD.md 决策十四）。在那之前它走
+// std::sample，顺序是簇的遍历顺序；RNG 已随票 06 从本文件移除，提案 T-26
+// 因此过期。
 bool by_captured_at_desc(const RepInfo& a, const RepInfo& b) {
   auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
   auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
