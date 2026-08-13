@@ -72,10 +72,10 @@ Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, cons
   return R::Ok(std::move(result));
 }
 
-std::vector<ImageId> exclude_by_tags(db::Database& db, ProjectId project_id,
-                                      const std::vector<ImageId>& image_ids,
-                                      const std::vector<std::string>& exclude_tag_names,
-                                      std::optional<TagId> scope_tag) {
+std::unordered_set<ImageId> excluded_by_tags(db::Database& db, ProjectId project_id,
+                                              const std::vector<ImageId>& image_ids,
+                                              const std::vector<std::string>& exclude_tag_names,
+                                              std::optional<TagId> scope_tag) {
   std::unordered_set<ImageId> excluded;
   for (const auto& tag_name : exclude_tag_names) {
     auto tag_id = tagging::find_tag_by_name(db, project_id, tag_name);
@@ -84,6 +84,14 @@ std::vector<ImageId> exclude_by_tags(db::Database& db, ProjectId project_id,
     auto tagged = tagging::images_with_tag(db, image_ids, *tag_id);
     excluded.insert(tagged.begin(), tagged.end());
   }
+  return excluded;
+}
+
+std::vector<ImageId> exclude_by_tags(db::Database& db, ProjectId project_id,
+                                      const std::vector<ImageId>& image_ids,
+                                      const std::vector<std::string>& exclude_tag_names,
+                                      std::optional<TagId> scope_tag) {
+  auto excluded = excluded_by_tags(db, project_id, image_ids, exclude_tag_names, scope_tag);
   if (excluded.empty()) return image_ids;
 
   std::vector<ImageId> kept;

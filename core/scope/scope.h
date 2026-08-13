@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/db/database.h"
@@ -87,7 +88,8 @@ enum class SystemTagPolicy { Allow, Reject };
 Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
                                      SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow);
 
-// 从 image_ids 里剔除带 exclude_tag_names 里任一标签的图片，保持输入顺序。
+// 排除规则本身：image_ids 里哪些图片带了 exclude_tag_names 里的标签、因而
+// 该被剔除。
 //
 // scope_tag 非空且正好在排除列表里时，那个标签不参与排除（F-26 的对称例
 // 外：用户显式把范围指成了废片，就是要处理废片）。直接传 resolve() 返回的
@@ -95,6 +97,19 @@ Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, cons
 //
 // 标签在项目里不存在时按"不排除任何东西"处理，不是错误 —— 项目还没跑过
 // `/dedup` 时"重复"标签根本不存在，那是正常情况。
+//
+// 暴露"排除集合"而不是只暴露下面那个 vector 版本，是因为调用方手里的容器
+// 不一定是一串 ImageId：`core/export` 拿的是 ImageRef。需要统一的是**排哪
+// 些**这条规则（哪些标签、对称例外、标签缺失怎么办），不是那一行
+// remove_if。让 export 为了复用而先把 ImageRef 拆成 id 再拼回去，是拿真实
+// 的复杂度换一个形式上的"零重复"。
+std::unordered_set<ImageId> excluded_by_tags(db::Database& db, ProjectId project_id,
+                                              const std::vector<ImageId>& image_ids,
+                                              const std::vector<std::string>& exclude_tag_names,
+                                              std::optional<TagId> scope_tag = std::nullopt);
+
+// excluded_by_tags 之上的薄封装，给手里正好是一串 ImageId 的调用方
+// （`core/tournament`、`cli` 的两条控制台路径）。保持输入顺序。
 std::vector<ImageId> exclude_by_tags(db::Database& db, ProjectId project_id,
                                       const std::vector<ImageId>& image_ids,
                                       const std::vector<std::string>& exclude_tag_names,

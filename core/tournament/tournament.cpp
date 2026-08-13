@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "core/media/media.h"
+#include "core/scope/scope.h"
 #include "core/tagging/tagging.h"
 
 namespace pzt::core::tournament {
@@ -120,20 +121,11 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   }
   const std::string& root_path = project_summary.value().root_path;
 
-  // 排除集合：泛化 dedup/curate 今天各自硬编码的单标签排除(废片 / 废片+
-  // 重复)成一个标签名列表，标签不存在时按"不排除任何东西"处理。
-  std::unordered_set<project::ImageId> excluded;
-  for (const auto& tag_name : exclude_tag_names) {
-    if (auto tag_id = tagging::find_tag_by_name(db, project_id, tag_name)) {
-      auto tagged = tagging::images_with_tag(db, image_ids, *tag_id);
-      excluded.insert(tagged.begin(), tagged.end());
-    }
-  }
-  std::vector<project::ImageId> candidates;
-  candidates.reserve(image_ids.size());
-  for (auto id : image_ids) {
-    if (!excluded.count(id)) candidates.push_back(id);
-  }
+  // 排除集合：dedup 传 {废片}、curate 传 {废片,重复}，标签不存在时按"不排
+  // 除任何东西"处理。规则本身收在 core::scope(T-16)，这里只负责把调用方给
+  // 的标签名列表递过去。不传 scope_tag —— 锦标赛这条路上没有 F-26 的对称
+  // 例外：范围本身是废片时 dedup 直接拒绝(#27 决策 D-2)，不是"照做但不排"。
+  auto candidates = scope::exclude_by_tags(db, project_id, image_ids, exclude_tag_names);
 
   if (candidates.empty()) {
     return Result<ChooseSummary, project::ProjectNotFoundError>::Ok(ChooseSummary{{}, 0, 0, 0});

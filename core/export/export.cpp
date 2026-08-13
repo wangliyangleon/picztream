@@ -10,6 +10,7 @@
 #include "core/db/stmt.h"
 #include "core/decode/decode.h"
 #include "core/recipe/recipe.h"
+#include "core/scope/scope.h"
 
 namespace pzt::core::exporting {
 
@@ -230,23 +231,25 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   }
   auto images = std::move(filtered.value());
 
-  // F-26：默认排除废片/重复，除非调用方显式要求包含，或者这次导出的
-  // 目标标签本身就是废片/重复(用户已经明确要处理它)。项目里还没有对
-  // 应系统标签时(find_tag_by_name 查不到)没有可排除的东西，跳过。
-  auto exclude_by_tag = [&](const char* system_tag_name) {
-    auto system_tag_id = tagging::find_tag_by_name(db, tag_info->project_id, system_tag_name);
-    if (!system_tag_id || tag_id == *system_tag_id) return;
+  // F-26：默认排除废片/重复，除非调用方显式要求包含，或者这次导出的目标
+  // 标签本身就是废片/重复(用户已经明确要处理它 —— 这就是 excluded_by_tags
+  // 的 scope_tag 参数，这里传导出目标标签)。规则本身收在 core::scope
+  // (T-16)，这里只负责决定排哪几个标签、以及把结果套到自己手里的 ImageRef
+  // 上；项目里还没有对应系统标签时那边按"没有可排除的东西"处理。
+  std::vector<std::string> exclude_tag_names;
+  if (!include_reject) exclude_tag_names.emplace_back(tagging::kRejectTagName);
+  if (!include_dup) exclude_tag_names.emplace_back(tagging::kDuplicateTagName);
+  if (!exclude_tag_names.empty()) {
     std::vector<ImageId> ids;
     ids.reserve(images.size());
     for (const auto& img : images) ids.push_back(img.id);
-    auto matched = tagging::images_with_tag(db, ids, *system_tag_id);
-    if (matched.empty()) return;
-    images.erase(std::remove_if(images.begin(), images.end(),
-                                 [&](const auto& img) { return matched.count(img.id) > 0; }),
-                 images.end());
-  };
-  if (!include_reject) exclude_by_tag(tagging::kRejectTagName);
-  if (!include_dup) exclude_by_tag(tagging::kDuplicateTagName);
+    auto excluded = scope::excluded_by_tags(db, tag_info->project_id, ids, exclude_tag_names, tag_id);
+    if (!excluded.empty()) {
+      images.erase(std::remove_if(images.begin(), images.end(),
+                                   [&](const auto& img) { return excluded.count(img.id) > 0; }),
+                   images.end());
+    }
+  }
 
   fs::path root_path = get_project_root_path(conn, tag_info->project_id);
   fs::path out_dir(output_folder);
@@ -282,20 +285,23 @@ Result<ExportResult, ExportImagesError> export_images(db::Database& db, project:
                                        info->preview_cache_path});
   }
 
-  auto exclude_by_tag = [&](const char* system_tag_name) {
-    auto system_tag_id = tagging::find_tag_by_name(db, project_id, system_tag_name);
-    if (!system_tag_id) return;
+  // F-26：同 export_tag，规则收在 core::scope(T-16)。这条路径没有"导出目
+  // 标标签"可言(调用方直接给的 image_ids)，所以不传 scope_tag，没有对称例
+  // 外 —— 跟收编之前那份 lambda 不比较 tag_id 的行为一致。
+  std::vector<std::string> exclude_tag_names;
+  if (!include_reject) exclude_tag_names.emplace_back(tagging::kRejectTagName);
+  if (!include_dup) exclude_tag_names.emplace_back(tagging::kDuplicateTagName);
+  if (!exclude_tag_names.empty()) {
     std::vector<ImageId> ids;
     ids.reserve(images.size());
     for (const auto& img : images) ids.push_back(img.id);
-    auto matched = tagging::images_with_tag(db, ids, *system_tag_id);
-    if (matched.empty()) return;
-    images.erase(std::remove_if(images.begin(), images.end(),
-                                 [&](const auto& img) { return matched.count(img.id) > 0; }),
-                 images.end());
-  };
-  if (!include_reject) exclude_by_tag(tagging::kRejectTagName);
-  if (!include_dup) exclude_by_tag(tagging::kDuplicateTagName);
+    auto excluded = scope::excluded_by_tags(db, project_id, ids, exclude_tag_names);
+    if (!excluded.empty()) {
+      images.erase(std::remove_if(images.begin(), images.end(),
+                                   [&](const auto& img) { return excluded.count(img.id) > 0; }),
+                   images.end());
+    }
+  }
 
   fs::path root_path = get_project_root_path(conn, project_id);
   fs::path out_dir(output_folder);

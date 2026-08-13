@@ -202,19 +202,6 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
   return pzt::cli::i18n::err_console_invalid_scope();
 }
 
-// F-26：从 scope.image_ids 里剔除带 exclude_tag_id 这个标签的图片，除非
-// 范围本身就是这个标签(对称例外)——eval/dedup 的批量范围各自受一个独立
-// 开关控制(settings.eval_reject/dedup_reject)，共用这一份过滤逻辑。
-// exclude_tag_id 为空(项目里还没有对应系统标签)时直接跳过，不当错误处理。
-void exclude_scope_by_tag(pzt::core::Scope& scope, std::optional<pzt::core::TagId> exclude_tag_id) {
-  if (!exclude_tag_id || scope.scope_tag == *exclude_tag_id) return;
-  auto matched = pzt::core::images_with_tag(scope.image_ids, *exclude_tag_id);
-  if (matched.empty()) return;
-  auto& ids = scope.image_ids;
-  ids.erase(std::remove_if(ids.begin(), ids.end(), [&](auto id) { return matched.count(id) > 0; }),
-            ids.end());
-}
-
 // --debug 面板的绘制。抽成函数是因为有两个调用方:主循环每帧画一次(正常
 // 路径)，以及下面 LiveDebugPanel 在阻塞命令期间从后台线程画。每条原始日
 // 志先按显示宽度换行展开，再对展开后的结果取最后 rows 行——一条长日志
@@ -334,8 +321,8 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   // 同一份 Settings,现读不缓存,跟 resolve_ai_provider() 同一个先例。
   auto settings = pzt::core::load_settings();
   if (!settings.dedup_reject) {
-    exclude_scope_by_tag(resolved,
-                          pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
+    resolved.image_ids = pzt::core::exclude_by_tags(
+        project_id, resolved.image_ids, {pzt::core::tagging::kRejectTagName}, resolved.scope_tag);
   }
 
   // 两段进度共用 banner 同一行,后写的覆盖先写的:分组跑完之后 AI 那段接
@@ -460,8 +447,8 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
 
   // F-26：同上，默认排除废片，除非范围本身就是 #废片。
   if (!pzt::core::load_settings().eval_reject) {
-    exclude_scope_by_tag(resolved,
-                          pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kRejectTagName));
+    resolved.image_ids = pzt::core::exclude_by_tags(
+        project_id, resolved.image_ids, {pzt::core::tagging::kRejectTagName}, resolved.scope_tag);
   }
 
   // F-07：同上，一条批量查询代替逐张 get_image()。
