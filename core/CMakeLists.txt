@@ -31,6 +31,7 @@ add_library(core STATIC
   tagging/tagging.cpp
   browse/browse.cpp
   browse/prefetch.cpp
+  scope/scope.cpp
   export/export.cpp
   decode/decode.cpp
   media/media.cpp
