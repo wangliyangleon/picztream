@@ -76,6 +76,7 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 |---|---|---|---|
 | HEIC 支持 | [#16](https://github.com/wangliyangleon/picztream/issues/16) | 2026-08-09 | 首份迁移的试点。原文件 `docs/HEIC_Support_PRD.md` 已删除，可从 `git show b67047e:docs/HEIC_Support_PRD.md` 取回 |
 | T-29 recipe 自建 version 向导 + 实时预览 | [#17](https://github.com/wangliyangleon/picztream/issues/17) | 2026-08-11 | 第二份，且是**直接开在 Issues 上、从来没有过仓库文件**的第一份（不是"迁移"而是原生）。实现票 [#18](https://github.com/wangliyangleon/picztream/issues/18)/[#19](https://github.com/wangliyangleon/picztream/issues/19)/[#20](https://github.com/wangliyangleon/picztream/issues/20)，已于 2026-08-12 全部收口 |
+| T-16 scope 解析与排除规则收进 core | [#23](https://github.com/wangliyangleon/picztream/issues/23) | 2026-08-13 | 第三份，同样是原生开在 Issues 上。立项时 D-1/D-2/D-3 已拍板，Q-2/Q-3 带建议待确认 |
 
 **仍在仓库里的存量**（不完整列举，以 `docs/` 与 `docs/history/` 实际内容为准）：`docs/history/Intent_Curation_PRD.md`、`docs/history/Dedup_Cancel_PRD.md`、`docs/history/Dedup_AI_Console_PRD.md`、`docs/history/Env_Preflight_*`、`docs/history/Headless_Observability_*`、各里程碑与周目标的 PRD/Eng Design。**`docs/SPEC.md` 里有几十处按路径引用这些文件，迁移任何一份时必须同时改掉它的入边**，否则审计链断掉。
 
