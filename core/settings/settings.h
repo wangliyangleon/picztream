@@ -50,16 +50,24 @@ struct Settings {
   // core 侧按 1.5 生效 - M=1 时池子正好等于要选的数量，后续模型没有任何
   // 选择余地。见 docs/history/Intent_Curation_PRD.md 决策十一。
   double curate_preselect_multiplier = 2.0;
-  // F-26 的批量默认排除策略用的四个开关——true 表示"不排除"(把这类图
-  // 片当成正常范围的一部分处理)，false(默认)是当前拍板的行为。
+  // F-26 的批量默认排除策略用的开关——true 表示"不排除"(把这类图片当成
+  // 正常范围的一部分处理)，false(默认)是当前拍板的行为。
+  //
+  // T-16/#27：原本还有第四个 dedup_reject，已删除。它自 4cc6549 起就完全
+  // 无效 —— core 侧无条件排废片(keep 改成"留最新"之后，一张废片若
+  // captured_at 最新会当上 keeper 把好邻居全打成"重复")，cli 层据此跳过
+  // 自己那份排除之后 core 照排不误。要让它真正可用，得先把簇内 keep 选择
+  // 改成废片感知，而 F-26 当初加它只是为了跟另外三个对称，它"开启"时的语
+  // 义恰好就是 F-26 自己要防的那件事。旧 config.json 里残留这个字段会被
+  // 静默忽略(逐字段 assign_if_present)，不报错。
   bool eval_reject = false;
-  bool dedup_reject = false;
   bool export_reject = false;
   bool export_dup = false;
   // W2026-07-21：选片评估把这张图判为 unusable(有硬伤)时，自动打上
   // "废片"标签——默认 false(不自动打)。开着的话，后续默认排除废片的路
-  // 径(eval_reject/dedup_reject/export_reject 均为 false 时)会连带把这
-  // 些图挡在外面，不需要用户评估完之后手动再筛一遍逐张处理。只在
+  // 径(eval_reject/export_reject 均为 false 时)会连带把这些图挡在外面，
+  // 不需要用户评估完之后手动再筛一遍逐张处理。dedup 那条路无条件排废片，
+  // 不受开关影响。只在
   // unusable 时打标签，反过来(重新评估后可用了)不会自动摘掉——摘除已
   // 有标签是更容易造成意外的操作，这次不做。
   bool auto_ai_reject = false;

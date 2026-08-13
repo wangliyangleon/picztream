@@ -1155,6 +1155,20 @@ std::string err_console_invalid_scope() {
   }
 }
 
+std::string err_console_dedup_system_tag_scope(const std::string &canonical_tag_name) {
+  // 传进来的是库里的 canonical 名(废片/重复)，显示要跟着界面语言走 —— 这
+  // 正是"标识符 vs 显示文案"那条区分(见 core/scope/scope.h 的 D-3)在展示
+  // 侧的另一半。
+  std::string label = canonical_tag_name == pzt::core::tagging::kDuplicateTagName
+                          ? duplicate_tag_label()
+                          : reject_tag_label();
+  if (g_lang == Lang::zh) {
+    return " 不能对系统标签 '" + label + "' 做去重 ";
+  } else {
+    return " Cannot dedup within the system tag '" + label + "' ";
+  }
+}
+
 std::string err_console_invalid_filter_criterion() {
   if (g_lang == Lang::zh) {
     return " 筛选条件必须是 unevaluated/fail/reject/dup 之一 ";

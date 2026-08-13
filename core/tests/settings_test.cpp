@@ -41,7 +41,6 @@ TEST_CASE("load returns all defaults when the config file doesn't exist") {
   CHECK(s.curate_hash_threshold == 10);
   CHECK(s.curate_preselect_multiplier == doctest::Approx(2.0));
   CHECK(s.eval_reject == false);
-  CHECK(s.dedup_reject == false);
   CHECK(s.export_reject == false);
   CHECK(s.export_dup == false);
   CHECK(s.auto_ai_reject == false);
@@ -66,6 +65,21 @@ TEST_CASE("load returns all defaults when the top-level JSON value isn't an obje
   CHECK(s.dedup_time_window_seconds == 10);
 }
 
+// T-16/#27：dedup_reject 已删除。装过旧版本的用户 config.json 里还留着这
+// 个字段，升级之后必须照常加载、不报错 —— 逐字段 assign_if_present 天然
+// 满足，但这是对外的数据兼容性承诺(见 docs/RELEASE.md)，要有东西守住。
+TEST_CASE("load ignores fields that no longer exist instead of failing") {
+  auto path = fresh_config_path("removed_field");
+  write_file(path, R"json({
+    "dedup_reject": true,
+    "some_field_that_never_existed": 42,
+    "lang": "en"
+  })json");
+
+  Settings s = load(path);
+  CHECK(s.lang == "en");  // 同一个文件里的合法字段照常读到
+}
+
 TEST_CASE("load reads every field correctly when the file is fully populated") {
   auto path = fresh_config_path("full");
   write_file(path, R"json({
@@ -79,7 +93,6 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
     "curate_hash_threshold": 15,
     "curate_preselect_multiplier": 3.5,
     "eval_reject": true,
-    "dedup_reject": true,
     "export_reject": true,
     "export_dup": true,
     "auto_ai_reject": true,
@@ -100,7 +113,6 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
   CHECK(s.curate_hash_threshold == 15);
   CHECK(s.curate_preselect_multiplier == doctest::Approx(3.5));
   CHECK(s.eval_reject == true);
-  CHECK(s.dedup_reject == true);
   CHECK(s.export_reject == true);
   CHECK(s.export_dup == true);
   CHECK(s.auto_ai_reject == true);

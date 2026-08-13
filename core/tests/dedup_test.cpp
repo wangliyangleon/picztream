@@ -443,6 +443,41 @@ TEST_CASE("find_and_tag_duplicates excludes reject-tagged images from clustering
   CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));  // 好图 a 不被打成重复
 }
 
+// T-16/#27 的回归守卫。这里钉的不是一个新行为，是**排废片这件事归 core、
+// 且不可配置**这条契约 —— 上一次它被打破时没有任何测试会红：
+//
+// F-26(2026-07-11) 在 cli 层做了一份受 settings.dedup_reject 控制的条件排
+// 除，还配了真机验证。W2026-07-21 的 4cc6549 为了防"废片当上 keeper"，在
+// core 里又加了一份**无条件**的，两份叠加之后 core 那份赢 —— 开关自此完
+// 全无效，`/dedup #废片` 变成静默 no-op(范围全被排空、报"0 组")。两处失效
+// 都是用户可见的，坏了 22 天没人发现，因为 cli 那个开关零测试覆盖，而 core
+// 侧改排除策略时没有任何东西把两边联系起来。
+//
+// 所以这个用例断言的是"整批都是废片时结果为空"——它正是让 `/dedup #废片`
+// 没有意义的那个事实。谁要是把 core 这份排除改成有条件的或加上对称例外，
+// 这里会红，然后从这段注释找到 #27 的 D-1/D-2：那不是 bug，是拍板过的；
+// 真要改，先回去改那两条决策，别再在 cli 层加第二份开关。
+TEST_CASE("reject exclusion is core-owned and unconditional (T-16 regression guard)") {
+  auto fx = make_fixture("reject_exclusion_contract", 2);
+  auto dir = fs::path(fx.root_path);
+  REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
+  REQUIRE(write_solid_jpeg(dir / "b.jpg", 16, 16, 120));  // 字节相同,本会成一组
+  set_captured_at(fx.db, fx.images[0], 1000);
+  set_captured_at(fx.db, fx.images[1], 1002);
+
+  auto reject_tag_id = ensure_reject_tag(fx.db, fx.project_id);
+  REQUIRE(add_tag(fx.db, fx.images[0], reject_tag_id).ok());
+  REQUIRE(add_tag(fx.db, fx.images[1], reject_tag_id).ok());
+
+  // 整批都是废片 = 候选集被排空。没有任何参数能让这两张图参与聚类，这正是
+  // "范围本身是废片"那条路径注定拿不到结果的原因，也是 D-2 改成显式拒绝
+  // (而不是让它继续静默报 0 组)的依据。
+  auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
+  REQUIRE(result.ok());
+  CHECK(result.value().group_count == 0);
+  CHECK(result.value().tagged_count == 0);
+}
+
 // F-18：以前不检查 add_tag 的返回值，tagged_count 无条件自增。如果用户
 // 在这个功能之前就手动建过一个带 cap 的同名"重复"标签(ensure_duplicate_
 // tag 会直接复用它，不区分是不是系统创建的，见该函数的说明)，超出 cap

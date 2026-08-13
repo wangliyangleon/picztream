@@ -74,7 +74,6 @@ Settings load(const std::string& path) {
   assign_if_present(j, "curate_hash_threshold", settings.curate_hash_threshold);
   assign_if_present(j, "curate_preselect_multiplier", settings.curate_preselect_multiplier);
   assign_if_present(j, "eval_reject", settings.eval_reject);
-  assign_if_present(j, "dedup_reject", settings.dedup_reject);
   assign_if_present(j, "export_reject", settings.export_reject);
   assign_if_present(j, "export_dup", settings.export_dup);
   assign_if_present(j, "auto_ai_reject", settings.auto_ai_reject);

@@ -194,8 +194,8 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
     case pzt::core::ScopeError::FilterFailed:
       return pzt::cli::i18n::err_filter_failed();
     case pzt::core::ScopeError::SystemTagNotAllowed:
-      // 本票的两个调用点都用默认的 SystemTagPolicy::Allow，这一支到不了。
-      // #27 给 dedup 接上 Reject 策略时会连同专属文案一起补进来。
+      // 只有 `/dedup` 会传 Reject 策略，`/ai_eval` 到不了这一支。
+      return pzt::cli::i18n::err_console_dedup_system_tag_scope(failure.tag_name);
     case pzt::core::ScopeError::InvalidSyntax:
       return pzt::cli::i18n::err_console_invalid_scope();
   }
@@ -313,17 +313,23 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     return pzt::cli::i18n::err_dedup_bad_args();
   }
 
-  auto scope_result = pzt::core::resolve_scope(project_id, scope);
+  // #27 (D-2)：范围本身是系统标签时直接拒绝。此前这里是静默 no-op ——
+  // 范围被正确解析出来，进 core 后全被排除，命令报"0 组"，用户无从分辨这
+  // 是"真没有重复"还是"范围被清空了"。
+  auto scope_result =
+      pzt::core::resolve_scope(project_id, scope, pzt::core::SystemTagPolicy::Reject);
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
-  // F-12/F-26：一次读全,时间窗/哈希阈值(F-08)和废片排除开关都来自
-  // 同一份 Settings,现读不缓存,跟 resolve_ai_provider() 同一个先例。
+  // F-12/F-08：时间窗/哈希阈值来自 Settings,现读不缓存,跟
+  // resolve_ai_provider() 同一个先例。
+  //
+  // #27 (D-1)：这里不再排废片 —— core 那边无条件排(见
+  // dedup::find_and_tag_duplicates 传给 cluster_and_choose 的
+  // exclude_tag_names)，此前这一层再排一遍是纯粹的重复劳动，而它外面那个
+  // settings.dedup_reject 判断自 4cc6549 起就完全无效：开关打开时这一层
+  // 跳过，core 照排不误。开关已随本票删除。
   auto settings = pzt::core::load_settings();
-  if (!settings.dedup_reject) {
-    resolved.image_ids = pzt::core::exclude_by_tags(
-        project_id, resolved.image_ids, {pzt::core::tagging::kRejectTagName}, resolved.scope_tag);
-  }
 
   // 两段进度共用 banner 同一行,后写的覆盖先写的:分组跑完之后 AI 那段接
   // 着往同一个位置写,不会堆出两行。

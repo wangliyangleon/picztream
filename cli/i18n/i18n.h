@@ -220,6 +220,11 @@ std::string err_console_tag_not_found(const std::string& tag_name);
 // 范围参数既不是 `*` 也不以 `#` 开头时统一提示,不静默把它当成裸标签
 // 名解析，见 docs/history/M3_PRD.md"触发入口"一节。
 std::string err_console_invalid_scope();
+// T-16/#27：`/dedup` 的范围本身是系统标签(废片/重复)时拒绝。此前是静
+// 默 no-op——范围被正确解析出来、进 core 后全被排除，命令报"0 组",用
+// 户无从分辨这是"真没有重复"还是"范围被清空了"。参数收的是库里的
+// canonical 名,显示名由这个函数按当前语言换算。
+std::string err_console_dedup_system_tag_scope(const std::string& canonical_tag_name);
 // F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
 // 示,控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
 std::string err_console_invalid_filter_criterion();

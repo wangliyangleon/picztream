@@ -143,8 +143,8 @@ int emit_scope_error(const pzt::core::ScopeFailure& failure) {
     case pzt::core::ScopeError::FilterFailed:
       return emit_json_error("filter_failed", "failed to filter by tag");
     case pzt::core::ScopeError::SystemTagNotAllowed:
-      // 本票的调用点用默认的 SystemTagPolicy::Allow，这一支到不了。#27 给
-      // dedup 接上 Reject 策略时会连同专属 error_code 一起补进来。
+      return emit_json_error("system_tag_scope",
+                             "cannot dedup within a system tag: " + failure.tag_name);
     case pzt::core::ScopeError::InvalidSyntax:
       return emit_json_error("invalid_scope", "scope must be * or #tag");
   }
@@ -202,7 +202,10 @@ int cmd_dedup(const std::vector<std::string>& args) {
   auto project_id = resolve_project_json(positional[0]);
   if (!project_id) return 1;
 
-  auto scope_result = pzt::core::resolve_scope(*project_id, scope);
+  // #27 (D-2)：跟 `pzt open` 控制台的 `/dedup` 同一条规则 —— 范围本身是系
+  // 统标签时拒绝，而不是静默排空之后报"0 组"。
+  auto scope_result =
+      pzt::core::resolve_scope(*project_id, scope, pzt::core::SystemTagPolicy::Reject);
   if (!scope_result.ok()) return emit_scope_error(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
