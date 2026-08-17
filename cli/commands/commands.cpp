@@ -502,8 +502,28 @@ int cmd_images(const std::vector<std::string>& args) {
       }
     }
     nlohmann::json tag_names = nlohmann::json::array();
-    for (const auto& t : pzt::core::tags_for_image(r.id)) tag_names.push_back(t.name);
+    // T-25：`tags` 是原始存储名（中文字面量），只够拿来显示。agent 要按
+    // "是不是废片/重复"过滤时用它就等于在 Python 里复刻一遍 core 的字面
+    // 量，core 改名或未来 i18n 化系统标签名，agent 会**静默地不过滤任何东
+    // 西**——不报错，只是结果变错。所以额外给一列机读标记：稳定 ASCII 别
+    // 名（`Reject`/`Duplicate`），跟 `--scope '#Reject'` 认的是同一组常量
+    // （tagging::kRejectTagAlias）。
+    //
+    // 只标记、不替 agent 做过滤：排哪些标签是**策略**、归调用方，这是 PRD
+    // #23 立的那条界（"统一的是机制不是策略"）。`pzt images` 是一个读命
+    // 令，给它一个"顺便按某套规则筛一遍"的开关就是把策略搬进 core。
+    //
+    // `tags` 原样保留：它今天没有生产消费者按名字过滤，但删掉是无收益的破
+    // 坏性改动。
+    nlohmann::json system_tags = nlohmann::json::array();
+    for (const auto& t : pzt::core::tags_for_image(r.id)) {
+      tag_names.push_back(t.name);
+      if (auto alias = pzt::core::tagging::system_tag_alias(t.name)) {
+        system_tags.push_back(*alias);
+      }
+    }
     item["tags"] = tag_names;
+    item["system_tags"] = system_tags;
     images.push_back(std::move(item));
   }
 
