@@ -81,6 +81,19 @@ scripts/release.sh 2026.7.20     # CalVer,不带 v 前缀
 
 用户升级：`brew update && brew upgrade pzt pzt-agent`。
 
+### 两个 formula 必须一起升
+
+**升级命令里的两个名字都要写。** `pzt-agent.rb` 的 `depends_on "pzt"` 不带版本约束 —— brew 只保证 `pzt` 装了，不保证它跟 agent 同版本，所以 `brew upgrade pzt-agent` 单独跑是能成功的，跑完就是新 agent 配旧 CLI。
+
+不对称的是这两个方向的后果：
+
+- **CLI 新 / agent 旧：无害。** headless 的 JSON 输出只做加法，旧 agent 读不到新字段就是不读。
+- **agent 新 / CLI 旧：会失败。** agent 用到了旧 CLI 还没有的字段时，那个 stage 直接崩。目前唯一这样的字段是 `pzt images --json` 的 `system_tags`（T-25，2026-08-14 起；curate 的 passthrough 分支靠它排废片/重复）。
+
+失败是**响的**，但不是**自解释的**：`worker._step` 的兜底把异常转成 `JobCrashed`，全栈进日志，Telegram 那边只收到一句通用的"处理过程中出了点问题"。用户不会被静默交付错结果（那正是 T-25 消灭的失效），但也不会知道该去升级 —— **定位得看日志**。
+
+刻意没有在 `pzt_client` 里把"字段缺席"翻译成"请升级 pzt"那句人话：单独升 agent 本就是本文档不支持的用法，为一个反文档操作加一层运行时版本兼容逻辑不划算。这条决定的前提是上面那个"响的"结论；哪天失败变回静默的，就得重新算这笔账。
+
 ---
 
 ## 数据兼容性
