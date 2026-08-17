@@ -18,7 +18,7 @@ _RESPONSES: Dict[str, Any] = {
     "dedup": {"groups": 2, "tagged": 2, "skipped_no_capture_time": 0},
     "curate": {"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]},
     "tag": {},
-    "images": {"images": [{"path": "a.jpg", "tags": []}]},
+    "images": {"images": [{"path": "a.jpg", "tags": [], "system_tags": []}]},
 }
 
 

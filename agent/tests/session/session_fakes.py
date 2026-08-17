@@ -33,7 +33,8 @@ _FIXED_RESPONSES = {
     "dedup": {"groups": 2, "tagged": 0, "skipped_no_capture_time": 0},
     "curate": {"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]},
     "images": {"project": "run-1", "images": [
-        {"path": "a.jpg", "tags": []}, {"path": "b.jpg", "tags": []},
+        {"path": "a.jpg", "tags": [], "system_tags": []},
+        {"path": "b.jpg", "tags": [], "system_tags": []},
     ]},
     "tag": {},
     "recipe": {"applied": True, "recipe_name": "Havana 1959"},

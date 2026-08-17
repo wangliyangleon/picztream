@@ -1,6 +1,8 @@
 import json
 import subprocess
 
+import pytest
+
 from orchestrator.driver import Driver
 from orchestrator.stage import StageContext
 from orchestrator.types import Plan, RunState, RunStatus, StageSpec, StageStatus
@@ -125,8 +127,16 @@ def test_curate_with_exclude_overfetches_filters_and_truncates():
     assert len(call_log) == 4
 
 
+# `pzt images --json` 里 canonical 存储名 -> 稳定 ASCII 别名，跟 core 的
+# tagging::system_tag_alias 一致。fake 在这里跟着做一遍，是为了让 path_tags
+# 这种"按标签名写 fixture"的写法继续可读，同时产出真二进制真会发的形状。
+_SYSTEM_TAG_ALIASES = {"废片": "Reject", "重复": "Duplicate"}
+
+
 def _images_json(*, path_tags):
-    images = [{"path": path, "tags": tags} for path, tags in path_tags]
+    images = [{"path": path, "tags": tags,
+               "system_tags": [_SYSTEM_TAG_ALIASES[t] for t in tags if t in _SYSTEM_TAG_ALIASES]}
+              for path, tags in path_tags]
     return json.dumps({"project": "proj-1", "images": images})
 
 
@@ -155,6 +165,67 @@ def test_curate_passthrough_when_count_is_none_lists_images_excluding_duplicate_
     assert call_log[2] == ["/fake/pzt", "tag", "apply", "proj-1", "a.jpg", "精选", "--json"]
     assert call_log[3] == ["/fake/pzt", "tag", "apply", "proj-1", "d.jpg", "精选", "--json"]
     assert len(call_log) == 4
+
+
+# -- T-25：passthrough 按机读标记过滤，不按中文字面量 --
+
+
+def test_curate_passthrough_filters_on_system_tags_not_on_the_displayed_tag_name():
+    # 这是 T-25 修的那个失效模式：core 改 canonical 存储名、或未来把系统标
+    # 签名 i18n 化之后，system_tags 照旧是 Reject/Duplicate，而 tags 里换成
+    # 了别的词。此前按 "废片"/"重复" 比对 tags 的写法在这里会**静默地一张
+    # 都不排**，把废片和重复项当入选结果交付出去。
+    call_log = []
+    client = _make_client({
+        "images": json.dumps({"project": "proj-1", "images": [
+            {"path": "a.jpg", "tags": [], "system_tags": []},
+            {"path": "b.jpg", "tags": ["Rejected"], "system_tags": ["Reject"]},
+            {"path": "c.jpg", "tags": ["Near-duplicate"], "system_tags": ["Duplicate"]},
+        ]}),
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选"})
+
+    assert output.data["selected"] == ["a.jpg"]
+
+
+def test_curate_passthrough_ignores_the_literal_when_it_is_not_marked_as_a_system_tag():
+    # 反向：一个碰巧叫"废片"的**用户**标签不是系统标签，core 不会给它标
+    # 记，这里也不该排掉它。按字面量比对时这张图会被误杀。
+    call_log = []
+    client = _make_client({
+        "images": json.dumps({"project": "proj-1", "images": [
+            {"path": "a.jpg", "tags": ["废片"], "system_tags": []},
+        ]}),
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    output = stage.run(ctx, {"count": None, "apply_tag": "精选"})
+
+    assert output.data["selected"] == ["a.jpg"]
+
+
+def test_curate_passthrough_fails_loudly_when_the_pzt_binary_predates_system_tags():
+    # 下标不是 .get：字段缺席只可能是接到了过旧的 pzt（CLAUDE.md 记的那个
+    # 静默回落到 brew 的坑）。退回成"一张都不排"会把 T-25 刚消灭的无声失效
+    # 原样请回来，所以这里要求它打成 stage 失败。
+    call_log = []
+    client = _make_client({
+        "images": json.dumps({"project": "proj-1", "images": [
+            {"path": "a.jpg", "tags": []},
+        ]}),
+        "tag": '{}',
+    }, call_log)
+    stage = CurateStage(client=client)
+    ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
+
+    with pytest.raises(KeyError):
+        stage.run(ctx, {"count": None, "apply_tag": "精选"})
 
 
 def test_curate_passthrough_respects_exclude():
@@ -231,7 +302,7 @@ def test_missing_ai_fallback_count_defaults_to_zero():
 def test_passthrough_reports_no_fallback():
     # count=None 走 passthrough，根本不调 pzt curate，没有退化可言。
     call_log = []
-    client = _make_client({"images": json.dumps({"images": [{"path": "a.jpg", "tags": []}]}),
+    client = _make_client({"images": _images_json(path_tags=[("a.jpg", [])]),
                             "tag": '{}'}, call_log)
     stage = CurateStage(client=client)
     ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})
@@ -319,7 +390,7 @@ def test_passthrough_reports_no_caption():
     # count=None 根本不调 pzt curate，没有模型调用也就没有文案（验收 25 的
     # 同一形状：不产出，也不因此报错）。
     call_log = []
-    client = _make_client({"images": json.dumps({"images": [{"path": "a.jpg", "tags": []}]}),
+    client = _make_client({"images": _images_json(path_tags=[("a.jpg", [])]),
                             "tag": '{}'}, call_log)
     stage = CurateStage(client=client)
     ctx = StageContext(run_id="run-1", project_id="proj-1", outputs={})

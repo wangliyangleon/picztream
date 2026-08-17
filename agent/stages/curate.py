@@ -8,6 +8,22 @@ from orchestrator.types import StageOutput
 from pzt_client import PztClient, PztCommandError
 from stages.progress import forwarding
 
+# T-25：系统标签的稳定 ASCII 别名，由 `pzt images --json` 的 system_tags 字
+# 段送过来，定义在 core（tagging::kRejectTagAlias/kDuplicateTagAlias），跟
+# `--scope '#Reject'` 认的是同一组常量。
+#
+# 这里刻意**不**写 "废片"/"重复"：那是 core 的 canonical 存储名，属于显示
+# 文案那一侧。此前这个 passthrough 分支直接拿中文字面量比对 `tags`，于是
+# core 改名或未来把系统标签名 i18n 化时，这里会静默地不过滤任何东西——不
+# 报错，只是把废片和重复项当成入选结果交付出去。
+#
+# 别名是标识符、不随界面语言变，所以在 Python 里写下它不构成"第三份排除规
+# 则实现"：这一行是**策略**（passthrough 要排掉哪些系统标签），归调用方，
+# 见 PRD #23 "统一的是机制不是策略"。机制（哪个标签算系统标签）在 core。
+REJECT_TAG_ALIAS = "Reject"
+DUPLICATE_TAG_ALIAS = "Duplicate"
+_PASSTHROUGH_EXCLUDED_SYSTEM_TAGS = frozenset({REJECT_TAG_ALIAS, DUPLICATE_TAG_ALIAS})
+
 
 @dataclass
 class CurateStage:
@@ -42,8 +58,16 @@ class CurateStage:
                 # curate 的 count 语义是"每簇最多一个 winner"，不是
                 # "top N"，冒充会把用户明确拒绝的"再筛一次"悄悄做了）。
                 images = self.client.call("images", ctx.project_id)["images"]
-                survivors = [img["path"] for img in images
-                             if "重复" not in img["tags"] and "废片" not in img["tags"]]
+                # 下标而不是 .get：`pzt images --json` **无条件**发这个字
+                # 段，缺席只可能是接到了一个过旧的 pzt（CLAUDE.md 记过这个
+                # 坑：worktree 里没构建物时会静默回落到 brew 那个）。这种
+                # 情况下 .get("system_tags", []) 会退回成"一张都不排"，正
+                # 是 T-25 要消灭的那种无声失效；KeyError 打成 stage 失败是
+                # 对的。
+                survivors = [
+                    img["path"] for img in images
+                    if not _PASSTHROUGH_EXCLUDED_SYSTEM_TAGS.intersection(img["system_tags"])
+                ]
                 final_selection = [p for p in survivors if p not in exclude]
                 requested = None
             else:
