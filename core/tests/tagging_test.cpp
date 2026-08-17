@@ -462,6 +462,35 @@ TEST_CASE("ensure_reject_tag and ensure_duplicate_tag coexist as two distinct sy
   CHECK(list_tags(fx.db, fx.project_id).size() == 2);
 }
 
+// T-25：系统标签的稳定 ASCII 别名。纯函数，不碰库。
+TEST_CASE("system_tag_alias maps the two system tags to their stable ASCII identifiers") {
+  auto reject = system_tag_alias(kRejectTagName);
+  REQUIRE(reject.has_value());
+  CHECK(*reject == "Reject");
+
+  auto duplicate = system_tag_alias(kDuplicateTagName);
+  REQUIRE(duplicate.has_value());
+  CHECK(*duplicate == "Duplicate");
+}
+
+TEST_CASE("system_tag_alias returns nothing for a user tag") {
+  CHECK(!system_tag_alias("精选").has_value());
+  CHECK(!system_tag_alias("").has_value());
+  // 输入是 canonical 存储名，别名本身不是存储名——大小写不敏感的别名匹配
+  // 是 core/scope::resolve 那一侧的事，这里不该反向认。
+  CHECK(!system_tag_alias("Reject").has_value());
+}
+
+// 回归守卫：`pzt images --json` 的 system_tags 与 `--scope '#Reject'` 必须
+// 是同一组词。它们此前各自硬编码字面量（scope.cpp 匿名 namespace 一份），
+// 分开改一处而另一处不动，headless 就会输出 agent 认不出的标记。
+TEST_CASE("the scope alias and the machine-readable marker are the same tokens") {
+  CHECK(std::string(kRejectTagAlias) == "Reject");
+  CHECK(std::string(kDuplicateTagAlias) == "Duplicate");
+  CHECK(*system_tag_alias(kRejectTagName) == std::string(kRejectTagAlias));
+  CHECK(*system_tag_alias(kDuplicateTagName) == std::string(kDuplicateTagAlias));
+}
+
 // F-26/F-09：只返回请求范围内、确实打了目标标签的图片，不是"这个标签下
 // 所有图片"（那是 filter_by_tag 的职责）。
 TEST_CASE("images_with_tag returns only the images in scope that carry the given tag") {

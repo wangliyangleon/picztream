@@ -140,4 +140,24 @@ constexpr const char* kDuplicateTagName = "重复";
 // 字——不共享实现，两行代码不值得为此抽一层。
 TagId ensure_duplicate_tag(db::Database& db, ProjectId project_id);
 
+// 系统标签的稳定 ASCII 别名（提案 T-25）。这是**标识符**、不是显示文案：
+// 它不随界面语言变，core 改 canonical 存储名或未来把系统标签名 i18n 化时
+// 它都不动。这条判据在 PRD #23 决策 D-3 里已经立过（`pzt dedup --scope
+// '#Reject'` 认这两个词），T-25 只是把当时留在 core/scope 匿名 namespace
+// 里的那张表挪上来，让第二个消费者（`pzt images --json` 的 system_tags 字
+// 段）用的是同一张，而不是又抄一遍。
+//
+// 别名的拼写跟 scope 语法里用户打的那个词逐字节相同，故意不为 JSON 另起一
+// 套小写形式：两套拼写就是两张表，正是这条提案要消灭的东西。
+constexpr const char* kRejectTagAlias = "Reject";
+constexpr const char* kDuplicateTagAlias = "Duplicate";
+
+// canonical 存储名 -> 稳定别名。不是系统标签时返回空 optional。
+//
+// 输入是**存储名**（"废片"/"重复"），不是用户打的原文——大小写不敏感的别
+// 名匹配是 scope 解析那一侧的事（core/scope::resolve 先把用户输入归一成
+// canonical 名再查库），这个函数只做"库里这行标签是不是系统标签、对应哪个
+// 标识符"这一件事。
+std::optional<std::string> system_tag_alias(const std::string& tag_name);
+
 }  // namespace pzt::core::tagging

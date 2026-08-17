@@ -385,4 +385,10 @@ TagId ensure_duplicate_tag(db::Database& db, ProjectId project_id) {
   return created.value();
 }
 
+std::optional<std::string> system_tag_alias(const std::string& tag_name) {
+  if (tag_name == kRejectTagName) return std::string(kRejectTagAlias);
+  if (tag_name == kDuplicateTagName) return std::string(kDuplicateTagAlias);
+  return std::nullopt;
+}
+
 }  // namespace pzt::core::tagging

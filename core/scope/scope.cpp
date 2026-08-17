@@ -22,18 +22,24 @@ bool equals_ascii_case_insensitive(const std::string& a, const char* b) {
 // 用户打的标签名 -> canonical 存储名。只有系统标签有别名，普通标签原样返
 // 回（它们照样享受 find_tag_by_name 自己的大小写不敏感匹配，只是不做语言
 // 别名）。见头文件 D-3 那段。
+//
+// 别名的拼写来自 tagging::kRejectTagAlias/kDuplicateTagAlias，不在这里再写
+// 一遍字面量：T-25 之后 `pzt images --json` 的 system_tags 字段用的是同一
+// 组常量，两处必须逐字节一致，否则 headless 认得的词和输出的词会对不上。
 std::string canonical_tag_name(const std::string& written) {
-  if (written == tagging::kRejectTagName || equals_ascii_case_insensitive(written, "Reject")) {
+  if (written == tagging::kRejectTagName ||
+      equals_ascii_case_insensitive(written, tagging::kRejectTagAlias)) {
     return tagging::kRejectTagName;
   }
-  if (written == tagging::kDuplicateTagName || equals_ascii_case_insensitive(written, "Duplicate")) {
+  if (written == tagging::kDuplicateTagName ||
+      equals_ascii_case_insensitive(written, tagging::kDuplicateTagAlias)) {
     return tagging::kDuplicateTagName;
   }
   return written;
 }
 
 bool is_system_tag_name(const std::string& canonical) {
-  return canonical == tagging::kRejectTagName || canonical == tagging::kDuplicateTagName;
+  return tagging::system_tag_alias(canonical).has_value();
 }
 
 }  // namespace
