@@ -265,6 +265,27 @@ TEST_CASE("msg_console_filter_no_images and err_console_invalid_filter_criterion
   g_lang = Lang::zh;  // 还原
 }
 
+// T-15（#30）：`.`（当前视图）这一支的作用域错误有自己的文案，不能复用
+// err_console_invalid_scope。整条决策（PRD #28 D-6 第二条）就是"`.` 是合
+// 法写法，报语法错是撒谎"，两句话说成一句等于把那条决策原地取消，所以这
+// 里连内容一起断言，不只断言两种语言都非空。
+TEST_CASE("err_console_scope_no_view is its own text, not the invalid-scope one") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK(err_console_scope_no_view() != err_console_invalid_scope());
+    // 不该重复"必须是 * 或 #标签名"那套说法 - 用户写的 `.` 本来就没错。
+    CHECK(err_console_scope_no_view().find("#") == std::string::npos);
+  }
+
+  g_lang = Lang::zh;
+  CHECK(err_console_scope_no_view().find("视图") != std::string::npos);
+
+  g_lang = Lang::en;
+  CHECK(err_console_scope_no_view().find("view") != std::string::npos);
+
+  g_lang = Lang::zh;  // 还原
+}
+
 // F-09：placeholder 提示要包含新命令的用法,不然用户按 `:` 之后完全不
 // 知道 /filter 存在。
 TEST_CASE("msg_ai_prompt_placeholder mentions /filter usage") {

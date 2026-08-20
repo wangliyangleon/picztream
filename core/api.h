@@ -244,8 +244,12 @@ Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 
 // T-16：`*` / `#标签名` / `#"带空格的标签名"` 的解析，交互与 headless 两个
 // 入口共用这一份。错误是结构化的，两层各自映射成 i18n 文案 / error_code。
+//
+// T-15：第四支 `.` = explicit_ids 给的那一组 id，不给而写了 `.` 报
+// NoExplicitSet。语法与各支的完整说明只在 core/scope/scope.h 那一处。
 Result<Scope, ScopeFailure> resolve_scope(ProjectId project_id, const std::string& scope,
-                                           SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow);
+                                           SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow,
+                                           const std::vector<ImageId>* explicit_ids = nullptr);
 
 // T-16：按标签名剔除，保持输入顺序。scope_tag 非空且在排除列表里时那个标
 // 签不参与排除（F-26 对称例外）。开关留在调用方，core 不认识 Settings。

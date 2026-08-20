@@ -1155,6 +1155,14 @@ std::string err_console_invalid_scope() {
   }
 }
 
+std::string err_console_scope_no_view() {
+  if (g_lang == Lang::zh) {
+    return " 这里没有当前视图可指 ";
+  } else {
+    return " No current view to use here ";
+  }
+}
+
 std::string err_console_dedup_system_tag_scope(const std::string &canonical_tag_name) {
   // 传进来的是库里的 canonical 名(废片/重复)，显示要跟着界面语言走 —— 这
   // 正是"标识符 vs 显示文案"那条区分(见 core/scope/scope.h 的 D-3)在展示

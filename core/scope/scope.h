@@ -37,10 +37,15 @@ using tagging::TagId;
 // 任何面向用户的文案"和 §4.1 的分层契约。映射留在各自层不是重复实现，是
 // 正确的分层。
 enum class ScopeError {
-  InvalidSyntax,        // 既不是 `*` 也不以 `#` 开头
+  InvalidSyntax,        // 既不是 `*` / `.`，也不以 `#` 开头
   TagNotFound,          // 写法对，但项目里没有这个标签
   SystemTagNotAllowed,  // 范围是系统标签，而调用方声明了不接受（见 SystemTagPolicy）
   FilterFailed,         // 底层按标签过滤失败
+  // 范围写的是 `.`，但调用方没给显式 id 集合（见 resolve 的 explicit_ids）。
+  // 这一支不能并进 InvalidSyntax：`.` 是合法写法，只是这一侧没有集合可指，
+  // 报语法错等于让 headless 说出"既不是 `*` 也不以 `#` 开头"这句假话，正是
+  // T-10 与 U-3 那类"撒谎文案"（PRD #28 决策 D-6 第二条）。
+  NoExplicitSet,
 };
 
 struct ScopeFailure {
@@ -54,8 +59,9 @@ struct ScopeFailure {
 
 struct Scope {
   std::vector<ImageId> image_ids;
-  // 范围本身就是哪个标签，`*` 时为空。调用方用它判断 F-26 的对称例外
-  // （范围就是废片时不再排除废片），直接喂给 exclude_by_tags 的同名参数。
+  // 范围本身就是哪个标签，`*` 与 `.` 时为空（视图不是标签）。调用方用它
+  // 判断 F-26 的对称例外（范围就是废片时不再排除废片），直接喂给
+  // exclude_by_tags 的同名参数。
   std::optional<TagId> scope_tag;
 };
 
@@ -70,8 +76,29 @@ struct Scope {
 // 只有 dedup 存在"废片当上 keeper 把好邻居打成重复"这个失效模式。
 enum class SystemTagPolicy { Allow, Reject };
 
-// 支持 `*`（整个项目）、`#标签名`、`#"带空格的标签名"` 三种写法。标签名匹
-// 配大小写不敏感（沿用 find_tag_by_name 的 COLLATE NOCASE）。
+// 支持 `*`（整个项目）、`#标签名`、`#"带空格的标签名"`、`.`（调用方给定
+// 的显式 id 集合）四种写法。标签名匹配大小写不敏感（沿用 find_tag_by_name
+// 的 COLLATE NOCASE）。
+//
+// `.` 是 T-15（PRD #28 决策 D-4/D-6）加的第四支，core 侧的定义是"用
+// explicit_ids 给的那一组，没给就是错"。参数的语义是**调用方给定的显式 id
+// 集合**，不是"当前视图"这个 cli 概念 - core 不需要知道那组 id 从哪来，
+// 所以这里没有分层泄漏；交互层传的是当前视图（`f` 筛选 ∩ `/filter` 之后
+// 正在浏览的那批），headless 一侧没有可传的东西、于是拿到 NoExplicitSet。
+//
+// 之所以进 core 而不是在 cli 拦截：这份头注释是这套语法今天的**唯一权威
+// 出处**，cli 分流会让它变成不完整的文档而读者无从知道要去拼第二处；且
+// "这个 token 是不是合法作用域"归 core 判是 T-16 拍过的板。
+//
+// 这一支**不校验那组 id 属不属于 project_id**，另外三支则句句查库。这是
+// "core 不需要知道那组 id 从哪来"的必然代价：能查的只有"这些 id 在不在这
+// 个项目里"，而调用方本来就是从同一个项目的浏览列表里取的那批。写在这里
+// 是让它成为一条明写的信任边界，而不是一个没人注意到的疏漏。
+//
+// nullptr 与"给了但是空的"是两件事：前者报 NoExplicitSet，后者是合法的空
+// 作用域（`/filter` 一张都没筛出来是正常情况）。可选参数用指针而不是
+// std::optional<std::vector> 正是为了分开这两者且不复制。集合原样透传、保
+// 持顺序，`*` 与 `#标签` 两支完全不看它。
 //
 // 系统标签额外认稳定的 ASCII 别名 `#Reject` / `#Duplicate`（任意大小写）。
 // 这是 PRD #23 决策 D-3：别名是**标识符**，不是显示文案。core 本来就把
@@ -86,7 +113,8 @@ enum class SystemTagPolicy { Allow, Reject };
 // 写的是系统标签但项目里还没建过这个标签时，报 SystemTagNotAllowed 比报
 // TagNotFound 更贴近用户真正做错的事。
 Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
-                                     SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow);
+                                     SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow,
+                                     const std::vector<ImageId>* explicit_ids = nullptr);
 
 // 排除规则本身：image_ids 里哪些图片带了 exclude_tag_names 里的标签、因而
 // 该被剔除。

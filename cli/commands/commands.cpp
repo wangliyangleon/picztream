@@ -145,6 +145,13 @@ int emit_scope_error(const pzt::core::ScopeFailure& failure) {
     case pzt::core::ScopeError::SystemTagNotAllowed:
       return emit_json_error("system_tag_scope",
                              "cannot dedup within a system tag: " + failure.tag_name);
+    case pzt::core::ScopeError::NoExplicitSet:
+      // T-15（#30，PRD #28 验收 4）：`--scope .` 不能落进 invalid_scope。
+      // `.` 是合法写法，headless 只是没有"当前视图"这种东西可指 - 报语法
+      // 错等于告诉 agent"写法不对"，让它去改一个本来就对的写法。
+      return emit_json_error("no_current_view",
+                             "scope '.' means the caller's current view; headless commands "
+                             "have none, use * or #tag");
     case pzt::core::ScopeError::InvalidSyntax:
       return emit_json_error("invalid_scope", "scope must be * or #tag");
   }

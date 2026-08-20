@@ -115,9 +115,10 @@ TagId ensure_reject_tag(ProjectId project_id) {
 }
 
 Result<Scope, ScopeFailure> resolve_scope(ProjectId project_id, const std::string& scope,
-                                           SystemTagPolicy system_tag_policy) {
+                                           SystemTagPolicy system_tag_policy,
+                                           const std::vector<ImageId>* explicit_ids) {
   db::Database db = db::Database::open_default();
-  return scope::resolve(db, project_id, scope, system_tag_policy);
+  return scope::resolve(db, project_id, scope, system_tag_policy, explicit_ids);
 }
 
 std::vector<ImageId> exclude_by_tags(ProjectId project_id, const std::vector<ImageId>& image_ids,

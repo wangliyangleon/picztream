@@ -196,6 +196,10 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
     case pzt::core::ScopeError::SystemTagNotAllowed:
       // 只有 `/dedup` 会传 Reject 策略，`/ai_eval` 到不了这一支。
       return pzt::cli::i18n::err_console_dedup_system_tag_scope(failure.tag_name);
+    case pzt::core::ScopeError::NoExplicitSet:
+      // T-15（#30）：`.` 是合法写法，只是这条路径没给视图，所以不能落进下
+      // 面那句"必须是 * 或 #标签名"。本票不接调用方，接上是票 C/票 D。
+      return pzt::cli::i18n::err_console_scope_no_view();
     case pzt::core::ScopeError::InvalidSyntax:
       return pzt::cli::i18n::err_console_invalid_scope();
   }

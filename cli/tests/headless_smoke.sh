@@ -209,6 +209,17 @@ assert_json_has "$out" "'ai_fallback_count' not in j" \
 assert_nonzero_exit_with_error "dedup: unknown tag scope fails with JSON error" \
   "$PZT" dedup smoke --scope '#不存在的标签' --json
 
+# T-15（#30，PRD #28 验收 4）：`.`（当前视图）是合法作用域写法，只是
+# headless 这一侧没有视图可指。这里断言的重点是它**不是** invalid_scope -
+# 报语法错等于让 agent 去改一个本来就对的写法，正是 T-10/U-3 那类"撒谎文
+# 案"。
+assert_nonzero_exit_with_error "dedup: --scope . fails because headless has no current view" \
+  "$PZT" dedup smoke --scope '.' --json
+assert_json_has "$(cat /tmp/headless_smoke_stderr)" "j['error'] == 'no_current_view'" \
+  "dedup: --scope . reports no_current_view, not invalid_scope"
+assert_json_has "$(cat /tmp/headless_smoke_stderr)" "'current view' in j['message']" \
+  "dedup: the --scope . message states the real reason"
+
 # W2026-07-21 目标二：--ai/--provider 接线。fixture 三张图都没有
 # captured_at，压根进不了候选聚类，不会有任何簇尝试 AI 比较，
 # ai_fallback_count 恒为 0——这里验证的是"flag 接线不炸"，AI 锦标赛本身

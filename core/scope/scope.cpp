@@ -45,12 +45,22 @@ bool is_system_tag_name(const std::string& canonical) {
 }  // namespace
 
 Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, const std::string& scope,
-                                     SystemTagPolicy system_tag_policy) {
+                                     SystemTagPolicy system_tag_policy,
+                                     const std::vector<ImageId>* explicit_ids) {
   using R = Result<Scope, ScopeFailure>;
 
   if (scope == "*") {
     Scope result;
     for (const auto& ref : browse::list_images(db, project_id)) result.image_ids.push_back(ref.id);
+    return R::Ok(std::move(result));
+  }
+  // T-15：`.` 原样用调用方给的那一组，不查库、不重排、不受 system_tag_
+  // policy 影响（策略管的是"范围本身是不是系统标签"，`.` 根本不是标签）。
+  // scope_tag 留空，见头文件那段与 PRD #28 决策 D-7。
+  if (scope == ".") {
+    if (explicit_ids == nullptr) return R::Err(ScopeFailure{ScopeError::NoExplicitSet, ""});
+    Scope result;
+    result.image_ids = *explicit_ids;
     return R::Ok(std::move(result));
   }
   if (scope.empty() || scope[0] != '#') return R::Err(ScopeFailure{ScopeError::InvalidSyntax, ""});

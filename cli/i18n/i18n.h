@@ -225,6 +225,11 @@ std::string err_console_invalid_scope();
 // 户无从分辨这是"真没有重复"还是"范围被清空了"。参数收的是库里的
 // canonical 名,显示名由这个函数按当前语言换算。
 std::string err_console_dedup_system_tag_scope(const std::string& canonical_tag_name);
+// T-15（#30）：范围写的是 `.`（当前视图）但这条路径没有视图可传。`.` 本
+// 身是合法写法，所以不能复用 err_console_invalid_scope 那句"必须是 * 或
+// #标签名" - 那是假话。控制台的 `/dedup`/`/ai_eval` 接上视图之后（票 D）
+// 这一支在交互层不再出现，映射仍然要在，因为 core 的错误集合是穷举的。
+std::string err_console_scope_no_view();
 // F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
 // 示,控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
 std::string err_console_invalid_filter_criterion();
