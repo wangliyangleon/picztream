@@ -1,81 +1,79 @@
 # AGENTS.md
 
+本文件只放**最高层、最小概率变化**的东西：项目是什么、怎么分层、硬约束在哪。凡是"当前在做什么、上一批收了什么"一律不进这里，去 `docs/SPEC.md`。
+
 ## 项目
 
-PicZTream（简称 PZT）是一个基于终端的全键盘图片筛选与色彩处理工具，核心诉求是零延迟选片体验与高性能本地色彩流水线。项目使用现代 C++（C++20+）开发，运行环境固定为 Mac M 系列芯片、Ghostty 终端（Kitty 图像协议）、Tmux 窗格、Fish 4.0、LazyVim、CMake + Ninja 构建链。
+PicZTream（简称 PZT）是终端内全键盘的图片筛选与色彩处理工具，核心诉求是零延迟选片体验与高性能本地色彩流水线。
 
-## 权威文档
+**核心用户**：有技术背景的摄影爱好者。能力轴上他会用 CLI、能自行配置 AI 凭证或部署本地模型、能照文档搭起即时通讯 bot；用途轴上他拍的是自己旅途里的照片，终点是个人 social media。两条轴缺一不可，专业、商用与多人协作明确排除在外。
 
-这些文档是本项目设计决策的权威来源，任何代码实现与文档冲突时以文档为准，如需偏离必须先提出并等待确认，不得自行决定。**不要每个 session 全读**，按下述规则加载：
+**核心功能**：秒切浏览与标签分组、recipe 色彩配方、近似重复检测（dedup）、意图驱动的跨簇选片（curate）、导出，以及 Telegram 上「发照片 → 自动去重/选片/套风格 → 推回确认」的闭环。
 
-* `docs/SPEC.md`：长期稳定的全局规格（项目定位、模块划分、设计哲学、对外接口轮廓、技术契约、紧凑现状与路线），是每个 session 的 ground truth，**每个 session 唯一必读**，**先读它**
-* 其余非 history 文档：先识别当前 session 的开发意图，再按需读取对应文档，不要预先全读：
-  * 开发本周 feature → 读 `docs/W{当前周日期}_PRD.md` 及对应 Eng Design。**当前没有活跃周目标**（`W2026-07-21` 已全部收口，归档在 `docs/history/W2026-07-21_*`；上一周 `W2026-07-15` 同样归档在 `docs/history/W2026-07-15_*`，需倒查实现细节时去 history 读）
-  * 闲时挑个低优先级活儿修 → 读 `docs/Task_Pool.md`（中长期低优先级任务池，标了 size 与依赖；2026-07 Fix-it Night 的短期必修项已收口，完整评审快照归档在 `docs/history/Fix_It_Night_Review.md`）
-  * 其它具体问题 → 查对应的活跃文档（如涉及 RAW 相关改动读 `docs/RAW_Support.md`）
-* `docs/history/`：已完成里程碑的 PRD/Eng Design（M0-M4）及被吸收的 `Roadmap.md`/`Optimization_Backlog.md`（见其 `README.md` 索引），最不需要预读，仅在遇到具体设计或开发问题需要倒查某个能力"当初怎么设计的"时再查
+**格式优先级**：JPEG 与 HEIC 是 P0，RAW 是 P1（opt-in，`--support-raw`）。**HEIC 目前完全不被支持**，是已知的 P0 缺口。
 
-具体的工程设计、模块划分、schema 与 tradeoff 以对应周/里程碑的 Eng Design 文档为准，尚未产出对应文档的目标，agent 不应臆测细节自行实现，应先提出问题等待确认。
+**运行环境固定**：Mac M 系列芯片、Ghostty（Kitty 图像协议，可在 tmux 窗格内渲染物理分辨率大图）、Fish 4.0、LazyVim、CMake + Ninja、现代 C++（C++20+）。
 
-## 当前状态
+## 设计哲学
 
-M0（MVP）、M1（风格化）、M2（RAW）、M3 的两个增量（选片辅助评分、近似重复检测）、M4 增量一（Telegram 选片-交付闭环，含 agent Style）均已完成。`W2026-07-15` 周目标（含 2026-07-17 追加的目标五 agent 运行时双线程重构）已全部收口并归档：本地模型（Ollama）、recipe/滤镜扩展、agent Style、agent 运行时重构、部署与分发（Homebrew tap 分发 `pzt`/`pzt-agent` + README + 静态主页 + 一键 release 自动化）均完成；**目标二的几何变换（裁切/水平矫正）顺延**，已进 `docs/Task_Pool.md`。`W2026-07-21` 周目标同样已全部收口并归档：eval 解耦（文字描述+硬伤 flag，不再产跨图分数）+ dedup/curate 涉及比较的选择改 AI 锦标赛（整个锦标赛都在 core 的 `tournament` 模块里，分簇/场次推进/判定胜者一次调用做完；PRD 最初设想的"bracket 推进放 agent"在规划阶段就被推翻了，见 `docs/history/W2026-07-21_Tournament_Eng_Design.md` 决策一）+ 全局 AI 开关 + dedup/curate 流程按意图可选化（不再固定全跑）均完成；真机反馈后又追加了一次超出该周 PRD 范围的架构调整（选片确认闸门挪到套滤镜之前，交付不再挂闸门）。手动选片模式明确移出范围，未立项。2026-07-28 的真机反馈又追加了一刀并已完成：控制台补上 `/dedup <范围> --ai`（此前锦标赛只有 agent 层接得上），含开跑前的开销闸门与两段进度反馈，见 `docs/history/Dedup_AI_Console_PRD.md`。2026-07-29 又围绕同一条路径连做了三件事并全部收口：`/dedup` 的两级进度（组 + 每次比较）、Ctrl-C 在信号路径上还原终端（此前会把用户留在备用屏幕里）、以及 Ctrl-C 中途取消这一次去重而不是杀掉整个 `pzt open`（明确推翻了上一份 PRD 的非目标"不做中途可中断"，见 `docs/history/Dedup_Cancel_PRD.md`）。2026-07-30 又收了一条（提案 T-10，归档在 `docs/history/Env_Preflight_*`）：三个运行环境前提（Kitty 协议终端、Telegram 凭证、Ollama 可达）不满足时都不告知原因，现在分别补上终端白名单探测 + 进备用屏幕前的提示与等待、凭证缺失的人话 + 退出码 2、agent 启动期的 Ollama/API key 预检（只告警不拦启动），顺带救活两条被 `DebugLogRedirect` 吞掉的死文案；该条的真机验收推翻了原方案"把提示画进 banner"的做法，理由见归档说明。2026-07-31 再收一条（提案 T-8，归档在 `docs/history/Headless_Observability_*`）：headless 的分钟级 AI 运行在 Telegram 那一侧是纯黑箱，现在进度走 stderr 带外通道（stdout 的原子性不变，SPEC §3.2 契约改述为"stdout 原子 + stderr 带外"）、`pzt_client` 改成两个读取线程边跑边读、`ai_fallback_count` 不再蒸发并进用户话术、`Style`/`StyleApplyAll` 补进可取消集合；真机验收推翻了 PRD"把 phase 压掉"的决策（单位必须跟着数字走）。这一批的来源是 `docs/proposal-2026-07-25.md` 三视角评审，该文档记录了全部 33 条提案条目与逐条完成状态，是当前唯一的活跃待办清单。2026-08-03 又收口了一次**不属于那 33 条的独立立项**：意图驱动的跨簇选片（PRD 与 13 张票已归档在 `docs/history/Intent_Curation_PRD.md` 与 `docs/history/issues/intent-curation/`，文献调研在 `docs/history/Research_Selection_And_VLM_Limits.md`）。`pzt curate` 的第二步此前是空白（开 AI 走 `std::sample` 随机抽样，关 AI 只按拍摄时间散开，用户意图流到这一步只被当字符串打了个标签），现在改为：描述加 `content` 字段、多样性预筛出预选集、curate 内部只评估预选集、由模型按选片简述一次调用连选带排并产出文案，退化时整批落回与关 AI 同一条确定性路径；选片简述在方案确认与选片确认两个阶段都能改；开销闸门与进度按入口分别接线（TUI 阻塞式确认零写入，headless 告知 + 可撤）。这一刀推翻了 `W2026-07-21_PRD.md` 的"agent 不再整批跑评估"（现在只评估预选集）与旧的"视觉/语言推理"分轴（已改述为"关于照片的推理归 core"，见 ADR-0001）。2026-08-08 收口提案 **T-4**（"核心用户是谁"，悬置 26 天）：核心用户 = **有技术背景的摄影爱好者**，能力轴（会用 CLI、能自配 AI 凭证或部署本地模型、能照文档搭 bot）与用途轴（个人旅途照片 → 个人 social media，排除专业/商用/多人协作）两条一起才成立；由此定下 **JPEG 与 HEIC = P0、RAW = P1**（RAW 降级是技术难度所致，不是用户不需要，故不是 P2）。三个下游收敛 2/3：T-27（公开叙事改由"选片成本 = 单次决策延迟 × 决策次数"统领，RAW 旁路降为第三段）与 T-31（Caption **已落地**、是 Curate 的副产品而非第七个 Stage；Profile **不做**；`last_config` 进 Task_Pool）收敛，**T-20 只转为远期开放**（"多用户托管"≠"多人协作"，前者待决、后者不做）。T-5 维持原判，并拍定"HEIC 入口不计入那一半"。拍板同时炸出一个**不在任何清单上的 P0 缺口：HEIC 完全不被支持**（闸门只是 `core/project/project.cpp` 的扩展名白名单，解码/色彩/EXIF 实测零改动即通），另行出 PRD。2026-08-12 收口提案 **T-29**（PRD 与实现票是 GitHub issues #17/#19/#20，第二份直接开在 Issues 上的 PRD）：`r c` 自建 recipe version 从 9 个盲填数字的线性问答，改成可前进后退的分步向导 + 每提交一格就重渲染当前这张图的实时预览。grilling 期间推翻了"只加预览"这个最直白的读法（只在最后一格渲染会让人填到第 7、8 格才发现第 1 格不对，唯一出路是整个作废重填，比没有预览更糟），所以向导是预览能用的前提；"解析失败静默变 0"刻意维持不修（有了字段级回退就不需要再加拒绝/重提示）。实现上"预览与保存后是同一张图"做成构造上成立：`render_preview` 与 `render()` 共用 `apply_resolved`，字段到参数的映射只有 `params_from_wizard_fields` 一份。`read_text_line` 的共享契约未动（新增第四态 `BackspaceOnEmpty`，只有向导专用薄壳读成"回退"）。真机反馈追加一处超范围改动：向导进门先渲染一次预设的中性状态。遗留一笔账指向 T-30（预览走门面、每次开一次库）。当前没有活跃周目标。完整现状与路线见 `docs/SPEC.md` 的"现状与路线"一节。
+- **双层流水线**：culling 阶段只读相机 ISP 已渲染好的内嵌 JPEG 或原生 JPEG，绕过 RAW 解码换取零延迟秒切；processing 阶段只在用户明确标记需要精修时才触发 LibRaw 解码与色彩处理。复杂度按需升级，默认体验永远是轻的。
+- **可插拔异步**：所有 AI 能力都能完全关闭而不影响 culling 主流程的零延迟；AI 结果以"建议"形式写回数据库供参考，不直接替代用户判断。
+- **不碰用户数据**：原始文件永不被修改，一切状态都在 PZT 自己的库里。
+- **自动化后于人工验证**：一个能力先要在人工路径上被用过、调校过，才谈让 agent 自动跑它，否则自动化只是在不稳固的地基上搭黑盒。这条决定了里程碑的推进顺序。
+- **不做过早优化、不做超范围抽象**：SIMD 之类的底层优化只在有实测数据支撑时引入；不引入超出当前目标范围的抽象设计。
+
+## 项目地图
+
+依赖方向严格单向：`agent` → `pzt`（cli 二进制）→ `core`，三层不互相渗透。
+
+| 层 | 是什么 | 子模块 |
+|---|---|---|
+| `core/` | 核心业务逻辑库，不得含任何终端渲染或按键交互依赖 | `project` `db` `decode` `media` `raw` `color` `recipe` `dedup` `curate` `tournament` `tagging` `scope` `export` `ai` `settings` `browse` `api` |
+| `cli/` | 终端全键盘交互前端，只调用 `core` 暴露的接口 | `commands` `menu` `ui` `term` `kitty` `text` `i18n` |
+| `agent/` | Python headless 编排层，只通过 `pzt --json` 子进程驱动 `core`，不直接链接 C++ | `session`（多线程运行时） `stages` `orchestrator` `compose` `transport` `store` `router` |
+
+- **对外有两个命令面**：面向人的 `pzt` CLI，和面向 agent 的 headless `--json` 命令面。一个能力落在哪一面由**决策归谁**决定，不由它实现在哪里决定；同一个 core 能力可以两面都接。headless 的契约是「stdout 原子 + stderr 带外」：stdout 只在跑完时写一个 JSON 对象，进度与开销走 stderr。
+- **agent 三个入口**：`run_telegram.py`（常驻会话，用户主入口）、`run_intent.py`（本地命令行，开发测试）、`run_watchfolder.py`（无对话的全自动回归基线）。Stage 库六个：Ingest / Dedup / Curate / Style / StyleApplyAll / Deliver，由一个零 LLM 决策的确定性 Driver 按 Plan 推进；Plan 本身由一次 LLM 调用从用户意图组装、再经确定性校验。
+
+## 文档
+
+- `docs/SPEC.md` 是长期 ground truth，**每个 session 唯一必读、且先读它**。现状与路线只在那里维护，不要在别处复制一份。
+- 其余文档按当前 session 的意图**按需读，不预读**：`docs/Task_Pool.md`（中长期低优先级活儿池）、`docs/RAW_Support.md`（碰 RAW 前必读）、`docs/proposal-2026-07-25.md`（33 条提案与逐条完成状态）、`docs/history/`（已归档的里程碑与周目标，只在倒查"当初怎么设计的"时进）。
+- **票与 PRD 在 GitHub Issues**（`wangliyangleon/picztream`，用 `gh` CLI），存量 PRD 渐进迁移中、两处并存是正常状态，找 PRD 前先查已迁清单：`docs/agents/issue-tracker.md`。triage 沿用五个规范 label，见 `docs/agents/triage-labels.md`。
+- **ADR 永远留在仓库**（`docs/adr/`），术语表是根 `CONTEXT.md`（只定义概念，不记实现决策），见 `docs/agents/domain.md`。
+- 代码实现与权威文档冲突时以文档为准，要偏离必须先提出并等待确认。尚未产出对应文档的目标，不臆测细节自行实现。
 
 ## 工程契约
 
-以下是不随具体业务功能变化的全局约束（`docs/SPEC.md` 第四节是同一套契约的完整版，含依据与展开，两者一致）：
+`docs/SPEC.md` 第四节是同一套契约的完整版（含依据与展开），两者一致。
 
-### 架构分层
+**分层**：新增代码前先判归属 - 业务逻辑一律进 `core`，交互展示一律进 `cli`，编排一律进 `agent`。
 
-* `core/`：核心业务逻辑库，不得引入任何终端渲染或按键交互相关的依赖，保持对未来非 `cli` 调用方（如 headless agent 层）的可复用性
-* `cli/`：终端交互前端，只调用 `core` 暴露的接口，不承载业务逻辑
-* `agent/`：Python headless 编排层，只通过 `pzt` 的 headless 命令（子进程）驱动 `core`，不直接链接 C++
-* 新增代码前先判断归属层级，业务逻辑一律进 `core`，交互展示逻辑一律进 `cli`，编排逻辑一律进 `agent`，三者不得相互渗透
+**代码规范**：C++20 及以上；并发统一 `std::jthread`，禁止裸 `std::thread` 且不管理生命周期；`core` 层禁止阻塞 IO 到主线程；禁止引入运行时开销较大的框架或脚本语言依赖。
 
-### 代码规范
+**AI 边界**：LLM（包括 Claude Code 本身）只做算法推导、生成结构化配方或配置、代码撰写与审查，不进任何需要确定性与实时性能的核心执行路径。AI 能力内部再分职责：**关于照片的推理归 `core`**（看图点评、两两比较、看图选风格、读描述跨簇选片），**关于用户的推理归 `agent`**（解析意图、解析对话调整、按文字描述匹配风格）。判据是输入里有没有照片信息，含照片的衍生描述、不限于像素，见 `docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md`。
 
-* C++20 及以上标准，禁止引入运行时开销较大的框架或脚本语言依赖
-* 并发统一使用 `std::jthread`，禁止裸 `std::thread` 且不管理生命周期
-* 不做过早优化，SIMD 等底层优化仅在有实测数据支撑需要时引入
-* `core` 层禁止阻塞 IO 到主线程，涉及磁盘读取的路径需评估是否要走异步
+**提交与测试**：提交前自查是否覆盖对应 PRD 的验收标准；核心逻辑要有单元测试覆盖，遵循 TDD 节奏（先 RED 后 GREEN，一个可提交单元一次 commit）；涉及延迟敏感路径的改动要有配套延迟日志或基准数据。改了 C++ 之后 `build/` 与 `build_release/` 两个目录都要重建，用户是拿 release 二进制实测的。
 
-### AI 使用边界
+**worktree 里的两个坑**：
 
-LLM（包括 Claude Code 本身）在本项目中的角色严格限定为算法推导、生成结构化配方或配置、代码撰写与审查，不参与任何需要保证确定性和实时性能的核心执行路径，不得在性能关键代码中依赖运行时调用 LLM 进行决策。AI 辅助能力内部再分职责：**关于照片的推理**（看图点评/两两比较/看图选风格/读描述跨簇选片）归 `core`（C++ headless 命令承载），**关于用户的推理**（意图/对话调整/按文字描述匹配风格）归 `agent`（Python）。判据是输入里有没有照片信息，含照片的衍生描述、不限于像素（此前表述为"视觉推理 vs 语言推理"，改述理由见 `docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md`）。
+1. 开 worktree 之后**先建一次 release 构建物**，哪怕这次改动根本不碰 C++：
 
-### 提交与测试
+   ```sh
+   cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
+   cmake --build build_release
+   ```
 
-* 每个功能提交前自查是否覆盖对应 PRD 中列出的验收标准
-* 核心逻辑需要基本单元测试覆盖
-* 涉及延迟敏感路径的改动，需要有配套的延迟日志或基准数据
+   `agent/pzt_client.py` 的 `default_pzt_bin()` 按「仓库根的 `build_release/cli/pzt` 存在就用它，否则回落到 PATH」解析，而构建物不进 git、worktree 里没有。回落是**静默**的，于是从 worktree 里起的 agent 会去调 brew 装的那个可能落后好几周的 `pzt`，症状却是一句看不出所以然的 SQL 错误。`agent/tests/test_pzt_client.py::test_default_pzt_bin_points_at_repo_build_release_cli_pzt` 是这件事的哨兵，它在 worktree 里红说的就是"此刻解析到的不是仓库构建物"，别当环境噪音跳过。
 
-### 改动在哪儿落地
+2. `agent/.venv` 只存在于主 checkout，worktree 里没有（venv 不进 git），且这台机器上没有 `python` 这个命令。在 worktree 的 `agent/` 目录里要这样跑测试：
 
-开 worktree 之后**先建一次 release 构建物**，哪怕这次改动根本不碰 C++：
+   ```sh
+   /Users/wangliyang/Dev/picztream/agent/.venv/bin/python -m pytest tests/
+   ```
 
-```sh
-cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build_release
-```
-
-理由是 `agent/pzt_client.py` 的 `default_pzt_bin()` 按「`<仓库根>/build_release/cli/pzt` 存在就用它，否则回落到 PATH」解析，而 worktree 里没有构建物（那是 build 产物，不进 git）。回落是**静默**的，于是从 worktree 里起的 agent 会去调 brew 装的那个 `pzt`，版本可能落后好几周，报出来的却是一句看不出所以然的 SQL 错误。真机踩过一次：`no such column: image_evaluations.exposure_score`，那一列在 W2026-07-21 的 eval 解耦里就删了，是 brew 上 2026.7.20 的旧 schema。
-
-`agent/tests/test_pzt_client.py::test_default_pzt_bin_points_at_repo_build_release_cli_pzt` 就是这件事的哨兵：它在 worktree 里红，说的就是"此刻解析到的不是仓库构建物"，别当成环境噪音跳过。
-
-## Agent skills
-
-### Issue tracker
-
-票与 PRD 都在 GitHub Issues（`wangliyangleon/picztream`，用 `gh` CLI）；**ADR 永远留在仓库**，存量 PRD 正在渐进迁移、两处并存是当前的正常状态，找 PRD 前先查已迁清单。见 `docs/agents/issue-tracker.md`。
-
-### Triage labels
-
-沿用五个规范 label（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`），全部已存在于仓库。见 `docs/agents/triage-labels.md`。
-
-### Domain docs
-
-单 context：根 `CONTEXT.md` + `docs/adr/`，无 `CONTEXT-MAP.md`。注意 `docs/SPEC.md` 仍是每个 session 唯一必读、且先于这两者。见 `docs/agents/domain.md`。
+   `pyproject.toml` 的 `pythonpath = ["."]` 保证 import 解析到当前 worktree 的代码，测的仍是本次改动。
 
 ## 行为准则
 
-Agent 在本仓库中回应时保持客观、严格、简洁、逻辑导向，不做无依据的功能扩展，不引入超出当前里程碑范围的抽象设计，遇到需求不明确或与文档冲突的情况先提出问题，不擅自假设。
+回应保持客观、严格、简洁、逻辑导向。不做无依据的功能扩展，不引入超出当前范围的抽象设计。遇到需求不明确或与文档冲突的情况先提出问题、等待确认，不擅自假设。
