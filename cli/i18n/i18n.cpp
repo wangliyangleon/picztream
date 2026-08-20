@@ -96,7 +96,7 @@ std::string usage_main() {
            "  pzt list\n"
            "  pzt open [project_name] [--debug]  (h/l 上一张/下一张,"
            "j/k 下一张/上一张未打标签,space 打标签,x 标记废片,e 导出,f 筛选,"
-           "r 应用/清除/新建/删除风格,r v 临时预览原图,: 控制台,"
+           "r 应用/清除/新建/删除配方,r v 临时预览原图,: 控制台,"
            "q 退出;--debug 时在图片下方开一块区域滚动显示内部日志,默认"
            "不显示也不产生这些日志)\n"
            "      控制台(在 pzt open 里按 : 进入):/dedup <范围> [--ai] "
@@ -521,7 +521,7 @@ std::string export_skip_reason(pzt::core::SkipReason reason) {
     case pzt::core::SkipReason::DecodeFailed:
       return g_lang == Lang::zh ? "解码失败" : "decode failed";
     case pzt::core::SkipReason::RenderFailed:
-      return g_lang == Lang::zh ? "应用风格失败" : "apply recipe failed";
+      return g_lang == Lang::zh ? "应用配方失败" : "apply recipe failed";
     case pzt::core::SkipReason::EncodeFailed:
       return g_lang == Lang::zh ? "编码失败" : "encode failed";
     case pzt::core::SkipReason::RawDecodeFailed:
@@ -761,7 +761,7 @@ std::vector<MenuLine> menu_lines() {
         {'f', menu_item("f", "筛选")},
         {'e', menu_item("e", "导出")},
         {0, ""},
-        {'r', menu_item("r", "风格")},
+        {'r', menu_item("r", "配方")},
         {0, ""},
         {':', menu_item(":", "控制台")},
     };
@@ -861,7 +861,7 @@ std::string info_source_label(bool is_raw) {
 }
 
 // "拍摄时间: 2025-05-11 19:24" 这一整行经常超出信息栏这种窄列的宽度（比
-// "大小:"/"来源:"那两行长不少），会被截断——改成跟"风格:"一样的"标题行 +
+// "大小:"/"来源:"那两行长不少），会被截断——改成跟"配方:"一样的"标题行 +
 // 缩进值行"两行展示，标题（本函数）和格式化后的值（format_captured_at）
 // 分开，调用方各自 emit 一行。
 std::string info_captured_at_heading() {
@@ -889,7 +889,7 @@ std::string format_captured_at(std::optional<std::int64_t> captured_at) {
 
 std::string info_style_label() {
   if (g_lang == Lang::zh) {
-    return "风格:";
+    return "配方:";
   } else {
     return "Recipe:";
   }
@@ -1854,13 +1854,13 @@ std::string recipe_menu_create_success(const std::string &preset_name) {
 std::string recipe_menu_actions_line(bool has_recipe) {
   if (g_lang == Lang::zh) {
     std::string line = " " + menu_item("r", "清除");
-    if (has_recipe) line += "  " + menu_item("v", "切换原图/风格化");
+    if (has_recipe) line += "  " + menu_item("v", "切换原图/配方");
     line += "  " + menu_item("c", "新建") + "  " + menu_item("d", "删除") + "  " +
             menu_item("Esc", "取消");
     return line;
   } else {
     std::string line = " " + menu_item("r", "Clear");
-    if (has_recipe) line += "  " + menu_item("v", "Toggle Original/Style");
+    if (has_recipe) line += "  " + menu_item("v", "Toggle Original/Recipe");
     line += "  " + menu_item("c", "New") + "  " + menu_item("d", "Delete") + "  " +
             menu_item("Esc", "Cancel");
     return line;

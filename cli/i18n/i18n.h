@@ -155,7 +155,7 @@ std::string info_source_label(bool is_raw);
 // 标题行 + 缩进值行两行展示，见 i18n.cpp 里的说明。
 std::string info_captured_at_heading();
 std::string format_captured_at(std::optional<std::int64_t> captured_at);
-// 标签本身("风格:"/"Recipe:")，值部分(预设名，或者没有 recipe 时复用
+// 标签本身("配方:"/"Recipe:")，值部分(预设名，或者没有 recipe 时复用
 // info_none_label())在 browse.cpp 里跟标签拼在同一行,两部分分开是因
 // 为只有值那部分需要加粗，标签本身不加粗，见 browse.cpp 的说明。
 std::string info_style_label();

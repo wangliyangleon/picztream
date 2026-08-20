@@ -1179,7 +1179,7 @@ int cmd_open(const std::vector<std::string>& args) {
         if (info) {
           emit_line(pzt::cli::i18n::info_size_label(format_size(info->file_size)));
           emit_line(pzt::cli::i18n::info_source_label(info->kind == "raw"));
-          // 拍摄时间这一行经常超出信息栏窄列的宽度被截断,改成跟"风格:"一
+          // 拍摄时间这一行经常超出信息栏窄列的宽度被截断,改成跟"配方:"一
           // 样的标题行 + 缩进值行,见 i18n.cpp 里 info_captured_at_heading/
           // format_captured_at 的说明。
           emit_line(pzt::cli::i18n::info_captured_at_heading());
@@ -1191,7 +1191,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // 方便用 apply-debug 之类的调试命令验证时能直观看到结果,不用每
         // 次都手动查数据库。两层模型(预设/version)用两级缩进画成一棵小
         // 树,不是拼成一行文本——真机测试发现拼一行会在信息栏这种窄列里
-        // 被截断,例如"风格: Standard: MyStandard"就被切成了"风格:
+        // 被截断,例如"配方: Standard: MyStandard"就被切成了"配方:
         // Standard: MyStanda",看不全。
         row++;  // 空一行
         // M3 修订：Recipe 标签跟值(预设名/(无))合并一行，不再各占一行——
@@ -1210,7 +1210,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // (`*`)当主要信号,粗体转义码还留着(在支持的终端上锦上添花),
         // 但不再是唯一的指示方式。星号不显示时换成等宽的空格而不是整个
         // 去掉——真机反馈过直接去掉会导致名字的列位置随着 `r v` 切换来
-        // 回跳动，看着很别扭。标签本身("风格:"/"Recipe:")不加粗，只加
+        // 回跳动，看着很别扭。标签本身("配方:"/"Recipe:")不加粗，只加
         // 粗星号+名字这一段——两段分开各自 pad_to 再拼起来，不是对整行
         // 结果做字符串切片插入转义码(那样要精确计算标签的字节长度，容
         // 易因为中英文标签宽度不同出 bug)。

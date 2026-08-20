@@ -337,9 +337,9 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
   // 里。
   while (true) {
     auto presets = presets_for_menu();
-    // `v`(原图/风格化切换)只在这张图确实应用了风格时才有意义、才显示这
-    // 个选项——没有风格可言时,切换没有任何视觉效果,不该占一个选项误导
-    // 用户。文案固定写"切换原图/风格化",不再跟着 show_original 动态变
+    // `v`(原图/配方切换)只在这张图确实应用了配方时才有意义、才显示这
+    // 个选项——没有配方可言时,切换没有任何视觉效果,不该占一个选项误导
+    // 用户。文案固定写"切换原图/配方",不再跟着 show_original 动态变
     // (之前试过跟着状态变文案,反而更难读)。
     bool has_recipe = pzt::core::get_image_recipe(image_id).has_value();
     // 预设一多单行拼不下:编号选项按整个单元铺满两行(不拆 id 和名字)，操作

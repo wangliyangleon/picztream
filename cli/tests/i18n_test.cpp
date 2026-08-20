@@ -1,6 +1,8 @@
 #include <doctest.h>
 #include <cstdlib>
+#include <fstream>
 #include <string>
+#include <vector>
 
 #include "cli/i18n/i18n.h"
 #include "cli/text/text.h"
@@ -618,6 +620,89 @@ TEST_CASE("tag_menu_limit_reached 报出上限数字并指出出路") {
   CHECK(en.find("8") != std::string::npos);
   CHECK(en.find("d") != std::string::npos);
   CHECK(pzt::cli::text::display_width(en) <= kNarrowestBanner);
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// 从一份 C++ 源码里抠出所有字符串字面量的内容。左到右单趟扫描,维护"当前
+// 是否在字符串里"这一个状态:不在字符串里遇到 `//` 就丢掉本行剩下的部分
+// (注释里带引号的地方非常多-i18n.cpp 的注释经常整段引用文案,不先剥掉注释
+// 的话它们会被当成字面量,守卫立刻变成误报机)。`\"` 按转义处理,不结束字
+// 符串。字符字面量('r' 这种)不含要查的词,不特殊处理。
+std::vector<std::string> string_literals_in(const std::string& path) {
+  std::ifstream in(path);
+  REQUIRE_MESSAGE(in.is_open(), "打不开 " << path << " - 守卫会静默失效,不能当噪音跳过");
+
+  std::vector<std::string> literals;
+  std::string line;
+  while (std::getline(in, line)) {
+    bool in_string = false;
+    std::string current;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+      if (in_string && line[i] == '\\' && i + 1 < line.size()) {
+        current += line[i];
+        current += line[i + 1];
+        ++i;  // 转义序列整体跳过,`\"` 不算收尾引号
+        continue;
+      }
+      if (line[i] == '"') {
+        if (in_string) literals.push_back(current);
+        current.clear();
+        in_string = !in_string;
+        continue;
+      }
+      if (!in_string && line[i] == '/' && i + 1 < line.size() && line[i + 1] == '/') {
+        break;  // 行注释,本行到此为止
+      }
+      if (in_string) current += line[i];
+    }
+  }
+  return literals;
+}
+
+// T-15 票 E：cli 显示文案里表示 recipe 这个概念的词统一成"配方"/Recipe。
+// 依据是 ADR-0002：配方(recipe)是 cli/core 的词-精确、可执行的那个调色对
+// 象;风格(style)是 agent 的词-用户口语里"我想要什么感觉",模糊、不可直接
+// 执行。坐在终端前按 r 的人做的是"在 10 个预设里选第 3 个",他选的是精确
+// 对象,不是在表达偏好,所以 cli 这一侧不该出现"风格"。
+//
+// 守卫扫的是 i18n.cpp 里的字符串字面量,不是挨个调用几个函数-枚举只能盖住
+// 立项时就存在的那几条,拦不住以后新写的文案,而票 C 马上要写一批新文案。
+// 注释不在扫描范围内:那里面的"风格"多数是"vim 风格"/"留白风格"这种通用词
+// 义,本来就不该改。
+TEST_CASE("T-15：cli 显示文案里不出现\"风格\"/Style") {
+  auto literals = string_literals_in(PZT_I18N_SOURCE);
+  // 扫出来的量级不对就说明扫描器本身坏了(比如路径变了、或者剥注释剥过头),
+  // 那样后面每条断言都会"通过",守卫静默失效。
+  REQUIRE(literals.size() > 100);
+
+  for (const auto& s : literals) {
+    CHECK(s.find("风格") == std::string::npos);
+    CHECK(s.find("Style") == std::string::npos);
+  }
+}
+
+// 上面那条只保证"风格"没了。光删词不算统一-概念本身还得在文案里露出来,
+// 否则用户在菜单和 usage 里都找不到这个功能。
+TEST_CASE("T-15：配方这个概念仍然出现在菜单、usage 和报错里") {
+  g_lang = Lang::zh;
+  CHECK(info_style_label() == "配方:");
+  CHECK(usage_main().find("配方") != std::string::npos);
+  CHECK(export_skip_reason(pzt::core::SkipReason::RenderFailed).find("配方") !=
+        std::string::npos);
+  bool zh_menu_mentions_recipe = false;
+  for (const auto& line : menu_lines()) {
+    if (line.text.find("配方") != std::string::npos) zh_menu_mentions_recipe = true;
+  }
+  CHECK(zh_menu_mentions_recipe);
+
+  g_lang = Lang::en;
+  CHECK(info_style_label() == "Recipe:");
+  bool en_menu_mentions_recipe = false;
+  for (const auto& line : menu_lines()) {
+    if (line.text.find("Recipe") != std::string::npos) en_menu_mentions_recipe = true;
+  }
+  CHECK(en_menu_mentions_recipe);
 
   g_lang = Lang::zh;  // 还原
 }
