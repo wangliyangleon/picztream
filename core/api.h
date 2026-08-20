@@ -323,6 +323,12 @@ Result<void, SetImageRecipeError> set_image_recipe(ImageId image_id,
                                                     std::optional<RecipeId> recipe_id);
 std::optional<RecipeId> get_image_recipe(ImageId image_id);
 
+// T-15:批量套配方/批量清除。整批**一次开库**(不是每张一次)、校验配方一
+// 次、一个事务包住全部 UPDATE,契约是要么全套上、要么一张都不套。语义与
+// 那条与 agent 侧冲突的留账见 core/recipe/recipe.h。
+Result<void, SetImageRecipeError> set_images_recipe(const std::vector<ImageId>& image_ids,
+                                                     std::optional<RecipeId> recipe_id);
+
 // 供 `pzt open` 信息栏显示用,见 core/recipe/recipe.h。
 std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id);
 

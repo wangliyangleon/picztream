@@ -272,6 +272,12 @@ Result<void, SetImageRecipeError> set_image_recipe(ImageId image_id,
   return recipe::set_image_recipe(db, image_id, recipe_id);
 }
 
+Result<void, SetImageRecipeError> set_images_recipe(const std::vector<ImageId>& image_ids,
+                                                    std::optional<RecipeId> recipe_id) {
+  db::Database db = db::Database::open_default();
+  return recipe::set_images_recipe(db, image_ids, recipe_id);
+}
+
 std::optional<RecipeId> get_image_recipe(ImageId image_id) {
   db::Database db = db::Database::open_default();
   return recipe::get_image_recipe(db, image_id);

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "core/db/database.h"
 #include "core/db/schema.h"
@@ -61,6 +62,28 @@ ImageFixture make_image_fixture(const std::string& tag) {
   auto image_id = find_image_by_path(db, created.value(), "img_000.jpg");
   REQUIRE(image_id.has_value());
   return ImageFixture{std::move(db), *image_id};
+}
+
+// 批量路径要的是"同一个项目下的多张图"，上面那个单张 fixture 给不出来。
+struct ImagesFixture {
+  Database db;
+  std::vector<ImageId> image_ids;
+};
+
+ImagesFixture make_images_fixture(const std::string& tag, int count) {
+  auto db = Database::open_at(temp_db_path(tag));
+  ensure_default_presets(db);
+  auto photos = fresh_photo_dir(tag);
+  for (int i = 0; i < count; ++i) touch(photos / ("img_" + std::to_string(i) + ".jpg"));
+  auto created = create_project(db, "proj", photos.string());
+  REQUIRE(created.ok());
+  std::vector<ImageId> ids;
+  for (int i = 0; i < count; ++i) {
+    auto id = find_image_by_path(db, created.value(), "img_" + std::to_string(i) + ".jpg");
+    REQUIRE(id.has_value());
+    ids.push_back(*id);
+  }
+  return ImagesFixture{std::move(db), std::move(ids)};
 }
 
 }  // namespace
@@ -323,6 +346,73 @@ TEST_CASE("set_image_recipe reports ImageNotFound and RecipeNotFound") {
   auto deleted_recipe = set_image_recipe(fx.db, fx.image_id, version_id);
   REQUIRE(!deleted_recipe.ok());
   CHECK(deleted_recipe.error() == SetImageRecipeError::RecipeNotFound);
+}
+
+TEST_CASE("set_images_recipe applies one recipe to every image in the batch") {
+  auto fx = make_images_fixture("recipe_batch_apply", 5);
+  auto preset_id = list_presets(fx.db)[1].id;
+  auto version_id = create_version(fx.db, preset_id, std::string("Look"), VersionParams{}).value();
+
+  REQUIRE(set_images_recipe(fx.db, fx.image_ids, version_id).ok());
+  for (auto id : fx.image_ids) CHECK(get_image_recipe(fx.db, id) == version_id);
+}
+
+TEST_CASE("set_images_recipe writes nothing at all when the recipe does not exist") {
+  auto fx = make_images_fixture("recipe_batch_bad_recipe", 5);
+  auto preset_id = list_presets(fx.db)[1].id;
+  REQUIRE(set_images_recipe(fx.db, fx.image_ids, preset_id).ok());  // 先都套上一个
+
+  auto missing = set_images_recipe(fx.db, fx.image_ids, 999999);
+  REQUIRE(!missing.ok());
+  CHECK(missing.error() == SetImageRecipeError::RecipeNotFound);
+  for (auto id : fx.image_ids) CHECK(get_image_recipe(fx.db, id) == preset_id);
+
+  // 软删除的 version 与"不存在"同等对待，同样是一张都不写。
+  auto version_id = create_version(fx.db, preset_id, std::nullopt, VersionParams{}).value();
+  REQUIRE(delete_version(fx.db, version_id).ok());
+  auto deleted = set_images_recipe(fx.db, fx.image_ids, version_id);
+  REQUIRE(!deleted.ok());
+  CHECK(deleted.error() == SetImageRecipeError::RecipeNotFound);
+  for (auto id : fx.image_ids) CHECK(get_image_recipe(fx.db, id) == preset_id);
+}
+
+TEST_CASE("set_images_recipe writes nothing at all when one image id does not exist") {
+  auto fx = make_images_fixture("recipe_batch_bad_image", 4);
+  auto preset_id = list_presets(fx.db)[1].id;
+  auto other_id = list_presets(fx.db)[2].id;
+  REQUIRE(set_images_recipe(fx.db, fx.image_ids, preset_id).ok());
+
+  std::vector<ImageId> with_hole = fx.image_ids;
+  with_hole.insert(with_hole.begin() + 2, 999999);  // 中间插一个不存在的
+  auto result = set_images_recipe(fx.db, with_hole, other_id);
+  REQUIRE(!result.ok());
+  CHECK(result.error() == SetImageRecipeError::ImageNotFound);
+  // 事务回滚，前两张也没留下 other_id。
+  for (auto id : fx.image_ids) CHECK(get_image_recipe(fx.db, id) == preset_id);
+}
+
+TEST_CASE("set_images_recipe on an empty batch succeeds and writes nothing") {
+  auto fx = make_images_fixture("recipe_batch_empty", 3);
+  auto preset_id = list_presets(fx.db)[1].id;
+
+  REQUIRE(set_images_recipe(fx.db, {}, preset_id).ok());
+  REQUIRE(set_images_recipe(fx.db, {}, std::nullopt).ok());
+  for (auto id : fx.image_ids) CHECK_FALSE(get_image_recipe(fx.db, id).has_value());
+
+  // 配方校验是前置条件,不因为恰好没有图片而跳过:空批量配上一个不存在的
+  // 配方仍然报 RecipeNotFound,不是静默成功。
+  auto missing = set_images_recipe(fx.db, {}, 999999);
+  REQUIRE(!missing.ok());
+  CHECK(missing.error() == SetImageRecipeError::RecipeNotFound);
+}
+
+TEST_CASE("set_images_recipe with nullopt clears the whole batch") {
+  auto fx = make_images_fixture("recipe_batch_clear", 5);
+  auto preset_id = list_presets(fx.db)[1].id;
+  REQUIRE(set_images_recipe(fx.db, fx.image_ids, preset_id).ok());
+
+  REQUIRE(set_images_recipe(fx.db, fx.image_ids, std::nullopt).ok());
+  for (auto id : fx.image_ids) CHECK_FALSE(get_image_recipe(fx.db, id).has_value());
 }
 
 TEST_CASE("get_image_recipe returns empty for a nonexistent image or one with no recipe applied") {

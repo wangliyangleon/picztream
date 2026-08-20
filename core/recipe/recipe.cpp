@@ -11,6 +11,7 @@ namespace pzt::core::recipe {
 
 namespace {
 
+using db::exec_simple;
 using db::Stmt;
 
 std::int64_t now_unix() {
@@ -323,6 +324,58 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
   sqlite3_bind_int64(stmt.get(), 2, image_id);
   if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
     throw std::runtime_error(std::string("set image recipe failed: ") + sqlite3_errmsg(conn));
+  }
+  return Result<void, SetImageRecipeError>::Ok();
+}
+
+Result<void, SetImageRecipeError> set_images_recipe(db::Database& db,
+                                                     const std::vector<ImageId>& image_ids,
+                                                     std::optional<RecipeId> recipe_id) {
+  sqlite3* conn = db.handle();
+  // 校验配方一次,不是每张一次 - 这正是这个函数存在的理由之一,也是它的
+  // 契约比"cli 循环调 N 次"更强的地方。空 image_ids 也照验(见头文件)。
+  if (recipe_id) {
+    auto row = get_recipe_row(conn, *recipe_id);
+    if (!row || row->deleted) {
+      return Result<void, SetImageRecipeError>::Err(SetImageRecipeError::RecipeNotFound);
+    }
+  }
+  if (image_ids.empty()) return Result<void, SetImageRecipeError>::Ok();
+
+  // 图片存在性不预先各查一次:UPDATE 匹配不到行时 sqlite3_changes 就是 0,
+  // 照抄 delete_project 用它判"实体不存在"的先例(project.cpp)。发现了就
+  // 整批回滚,不留半截状态。
+  bool image_missing = false;
+  exec_simple(conn, "BEGIN;");
+  try {
+    {
+      Stmt stmt(conn, "UPDATE images SET recipe_id = ? WHERE id = ?;");
+      for (ImageId image_id : image_ids) {
+        sqlite3_reset(stmt.get());
+        if (recipe_id) {
+          sqlite3_bind_int64(stmt.get(), 1, *recipe_id);
+        } else {
+          sqlite3_bind_null(stmt.get(), 1);
+        }
+        sqlite3_bind_int64(stmt.get(), 2, image_id);
+        if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+          throw std::runtime_error(std::string("set images recipe failed: ") +
+                                    sqlite3_errmsg(conn));
+        }
+        if (sqlite3_changes(conn) == 0) {
+          image_missing = true;
+          break;
+        }
+      }
+    }
+    exec_simple(conn, image_missing ? "ROLLBACK;" : "COMMIT;");
+  } catch (...) {
+    exec_simple(conn, "ROLLBACK;");
+    throw;
+  }
+
+  if (image_missing) {
+    return Result<void, SetImageRecipeError>::Err(SetImageRecipeError::ImageNotFound);
   }
   return Result<void, SetImageRecipeError>::Ok();
 }

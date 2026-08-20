@@ -116,6 +116,38 @@ enum class SetImageRecipeError {
 Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId image_id,
                                                     std::optional<RecipeId> recipe_id);
 
+// T-15:批量套配方。一次校验配方(不是每张一次)+ 一个事务包住全部
+// UPDATE，契约是**要么全套上、要么一张都不套**:中途遇到任何一张不存在
+// 的 image_id 就整批回滚报 ImageNotFound，不留下"前 44 张已落库"这种半
+// 截状态。recipe_id = nullopt 是批量清除，走同一条路。空 image_ids 是合
+// 法输入(成功、零写入)，但配方仍然会被校验:校验是这个函数的前置条件，
+// 不因为恰好没有图片而跳过。
+//
+// 与单张 set_image_recipe 的一处刻意差别:错误优先级相反。单张先查图片
+// (ImageNotFound 优先)，批量先校验配方(RecipeNotFound 优先)，因为"校验
+// 配方一次"这条要求本身就把它推到了循环之前。两者同时出错时报的错不一
+// 样，这是这两个函数不能互相实现的原因,不是疏漏。另外批量只报"有一张不
+// 存在"，不报是哪一张:调用方(交互层)的 id 来自 core/scope 的求值结果，
+// 拿到 ImageNotFound 说明库在这中间被改过，那不是一个用户能逐张处理的
+// 情况。
+//
+// "批量"这件事的语义留在 core，不是让 cli 循环调 set_image_recipe N
+// 次 - 那会把循环语义、部分失败语义、校验时机这些业务决策推到交互层，
+// 违 SPEC §4.1。
+//
+// **留账(T-15 D-11)**:这个"全有或全无"的契约与 agent 侧
+// `StyleApplyAllStage` 的语义正面冲突。那一侧是 criticality="optional"、
+// 维护 skipped 列表**逐张容错**("个别照片套用失败不该拖垮整批交付"),且
+// agent 传的是路径、这个函数吃的是 ImageId,中间那层 path→id 解析本身就
+// 逐张可失败。T-15 不解决这个冲突(agent 那侧今天工作正常,改它是无实测
+// 支撑的纯性能优化,撞 SPEC §2.4),但未来若要把 headless 批量口收编到这
+// 个函数上,**先解决它**:要么 core 放弃可陈述的契约,要么 agent 放弃软
+// 失败,两条都要付真实代价。在有真实消费者之前不要提前开那个 headless
+// 口 - SPEC §3.2 记着 eval/compare 无人调用最终被 T-22 删除的先例。
+Result<void, SetImageRecipeError> set_images_recipe(db::Database& db,
+                                                     const std::vector<ImageId>& image_ids,
+                                                     std::optional<RecipeId> recipe_id);
+
 // 图片不存在、或者存在但没应用任何 recipe，两种情况都返回空——跟
 // tags_for_image 对不存在的 image_id 返回空列表是同一个套路，不特殊区分。
 std::optional<RecipeId> get_image_recipe(db::Database& db, ImageId image_id);
