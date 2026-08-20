@@ -48,7 +48,7 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 
 > **已验证（2026-08-20）**：**sub-issues 可用**。T-15 的五张实现票（#29-#33）已用 `gh api --method POST repos/<owner>/<repo>/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>` 成功挂到 PRD #28 之下，`<child-db-id>` 取自 `gh api repos/<owner>/<repo>/issues/<n> --jq .id`（**不是** `#number`，也不是 `node_id`），调用返回的是**父** issue 对象。列出子票用 `gh api repos/<owner>/<repo>/issues/<parent>/sub_issues`，返回顺序即挂载顺序，可以直接拿来表达施工顺序。
 >
-> **原生 issue dependencies（`blocked_by`）仍未验证** —— T-15 这批的依赖关系写在票正文的"依赖"行里，没有试过那个端点。
+> **原生 issue dependencies（`blocked_by`）仍未验证** - T-15 这批的依赖关系写在票正文的"依赖"行里，没有试过那个端点。
 
 ---
 
