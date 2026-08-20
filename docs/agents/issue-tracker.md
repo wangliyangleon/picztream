@@ -46,7 +46,9 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Claim**: `gh issue edit <n> --add-assignee @me` - the session's first write.
 - **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer to the map's Decisions-so-far.
 
-> **未验证**：原生 issue dependencies 是较新的 GitHub 功能，本仓库**尚未验证过是否可用**（配置时还没有任何 issue 可试）。第一次 `/to-tickets` 建票时先探一次，不可用就按上面那条退路走 `Blocked by: #<n>` 文本行。
+> **已验证（2026-08-20）**：**sub-issues 可用**。T-15 的五张实现票（#29-#33）已用 `gh api --method POST repos/<owner>/<repo>/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>` 成功挂到 PRD #28 之下，`<child-db-id>` 取自 `gh api repos/<owner>/<repo>/issues/<n> --jq .id`（**不是** `#number`，也不是 `node_id`），调用返回的是**父** issue 对象。列出子票用 `gh api repos/<owner>/<repo>/issues/<parent>/sub_issues`，返回顺序即挂载顺序，可以直接拿来表达施工顺序。
+>
+> **原生 issue dependencies（`blocked_by`）仍未验证** —— T-15 这批的依赖关系写在票正文的"依赖"行里，没有试过那个端点。
 
 ---
 
