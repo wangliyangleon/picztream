@@ -55,4 +55,12 @@ std::pair<std::string, std::string> split_console_command(const std::string& inp
 // 保留开头的 `#` 和引号,解引号交给调用方。
 std::pair<std::string, std::string> take_scope_token(const std::string& s);
 
+// take_scope_token 切出来的这个 token 是不是一个**显式的作用域标记**
+// (`*` / `.` / `#标签名`)。`/ai_eval` 用它分流:是标记就走批量提交，不是
+// 就说明用户没写作用域、整段剩余文本是对当前这一张的额外指引。
+//
+// 这里只认标记的**形状**,不判断作用域是否有效(标签存不存在、有没有视图
+// 可指): 那归 core::scope::resolve，是它那份头注释在管的事。
+bool is_batch_scope_token(const std::string& token);
+
 }  // namespace pzt::cli::text

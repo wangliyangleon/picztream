@@ -322,6 +322,39 @@ TEST_CASE("msg_help_overview lists every command and msg_help_command covers eac
   g_lang = Lang::zh;  // 还原
 }
 
+// T-15 票 D（#32 验收）：`.` 接进 `/dedup` 与 `/ai_eval` 之后，两条命令
+// 的 `/help` 详情必须说出这种写法 - `.` 是**没有别处可发现**的：`*` 与
+// `#标签` 用户在别处见得到(标签栏、filter 提示)，一个孤零零的点只可能从
+// 文档或这里学到。文案漏了它，等于这一票只做了一半。
+TEST_CASE("msg_help_command documents the `.` (current view) scope for dedup and ai_eval") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto dedup = msg_help_command("dedup");
+    REQUIRE(dedup.has_value());
+    CHECK(dedup->find("/dedup .") != std::string::npos);
+
+    auto ai_eval = msg_help_command("ai_eval");
+    REQUIRE(ai_eval.has_value());
+    CHECK(ai_eval->find("/ai_eval .") != std::string::npos);
+  }
+
+  g_lang = Lang::zh;  // 还原
+}
+
+// 同上的另一半：`.` 成为合法写法之后，"范围写错了"那句话不能还在只列
+// `*` 和 `#标签名` - 用户照它改，改出来的还是不含 `.` 的两种写法。这跟
+// err_console_scope_no_view 那条是同一个"不撒谎"的要求(PRD #28 D-6)。
+TEST_CASE("err_console_invalid_scope lists `.` alongside the other two forms") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK(err_console_invalid_scope().find("*") != std::string::npos);
+    CHECK(err_console_invalid_scope().find(".") != std::string::npos);
+    CHECK(err_console_invalid_scope().find("#") != std::string::npos);
+  }
+
+  g_lang = Lang::zh;  // 还原
+}
+
 TEST_CASE("err_help_unknown_command includes the command name and follows language") {
   g_lang = Lang::zh;
   CHECK(err_help_unknown_command("bogus").find("bogus") != std::string::npos);

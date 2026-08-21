@@ -139,3 +139,22 @@ TEST_CASE("wrap_tokens breaks only between tokens, counting CJK width as 2") {
   // 空输入 -> 至少一行空串
   CHECK(wrap_tokens({}, 10) == std::vector<std::string>{""});
 }
+
+TEST_CASE("is_batch_scope_token recognizes the three explicit scope markers") {
+  // T-15 票 D：`.`(当前视图)是第三个批量标记 - 没有这一支的话
+  // `/ai_eval .` 会落进"对当前这一张、额外指引是一个点"那条路径。
+  CHECK(is_batch_scope_token("*"));
+  CHECK(is_batch_scope_token("."));
+  CHECK(is_batch_scope_token("#城市"));
+  CHECK(is_batch_scope_token("#\"foo bar\""));
+
+  // 省略作用域 = 对当前这一张，不是批量(PRD #28 决策 D-4 否决了"省略作用
+  // 域"当视图讲的方案)。
+  CHECK_FALSE(is_batch_scope_token(""));
+  // 裸词不是标记:忘了打 `#` 的典型误输入形态，照样走单张路径。
+  CHECK_FALSE(is_batch_scope_token("城市"));
+  CHECK_FALSE(is_batch_scope_token("view"));
+  // `.` 要**整个** token 才算，`..` / `.jpg` 这类不是。
+  CHECK_FALSE(is_batch_scope_token(".."));
+  CHECK_FALSE(is_batch_scope_token(".jpg"));
+}

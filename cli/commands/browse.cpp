@@ -197,13 +197,36 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
       // 只有 `/dedup` 会传 Reject 策略，`/ai_eval` 到不了这一支。
       return pzt::cli::i18n::err_console_dedup_system_tag_scope(failure.tag_name);
     case pzt::core::ScopeError::NoExplicitSet:
-      // T-15（#30）：`.` 是合法写法，只是这条路径没给视图，所以不能落进下
-      // 面那句"必须是 * 或 #标签名"。本票不接调用方，接上是票 C/票 D。
+      // T-15（#30）：`.` 是合法写法，只是没给视图，所以不能落进下面那句
+      // "必须是 * 或 . 或 #标签名"。票 D 之后控制台三条命令都经
+      // resolve_console_scope 传视图，这一支在交互侧到不了了；留着是因为
+      // 映射表要对 ScopeError 全枚举穷尽，而这条文案仍是它唯一正确的说法。
       return pzt::cli::i18n::err_console_scope_no_view();
     case pzt::core::ScopeError::InvalidSyntax:
       return pzt::cli::i18n::err_console_invalid_scope();
   }
   return pzt::cli::i18n::err_console_invalid_scope();
+}
+
+// 控制台带作用域的命令共用的作用域求值入口。**`.` 的显式 id 集合只在这一
+// 处传进 core**（T-15 票 D）：`/dedup`、`/ai_eval`（票 C 之后还有
+// `/recipe`）都从这里走，不各写一遍 - 三份各自取视图的代码正是 T-16 收
+// 编掉的那种分叉的种子。
+//
+// 收窄成"从 ImageRef 里取 id"而不是让调用方自己转:调用方手里的浏览池本来
+// 就是 std::vector<ImageRef>(cmd_open 的 images)，把这一步留给它们等于把
+// 同一个转换写三遍，而它是这个 helper 存在的全部理由的一半。
+//
+// 传的是 cmd_open 的 `images`,也就是 `f` 筛选 ∩ `/filter` 之后正在浏览的
+// 那批,顺序与屏幕上一致 - core 那一支原样透传不重排(见 scope.h)。
+pzt::core::Result<pzt::core::Scope, pzt::core::ScopeFailure> resolve_console_scope(
+    pzt::core::ProjectId project_id, const std::string& scope,
+    const std::vector<pzt::core::ImageRef>& view,
+    pzt::core::SystemTagPolicy system_tag_policy = pzt::core::SystemTagPolicy::Allow) {
+  std::vector<pzt::core::ImageId> view_ids;
+  view_ids.reserve(view.size());
+  for (const auto& ref : view) view_ids.push_back(ref.id);
+  return pzt::core::resolve_scope(project_id, scope, system_tag_policy, &view_ids);
 }
 
 // --debug 面板的绘制。抽成函数是因为有两个调用方:主循环每帧画一次(正常
@@ -282,10 +305,14 @@ class LiveDebugPanel {
 
 // `/dedup <范围> [--ai]`，近似重复检测唯一的触发入口，见
 // docs/history/M3_Dedup_Eng_Design.md"控制台命令"一节与 docs/history/Dedup_AI_Console_PRD.md。
-// 范围写法(`*` / `#标签名` / `#"带空格的标签名"`)由 take_scope_token 切
-// 出来，跟 `/ai_eval` 分离"范围"和"额外指引"用的是同一个原语，引号处理
+// 范围写法(`*` / `.` / `#标签名` / `#"带空格的标签名"`)由 take_scope_token
+// 切出来，跟 `/ai_eval` 分离"范围"和"额外指引"用的是同一个原语，引号处理
 // 不需要在这里重新实现一遍。范围后面除了 `--ai` 不接受任何东西——认不出
 // 来的 token 报用法错误，不当成标签名吞掉，控制台一贯"显式标记，不猜"。
+//
+// T-15 票 D：`.` = 当前视图，与 `/ai_eval .`、`/recipe .` 同一套写法(决策
+// D-5)。`/filter dup` 之后再 `/dedup .` 是用户自找的无意义操作、但不是错
+// 误 - `.` 不改变 `/dedup` 本身的语义，这一层不替用户拦。
 //
 // 整个过程是阻塞的:不开 --ai 时是本地分组，几秒到几十秒;开了 --ai 之后
 // 每簇还要发 N-1 次网络比较，量级拉到分钟级。刻意不做成异步(见
@@ -307,7 +334,8 @@ class LiveDebugPanel {
 // 置上的确认是另一回事:只在 --ai 时问，问的是"要不要为此发 M 次请求"，
 // 而且是在本地分组跑完、拿到精确开销之后才问的。
 std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::string& rest,
-                                  int banner_row, int start_col, int content_cols,
+                                  const std::vector<pzt::core::ImageRef>& view, int banner_row,
+                                  int start_col, int content_cols,
                                   const LiveDebugContext& debug_ctx) {
   auto [scope, tail] = pzt::cli::text::take_scope_token(rest);
   bool ai_enabled = false;
@@ -320,8 +348,13 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   // #27 (D-2)：范围本身是系统标签时直接拒绝。此前这里是静默 no-op ——
   // 范围被正确解析出来，进 core 后全被排除，命令报"0 组"，用户无从分辨这
   // 是"真没有重复"还是"范围被清空了"。
+  //
+  // 注意 Reject 只对"作用域**本身**是系统标签"生效，而 `.` 的 scope_tag 恒
+  // 为 nullopt(视图不是标签)，所以 `/filter reject` 之后 `/dedup .` 不被这
+  // 条策略拦下。这是正确行为不是漏洞：被拒的是"把系统标签当作用域写出来"
+  // 这个写法(#32 那条"注意")。
   auto scope_result =
-      pzt::core::resolve_scope(project_id, scope, pzt::core::SystemTagPolicy::Reject);
+      resolve_console_scope(project_id, scope, view, pzt::core::SystemTagPolicy::Reject);
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
@@ -442,7 +475,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
                                            result.value().ai_fallback_count);
 }
 
-// `/ai_eval * | #标签名 [额外指引]`——批量提交，见
+// `/ai_eval * | . | #标签名 [额外指引]`——批量提交，见
 // docs/history/M3_PRD.md"批量评估与任务状态"一节。已经评估过的直接跳过，不重
 // 新评估（哪怕这次带了不同的额外指引）；单张重新评估只能走
 // `/ai_eval [额外指引]`(当前图片)那条路径，逐张手动做。提交立即返回，
@@ -450,12 +483,17 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 // 交跟单张手动触发不会互相冲突，不需要在这里额外处理。
 std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worker,
                                     pzt::core::ProjectId project_id, const std::string& scope,
+                                    const std::vector<pzt::core::ImageRef>& view,
                                     const std::string& extra_guidance) {
-  auto scope_result = pzt::core::resolve_scope(project_id, scope);
+  auto scope_result = resolve_console_scope(project_id, scope, view);
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
-  // F-26：同上，默认排除废片，除非范围本身就是 #废片。
+  // F-26：同上，默认排除废片，除非范围本身就是 #废片。`.` 的 scope_tag 恒
+  // 为 nullopt，接不上这条对称例外，所以 `/filter reject` 之后 `/ai_eval .`
+  // 会被排空、报"提交 0 张"。这是 `/ai_eval` 的排除策略本来就有的语义(评
+  // 估要花钱和时间，不花在已判死的照片上)，`.` 只是让它多了一条到达路径；
+  // `/recipe` 那边刻意不排除(PRD #28 决策 D-7)，两者不同构是有意的。
   if (!pzt::core::load_settings().eval_reject) {
     resolved.image_ids = pzt::core::exclude_by_tags(
         project_id, resolved.image_ids, {pzt::core::tagging::kRejectTagName}, resolved.scope_tag);
@@ -553,14 +591,19 @@ std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId proje
 }
 
 // `:` 输入以 `/` 开头时的命令分发。`ai_eval` 一条命令兼顾三种用法——
-// 第一个 token 是范围标记(`*` 或 `#标签名`)时走批量提交；不是的话，说
-// 明用户没写范围，整段剩余文本都当成对**当前图片**的额外指引，直接提
+// 第一个 token 是范围标记(`*` / `.` / `#标签名`)时走批量提交；不是的话，
+// 说明用户没写范围，整段剩余文本都当成对**当前图片**的额外指引，直接提
 // 交单图评估(原来 handle_ai_prompt_flow 里那条路径搬到这里)。用范围标
 // 记来判断走哪条路径，而不是猜测第一个词是不是标签名——这正是要求整个
 // 控制台必须以 `/` 开头的同一个理由:显式标记，不猜。
+//
+// `view` 是当前浏览池(`f` 筛选 ∩ `/filter` 之后屏幕上那批)，`.` 指的就是
+// 它，由 cmd_open 一路传下来 - 带作用域的命令都从 resolve_console_scope
+// 取，见那里的说明。
 ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_worker,
                                                 pzt::core::ProjectId project_id,
                                                 pzt::core::ImageId current_image_id,
+                                                const std::vector<pzt::core::ImageRef>& view,
                                                 const std::string& input, int banner_row, int start_col,
                                                 int content_cols, const LiveDebugContext& debug_ctx) {
   auto [command, rest] = split_console_command(input);
@@ -575,8 +618,8 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     return ConsoleCommandResult{*detail};
   }
   if (command == "dedup") {
-    return ConsoleCommandResult{
-        handle_dedup_command(project_id, rest, banner_row, start_col, content_cols, debug_ctx)};
+    return ConsoleCommandResult{handle_dedup_command(project_id, rest, view, banner_row, start_col,
+                                                      content_cols, debug_ctx)};
   }
   if (command == "tasks") {
     return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};
@@ -604,10 +647,12 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
   }
   if (command == "ai_eval") {
     auto [first_token, extra_guidance] = take_scope_token(rest);
-    bool is_batch_scope = first_token == "*" || (!first_token.empty() && first_token[0] == '#');
-    if (is_batch_scope) {
-      return ConsoleCommandResult{
-          handle_ai_eval_command(evaluation_worker, project_id, first_token, extra_guidance)};
+    // T-15 票 D：批量判据认三个标记(`*` / `.` / `#标签`)，判定本身在
+    // cli/text 里、有测试盯着 - 漏一支的失效模式是静默走错路径而不是报
+    // 错，见 is_batch_scope_token 的说明。
+    if (is_batch_scope_token(first_token)) {
+      return ConsoleCommandResult{handle_ai_eval_command(evaluation_worker, project_id, first_token,
+                                                          view, extra_guidance)};
     }
     // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——供
     // 应商见 resolve_ai_provider()(F-10:读 config.json 的 ai_provider，
@@ -641,15 +686,17 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
 // Esc 依然是唯一真正的取消。
 ConsoleCommandResult handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluation_worker,
                                             pzt::core::ProjectId project_id,
-                                            pzt::core::ImageId image_id, int banner_row, int start_col,
-                                            int content_cols, const LiveDebugContext& debug_ctx) {
+                                            pzt::core::ImageId image_id,
+                                            const std::vector<pzt::core::ImageRef>& view,
+                                            int banner_row, int start_col, int content_cols,
+                                            const LiveDebugContext& debug_ctx) {
   auto input = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
                                                  banner_row, start_col, content_cols);
   if (!input) return ConsoleCommandResult{};  // Esc,静默取消
   if (input->empty() || (*input)[0] != '/') {
     return ConsoleCommandResult{pzt::cli::i18n::msg_console_requires_slash()};
   }
-  return handle_ai_console_command(evaluation_worker, project_id, image_id, *input, banner_row,
+  return handle_ai_console_command(evaluation_worker, project_id, image_id, view, *input, banner_row,
                                     start_col, content_cols, debug_ctx);
 }
 
@@ -1764,8 +1811,12 @@ int cmd_open(const std::vector<std::string>& args) {
             debug_ctx.top_row = debug_top_row;
             debug_ctx.rows = kDebugRows;
           }
-          auto console_result = handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id,
-                                                        banner_row, start_col, content_cols, debug_ctx);
+          // T-15 票 D：`images` 就是 `.` 指的那批(`f` 筛选 ∩ `/filter` 之
+          // 后正在浏览的)，从这里一路传到 resolve_console_scope - 全 cli
+          // 只有这一处把视图交出去。
+          auto console_result =
+              handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, images, banner_row,
+                                    start_col, content_cols, debug_ctx);
           status_override = console_result.status;
           if (console_result.action == ConsoleCommandResult::FilterAction::Clear) {
             // 没有活跃二级筛选时是静默 no-op,跟 f+f 空筛选同一个约定。

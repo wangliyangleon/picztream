@@ -222,4 +222,16 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s) {
   return {s.substr(start, space - start), rest_start == std::string::npos ? "" : s.substr(rest_start)};
 }
 
+// 三个标记与 core::scope 的四种写法一一对应(`#标签名` 与 `#"带空格的标签
+// 名"` 同一个前缀)。抽成具名函数而不是留在 browse.cpp 那一行条件里,是因
+// 为 T-15 票 D 给它加第三支时,那一行的原始形态
+// (`t == "*" || (!t.empty() && t[0] == '#')`)已经是"漏一支就静默走错路径"
+// 的形状:漏掉 `.` 的话 `/ai_eval .` 不报错,只是安静地把那个点当成额外指
+// 引发给当前这一张。这种失效模式要有测试盯着(cli/tests/text_test.cpp)。
+//
+// `.` 要求整个 token 相等,不是前缀匹配 - `.jpg`、`..` 都不是作用域。
+bool is_batch_scope_token(const std::string& token) {
+  return token == "*" || token == "." || (!token.empty() && token[0] == '#');
+}
+
 }  // namespace pzt::cli::text

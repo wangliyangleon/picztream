@@ -990,12 +990,15 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
 }
 
 std::string msg_ai_prompt_placeholder() {
+  // T-15 票 D：`.` 加进来之后逐条列举(`* | . | #标签` × 两条命令)会把这行
+  // 撑到把 /help 挤出屏幕，所以改成"命令列表 + 范围写法列一次"。这样这行
+  // 的长度不随作用域支数增长，而 `.` 这种没有别处可发现的写法照样露面。
   if (g_lang == Lang::zh) {
-    return "命令必须以 / 开头: /ai_eval [指引] | /ai_eval * | /ai_eval #标签 | /tasks | /dedup * | /dedup "
-           "#标签 [--ai] | /filter <条件> | /filter clear | /help";
+    return "命令必须以 / 开头: /ai_eval [范围] [指引] | /tasks | /dedup <范围> [--ai] | /filter <条件> "
+           "| /filter clear | /help ; 范围是 * 或 . (当前视图) 或 #标签";
   } else {
-    return "Commands must start with /: /ai_eval [note] | /ai_eval * | /ai_eval #tag | /tasks | /dedup * "
-           "| /dedup #tag [--ai] | /filter <criterion> | /filter clear | /help";
+    return "Commands must start with /: /ai_eval [scope] [note] | /tasks | /dedup <scope> [--ai] "
+           "| /filter <criterion> | /filter clear | /help ; scope is *, . (current view) or #tag";
   }
 }
 
@@ -1093,11 +1096,12 @@ std::string msg_help_overview() {
 std::optional<std::string> msg_help_command(const std::string &command) {
   if (g_lang == Lang::zh) {
     if (command == "ai_eval") {
-      return " /ai_eval [指引] 评估当前图片；/ai_eval * [指引] 评估全部；/ai_eval #标签 [指引] 评估该标签范围 ";
+      return " /ai_eval [指引] 评估当前图片；/ai_eval * [指引] 评估全部；/ai_eval #标签 [指引] "
+             "评估该标签范围；/ai_eval . [指引] 评估当前视图 ";
     }
     if (command == "dedup") {
-      return " /dedup * 或 /dedup #标签：在范围内查找近似重复，非保留项打上\"重复\"标签；加 --ai "
-             "改用 AI 逐组比较挑保留项(会先报开销并等确认) ";
+      return " /dedup * 或 /dedup #标签 或 /dedup .(当前视图)：在范围内查找近似重复，非保留项打上"
+             "\"重复\"标签；加 --ai 改用 AI 逐组比较挑保留项(会先报开销并等确认) ";
     }
     if (command == "tasks") {
       return " /tasks：查看评估队列排队中/处理中的数量 ";
@@ -1112,11 +1116,12 @@ std::optional<std::string> msg_help_command(const std::string &command) {
   } else {
     if (command == "ai_eval") {
       return " /ai_eval [note] evaluates the current photo; /ai_eval * [note] the whole project; "
-             "/ai_eval #tag [note] a tag's scope ";
+             "/ai_eval #tag [note] a tag's scope; /ai_eval . [note] the current view ";
     }
     if (command == "dedup") {
-      return " /dedup * or /dedup #tag: find near-duplicates in scope, tag non-keep members Duplicate; "
-             "add --ai to pick keepers by AI comparison (asks first, showing the cost) ";
+      return " /dedup *, /dedup #tag or /dedup . (current view): find near-duplicates in scope, tag "
+             "non-keep members Duplicate; add --ai to pick keepers by AI comparison (asks first, "
+             "showing the cost) ";
     }
     if (command == "tasks") {
       return " /tasks: shows how many evaluations are queued/processing ";
@@ -1148,10 +1153,13 @@ std::string err_console_tag_not_found(const std::string &tag_name) {
 }
 
 std::string err_console_invalid_scope() {
+  // T-15 票 D：`.` 在交互侧能用了(视图由 cmd_open 一路传到
+  // resolve_console_scope)，所以这句"合法写法有哪几种"必须把它列进来:
+  // 少列一种,用户照着改也改不出他想要的那条命令。
   if (g_lang == Lang::zh) {
-    return " 范围必须是 * 或 #标签名 ";
+    return " 范围必须是 * 或 . 或 #标签名 ";
   } else {
-    return " Scope must be * or #tag ";
+    return " Scope must be *, . or #tag ";
   }
 }
 
@@ -1286,9 +1294,9 @@ std::string msg_dedup_ai_confirm_line2() {
 
 std::string err_dedup_bad_args() {
   if (g_lang == Lang::zh) {
-    return " 用法: /dedup <范围> [--ai]，范围是 * 或 #标签名 ";
+    return " 用法: /dedup <范围> [--ai]，范围是 * 或 . 或 #标签名 ";
   } else {
-    return " Usage: /dedup <scope> [--ai], where scope is * or #tag ";
+    return " Usage: /dedup <scope> [--ai], where scope is *, . or #tag ";
   }
 }
 
