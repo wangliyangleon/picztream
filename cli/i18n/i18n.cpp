@@ -1154,7 +1154,7 @@ std::string err_console_tag_not_found(const std::string &tag_name) {
 
 std::string err_console_invalid_scope() {
   // T-15 票 D：`.` 在交互侧能用了(视图由 cmd_open 一路传到
-  // resolve_console_scope)，所以这句"合法写法有哪几种"必须把它列进来:
+  // resolve_scope_with_view)，所以这句"合法写法有哪几种"必须把它列进来:
   // 少列一种,用户照着改也改不出他想要的那条命令。
   if (g_lang == Lang::zh) {
     return " 范围必须是 * 或 . 或 #标签名 ";

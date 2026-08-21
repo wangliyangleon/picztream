@@ -198,8 +198,9 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
       return pzt::cli::i18n::err_console_dedup_system_tag_scope(failure.tag_name);
     case pzt::core::ScopeError::NoExplicitSet:
       // T-15（#30）：`.` 是合法写法，只是没给视图，所以不能落进下面那句
-      // "必须是 * 或 . 或 #标签名"。票 D 之后控制台三条命令都经
-      // resolve_console_scope 传视图，这一支在交互侧到不了了；留着是因为
+      // "必须是 * 或 . 或 #标签名"。票 D 之后控制台带作用域的命令(今天是
+      // `/dedup` 与 `/ai_eval`，票 C 再加 `/recipe`)都经
+      // resolve_scope_with_view 传视图，这一支在交互侧到不了了；留着是因为
       // 映射表要对 ScopeError 全枚举穷尽，而这条文案仍是它唯一正确的说法。
       return pzt::cli::i18n::err_console_scope_no_view();
     case pzt::core::ScopeError::InvalidSyntax:
@@ -213,13 +214,18 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
 // `/recipe`）都从这里走，不各写一遍 - 三份各自取视图的代码正是 T-16 收
 // 编掉的那种分叉的种子。
 //
+// 名字**刻意避开** `resolve_console_scope`：那是 T-16 删掉的那个 cli 侧范
+// 围 DSL 解析器的名字(还留在 cli/text/text.cpp 的注释与多份 history 文档
+// 里)，重用它会让读者以为解析又搬回 cli 了。这个函数不解析任何东西,它只
+// 是把视图交给 core::scope::resolve。
+//
 // 收窄成"从 ImageRef 里取 id"而不是让调用方自己转:调用方手里的浏览池本来
 // 就是 std::vector<ImageRef>(cmd_open 的 images)，把这一步留给它们等于把
 // 同一个转换写三遍，而它是这个 helper 存在的全部理由的一半。
 //
 // 传的是 cmd_open 的 `images`,也就是 `f` 筛选 ∩ `/filter` 之后正在浏览的
 // 那批,顺序与屏幕上一致 - core 那一支原样透传不重排(见 scope.h)。
-pzt::core::Result<pzt::core::Scope, pzt::core::ScopeFailure> resolve_console_scope(
+pzt::core::Result<pzt::core::Scope, pzt::core::ScopeFailure> resolve_scope_with_view(
     pzt::core::ProjectId project_id, const std::string& scope,
     const std::vector<pzt::core::ImageRef>& view,
     pzt::core::SystemTagPolicy system_tag_policy = pzt::core::SystemTagPolicy::Allow) {
@@ -353,8 +359,15 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
   // 为 nullopt(视图不是标签)，所以 `/filter reject` 之后 `/dedup .` 不被这
   // 条策略拦下。这是正确行为不是漏洞：被拒的是"把系统标签当作用域写出来"
   // 这个写法(#32 那条"注意")。
+  //
+  // 但**别把"没被拦下"读成"能出结果"**：作用域活着进了 core，dedup 自己那
+  // 份无条件排废片(find_and_tag_duplicates 传 {kRejectTagName}，见
+  // dedup.cpp)会把这批全排掉，命令照样报"0 组"。落点与 #27/D-2 修掉的
+  // `/dedup #废片` 相同,但性质不同:那次错在"写法被判成空范围",这次是用户
+  // 把范围指向了一批已判死的照片 - D-5 说的"用户自找的无意义操作、但不是
+  // 错误"。真要对废片查重复,写 `/dedup #废片` 才是那条会被明确拒绝的路。
   auto scope_result =
-      resolve_console_scope(project_id, scope, view, pzt::core::SystemTagPolicy::Reject);
+      resolve_scope_with_view(project_id, scope, view, pzt::core::SystemTagPolicy::Reject);
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
@@ -485,7 +498,7 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
                                     pzt::core::ProjectId project_id, const std::string& scope,
                                     const std::vector<pzt::core::ImageRef>& view,
                                     const std::string& extra_guidance) {
-  auto scope_result = resolve_console_scope(project_id, scope, view);
+  auto scope_result = resolve_scope_with_view(project_id, scope, view);
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
@@ -598,7 +611,7 @@ std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId proje
 // 控制台必须以 `/` 开头的同一个理由:显式标记，不猜。
 //
 // `view` 是当前浏览池(`f` 筛选 ∩ `/filter` 之后屏幕上那批)，`.` 指的就是
-// 它，由 cmd_open 一路传下来 - 带作用域的命令都从 resolve_console_scope
+// 它，由 cmd_open 一路传下来 - 带作用域的命令都从 resolve_scope_with_view
 // 取，见那里的说明。
 ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& evaluation_worker,
                                                 pzt::core::ProjectId project_id,
@@ -1812,7 +1825,7 @@ int cmd_open(const std::vector<std::string>& args) {
             debug_ctx.rows = kDebugRows;
           }
           // T-15 票 D：`images` 就是 `.` 指的那批(`f` 筛选 ∩ `/filter` 之
-          // 后正在浏览的)，从这里一路传到 resolve_console_scope - 全 cli
+          // 后正在浏览的)，从这里一路传到 resolve_scope_with_view - 全 cli
           // 只有这一处把视图交出去。
           auto console_result =
               handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, images, banner_row,

@@ -61,6 +61,12 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s);
 //
 // 这里只认标记的**形状**,不判断作用域是否有效(标签存不存在、有没有视图
 // 可指): 那归 core::scope::resolve，是它那份头注释在管的事。
+//
+// 于是这里与 core 之间有一条**必须一起改**的线:语法的权威出处是
+// core/scope/scope.h,再加一支作用域写法时,这个函数要同步认它的形状,否则
+// `/ai_eval <新写法>` 会静默走成"对当前这一张"。之所以仍留在 cli:分流发生
+// 在**查库之前**(core::resolve 要 db 与 project_id,而这里只是决定调哪个
+// handler),让 cli 为了问一句"这是不是个标记"先开库是本末倒置。
 bool is_batch_scope_token(const std::string& token);
 
 }  // namespace pzt::cli::text
