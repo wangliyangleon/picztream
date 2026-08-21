@@ -1087,9 +1087,10 @@ std::string msg_ai_unknown_command(const std::string &command) {
 
 std::string msg_help_overview() {
   if (g_lang == Lang::zh) {
-    return " 可用命令: /ai_eval /dedup /tasks /filter /help —— /help <命令> 查看详情 ";
+    return " 可用命令: /ai_eval /dedup /recipe /tasks /filter /help —— /help <命令> 查看详情 ";
   } else {
-    return " Available commands: /ai_eval /dedup /tasks /filter /help — /help <command> for details ";
+    return " Available commands: /ai_eval /dedup /recipe /tasks /filter /help — /help <command> for "
+           "details ";
   }
 }
 
@@ -1102,6 +1103,11 @@ std::optional<std::string> msg_help_command(const std::string &command) {
     if (command == "dedup") {
       return " /dedup * 或 /dedup #标签 或 /dedup .(当前视图)：在范围内查找近似重复，非保留项打上"
              "\"重复\"标签；加 --ai 改用 AI 逐组比较挑保留项(会先报开销并等确认) ";
+    }
+    if (command == "recipe") {
+      return " /recipe * 或 /recipe #标签 或 /recipe .(当前视图)：对范围内全部图片套用同一个配方"
+             "；作用域写在命令里，配方回车之后在菜单上选(0 或 r 是批量清除)；执行前会报张数并等确"
+             "认 ";
     }
     if (command == "tasks") {
       return " /tasks：查看评估队列排队中/处理中的数量 ";
@@ -1122,6 +1128,11 @@ std::optional<std::string> msg_help_command(const std::string &command) {
       return " /dedup *, /dedup #tag or /dedup . (current view): find near-duplicates in scope, tag "
              "non-keep members Duplicate; add --ai to pick keepers by AI comparison (asks first, "
              "showing the cost) ";
+    }
+    if (command == "recipe") {
+      return " /recipe *, /recipe #tag or /recipe . (current view): applies one recipe to every "
+             "photo in scope; the scope goes on the command line, the recipe is picked from the "
+             "menu after Enter (0 or r clears in bulk); asks for confirmation, showing the counts ";
     }
     if (command == "tasks") {
       return " /tasks: shows how many evaluations are queued/processing ";
@@ -1880,6 +1891,104 @@ std::string recipe_menu_actions_line(bool has_recipe) {
     line += "  " + menu_item("c", "New") + "  " + menu_item("d", "Delete") + "  " +
             menu_item("Esc", "Cancel");
     return line;
+  }
+}
+
+std::string recipe_menu_actions_line_batch() {
+  // T-15 票 C 决策 D-14：批量菜单是 `r` 菜单的**子集**，`v`/`c`/`d` 不出
+  // 现-不是"画上去按下给一句不可用"。理由逐条见 issue #33：`v` 是浏览态
+  // 临时预览、"对一批图临时预览"没有定义；`d` 是配方库管理、与作用域无
+  // 关；`c` 新建的向导要拿"正在浏览的这张"逐格重渲染，批量语境下没有那张
+  // 图。`v` 也不再有 has_recipe 这个参数-单张那份是按"这张图有没有配方"
+  // 决定显不显示 `v`，批量这份根本没有 `v` 可言。
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("r", "批量清除") + "  " + menu_item("Esc", "取消");
+  } else {
+    return " " + menu_item("r", "Clear all") + "  " + menu_item("Esc", "Cancel");
+  }
+}
+
+std::string recipe_display_name(const std::string &preset_name,
+                                const std::optional<std::string> &version_name) {
+  // 信息栏把预设与 version 分两行显示，banner 只有一行，所以这里合成一
+  // 个。version 没有名字时用跟菜单一致的"默认"，不是留空-留空会拼出
+  // "City Pop / " 这种半截名字。
+  if (!version_name) return preset_name;
+  return preset_name + " / " + (version_name->empty() ? recipe_menu_version_default_label()
+                                                       : *version_name);
+}
+
+std::string msg_recipe_batch_confirm_line1(int total, int overwritten,
+                                            const std::optional<std::string> &recipe_name) {
+  // T-15 票 C 决策 D-9：**总是**弹确认，且 M 是主角。只有那 M 张不可逆
+  // (原 recipe_id 丢了、无处可查)，剩下 total−M 张原本无配方，套错了批量
+  // 清除就精确还原了 - 文案把不可逆切在这个位置上，而不是笼统说"此操作
+  // 不可撤销"。
+  const std::string n = std::to_string(total);
+  const std::string m = std::to_string(overwritten);
+  if (g_lang == Lang::zh) {
+    std::string head = recipe_name ? " 将对 " + n + " 张图片套用《" + *recipe_name + "》"
+                                    : " 将清除 " + n + " 张图片的配方";
+    return head + "，其中 " + m + " 张原本已有配方，会被覆盖且无法还原 ";
+  } else {
+    std::string head = recipe_name ? " Applying \"" + *recipe_name + "\" to " + n + " photo(s)"
+                                    : " Clearing the recipe on " + n + " photo(s)";
+    return head + "; " + m + " of them already have one and will be overwritten irreversibly ";
+  }
+}
+
+std::string msg_recipe_batch_confirm_line2() {
+  if (g_lang == Lang::zh) {
+    return " 按 y 确认，其它键取消 ";
+  } else {
+    return " Press y to confirm, any other key cancels ";
+  }
+}
+
+std::string msg_recipe_batch_applied(int total, const std::string &recipe_name) {
+  // 决策 D-15：闪 800ms 的回执。它不带任何 D-9 没报过的新信息，存在的唯一
+  // 理由是"当前浏览的这张可能不在作用域内"-那时画面一个像素都不会变，静
+  // 默等于让用户无从判断命令有没有生效。
+  if (g_lang == Lang::zh) {
+    return " 已对 " + std::to_string(total) + " 张图片套用《" + recipe_name + "》 ";
+  } else {
+    return " Applied \"" + recipe_name + "\" to " + std::to_string(total) + " photo(s) ";
+  }
+}
+
+std::string msg_recipe_batch_cleared(int total) {
+  if (g_lang == Lang::zh) {
+    return " 已清除 " + std::to_string(total) + " 张图片的配方 ";
+  } else {
+    return " Cleared the recipe on " + std::to_string(total) + " photo(s) ";
+  }
+}
+
+std::string msg_recipe_scope_no_images() {
+  if (g_lang == Lang::zh) {
+    return " 这个范围里没有图片 ";
+  } else {
+    return " No photos in that scope ";
+  }
+}
+
+std::string err_recipe_bad_args() {
+  // 决策 D-2 否掉了 `/recipe <作用域> <配方名>` 一行式(自定义配方的名字可
+  // 以为空且无唯一约束，一行式会把它们整个排除在批量之外)，所以作用域后面
+  // 多写的东西不能被静默忽略-那会让用户以为那个名字生效了。
+  if (g_lang == Lang::zh) {
+    return " 用法: /recipe * | . | #标签名 - 配方在回车之后的菜单里选，不写在命令里 ";
+  } else {
+    return " Usage: /recipe * | . | #tag - the recipe is picked from the menu after Enter, not on "
+           "the command line ";
+  }
+}
+
+std::string msg_recipe_batch_failed() {
+  if (g_lang == Lang::zh) {
+    return " 批量套用失败，一张都没有改动 ";
+  } else {
+    return " Bulk apply failed; nothing was changed ";
   }
 }
 

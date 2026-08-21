@@ -548,6 +548,17 @@ struct ConsoleCommandResult {
   std::string status;
   enum class FilterAction { NoChange, Clear, Apply } action = FilterAction::NoChange;
   ConsoleFilterCriterion criterion{};  // 仅 action == Apply 时有意义
+  // T-15 票 C：当前浏览的这张图的 recipe_id 被这条命令改过了，主循环要重
+  // 走一遍渲染。`/recipe` 是第一条会改到"当前这张"的控制台命令 - 在它之
+  // 前控制台只碰标签(`/dedup`)、只提交异步任务(`/ai_eval`)、或者只换视图
+  // (`/filter`)，一条都不动 recipe_id，所以主循环那两个开关以前没有理由
+  // 从控制台这条路被拨动。
+  //
+  // 用 bool 而不是让 handle_recipe_command 自己去改 show_original/
+  // style_toggled：那两个是主循环的局部状态，控制台这一层拿不到，也不该
+  // 拿到 - 命令层报"发生了什么"，主循环决定"这一帧怎么画"，跟
+  // FilterAction 是同一个既有分工。
+  bool restyle = false;
 };
 
 // 把 ConsoleFilterCriterion 转回控制台原本的关键字——info_console_filter_label
@@ -603,6 +614,97 @@ std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId proje
   return result;
 }
 
+// T-15 票 C（issue #33）：`/recipe * | . | #标签名` - 对作用域内**全部**图
+// 片套用同一个配方，或批量清除。
+//
+// **不排除任何东西**（决策 D-7），跟 `/ai_eval`、`export` 刻意不同构：所以
+// 这里既没有 exclude 那一步，也没有对应的 settings 开关。F-26 的三个既有实
+// 例各有具体失效模式(eval 把钱花在已判死的照片上、export 把垃圾交出去、
+// dedup 让废片当上 keeper)，套配方一个都没有 - 全部代价是一次 UPDATE，而
+// "套了会不会流出去"已经由 export 自己的排除挡住了。复制 F-26 的**策略**正
+// 是 core/scope/scope.h 头注释警告过的"统一的是机制不是策略"。
+//
+// 系统标签也照做（SystemTagPolicy::Allow，即默认值）：`/recipe #废片` 是
+// "把废片全套上某个配方"，一个有意义、且会真的写进 N 行的操作，不像
+// `/dedup #废片` 那样必然被排空成无结果。
+//
+// 补强一条：`.` 的 scope_tag 恒为 nullopt，F-26 的对称例外机制接不上它，
+// 所以若在这里默认排除，`/filter reject` → `/recipe .` 会被排空成静默
+// no-op - 正是 T-16 刚修掉的 `/dedup #废片` 失效模式的复刻。
+ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
+                                            const std::string& rest,
+                                            const std::vector<pzt::core::ImageRef>& view,
+                                            pzt::core::ImageId current_image_id, int banner_row,
+                                            int start_col, int content_cols) {
+  auto [scope, tail] = take_scope_token(rest);
+  // 作用域后面多写的东西不能被静默忽略:决策 D-2 否掉了
+  // `/recipe <作用域> <配方名>` 一行式，而用户很可能照着 `/ai_eval * 指引`
+  // 的形状去写 `/recipe * City Pop`。静默吞掉那半截等于让用户以为自己指定
+  // 的配方生效了，然后照样弹菜单 - 那比报错更让人困惑。
+  if (scope.empty() || !tail.empty()) {
+    return ConsoleCommandResult{pzt::cli::i18n::err_recipe_bad_args()};
+  }
+  auto scope_result = resolve_scope_with_view(project_id, scope, view);
+  if (!scope_result.ok()) return ConsoleCommandResult{scope_error_message(scope_result.error())};
+  const auto image_ids = std::move(scope_result.value().image_ids);
+
+  // 空作用域直接短路，不弹菜单。这不违 D-9 那条"总是确认":D-9 反对的是
+  // "确认时有时无会训练出闭眼按 y 的习惯"，而这里根本没有要确认的东西 -
+  // 让用户选完一个配方、再看一句"将对 0 张图片套用"，是拿两次交互换一句
+  // 本来第一时间就能说清的话。
+  if (image_ids.empty()) {
+    return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_scope_no_images()};
+  }
+
+  // 决策 D-2 的"菜单接力":作用域写在控制台、配方在菜单里选。菜单不落库，
+  // 写入留到确认之后 - 见 handle_batch_recipe_menu 的说明。
+  auto selection = pzt::cli::menu::handle_batch_recipe_menu(banner_row, start_col, content_cols);
+  if (selection.cancelled) return ConsoleCommandResult{selection.status};
+
+  std::optional<std::string> recipe_name;
+  if (selection.recipe_id) {
+    auto described = pzt::core::describe_recipe(*selection.recipe_id);
+    // 菜单刚从库里列出它、这一瞬间又查不到，说明库在这中间被改过。报"失
+    // 败、一张都没改"是诚实的:此刻我们确实还没写任何东西。
+    if (!described) return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_batch_failed()};
+    recipe_name = pzt::cli::i18n::recipe_display_name(described->preset_name,
+                                                       described->version_name);
+  }
+
+  // 决策 D-9：**总是**确认，报 N 与 M，M 是主角。M 只数这批 id(不是全库)，
+  // 一次开库一条语句 - 见 core::recipe::count_images_with_recipe。
+  const int n = static_cast<int>(image_ids.size());
+  const int m = static_cast<int>(pzt::core::count_images_with_recipe(image_ids));
+  char confirm = prompt_and_read_key_2line(
+      pzt::cli::i18n::msg_recipe_batch_confirm_line1(n, m, recipe_name),
+      pzt::cli::i18n::msg_recipe_batch_confirm_line2(), banner_row, start_col, content_cols);
+  if (confirm != 'y' && confirm != 'Y') return ConsoleCommandResult{};  // 零写入,静默
+
+  // 一个事务包住 N 次 UPDATE，要么全套上、要么一张都不套(票 B 的契约)。
+  // 决策 D-13：不做进度、不做中途取消 - 5000 张量级也在几十毫秒，画面来不
+  // 及静止，`/dedup --ai` 那两条(分钟级、Ctrl-C 可取消)的理由在这里一条都
+  // 不成立。
+  auto applied = pzt::core::set_images_recipe(image_ids, selection.recipe_id);
+  if (!applied.ok()) return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_batch_failed()};
+
+  // 决策 D-15：闪 800ms 的回执，不占额外按键(照抄 msg_ai_processing_submitted
+  // 的既有形态)。它不带任何 D-9 没报过的新信息 - 存在的唯一理由是"当前浏
+  // 览的这张可能不在作用域内"，那时下面的 restyle 为假、画面一个像素都不
+  // 会变，静默等于用户无从判断命令有没有生效。
+  move_cursor(banner_row, start_col + 1);
+  write_stdout(pad_to(recipe_name ? pzt::cli::i18n::msg_recipe_batch_applied(n, *recipe_name)
+                                   : pzt::cli::i18n::msg_recipe_batch_cleared(n),
+                       content_cols));
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));
+
+  ConsoleCommandResult result;
+  // 当前这张在作用域内才重绘(见 §7)。不在的话画面不动 - 那张图的
+  // recipe_id 确实一个字节都没变，强行重画只会白花一次渲染。
+  result.restyle =
+      std::find(image_ids.begin(), image_ids.end(), current_image_id) != image_ids.end();
+  return result;
+}
+
 // `:` 输入以 `/` 开头时的命令分发。`ai_eval` 一条命令兼顾三种用法——
 // 第一个 token 是范围标记(`*` / `.` / `#标签名`)时走批量提交；不是的话，
 // 说明用户没写范围，整段剩余文本都当成对**当前图片**的额外指引，直接提
@@ -633,6 +735,10 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
   if (command == "dedup") {
     return ConsoleCommandResult{handle_dedup_command(project_id, rest, view, banner_row, start_col,
                                                       content_cols, debug_ctx)};
+  }
+  if (command == "recipe") {
+    return handle_recipe_command(project_id, rest, view, current_image_id, banner_row, start_col,
+                                 content_cols);
   }
   if (command == "tasks") {
     return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};
@@ -1831,6 +1937,14 @@ int cmd_open(const std::vector<std::string>& args) {
               handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, images, banner_row,
                                     start_col, content_cols, debug_ctx);
           status_override = console_result.status;
+          // T-15 票 C：`/recipe` 改到了当前这张的 recipe_id。跟 `r` 键
+          // Applied/Cleared 那条路径一模一样(见下面 handle_r_key 的
+          // 调用点)：show_original 归位到"看风格化效果"，style_toggled 触
+          // 发一次重渲染 - 光靠导航检测触发不了,current_id 并没有变。
+          if (console_result.restyle) {
+            show_original = false;
+            style_toggled = true;
+          }
           if (console_result.action == ConsoleCommandResult::FilterAction::Clear) {
             // 没有活跃二级筛选时是静默 no-op,跟 f+f 空筛选同一个约定。
             if (active_console_filter) {

@@ -392,4 +392,31 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
   }
 }
 
+BatchRecipeSelection handle_batch_recipe_menu(int banner_row, int start_col, int content_cols) {
+  auto presets = presets_for_menu();
+  // 编号选项跟单张那份**完全一样**(同一个 presets_for_menu、同一个
+  // build_recipe_menu_lines)，换掉的只有操作图例 - 决策 D-14 说的"子集"
+  // 指的正是这个:1-9 与 0/r 的寻址在两个菜单上是同一套，用户不需要重新
+  // 学一遍编号。不同构的那一半在图例里，所以 build_recipe_menu_lines 收
+  // legend 做参数，而不是自己去查该画哪些操作。
+  auto [line1, line2] = build_recipe_menu_lines(
+      presets, pzt::cli::i18n::recipe_menu_actions_line_batch(), content_cols);
+  char c = prompt_and_read_key_2line(line1, line2, banner_row, start_col, content_cols);
+
+  if (c == 'r' || c == '0') return {/*cancelled=*/false, std::nullopt, ""};
+  if (c == 0x1B) return {/*cancelled=*/true, std::nullopt, ""};  // Esc,静默
+  if (c >= '1' && c <= static_cast<char>('0' + presets.size())) {
+    const auto& preset = presets[static_cast<std::size_t>(c - '1')];
+    std::string message;
+    auto recipe_id =
+        handle_pick_version_to_apply_prompt(preset, banner_row, start_col, content_cols, &message);
+    if (!recipe_id) return {/*cancelled=*/true, std::nullopt, message};
+    return {/*cancelled=*/false, *recipe_id, ""};
+  }
+  // 按了个不对应任何选项的键。这里刻意**不**像 handle_r_key 的 `c` 分支
+  // 那样 continue 回菜单:那个循环存在是因为"建完一个新 version 大概率想
+  // 紧接着套上去"，批量这份没有 `c`，也就没有那个理由。
+  return {/*cancelled=*/true, std::nullopt, pzt::cli::i18n::recipe_menu_invalid_key()};
+}
+
 }  // namespace pzt::cli::menu

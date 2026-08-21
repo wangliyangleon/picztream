@@ -760,3 +760,71 @@ TEST_CASE("T-15：配方这个概念仍然出现在菜单、usage 和报错里")
 
   g_lang = Lang::zh;  // 还原
 }
+
+// T-15 票 C 决策 D-14：批量菜单是 `r` 菜单的**子集**。`v`/`c`/`d` 不是
+// "画上去按下给一句不可用",是根本不出现在图例上——三个选项各自的理由见
+// issue #33。图例是用户判断"这个菜单能做什么"的唯一依据,多画一个就是在
+// 承诺一件做不到的事。
+TEST_CASE("T-15：批量配方菜单的图例只有清除和取消,没有 v/c/d") {
+  // 图例里每个选项都是 menu_item 拼的 "键:[文案]",且前面必有空格(行首一
+  // 个、选项之间两个)，所以连空格一起找。只找 "键:[" 不带空格会误报:
+  // "Esc:[" 里就含着一个 "c:["，那会让这条守卫在一份完全正确的图例上红。
+  // 只找单个字母就更糟,任何文案里的 c 都会命中。
+  auto has_key = [](const std::string& line, const std::string& key) {
+    return line.find(" " + key + ":[") != std::string::npos;
+  };
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto batch = recipe_menu_actions_line_batch();
+    CHECK_FALSE(has_key(batch, "v"));
+    CHECK_FALSE(has_key(batch, "c"));
+    CHECK_FALSE(has_key(batch, "d"));
+    // 清除留着:D-8 定了不做撤销,批量清除是唯一的兜底路径。
+    CHECK(has_key(batch, "r"));
+    CHECK(has_key(batch, "Esc"));
+  }
+  g_lang = Lang::zh;
+}
+
+// 单张那份必须原样保留 v/c/d,否则"子集"这个说法就变成了"两边都砍了"。
+TEST_CASE("T-15：单张配方菜单的图例仍然带 v/c/d") {
+  g_lang = Lang::zh;
+  auto single = recipe_menu_actions_line(/*has_recipe=*/true);
+  CHECK(single.find(" v:[") != std::string::npos);
+  CHECK(single.find(" c:[") != std::string::npos);
+  CHECK(single.find(" d:[") != std::string::npos);
+}
+
+// `/recipe` 得能在 /help 里被找到。总览漏一条的失效模式是"功能上线了但没
+// 人知道",而这正是控制台命令唯一的发现入口。
+TEST_CASE("T-15：/help 总览与详情都认识 /recipe") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK(msg_help_overview().find("/recipe") != std::string::npos);
+    auto detail = msg_help_command("recipe");
+    REQUIRE(detail.has_value());
+    // 详情要说清两件事:作用域写在命令里、配方在回车之后选(决策 D-2)。
+    CHECK(detail->find("/recipe *") != std::string::npos);
+    CHECK(detail->find("/recipe .") != std::string::npos);
+  }
+  g_lang = Lang::zh;
+}
+
+// 确认文案的主角是 M(见 D-9)。N 与 M 都必须真的出现在第一行里——把数字
+// 漏掉的失效模式是用户看着一句没有量的话按 y。
+TEST_CASE("T-15：批量确认第一行同时报出 N 与 M") {
+  g_lang = Lang::zh;
+  auto apply_line = msg_recipe_batch_confirm_line1(90, 7, std::string("City Pop"));
+  CHECK(apply_line.find("90") != std::string::npos);
+  CHECK(apply_line.find("7") != std::string::npos);
+  CHECK(apply_line.find("City Pop") != std::string::npos);
+
+  // M=0 时文案照出(D-9 否决了"只在 M>0 时确认"),只是不可逆那部分为零。
+  CHECK(msg_recipe_batch_confirm_line1(90, 0, std::string("City Pop")).find("90") !=
+        std::string::npos);
+
+  // 批量清除走同一条路,没有配方名。
+  auto clear_line = msg_recipe_batch_confirm_line1(90, 7, std::nullopt);
+  CHECK(clear_line.find("90") != std::string::npos);
+  CHECK(clear_line.find("7") != std::string::npos);
+}

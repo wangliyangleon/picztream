@@ -392,6 +392,26 @@ std::string recipe_menu_create_success(const std::string& preset_name);
 // 的 build_recipe_menu_lines 负责(要按显示宽度铺满两行、图例右对齐)，i18n
 // 只提供图例这段本地化文案。
 std::string recipe_menu_actions_line(bool has_recipe);
+// T-15 票 C：批量套配方那个菜单的操作图例。跟单张那份不同构(没有
+// has_recipe、也没有 v/c/d)，所以是独立一条而不是给上面那个加参数 - 决策
+// D-14 定的是"批量菜单是单张菜单的子集"，两份图例各自成立。
+std::string recipe_menu_actions_line_batch();
+// 把 describe_recipe 的 {预设名, 可选 version 名} 合成 banner 用的单行显
+// 示名。信息栏分两行显示同一件事，banner 只有一行。
+std::string recipe_display_name(const std::string& preset_name,
+                                const std::optional<std::string>& version_name);
+// T-15 票 C 决策 D-9：批量套配方/批量清除前**总是**弹的两行确认。total 是
+// 作用域内张数 N，overwritten 是其中原本已有配方、会被覆盖且无法还原的张数
+// M - M 是文案主角。recipe_name 为空表示这次是批量清除。
+std::string msg_recipe_batch_confirm_line1(int total, int overwritten,
+                                            const std::optional<std::string>& recipe_name);
+std::string msg_recipe_batch_confirm_line2();
+// 决策 D-15：闪 800ms 的回执，不占额外按键。
+std::string msg_recipe_batch_applied(int total, const std::string& recipe_name);
+std::string msg_recipe_batch_cleared(int total);
+std::string msg_recipe_scope_no_images();
+std::string err_recipe_bad_args();
+std::string msg_recipe_batch_failed();
 std::string recipe_menu_clear_failed();
 std::string recipe_menu_apply_failed();
 std::string recipe_menu_invalid_key();

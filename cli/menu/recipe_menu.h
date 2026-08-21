@@ -38,6 +38,32 @@ using PreviewFn =
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
                          int content_cols, const PreviewFn& preview = {});
 
+// T-15 票 C（issue #33）：`/recipe <作用域>` 回车之后弹的配方菜单，决策
+// D-2 的"菜单接力"。作用域写在控制台、配方在这里选 - 不做成
+// `/recipe <作用域> <配方名>` 一行式，因为自定义配方的名字是
+// `std::optional<std::string>`、可以为空且无唯一约束，一行式会把用户自建
+// 的配方整个排除在批量之外。
+//
+// 这个菜单是 `r` 菜单的**子集**（决策 D-14）：只有 `1`-`9`（选预设 → 二
+// 级选具体 version）与 `0`/`r`（批量清除），`v`/`c`/`d` 不出现。它不像
+// handle_r_key 那样收 ImageId，因为批量语境下根本没有"这张图"-那正是
+// `v` 与 `c` 在这里不成立的原因。
+//
+// 也不落库：选完就返回，写入由调用方在**确认之后**用
+// core::set_images_recipe 一次做掉。菜单不写库是这一票的要害 - D-9 的确
+// 认必须夹在选择和写入中间，把写入留在菜单里就没有那个位置了。
+struct BatchRecipeSelection {
+  // 取消（Esc、二级菜单取消、按了个不对应任何选项的键）。为真时
+  // recipe_id 没有意义，调用方零写入。
+  bool cancelled = true;
+  // cancelled 为假时：有值 = 套这个配方，nullopt = 批量清除。
+  std::optional<pzt::core::RecipeId> recipe_id;
+  // 非空时是给用户的一句提示（"该预设不存在"这类），跟 RKeyOutcome::status
+  // 同一个约定：Esc 静默、按错键给一句。
+  std::string status;
+};
+BatchRecipeSelection handle_batch_recipe_menu(int banner_row, int start_col, int content_cols);
+
 // issue #19：`r c` 分步向导的导航循环。按下标依次问 field_count 个字段，
 // read_field(下标, 该字段当前值) 返回提交/回退/取消：提交前进一格，回退
 // 退一格(在第一个字段上无效，停在原地)，取消整个作废并返回 nullopt。走
