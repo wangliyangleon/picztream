@@ -3,6 +3,69 @@
 > 本文件由 git-cliff 从 commit 历史自动生成,**请勿手改**(下次发布会覆盖)。
 > 发布与生成流程见 `scripts/release.sh`。
 
+## v2026.8.21 - 2026-08-21
+
+
+### 📝 文档
+- Docs: T-15 与 T-28 补收口注记
+- Docs: issue-tracker 补记 blocked_by 端点已验证
+- Docs: issue-tracker 里那处破折号改成普通短横
+- Docs: T-15 实现票 #29-#33 开出，记录 sub-issues API 已验证
+- Docs: T-15 立项，PRD 开在 GitHub Issues #28
+- Docs: AGENTS.md 只留最高层，删掉与 SPEC 重复的当前状态流水账
+- Docs: 记下 pzt 与 pzt-agent 必须一起升，及其不对称后果
+- Docs: T-25 收口，SPEC 补机读标记是别名的第二个消费者
+- Docs: T-16 立项，PRD 开在 GitHub Issues #23
+- Docs: SPEC 对 T-26 的引用改为已复核过期
+- Docs: T-29 收口归档
+- Docs: 删除重复 Claude Code 内置逻辑的落地判据说明
+- Docs: 改动落地判据改沿用 Claude Code 前台/后台 session 规则
+- Docs: T-26 已过期，意图驱动选片落地后随机性已从 curate 移除
+- Docs: 更正 ADR 归属的定性 - 它是默认，不是本仓库的偏离
+- Docs: 配置 agent skills 的 issue tracker，切到 GitHub Issues
+- Docs: HEIC 支持 PRD
+- Docs: 公开面按成本公式重写叙事 (T-27)
+- Docs: T-4 核心用户拍板，收口 T-27/T-31，T-20 转远期
+- Docs: T-22 收口,README/SPEC/提案同步
+
+### 🔩 其它
+- fix: count_images_with_recipe 查询失败要报出来，别当成"没有配方"接着数
+- feat(cli): `pzt --help` 的控制台清单也补上 /recipe
+- docs(spec): §3.1 "三处刻意的不对称"改成四处，补 /recipe
+- feat(cli): 控制台 /recipe <作用域> 批量套配方（T-15 票 C，#33）
+- feat(core): recipe::count_images_with_recipe，批量确认里那个 M 一次开库数出来
+- refactor(cli): 改名避开 T-16 删掉的那个 resolve_console_scope，修两处过头的注释
+- feat(cli): `.` 补给 /dedup 与 /ai_eval，共用一个作用域求值点
+- feat(core): recipe::set_images_recipe 批量套配方，一次校验 + 一个事务
+- core/scope: 作用域语法新增 `.`（调用方给定的显式 id 集合）
+- refactor(cli): 显示文案统一成"配方"，补源码级用词守卫
+- fix(agent): curate passthrough 按机读标记过滤，中文字面量退出 Python 层
+- feat(cli): pzt images --json 每张图补 system_tags 机读标记
+- feat(core): 系统标签稳定 ASCII 别名收进 core/tagging，scope 引用同一份
+- feat(dedup): 删除 dedup_reject、拒绝系统标签范围、补回归守卫
+- refactor(core): 排除规则收编到 core::scope，行为不变
+- refactor(cli): 两个入口的 scope 解析收编到 core::scope
+- feat(core): 新增 core::scope，scope 解析与排除规则的单一实现
+- Chore: curate 排序注释改成过去时,std::sample 已随票 06 移除
+- Fix: 向导进门先渲染一次预设的中性状态
+- Chore: 预览补一条延迟日志,名字字段下标写成常量
+- Feat: `r c` 向导接入逐字段实时预览 (#20)
+- Feat: `r c` 自建 version 改成可前进后退的分步向导 (#19)
+- Core: recipe 预览渲染，草稿参数不落库也能渲染 (#18)
+- Fix: 锦标赛 run_bracket 按对惰性解码，峰值内存从 O(簇大小) 降到常数
+- cli: 失败检查不再依赖 has_pending() (T-23)
+- cli/core: --debug 通道也要报文件名与失败总数 (T-23)
+- cli/core: 收 code review 的意见 (T-23)
+- cli/core: AI 评估失败报文件名与失败张数 (T-23)
+- cli: 标签建到菜单上限就挡住,不再静默丢掉 (T-24)
+- cli: 删掉 pzt archive / pzt unarchive (T-32)
+- cli: emit_json 的注释不再把 eval 当现役 headless 命令 (T-22)
+- cli: 删掉无消费者的 pzt eval / pzt compare (T-22)
+- cli: 收 code review 的意见 (T-18)
+- cli: 修好三个入口缺陷 (T-18)
+
+### 🚀 部署与分发
+- Deploy: 回填 pzt/pzt-agent formula 到 v2026.8.4 (sha256)
 ## v2026.8.4 - 2026-08-04
 
 
@@ -41,6 +104,7 @@
 - Docs: headless 的 stderr 带外通道写进 SPEC 契约 (T-8 E.3)
 
 ### 🔩 其它
+- Release v2026.8.4
 - agent: 收 code review 的意见 (票 12)
 - agent: rerun_stage 答完的闸门不再复活 (票 12)
 - agent: 精简 confirmation 提示词的新增部分,修掉自己引入的回归 (票 13)
