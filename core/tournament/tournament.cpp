@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "core/ai/compare.h"
 #include "core/media/media.h"
 #include "core/scope/scope.h"
 #include "core/tagging/tagging.h"
@@ -32,11 +33,13 @@ std::optional<decode::DecodedImage> decode_member(db::Database& db, const std::s
 
 // 簇内单淘汰锦标赛。members 是簇内全部成员(size>=2)，两两 compare_fn 比
 // 较、奇数个时最后一个轮空直接晋级，直到只剩一个。任意一步解码失败或
-// compare_fn 返回 Err 都视为"这一簇 AI 失败"，返回 nullopt 让调用方退化
-// 成 keep_id，不中断其它簇。N 个成员恰好 N-1 次比较，不管轮空怎么分布。
+// compare_fn 返回 nullopt 都视为"这一簇比较失败"，返回 nullopt 让调用方
+// 退化成 keep_id，不中断其它簇。N 个成员恰好 N-1 次比较，不管轮空怎么分
+// 布。比较由谁做出来这一层不知道，也不需要知道(见 tournament.h 上
+// CompareFn 的说明)。
 // 配对规则(哪个位置跟哪个位置比、轮空落在哪)逐轮不变，改动前后一字未
-// 动——compare_fn 是 AI 判断，不保证传递性(A 赢 B、B 赢 C，不代表 A 赢
-// C)，换一种配对方式可能真的换出一个不同的赢家；这不是纯内部实现细节，
+// 动 - CompareFn 的契约里没有传递性(A 赢 B、B 赢 C，不代表 A 赢 C)，换一
+// 种配对方式可能真的换出一个不同的赢家；这不是纯内部实现细节，
 // 换配对等于换了这个函数对外可观察的行为，T-28 只该修峰值内存，不该顺带
 // 改这个。
 //
@@ -76,7 +79,6 @@ using ComparisonStartFn = std::function<bool(int index_in_cluster)>;
 
 std::optional<project::ImageId> run_bracket(db::Database& db, const std::string& root_path,
                                              const std::vector<project::ImageId>& members,
-                                             ai::Provider provider, const ai::LocalModelConfig& local_config,
                                              const dedup::detail::PreviewDecodeFn& decode_fn,
                                              const detail::CompareFn& compare_fn,
                                              const ComparisonStartFn& on_comparison_start = nullptr) {
@@ -93,9 +95,9 @@ std::optional<project::ImageId> run_bracket(db::Database& db, const std::string&
         if (!left) return std::nullopt;
         auto right = decode_member(db, root_path, round[i + 1], decode_fn);
         if (!right) return std::nullopt;
-        auto result = compare_fn(*left, *right, provider, local_config);
-        if (!result.ok()) return std::nullopt;
-        next_round.push_back(result.value().winner == 0 ? round[i] : round[i + 1]);
+        auto winner = compare_fn(*left, *right);
+        if (!winner) return std::nullopt;
+        next_round.push_back(*winner == detail::ComparisonWinner::Left ? round[i] : round[i + 1]);
       } else {
         next_round.push_back(round[i]);  // 奇数个，轮空直接晋级，不解码
       }
@@ -112,9 +114,9 @@ namespace detail {
 Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
-    bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, dedup::DedupProgressFn on_progress,
-    AiGateFn on_ai_gate, AiProgressFn on_ai_progress, CancelFn on_cancel) {
+    bool apply_dup_tag, bool ai_enabled, dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn,
+    dedup::DedupProgressFn on_progress, AiGateFn on_ai_gate, AiProgressFn on_ai_progress,
+    CancelFn on_cancel) {
   auto project_summary = project::open_project(db, project_id);
   if (!project_summary.ok()) {
     return Result<ChooseSummary, project::ProjectNotFoundError>::Err(project_summary.error());
@@ -213,8 +215,8 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
           return true;
         };
       }
-      auto ai_winner = run_bracket(db, root_path, g.image_ids, ai_provider, local_config, decode_fn,
-                                    compare_fn, on_comparison_start);
+      auto ai_winner =
+          run_bracket(db, root_path, g.image_ids, decode_fn, compare_fn, on_comparison_start);
       if (ai_winner) {
         winner = *ai_winner;
       } else if (on_cancel && on_cancel()) {
@@ -270,9 +272,20 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
     bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
     dedup::DedupProgressFn on_progress, AiGateFn on_ai_gate, AiProgressFn on_ai_progress,
     CancelFn on_cancel) {
+  // AI 那条路的 adapter：把只认"左还是右"的比较原语接到 ai::
+  // request_comparison 上。供应商与本地模型配置在这里被捕获，所以
+  // bracket 推进那一层拿到的是一个中立的两图比较函数。ComparisonResult
+  // 的 reasoning 在这里丢掉 - 锦标赛只需要胜者，理由没有消费者。
+  detail::CompareFn compare_fn = [ai_provider, local_config](const decode::DecodedImage& a,
+                                                              const decode::DecodedImage& b)
+      -> std::optional<detail::ComparisonWinner> {
+    auto result = ai::request_comparison(a, b, ai_provider, local_config);
+    if (!result.ok()) return std::nullopt;
+    return result.value().winner == 0 ? detail::ComparisonWinner::Left : detail::ComparisonWinner::Right;
+  };
   return detail::cluster_and_choose_impl(db, project_id, image_ids, time_window_seconds, hash_threshold,
-                                          exclude_tag_names, apply_dup_tag, ai_enabled, ai_provider,
-                                          local_config, media::decode_preview_file, ai::request_comparison,
+                                          exclude_tag_names, apply_dup_tag, ai_enabled,
+                                          media::decode_preview_file, std::move(compare_fn),
                                           std::move(on_progress), std::move(on_ai_gate),
                                           std::move(on_ai_progress), std::move(on_cancel));
 }

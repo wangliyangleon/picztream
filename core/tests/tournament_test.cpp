@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -16,10 +17,6 @@
 namespace fs = std::filesystem;
 namespace dedup = pzt::core::dedup;
 using pzt::core::Result;
-using pzt::core::ai::ComparisonResult;
-using pzt::core::ai::CompareError;
-using pzt::core::ai::LocalModelConfig;
-using pzt::core::ai::Provider;
 using pzt::core::db::Database;
 using pzt::core::decode::DecodedImage;
 using pzt::core::decode::DecodeError;
@@ -174,8 +171,7 @@ bool has_duplicate_tag(Database& db, ImageId id, TagId duplicate_tag_id) {
 struct FakeCompare {
   int calls = 0;
 
-  Result<ComparisonResult, CompareError> operator()(const DecodedImage& a, const DecodedImage& b, Provider,
-                                                      const LocalModelConfig&) {
+  std::optional<detail::ComparisonWinner> operator()(const DecodedImage& a, const DecodedImage& b) {
     ++calls;
     // 复用 compute_dhash 反解出构造时的 target_hash——两张图都是
     // make_dhash_source 生成的，谁的哈希值更大谁赢，纯粹为了让胜负结果
@@ -184,15 +180,13 @@ struct FakeCompare {
     auto hb = dedup::compute_dhash(b);
     REQUIRE(ha.has_value());
     REQUIRE(hb.has_value());
-    int winner = (*ha > *hb) ? 0 : 1;
-    return Result<ComparisonResult, CompareError>::Ok(ComparisonResult{winner, "bigger hash wins"});
+    return (*ha > *hb) ? detail::ComparisonWinner::Left : detail::ComparisonWinner::Right;
   }
 };
 
 // 每次比较都失败的 fake CompareFn，用来测 AI 失败退化。
-Result<ComparisonResult, CompareError> always_fails(const DecodedImage&, const DecodedImage&, Provider,
-                                                      const LocalModelConfig&) {
-  return Result<ComparisonResult, CompareError>::Err(CompareError::NetworkError);
+std::optional<detail::ComparisonWinner> always_fails(const DecodedImage&, const DecodedImage&) {
+  return std::nullopt;
 }
 
 }  // namespace
@@ -210,8 +204,7 @@ TEST_CASE("cluster_and_choose with ai disabled: winner is the group's keep_id (c
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, /*time_window_seconds=*/10, /*hash_threshold=*/5, {},
-      /*apply_dup_tag=*/false, /*ai_enabled=*/false, Provider::Local, LocalModelConfig{}, decoder,
-      std::ref(fake_compare));
+      /*apply_dup_tag=*/false, /*ai_enabled=*/false, decoder, std::ref(fake_compare));
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 1);
   CHECK(result.value().clusters[0].members.size() == 3);
@@ -234,9 +227,9 @@ TEST_CASE("cluster_and_choose with ai enabled: bracket advances to a single winn
                                     {path_for(fx, 'e'), 4}});
   FakeCompare fake_compare;
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
-                                                 LocalModelConfig{}, decoder, std::ref(fake_compare));
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/true, decoder,
+      std::ref(fake_compare));
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 1);
   CHECK(result.value().clusters[0].members.size() == 5);
@@ -268,16 +261,15 @@ TEST_CASE("cluster_and_choose: decoding interleaves with comparing, not fully up
     timeline.push_back("decode");
     return base(path);
   };
-  auto tracking_compare = [&timeline](const DecodedImage& a, const DecodedImage& b, Provider p,
-                                       const LocalModelConfig& cfg) {
+  auto tracking_compare = [&timeline](const DecodedImage& a, const DecodedImage& b) {
     timeline.push_back("compare");
     FakeCompare inner;
-    return inner(a, b, p, cfg);
+    return inner(a, b);
   };
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
-                                                 LocalModelConfig{}, tracking_decoder, tracking_compare);
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/true,
+      tracking_decoder, tracking_compare);
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 1);
   REQUIRE(result.value().clusters[0].members.size() == 8);
@@ -306,9 +298,9 @@ TEST_CASE("cluster_and_choose: a decode failure during the bracket (not clusteri
       {{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}, {path_for(fx, 'c'), h}}, path_for(fx, 'b'));
   FakeCompare fake_compare;
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
-                                                 LocalModelConfig{}, decoder, std::ref(fake_compare));
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/true, decoder,
+      std::ref(fake_compare));
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 1);
   CHECK(result.value().clusters[0].members.size() == 3);
@@ -326,9 +318,9 @@ TEST_CASE("cluster_and_choose: singleton candidates become their own trivial clu
   auto decoder = hash_map_decoder({{path_for(fx, 'a'), 0}, {path_for(fx, 'b'), 1}});
   FakeCompare fake_compare;
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
-                                                 LocalModelConfig{}, decoder, std::ref(fake_compare));
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/true, decoder,
+      std::ref(fake_compare));
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 2);
   for (const auto& c : result.value().clusters) {
@@ -349,9 +341,9 @@ TEST_CASE("cluster_and_choose: a failed comparison degrades just that cluster to
                                     {path_for(fx, 'd'), ~ImageHash{0}},
                                     {path_for(fx, 'e'), ~ImageHash{0} - 1}});
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/true, Provider::Local,
-                                                 LocalModelConfig{}, decoder, always_fails);
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/true, decoder,
+      always_fails);
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 2);
   // 两组都因为比较失败而退化，各自的 winner 应该等于"captured_at 最新"
@@ -383,8 +375,7 @@ TEST_CASE("cluster_and_choose: exclude_tag_names removes images tagged with any 
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {kRejectTagName, kDuplicateTagName},
-      /*apply_dup_tag=*/false, /*ai_enabled=*/false, Provider::Local, LocalModelConfig{}, decoder,
-      std::ref(fake_compare));
+      /*apply_dup_tag=*/false, /*ai_enabled=*/false, decoder, std::ref(fake_compare));
   REQUIRE(result.ok());
   REQUIRE(result.value().clusters.size() == 1);  // 只剩 c
   CHECK(result.value().clusters[0].members == std::vector<ImageId>{fx.images[2]});
@@ -402,9 +393,9 @@ TEST_CASE("cluster_and_choose: apply_dup_tag=true tags non-winner members, re-ru
   FakeCompare fake_compare;
 
   auto run_once = [&] {
-    return detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                            /*apply_dup_tag=*/true, /*ai_enabled=*/false, Provider::Local,
-                                            LocalModelConfig{}, decoder, std::ref(fake_compare));
+    return detail::cluster_and_choose_impl(
+        fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false, decoder,
+        std::ref(fake_compare));
   };
 
   auto first = run_once();
@@ -430,9 +421,9 @@ TEST_CASE("cluster_and_choose: apply_dup_tag=false never tags anything even with
   auto decoder = hash_map_decoder({{path_for(fx, 'a'), h}, {path_for(fx, 'b'), h}});
   FakeCompare fake_compare;
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/false, Provider::Local,
-                                                 LocalModelConfig{}, decoder, std::ref(fake_compare));
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/false, decoder,
+      std::ref(fake_compare));
   REQUIRE(result.ok());
   CHECK(result.value().tagged_count == 0);
   auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
@@ -450,9 +441,9 @@ TEST_CASE("cluster_and_choose: images with no captured_at are counted as skipped
   auto decoder = hash_map_decoder({{path_for(fx, 'a'), 0}, {path_for(fx, 'b'), 1}});
   FakeCompare fake_compare;
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/false, Provider::Local,
-                                                 LocalModelConfig{}, decoder, std::ref(fake_compare));
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/false, decoder,
+      std::ref(fake_compare));
   REQUIRE(result.ok());
   CHECK(result.value().skipped_no_capture_time == 1);
   bool found_c_as_singleton = false;
@@ -466,10 +457,9 @@ TEST_CASE("cluster_and_choose: unknown project_id returns ProjectNotFoundError w
   auto fx = make_fixture("unknown_project", 1);
   FakeCompare fake_compare;
 
-  auto result = detail::cluster_and_choose_impl(fx.db, fx.project_id + 999999, fx.images, 10, 5, {},
-                                                 /*apply_dup_tag=*/false, /*ai_enabled=*/false, Provider::Local,
-                                                 LocalModelConfig{},
-                                                 hash_map_decoder({}), std::ref(fake_compare));
+  auto result = detail::cluster_and_choose_impl(
+      fx.db, fx.project_id + 999999, fx.images, 10, 5, {}, /*apply_dup_tag=*/false, /*ai_enabled=*/false,
+      hash_map_decoder({}), std::ref(fake_compare));
   REQUIRE(!result.ok());
   CHECK(result.error() == pzt::core::project::ProjectNotFoundError::NotFound);
   CHECK(fake_compare.calls == 0);
@@ -518,7 +508,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate sees the exact group and comparison co
   int seen_candidates = -1;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       [&](const AiCost& cost) {
         seen_groups = cost.group_count;
         seen_comparisons = cost.comparison_count;
@@ -551,7 +541,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate returning false writes absolutely noth
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       [](const AiCost&) { return false; });
 
   REQUIRE(result.ok());
@@ -575,7 +565,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate returning true is indistinguishable fr
     FakeCompare fake_compare;
     auto result = detail::cluster_and_choose_impl(
         fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-        Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+        decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
         std::move(gate));
     REQUIRE(result.ok());
     return std::make_pair(result.value(), fake_compare.calls);
@@ -601,7 +591,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when ai is disabled
   bool gate_called = false;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       [&](const AiCost&) {
         gate_called = true;
         return false;  // 万一被调用了，返回 false 会让结果明显不对，不会被蒙混过去
@@ -624,7 +614,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate is never consulted when there is nothi
   bool gate_called = false;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       [&](const AiCost&) {
         gate_called = true;
         return false;
@@ -643,7 +633,7 @@ TEST_CASE("cluster_and_choose: on_ai_progress fires once per comparison with bot
   std::vector<AiProgress> progress;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, [&](const AiProgress& p) { progress.push_back(p); });
   REQUIRE(result.ok());
   // 簇是 2 张 + 3 张 -> 1 + 2 = 3 次比较，每次比较一个事件(不是每簇一
@@ -686,19 +676,16 @@ TEST_CASE("cluster_and_choose: comparison counter catches up past a cluster that
                                     {path_for(fx, 'g'), 0x00FF00FF00FF00FFULL}});
 
   int calls = 0;
-  detail::CompareFn fail_first = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
-                                      const LocalModelConfig& cfg) {
-    if (++calls == 1) {
-      return Result<ComparisonResult, CompareError>::Err(CompareError::NetworkError);
-    }
+  detail::CompareFn fail_first = [&](const DecodedImage& a, const DecodedImage& b) {
+    if (++calls == 1) return std::optional<detail::ComparisonWinner>{};
     FakeCompare inner;
-    return inner(a, b, p, cfg);
+    return inner(a, b);
   };
 
   std::vector<AiProgress> progress;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, fail_first, /*on_progress=*/nullptr,
+      decoder, fail_first, /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, [&](const AiProgress& p) { progress.push_back(p); });
   REQUIRE(result.ok());
   CHECK(result.value().ai_fallback_count == 1);  // 第一簇退化,另外两簇正常
@@ -720,16 +707,15 @@ TEST_CASE("cluster_and_choose: on_ai_progress reports a cluster before comparing
   // 簇时全程零反馈)——上面那个用例只看数值、看不出时序，照样通过。这里
   // 把两种事件按发生顺序记进同一条时间线，钉住"报了才比"。
   std::vector<std::string> timeline;
-  auto counting_compare = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
-                              const LocalModelConfig& cfg) {
+  auto counting_compare = [&](const DecodedImage& a, const DecodedImage& b) {
     timeline.push_back("compare");
     FakeCompare inner;
-    return inner(a, b, p, cfg);
+    return inner(a, b);
   };
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, counting_compare, /*on_progress=*/nullptr,
+      decoder, counting_compare, /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr,
       [&](const AiProgress& p) {
         timeline.push_back("progress:" + std::to_string(p.comparison_done));
@@ -755,7 +741,7 @@ TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled")
   int calls = 0;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, [&](const AiProgress&) { ++calls; });
   REQUIRE(result.ok());
   // AI 关时那个循环是纯内存操作、瞬间跑完，报进度只会让 banner 闪一下。
@@ -772,16 +758,15 @@ TEST_CASE("cluster_and_choose: cancelling at the first comparison writes no tags
   auto duplicate_tag_id = ensure_duplicate_tag(fx.db, fx.project_id);
 
   int comparisons = 0;
-  detail::CompareFn counting = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
-                                    const LocalModelConfig& cfg) {
+  detail::CompareFn counting = [&](const DecodedImage& a, const DecodedImage& b) {
     ++comparisons;
     FakeCompare inner;
-    return inner(a, b, p, cfg);
+    return inner(a, b);
   };
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, counting, /*on_progress=*/nullptr,
+      decoder, counting, /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr, /*on_cancel=*/[] { return true; });
   REQUIRE(result.ok());
 
@@ -802,17 +787,16 @@ TEST_CASE("cluster_and_choose: cancel takes effect at the next comparison bounda
   // 下一次不该再发出去。簇是 2 张 + 3 张 = 3 次比较，取消后只应发生 1 次。
   int comparisons = 0;
   bool cancel_flag = false;
-  detail::CompareFn counting = [&](const DecodedImage& a, const DecodedImage& b, Provider p,
-                                    const LocalModelConfig& cfg) {
+  detail::CompareFn counting = [&](const DecodedImage& a, const DecodedImage& b) {
     ++comparisons;
     cancel_flag = true;  // 模拟"这次比较进行期间用户按了 Ctrl-C"
     FakeCompare inner;
-    return inner(a, b, p, cfg);
+    return inner(a, b);
   };
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, counting, /*on_progress=*/nullptr,
+      decoder, counting, /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr,
       /*on_cancel=*/[&] { return cancel_flag; });
   REQUIRE(result.ok());
@@ -829,7 +813,7 @@ TEST_CASE("cluster_and_choose: a cancelled run is not counted as an AI fallback"
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr, /*on_cancel=*/[] { return true; });
   REQUIRE(result.ok());
   // run_bracket 用同一个 nullopt 表达"取消"和"AI 失败"。判断顺序反了的话
@@ -848,7 +832,7 @@ TEST_CASE("cluster_and_choose: cancelling during clustering stops before the gat
   bool gate_asked = false;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
+      decoder, std::ref(fake_compare), /*on_progress=*/nullptr,
       [&](const AiCost&) {
         gate_asked = true;
         return true;
@@ -867,7 +851,7 @@ TEST_CASE("cluster_and_choose: no cancel callback behaves exactly as before") {
 
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/true,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare));
+      decoder, std::ref(fake_compare));
   REQUIRE(result.ok());
   // 默认 nullptr：headless 的 cmd_dedup 和全部既有调用点走的就是这条路，
   // 加了取消参数之后行为必须逐字节不变。
@@ -892,7 +876,7 @@ TEST_CASE("cluster_and_choose: cancelling is checked on singleton clusters too")
   int progress_calls = 0;
   auto result = detail::cluster_and_choose_impl(
       fx.db, fx.project_id, fx.images, 10, 5, {}, /*apply_dup_tag=*/true, /*ai_enabled=*/false,
-      Provider::Local, LocalModelConfig{}, decoder, std::ref(fake_compare),
+      decoder, std::ref(fake_compare),
       [&](int, int) { ++progress_calls; }, /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr,
       /*on_cancel=*/[] { return true; });
   REQUIRE(result.ok());

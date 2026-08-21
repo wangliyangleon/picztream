@@ -1,11 +1,11 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/ai/ai.h"
-#include "core/ai/compare.h"
 #include "core/db/database.h"
 #include "core/dedup/dedup.h"
 #include "core/decode/decode.h"
@@ -130,14 +130,23 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose(
 // decode_fn/compare_fn 的一层薄封装，不是"仅测试可调"的隔离代码。
 namespace detail {
 
-using CompareFn = std::function<Result<ai::ComparisonResult, ai::CompareError>(
-    const decode::DecodedImage&, const decode::DecodedImage&, ai::Provider, const ai::LocalModelConfig&)>;
+// 比较原语：给两张已解码的图，说赢的是左边还是右边。这是 bracket 推进对
+// "一次比较"的全部要求，与这次比较由谁做出来无关 - AI 那条路是
+// cluster_and_choose 把 ai::request_comparison 包成一层 adapter 注进来，
+// 供应商与本地模型配置在 adapter 内部捕获，不出现在这一层的签名里。
+//
+// nullopt = 这次比较没有结果(解码之外的失败：网络断了、模型输出解析不出
+// 胜者等)。失败的具体原因 bracket 推进用不上 - 它对每一种失败的反应完全
+// 相同(这一簇整体退化)，所以这里只保留"有没有赢家"这一个信息。
+enum class ComparisonWinner { Left, Right };
+
+using CompareFn = std::function<std::optional<ComparisonWinner>(const decode::DecodedImage&,
+                                                                const decode::DecodedImage&)>;
 
 Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int time_window_seconds, int hash_threshold, const std::vector<std::string>& exclude_tag_names,
-    bool apply_dup_tag, bool ai_enabled, ai::Provider ai_provider, const ai::LocalModelConfig& local_config,
-    dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn,
+    bool apply_dup_tag, bool ai_enabled, dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn,
     dedup::DedupProgressFn on_progress = nullptr, AiGateFn on_ai_gate = nullptr,
     AiProgressFn on_ai_progress = nullptr, CancelFn on_cancel = nullptr);
 
