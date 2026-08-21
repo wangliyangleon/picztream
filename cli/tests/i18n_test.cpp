@@ -801,6 +801,9 @@ TEST_CASE("T-15：/help 总览与详情都认识 /recipe") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
     CHECK(msg_help_overview().find("/recipe") != std::string::npos);
+    // `pzt --help` 里那份控制台命令清单是第二个发现入口(还没进 pzt open
+    // 的人只看得到它)，两份漏掉任何一份，功能就等于对那一半用户不存在。
+    CHECK(usage_main().find("/recipe") != std::string::npos);
     auto detail = msg_help_command("recipe");
     REQUIRE(detail.has_value());
     // 详情要说清两件事:作用域写在命令里、配方在回车之后选(决策 D-2)。
