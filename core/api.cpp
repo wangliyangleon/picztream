@@ -278,7 +278,7 @@ Result<void, SetImageRecipeError> set_images_recipe(const std::vector<ImageId>& 
   return recipe::set_images_recipe(db, image_ids, recipe_id);
 }
 
-std::size_t count_images_with_recipe(const std::vector<ImageId>& image_ids) {
+std::optional<std::size_t> count_images_with_recipe(const std::vector<ImageId>& image_ids) {
   db::Database db = db::Database::open_default();
   return recipe::count_images_with_recipe(db, image_ids);
 }

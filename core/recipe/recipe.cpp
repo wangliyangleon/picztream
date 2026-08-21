@@ -328,10 +328,11 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
   return Result<void, SetImageRecipeError>::Ok();
 }
 
-std::size_t count_images_with_recipe(db::Database& db, const std::vector<ImageId>& image_ids) {
+std::optional<std::size_t> count_images_with_recipe(db::Database& db,
+                                                     const std::vector<ImageId>& image_ids) {
   if (image_ids.empty()) return 0;
   // 一条准备好的语句复用 N 次(sqlite3_reset + 重新绑参),不是拼一条
-  // "id IN (?,?,...)" —— 后者对 5000 张要拼一条五千个占位符的 SQL、还会撞
+  // "id IN (?,?,...)" - 后者对 5000 张要拼一条五千个占位符的 SQL、还会撞
   // 上 SQLITE_MAX_VARIABLE_NUMBER。复用同一条语句没有这个上限,开销也只
   // 是 N 次主键点查。
   sqlite3* conn = db.handle();
@@ -340,9 +341,22 @@ std::size_t count_images_with_recipe(db::Database& db, const std::vector<ImageId
   for (ImageId image_id : image_ids) {
     sqlite3_reset(stmt.get());
     sqlite3_bind_int64(stmt.get(), 1, image_id);
-    // 出行 = 这张存在且有配方。图片不存在与"存在但没配方"都不出行,两者
-    // 在这里同样不计数(见头文件:不存在的 id 不报错)。
-    if (sqlite3_step(stmt.get()) == SQLITE_ROW) ++count;
+    int rc = sqlite3_step(stmt.get());
+    // 出行 = 这张存在且有配方。图片不存在与"存在但没配方"都出 SQLITE_DONE,
+    // 两者在这里同样不计数(见头文件:不存在的 id 不报错)。
+    if (rc == SQLITE_ROW) {
+      ++count;
+    } else if (rc != SQLITE_DONE) {
+      // 查询真的失败了(BUSY、库损坏)。**不能**当成"这张没有配方"继续数下
+      // 去:那样只会让 M 偏小,而 M 偏小的表现是确认里说"其中 0 张会被覆
+      // 盖"、用户放心按下 y、七张照片的配方就此没了。D-8 定了没有撤销,这
+      // 个数字是唯一的防线,宁可报不出来也不能报一个偏小的。
+      //
+      // BUSY 不是理论风险:这个连接是 open_default() 新开的,而
+      // EvaluationWorker 那个后台线程正对同一个库写评估结果,5 秒
+      // busy_timeout 到点之后照样返回 SQLITE_BUSY。
+      return std::nullopt;
+    }
   }
   return count;
 }

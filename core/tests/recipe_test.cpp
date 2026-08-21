@@ -839,20 +839,20 @@ TEST_CASE("render applies contrast even when the four original params are all ze
 
 // T-15 票 C：批量确认里的 M（"其中已有配方、会被覆盖且无法还原的张数"）。
 // 它是确认文案的主角,所以它算错的失效模式是"用户看着一个错的数字按下
-// y"——不崩、不报错,只能靠测试盯住。
+// y"-不崩、不报错,只能靠测试盯住。
 TEST_CASE("count_images_with_recipe counts only the ids that actually have one") {
   auto fx = make_images_fixture("recipe_count_with", 5);
   auto preset_id = list_presets(fx.db)[1].id;
-  CHECK(count_images_with_recipe(fx.db, fx.image_ids) == 0);
+  CHECK(*count_images_with_recipe(fx.db, fx.image_ids) == 0);
 
   std::vector<ImageId> half(fx.image_ids.begin(), fx.image_ids.begin() + 2);
   REQUIRE(set_images_recipe(fx.db, half, preset_id).ok());
-  CHECK(count_images_with_recipe(fx.db, fx.image_ids) == 2);
+  CHECK(*count_images_with_recipe(fx.db, fx.image_ids) == 2);
 
   // 只数传进来的这批,不是全库:下面把五张都套上之后,M 对 half 仍然是 2。
   REQUIRE(set_images_recipe(fx.db, fx.image_ids, preset_id).ok());
-  CHECK(count_images_with_recipe(fx.db, half) == 2);
-  CHECK(count_images_with_recipe(fx.db, fx.image_ids) == 5);
+  CHECK(*count_images_with_recipe(fx.db, half) == 2);
+  CHECK(*count_images_with_recipe(fx.db, fx.image_ids) == 5);
 }
 
 TEST_CASE("count_images_with_recipe on an empty batch is 0 and ignores unknown ids") {
@@ -860,11 +860,15 @@ TEST_CASE("count_images_with_recipe on an empty batch is 0 and ignores unknown i
   auto preset_id = list_presets(fx.db)[1].id;
   REQUIRE(set_images_recipe(fx.db, fx.image_ids, preset_id).ok());
 
-  CHECK(count_images_with_recipe(fx.db, {}) == 0);
+  // 成功路径必须是"有值的 0"，不是 nullopt：nullopt 专门留给查询失败，调
+  // 用方据此收摊、不弹确认。两者混为一谈就把这层保护退化回了"M 偏小"。
+  auto empty = count_images_with_recipe(fx.db, {});
+  REQUIRE(empty.has_value());
+  CHECK(*empty == 0);
   // 不存在的 id 既不计数也不报错:这个函数只是数一个数,"库在这中间被改
   // 过"那件事由紧随其后的 set_images_recipe 用它的 ImageNotFound 契约兜住。
-  CHECK(count_images_with_recipe(fx.db, {999999}) == 0);
+  CHECK(*count_images_with_recipe(fx.db, {999999}) == 0);
   std::vector<ImageId> with_hole = fx.image_ids;
   with_hole.push_back(999999);
-  CHECK(count_images_with_recipe(fx.db, with_hole) == 3);
+  CHECK(*count_images_with_recipe(fx.db, with_hole) == 3);
 }

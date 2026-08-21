@@ -1912,11 +1912,11 @@ std::string recipe_menu_actions_line_batch() {
 std::string recipe_display_name(const std::string &preset_name,
                                 const std::optional<std::string> &version_name) {
   // 信息栏把预设与 version 分两行显示，banner 只有一行，所以这里合成一
-  // 个。version 没有名字时用跟菜单一致的"默认"，不是留空-留空会拼出
-  // "City Pop / " 这种半截名字。
+  // 个。不处理"version 名是空串"这种情况：core 的 describe_recipe 对 NULL
+  // 名字已经兜成 "(未命名)"，空串到不了这里，写一个到不了的分支只会让读者
+  // 以为它会发生。
   if (!version_name) return preset_name;
-  return preset_name + " / " + (version_name->empty() ? recipe_menu_version_default_label()
-                                                       : *version_name);
+  return preset_name + " / " + *version_name;
 }
 
 std::string msg_recipe_batch_confirm_line1(int total, int overwritten,
@@ -1927,14 +1927,22 @@ std::string msg_recipe_batch_confirm_line1(int total, int overwritten,
   // 不可撤销"。
   const std::string n = std::to_string(total);
   const std::string m = std::to_string(overwritten);
+  // 套用与清除两条路的尾句**不共用**：清除路上那 M 张是被"清掉"的，说"被
+  // 覆盖"是错的字。共用一句尾巴能省几行，代价是在唯一一道防线上说一句不
+  // 准确的话。
   if (g_lang == Lang::zh) {
-    std::string head = recipe_name ? " 将对 " + n + " 张图片套用《" + *recipe_name + "》"
-                                    : " 将清除 " + n + " 张图片的配方";
-    return head + "，其中 " + m + " 张原本已有配方，会被覆盖且无法还原 ";
+    if (!recipe_name) {
+      return " 将清除 " + n + " 张图片的配方，其中 " + m + " 张确实有配方，清掉后无法还原 ";
+    }
+    return " 将对 " + n + " 张图片套用《" + *recipe_name + "》，其中 " + m +
+           " 张原本已有配方，会被覆盖且无法还原 ";
   } else {
-    std::string head = recipe_name ? " Applying \"" + *recipe_name + "\" to " + n + " photo(s)"
-                                    : " Clearing the recipe on " + n + " photo(s)";
-    return head + "; " + m + " of them already have one and will be overwritten irreversibly ";
+    if (!recipe_name) {
+      return " Clearing the recipe on " + n + " photo(s); " + m +
+             " of them actually have one, and clearing it cannot be undone ";
+    }
+    return " Applying \"" + *recipe_name + "\" to " + n + " photo(s); " + m +
+           " of them already have one and will be overwritten irreversibly ";
   }
 }
 

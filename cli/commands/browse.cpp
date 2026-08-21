@@ -673,8 +673,14 @@ ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
 
   // 决策 D-9：**总是**确认，报 N 与 M，M 是主角。M 只数这批 id(不是全库)，
   // 一次开库一条语句 - 见 core::recipe::count_images_with_recipe。
+  //
+  // 数不出来就**不弹确认**、直接收摊:确认里那个 M 是 D-8("没有撤销")之下
+  // 唯一的防线，拿一个不可信的数去弹确认，比不弹更坏 - 用户会照着它做决
+  // 定。此刻还一个字节都没写，所以"一张都没有改动"是实话。
+  auto overwritten = pzt::core::count_images_with_recipe(image_ids);
+  if (!overwritten) return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_batch_failed()};
   const int n = static_cast<int>(image_ids.size());
-  const int m = static_cast<int>(pzt::core::count_images_with_recipe(image_ids));
+  const int m = static_cast<int>(*overwritten);
   char confirm = prompt_and_read_key_2line(
       pzt::cli::i18n::msg_recipe_batch_confirm_line1(n, m, recipe_name),
       pzt::cli::i18n::msg_recipe_batch_confirm_line2(), banner_row, start_col, content_cols);

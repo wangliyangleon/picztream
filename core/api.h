@@ -331,8 +331,8 @@ Result<void, SetImageRecipeError> set_images_recipe(const std::vector<ImageId>& 
 
 // T-15:这批 id 里有多少张已经有配方,即批量确认要报的 M。一次开库、一条
 // 语句复用,不是让调用方对每个 id 调一次 get_image_recipe(那是 N 次开库)。
-// 见 core/recipe/recipe.h。
-std::size_t count_images_with_recipe(const std::vector<ImageId>& image_ids);
+// nullopt = 查询失败,调用方**不能**当 0 用,见 core/recipe/recipe.h。
+std::optional<std::size_t> count_images_with_recipe(const std::vector<ImageId>& image_ids);
 
 // 供 `pzt open` 信息栏显示用,见 core/recipe/recipe.h。
 std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id);
