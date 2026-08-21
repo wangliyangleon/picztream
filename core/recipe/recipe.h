@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -144,6 +145,20 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
 // 个函数上,**先解决它**:要么 core 放弃可陈述的契约,要么 agent 放弃软
 // 失败,两条都要付真实代价。在有真实消费者之前不要提前开那个 headless
 // 口 - SPEC §3.2 记着 eval/compare 无人调用最终被 T-22 删除的先例。
+// T-15 票 C：这批 id 里有多少张**已经**有配方。批量确认要报的 M（"会被
+// 覆盖且无法还原的张数"，见 issue #33 决策 D-9）就是它，而 N−M 那部分原本
+// 无配方、套错了批量清除就精确还原了 —— 这个数把"不可逆"切在了正确的位
+// 置上，是那句确认里唯一带风险量的信息。
+//
+// 收进 core 而不是让 cli 对每个 id 调一次 get_image_recipe：api 层那个薄
+// 壳每次调用都 open_default() 开一次库，5000 张就是 5000 次开库，正是
+// set_images_recipe 特意避开的东西。这里一次开库、一条查询。
+//
+// 不存在的 id 既不计数也不报错：这个函数只是数一个数。"库在这中间被改
+// 过"由紧随其后的 set_images_recipe 用它的 ImageNotFound 契约兜住，在这
+// 里再报一次只会让调用方对同一件事写两套处理。
+std::size_t count_images_with_recipe(db::Database& db, const std::vector<ImageId>& image_ids);
+
 Result<void, SetImageRecipeError> set_images_recipe(db::Database& db,
                                                      const std::vector<ImageId>& image_ids,
                                                      std::optional<RecipeId> recipe_id);

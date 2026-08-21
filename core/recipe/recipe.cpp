@@ -328,6 +328,25 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
   return Result<void, SetImageRecipeError>::Ok();
 }
 
+std::size_t count_images_with_recipe(db::Database& db, const std::vector<ImageId>& image_ids) {
+  if (image_ids.empty()) return 0;
+  // 一条准备好的语句复用 N 次(sqlite3_reset + 重新绑参),不是拼一条
+  // "id IN (?,?,...)" —— 后者对 5000 张要拼一条五千个占位符的 SQL、还会撞
+  // 上 SQLITE_MAX_VARIABLE_NUMBER。复用同一条语句没有这个上限,开销也只
+  // 是 N 次主键点查。
+  sqlite3* conn = db.handle();
+  Stmt stmt(conn, "SELECT 1 FROM images WHERE id = ? AND recipe_id IS NOT NULL;");
+  std::size_t count = 0;
+  for (ImageId image_id : image_ids) {
+    sqlite3_reset(stmt.get());
+    sqlite3_bind_int64(stmt.get(), 1, image_id);
+    // 出行 = 这张存在且有配方。图片不存在与"存在但没配方"都不出行,两者
+    // 在这里同样不计数(见头文件:不存在的 id 不报错)。
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW) ++count;
+  }
+  return count;
+}
+
 Result<void, SetImageRecipeError> set_images_recipe(db::Database& db,
                                                      const std::vector<ImageId>& image_ids,
                                                      std::optional<RecipeId> recipe_id) {
