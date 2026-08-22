@@ -85,6 +85,24 @@ std::vector<TaggedImageRef> ordered_entries(sqlite3* conn, TagId tag_id, bool is
   return out;
 }
 
+// 单张与批量两条路唯一的写入点。position 为空 = 无序标签(存 NULL)。
+void insert_image_tag(sqlite3* conn, ImageId image_id, TagId tag_id,
+                      std::optional<std::int64_t> position, std::int64_t tagged_at) {
+  Stmt stmt(conn,
+            "INSERT INTO image_tags (image_id, tag_id, position, tagged_at) VALUES (?, ?, ?, ?);");
+  sqlite3_bind_int64(stmt.get(), 1, image_id);
+  sqlite3_bind_int64(stmt.get(), 2, tag_id);
+  if (position.has_value()) {
+    sqlite3_bind_int64(stmt.get(), 3, *position);
+  } else {
+    sqlite3_bind_null(stmt.get(), 3);
+  }
+  sqlite3_bind_int64(stmt.get(), 4, tagged_at);
+  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+    throw std::runtime_error(std::string("insert image_tags failed: ") + sqlite3_errmsg(conn));
+  }
+}
+
 std::int64_t next_position(sqlite3* conn, TagId tag_id) {
   Stmt stmt(conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM image_tags WHERE tag_id = ?;");
   sqlite3_bind_int64(stmt.get(), 1, tag_id);
@@ -240,19 +258,9 @@ Result<void, AddTagError> add_tag(db::Database& db, ImageId image_id, TagId tag_
         AddTagError{AddTagFailureKind::CapExceeded, std::move(info)});
   }
 
-  Stmt stmt(conn,
-            "INSERT INTO image_tags (image_id, tag_id, position, tagged_at) VALUES (?, ?, ?, ?);");
-  sqlite3_bind_int64(stmt.get(), 1, image_id);
-  sqlite3_bind_int64(stmt.get(), 2, tag_id);
-  if (tag->is_ordered) {
-    sqlite3_bind_int64(stmt.get(), 3, next_position(conn, tag_id));
-  } else {
-    sqlite3_bind_null(stmt.get(), 3);
-  }
-  sqlite3_bind_int64(stmt.get(), 4, now_unix());
-  if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-    throw std::runtime_error(std::string("insert image_tags failed: ") + sqlite3_errmsg(conn));
-  }
+  std::optional<std::int64_t> position;
+  if (tag->is_ordered) position = next_position(conn, tag_id);
+  insert_image_tag(conn, image_id, tag_id, position, now_unix());
   return Result<void, AddTagError>::Ok();
 }
 
@@ -301,21 +309,10 @@ Result<int, AddTagError> add_tag_to_images(db::Database& db, const std::vector<I
   std::int64_t tagged_at = now_unix();
   exec_simple(conn, "BEGIN;");
   try {
-    Stmt stmt(conn,
-              "INSERT INTO image_tags (image_id, tag_id, position, tagged_at) VALUES (?, ?, ?, ?);");
     for (ImageId image_id : to_insert) {
-      sqlite3_reset(stmt.get());
-      sqlite3_bind_int64(stmt.get(), 1, image_id);
-      sqlite3_bind_int64(stmt.get(), 2, tag_id);
-      if (tag->is_ordered) {
-        sqlite3_bind_int64(stmt.get(), 3, position++);
-      } else {
-        sqlite3_bind_null(stmt.get(), 3);
-      }
-      sqlite3_bind_int64(stmt.get(), 4, tagged_at);
-      if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-        throw std::runtime_error(std::string("insert image_tags failed: ") + sqlite3_errmsg(conn));
-      }
+      std::optional<std::int64_t> slot;
+      if (tag->is_ordered) slot = position++;
+      insert_image_tag(conn, image_id, tag_id, slot, tagged_at);
     }
     exec_simple(conn, "COMMIT;");
   } catch (...) {

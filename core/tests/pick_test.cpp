@@ -279,6 +279,20 @@ TEST_CASE("第一级比较次数恰好 C - m，两级进度报的是同一批数
   CHECK(progress.front().match_total == 2);  // 三个成员的簇比两场
   CHECK(progress.back().stage == PickStage::Final);
   CHECK(progress.back().rank_total == 2);  // min(N, m)
+
+  // 一级的字段不许漏到另一级：渲染那一层按 stage 取字段，残值会直接画在
+  // 屏幕上。
+  for (const auto& p : progress) {
+    if (p.stage == PickStage::Cluster) {
+      CHECK(p.rank_index == 0);
+      CHECK(p.rank_total == 0);
+    } else {
+      CHECK(p.group_index == 0);
+      CHECK(p.group_total == 0);
+      CHECK(p.match_index == 0);
+      CHECK(p.match_total == 0);
+    }
+  }
 }
 
 TEST_CASE("带废片或重复标签的图片一次都不进入比较") {
@@ -328,7 +342,7 @@ TEST_CASE("N >= m 时跳过第二级，不从各簇亚军补位") {
   REQUIRE(result.ok());
   const auto& value = result.value();
 
-  // 要 5 张只拿到 3 张，另外 3 张判废——不是把各簇的第二名挖出来凑数。
+  // 要 5 张只拿到 3 张，另外 3 张判废 - 不是把各簇的第二名挖出来凑数。
   CHECK(value.selected.size() == 3);
   CHECK(value.cost.reject_count == 3);
   CHECK(value.rejected_count == 3);
@@ -455,6 +469,10 @@ TEST_CASE("中途取消：零写入，且与闸门拒绝是两个可区分的结
   CHECK(result.value().rejected_count == 0);
   CHECK(rejected_ids(fx).empty());
   CHECK(scene.human.calls < 3);  // 喊停之后不再比
+  // 取消之后这批数仍然要拿得到："已经比过的 K 次将全部作废"这句话要用它。
+  CHECK(result.value().cost.candidate_count == 6);
+  CHECK(result.value().cost.champion_count == 3);
+  CHECK(result.value().comparisons_done == scene.human.calls);
 }
 
 TEST_CASE("比较原语中途放弃等同于取消：零写入") {
@@ -494,4 +512,28 @@ TEST_CASE("重跑是收敛的：第二次的候选恰好是第一次留下的那
   for (auto id : rejected_ids(fx)) still_kept.erase(id);
   CHECK(still_kept.size() == 1);
   CHECK(*still_kept.begin() == second.value().selected[0]);
+}
+
+TEST_CASE("批量落库整批失败时报错，不谎称判废了 0 张") {
+  auto scene = make_six_image_scene("write_failed");
+  auto& fx = scene.fx;
+
+  // 混进一张别的项目的图片：它进得了候选(排除规则只看标签)，也能作为单例
+  // 当上簇冠军，但落库时批量接口会认出它不属于废片标签所在的项目、整批拒
+  // 绝。这是"选完了却一张都没记下来"最容易够到的一条真实路径。
+  auto other_photos = fresh_photo_dir("write_failed_other");
+  std::ofstream(other_photos / "z.jpg", std::ios::binary) << "x";
+  auto other = create_project(fx.db, "other", other_photos.string());
+  REQUIRE(other.ok());
+  auto foreign = find_image_by_path(fx.db, other.value(), "z.jpg");
+  REQUIRE(foreign.has_value());
+
+  auto ids = fx.images;
+  ids.push_back(*foreign);
+  auto result = detail::pick_impl(fx.db, fx.project_id, ids, /*count=*/2, kTimeWindow, kHashThreshold,
+                                  scene.decoder, as_compare_fn(scene.human));
+
+  REQUIRE_FALSE(result.ok());
+  CHECK(result.error() == PickError::RejectTagWriteFailed);
+  CHECK(rejected_ids(fx).empty());  // 全有全无：一张都没打上
 }

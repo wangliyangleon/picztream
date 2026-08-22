@@ -46,7 +46,7 @@ std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
 // F-26/F-09：给定一批图片 id，返回其中打了 tag_id 这个标签的子集——一条
 // 批量查询，不是逐张查（跟 project::evaluated_image_ids 同一个模式）。
 std::unordered_set<ImageId> images_with_tag(db::Database& db, const std::vector<ImageId>& image_ids,
-                                             TagId tag_id);
+                                           TagId tag_id);
 
 // 反方向查询："这张图当前打了哪些标签"（list_tags 是"这个项目有哪些标
 // 签"，filter_by_tag/ordered_entries 内部是"这个标签下有哪些图"）。increment
@@ -98,7 +98,7 @@ Result<void, AddTagError> add_tag(db::Database& db, ImageId image_id, TagId tag_
 // 空 image_ids 直接算成功(新增 0 张)，但标签本身仍然照验：一个不存在的
 // tag_id 无论批次空不空都是调用方的错。
 Result<int, AddTagError> add_tag_to_images(db::Database& db, const std::vector<ImageId>& image_ids,
-                                            TagId tag_id);
+                                          TagId tag_id);
 
 enum class RemoveTagError {
   TagNotFound,

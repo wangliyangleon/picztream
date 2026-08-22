@@ -13,7 +13,7 @@
 // 两级人工选片：从一批候选里选出 N 张留下，其余判废。
 //
 // 第一级在簇内决出簇冠军，第二级在簇冠军之间取 top-N。两级都用同一套
-// bracket 推进(core/tournament)，区别只在"一次比较由谁做出来"——这一层
+// bracket 推进(core/tournament)，区别只在"一次比较由谁做出来" - 这一层
 // 拿到的是一个中立的比较原语，等的是一次按键还是一次网络往返它不知道。
 //
 // 为什么分两级而不是在全范围上直接跑一棵树：比较次数是同一量级，但每一
@@ -31,9 +31,19 @@ using ComparisonWinner = tournament::detail::ComparisonWinner;
 using CompareFn = tournament::detail::CompareFn;
 
 // 中途取消(语义见 dedup.h 的 CancelFn，必须粘性)。查到 true 就返回
-// cancelled=true 的空结果，一个标签都不写——写库统一在最后一步，所以这
+// cancelled=true 的空结果，一个标签都不写 - 写库统一在最后一步，所以这
 // 里不需要回滚。
 using CancelFn = dedup::CancelFn;
+
+enum class PickError {
+  // 项目不存在。
+  ProjectNotFound,
+  // 最后那一步批量落库整批失败，因而**一张都没打上**(批量接口是全有全
+  // 无的)。走错误通道而不是回一个 Ok 加一个计数为 0 的结果：选出来了却
+  // 一张都没记下来，跟选片成功不是同一件事，而调用方要拿这个结果对用户
+  // 说"Y 张打上废片"。
+  RejectTagWriteFailed,
+};
 
 // 开跑前报得出的开销。分簇已经跑完(本地、便宜、无副作用)，但一次比较都
 // 还没发起、一个标签都还没写，所以这是唯一一个"能报出真实开销、且拒绝之
@@ -42,7 +52,7 @@ struct PickCost {
   // 排除废片/重复之后的候选总数 C。
   int candidate_count = 0;
   // 簇冠军池 m = 多图簇数 + 单例数。单例不经任何淘汰直接进第二级，所以
-  // 它跟一个 8 连拍里杀出来的冠军在决赛里平起平坐——这是"先分簇再选"这
+  // 它跟一个 8 连拍里杀出来的冠军在决赛里平起平坐 - 这是"先分簇再选"这
   // 个结构固有的。
   int champion_count = 0;
   // 第一级的比较次数 C - m，**精确值**：单淘汰 k 个成员恰好 k-1 场。
@@ -60,7 +70,7 @@ struct PickCost {
 // false = 不跑：不发起任何比较、不写任何标签，直接返回 declined=true 的
 // 空结果。nullptr(默认) = 无条件继续。
 //
-// 候选不足那条短路上不会被调到——那时没有任何要确认的开销(恒为零比较零
+// 候选不足那条短路上不会被调到 - 那时没有任何要确认的开销(恒为零比较零
 // 写入)，问了也没有意义。
 using PickGateFn = std::function<bool(const PickCost&)>;
 
@@ -75,7 +85,7 @@ struct PickProgress {
   PickStage stage = PickStage::Cluster;
   // Cluster 阶段：正在跑第几组 / 共几组，1-based。**只数真的要跑比较的
   // 组**(成员数 >= 2)，单例不发起比较也就不占一格，所以 group_total 通
-  // 常小于 PickCost::champion_count——这样进度才走得到分母。跟
+  // 常小于 PickCost::champion_count - 这样进度才走得到分母。跟
   // tournament::AiProgress 的 group_* 数的是同一类东西。
   int group_index = 0;
   int group_total = 0;
@@ -108,7 +118,7 @@ struct PickResult {
   // flag 为真时(零写入)分开。
   int rejected_count = 0;
   // C <= N(含 C == 0)：一次比较都没发起、一个标签都没打。selected 为
-  // 空——**不是**"这 C 张都留下了"，调用方该报"候选不足"而不是把空结果
+  // 空 - **不是**"这 C 张都留下了"，调用方该报"候选不足"而不是把空结果
   // 当成选择结果。count 非正(调用方违约)也落在这条短路上：不放大一个契
   // 约错误，按同样的零比较零写入返回。
   bool insufficient_candidates = false;
@@ -117,7 +127,7 @@ struct PickResult {
   bool declined = false;
   // CancelFn 返回了 true，或者比较原语中途放弃(人在环这条路上两者是同一
   // 件事：没有"AI 失败"这种第三种可能)。同样是 selected 为空、零写入。
-  // 跟 declined 分开报是因为对用户的含义不同——一个是"没点头"，一个是
+  // 跟 declined 分开报是因为对用户的含义不同 - 一个是"没点头"，一个是
   // "点了头又喊停"，跟 tournament::ChooseSummary 同名字段一致。
   bool cancelled = false;
 };
@@ -136,27 +146,27 @@ struct PickResult {
 // 的是"同一场景"的粒度而不是"近乎同一张"的粒度。
 //
 // count 是要留下的张数 N，必须为正。N >= m 时跳过第二级，m 个簇冠军全部
-// 入选，**不从各簇亚军补位凑够 N**——pick 的语义是每个场景只留最好的一
+// 入选，**不从各簇亚军补位凑够 N** - pick 的语义是每个场景只留最好的一
 // 张，连拍里的第二好本来就是该被淘汰的那张。
 //
 // 未入选的全部打上废片标签，入选的**不打任何标签**："被选中"的表示就是
 // "没有废片标签"，不引入第四个系统标签。落库是一个事务包住全部写入，且
 // 只发生在最后一步，所以取消路径不需要任何回滚。
-Result<PickResult, project::ProjectNotFoundError> pick(
+Result<PickResult, PickError> pick(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int count, int time_window_seconds, int hash_threshold, CompareFn compare_fn,
     PickGateFn on_gate = nullptr, PickProgressFn on_progress = nullptr, CancelFn on_cancel = nullptr);
 
 namespace detail {
 
-// 仅供单元测试使用——decode_fn 也可注入，不需要真的解码 JPEG 就能验证分
+// 仅供单元测试使用 - decode_fn 也可注入，不需要真的解码 JPEG 就能验证分
 // 簇后处理、两级推进、短路与落库。跟 tournament::detail::
 // cluster_and_choose_impl、dedup::detail::find_duplicates_impl 是同一个
 // 模式：上面的 pick 就是这个函数塞真实 decode_fn 的一层薄封装。
 //
-// compare_fn 在两级里都不带默认实现——它就是"人按了哪一边"，production
+// compare_fn 在两级里都不带默认实现 - 它就是"人按了哪一边"，production
 // 与测试各自注入，这一层没有可以兜底的默认答案。
-Result<PickResult, project::ProjectNotFoundError> pick_impl(
+Result<PickResult, PickError> pick_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int count, int time_window_seconds, int hash_threshold,
     dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, PickGateFn on_gate = nullptr,

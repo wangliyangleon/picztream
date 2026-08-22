@@ -26,20 +26,20 @@ std::vector<std::string> exclude_tag_names() {
   return std::vector<std::string>(std::begin(kExcludeTags), std::end(kExcludeTags));
 }
 
-Result<PickResult, project::ProjectNotFoundError> ok(PickResult result) {
-  return Result<PickResult, project::ProjectNotFoundError>::Ok(std::move(result));
+Result<PickResult, PickError> ok(PickResult result) {
+  return Result<PickResult, PickError>::Ok(std::move(result));
 }
 
 }  // namespace
 
-Result<PickResult, project::ProjectNotFoundError> pick_impl(
+Result<PickResult, PickError> pick_impl(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int count, int time_window_seconds, int hash_threshold,
     dedup::detail::PreviewDecodeFn decode_fn, CompareFn compare_fn, PickGateFn on_gate,
     PickProgressFn on_progress, CancelFn on_cancel) {
   auto project_summary = project::open_project(db, project_id);
   if (!project_summary.ok()) {
-    return Result<PickResult, project::ProjectNotFoundError>::Err(project_summary.error());
+    return Result<PickResult, PickError>::Err(PickError::ProjectNotFound);
   }
   const std::string& root_path = project_summary.value().root_path;
 
@@ -57,8 +57,12 @@ Result<PickResult, project::ProjectNotFoundError> pick_impl(
     return ok(std::move(insufficient));
   }
 
-  auto cancelled_result = [&](int comparisons_done) {
+  // 取消结果的构造只有这一处。cost 照样带回来：调用方在取消之后仍然要
+  // 拿这批数说话("已经比过的 K 次将全部作废")。分簇阶段就被取消时只有候
+  // 选数是已知的，其余仍是 0 - 那时簇还没成形，谁也算不出 m。
+  auto cancelled_result = [&](const PickCost& cost, int comparisons_done) {
     PickResult cancelled;
+    cancelled.cost = cost;
     cancelled.comparisons_done = comparisons_done;
     cancelled.cancelled = true;
     return cancelled;
@@ -69,16 +73,17 @@ Result<PickResult, project::ProjectNotFoundError> pick_impl(
       /*apply_dup_tag=*/false, /*ai_enabled=*/false, decode_fn, compare_fn, /*on_progress=*/nullptr,
       /*on_ai_gate=*/nullptr, /*on_ai_progress=*/nullptr, on_cancel);
   if (!summary.ok()) {
-    return Result<PickResult, project::ProjectNotFoundError>::Err(summary.error());
+    return Result<PickResult, PickError>::Err(PickError::ProjectNotFound);
   }
-  if (summary.value().cancelled) return ok(cancelled_result(0));
+
+  PickCost cost;
+  cost.candidate_count = candidate_count;
+  if (summary.value().cancelled) return ok(cancelled_result(cost, 0));
 
   const auto& clusters = summary.value().clusters;
   int champion_count = static_cast<int>(clusters.size());
   int selected_count = std::min(count, champion_count);
 
-  PickCost cost;
-  cost.candidate_count = candidate_count;
   cost.champion_count = champion_count;
   cost.first_stage_comparisons = candidate_count - champion_count;
   // N >= m 时第二级整个不跑(不补位)，所以那条路上的上界就是第一级的精确
@@ -110,10 +115,18 @@ Result<PickResult, project::ProjectNotFoundError> pick_impl(
       if (!on_progress) return true;
       progress.stage = stage;
       progress.comparisons_done = comparisons_done;
+      // 另一级的字段清零，不留上一级的残值：渲染进度行的那一层按 stage
+      // 取字段，读到一个上一组的"第 3/4 场"会直接画在屏幕上。
       if (stage == PickStage::Cluster) {
         progress.match_index = match_index;
+        progress.rank_index = 0;
+        progress.rank_total = 0;
       } else {
         progress.rank_index = rank_index;
+        progress.group_index = 0;
+        progress.group_total = 0;
+        progress.match_index = 0;
+        progress.match_total = 0;
       }
       on_progress(progress);
       return true;
@@ -137,8 +150,8 @@ Result<PickResult, project::ProjectNotFoundError> pick_impl(
     ++progress.group_index;
     progress.match_total = static_cast<int>(cluster.members.size()) - 1;
     auto champion = tournament::select_top_k(db, root_path, cluster.members, 1, decode_fn, compare_fn,
-                                              match_start(PickStage::Cluster));
-    if (champion.aborted || champion.ranked.empty()) return ok(cancelled_result(comparisons_done));
+                                             match_start(PickStage::Cluster));
+    if (champion.aborted || champion.ranked.empty()) return ok(cancelled_result(cost, comparisons_done));
     champions.push_back(champion.ranked.front());
   }
 
@@ -148,15 +161,15 @@ Result<PickResult, project::ProjectNotFoundError> pick_impl(
   } else {
     progress.rank_total = selected_count;
     auto ranked = tournament::select_top_k(db, root_path, champions, count, decode_fn, compare_fn,
-                                            match_start(PickStage::Final));
-    if (ranked.aborted) return ok(cancelled_result(comparisons_done));
+                                           match_start(PickStage::Final));
+    if (ranked.aborted) return ok(cancelled_result(cost, comparisons_done));
     selected = std::move(ranked.ranked);
   }
 
   // 写库统一在这最后一步，所以上面每一条提前返回都天然是零写入，不需要
   // 任何回滚。最后再查一次取消：粘性的 CancelFn 让"最后一场比完之后才喊
   // 停"也来得及。
-  if (on_cancel && on_cancel()) return ok(cancelled_result(comparisons_done));
+  if (on_cancel && on_cancel()) return ok(cancelled_result(cost, comparisons_done));
 
   std::unordered_set<project::ImageId> selected_set(selected.begin(), selected.end());
   std::vector<project::ImageId> rejected;
@@ -165,25 +178,32 @@ Result<PickResult, project::ProjectNotFoundError> pick_impl(
     if (!selected_set.count(id)) rejected.push_back(id);
   }
 
+  // 入选的不打任何标签："被选中"的表示就是"没有废片标签"。整批落库失败
+  // 时一张都没打上，这时候回一个 Ok 就是在说"选完了、判废了 0 张"，而实
+  // 际上这一次选片没有留下任何痕迹 - 走错误通道，让调用方自己决定怎么对
+  // 用户说。
+  auto tagged = tagging::add_tag_to_images(db, rejected, tagging::ensure_reject_tag(db, project_id));
+  if (!tagged.ok()) {
+    return Result<PickResult, PickError>::Err(PickError::RejectTagWriteFailed);
+  }
+
   PickResult result;
   result.selected = std::move(selected);
   result.cost = cost;
   result.comparisons_done = comparisons_done;
-  // 入选的不打任何标签："被选中"的表示就是"没有废片标签"。
-  auto tagged = tagging::add_tag_to_images(db, rejected, tagging::ensure_reject_tag(db, project_id));
-  result.rejected_count = tagged.ok() ? tagged.value() : 0;
+  result.rejected_count = tagged.value();
   return ok(std::move(result));
 }
 
 }  // namespace detail
 
-Result<PickResult, project::ProjectNotFoundError> pick(
+Result<PickResult, PickError> pick(
     db::Database& db, project::ProjectId project_id, const std::vector<project::ImageId>& image_ids,
     int count, int time_window_seconds, int hash_threshold, CompareFn compare_fn, PickGateFn on_gate,
     PickProgressFn on_progress, CancelFn on_cancel) {
   return detail::pick_impl(db, project_id, image_ids, count, time_window_seconds, hash_threshold,
-                            media::decode_preview_file, std::move(compare_fn), std::move(on_gate),
-                            std::move(on_progress), std::move(on_cancel));
+                           media::decode_preview_file, std::move(compare_fn), std::move(on_gate),
+                           std::move(on_progress), std::move(on_cancel));
 }
 
 }  // namespace pzt::core::pick
