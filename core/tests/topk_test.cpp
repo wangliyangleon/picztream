@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "core/db/database.h"
@@ -404,4 +405,67 @@ TEST_CASE("compare_fn 中途放弃时整场作废、名次为空") {
 
   CHECK(result.aborted);
   CHECK(result.ranked.empty());
+}
+
+TEST_CASE("on_match_start 报出正在取第几名、取这一名的第几场") {
+  auto fx = make_topk_fixture("match_hook", 5);
+  std::unordered_map<std::string, int> ranks{{topk_path_for(fx, 'a'), 40}, {topk_path_for(fx, 'b'), 20},
+                                             {topk_path_for(fx, 'c'), 50}, {topk_path_for(fx, 'd'), 10},
+                                             {topk_path_for(fx, 'e'), 30}};
+  RankCompare cmp;
+  std::vector<std::pair<int, int>> seen;
+  auto result = select_top_k(fx.db, fx.root_path, fx.images, 3, rank_decoder(ranks, {}),
+                             [&cmp](const DecodedImage& a, const DecodedImage& b) { return cmp(a, b); },
+                             [&seen](int rank_index, int match_index) {
+                               seen.push_back({rank_index, match_index});
+                               return true;
+                             });
+
+  REQUIRE_FALSE(result.aborted);
+  CHECK(static_cast<int>(seen.size()) == cmp.calls);  // 每一场都报一次，不多不少
+  // 第 1 名花的是建树的 m-1 场，之后每名重跑一条根到叶的路。
+  std::vector<std::pair<int, int>> first_rank{{1, 1}, {1, 2}, {1, 3}, {1, 4}};
+  REQUIRE(seen.size() >= first_rank.size());
+  CHECK(std::vector<std::pair<int, int>>(seen.begin(), seen.begin() + 4) == first_rank);
+  // 场次计数按名次重新从 1 数起，名次自身单调不减。
+  for (std::size_t i = first_rank.size(); i < seen.size(); ++i) {
+    CHECK(seen[i].first >= seen[i - 1].first);
+    CHECK(seen[i].second == (seen[i].first == seen[i - 1].first ? seen[i - 1].second + 1 : 1));
+  }
+  CHECK(seen.back().first == 3);
+}
+
+TEST_CASE("on_match_start 返回 false 时整场作废，之后一场都不再比") {
+  auto fx = make_topk_fixture("match_hook_abort", 4);
+  std::unordered_map<std::string, int> ranks{{topk_path_for(fx, 'a'), 40}, {topk_path_for(fx, 'b'), 20},
+                                             {topk_path_for(fx, 'c'), 50}, {topk_path_for(fx, 'd'), 10}};
+  RankCompare cmp;
+  int started = 0;
+  auto result = select_top_k(fx.db, fx.root_path, fx.images, 2, rank_decoder(ranks, {}),
+                             [&cmp](const DecodedImage& a, const DecodedImage& b) { return cmp(a, b); },
+                             [&started](int, int) { return ++started < 3; });
+
+  CHECK(result.aborted);
+  CHECK(result.ranked.empty());
+  CHECK(started == 3);   // 喊停的那一场之后没有第四场
+  CHECK(cmp.calls == 2);  // 喊停的那一场没有走到比较，也没有解码
+}
+
+TEST_CASE("解码失败决出的那一场同样报一次 on_match_start") {
+  auto fx = make_topk_fixture("match_hook_decode_fail", 4);
+  std::unordered_map<std::string, int> ranks{{topk_path_for(fx, 'a'), 40}, {topk_path_for(fx, 'b'), 20},
+                                             {topk_path_for(fx, 'c'), 50}, {topk_path_for(fx, 'd'), 10}};
+  RankCompare cmp;
+  int started = 0;
+  auto result =
+      select_top_k(fx.db, fx.root_path, fx.images, 1, rank_decoder(ranks, {topk_path_for(fx, 'b')}),
+                   [&cmp](const DecodedImage& a, const DecodedImage& b) { return cmp(a, b); },
+                   [&started](int, int) {
+                     ++started;
+                     return true;
+                   });
+
+  REQUIRE_FALSE(result.aborted);
+  CHECK(started == 3);    // 建树恰好 m-1 场，其中一场是判负决出的
+  CHECK(cmp.calls == 2);  // 判负那场不进 compare_fn
 }

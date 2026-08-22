@@ -61,7 +61,8 @@ bool wins_without_pixels(const MemberMeta& left, const MemberMeta& right) {
 TopKSelection select_top_k(db::Database& db, const std::string& root_path,
                            const std::vector<project::ImageId>& members, int k,
                            const dedup::detail::PreviewDecodeFn& decode_fn,
-                           const detail::CompareFn& compare_fn) {
+                           const detail::CompareFn& compare_fn,
+                           const MatchStartFn& on_match_start) {
   TopKSelection selection;
   int member_count = static_cast<int>(members.size());
   int wanted = std::clamp(k, 0, member_count);
@@ -93,7 +94,15 @@ TopKSelection select_top_k(db::Database& db, const std::string& root_path,
     return decoded.value();
   };
 
+  // 报进度用的两个计数：名次由下面的循环推进，场次每取一名重新从 1 数
+  // 起。都在 compare 之外，因为 compare 只知道"这一对是谁"。
+  int rank_index = 0;
+  int matches_in_rank = 0;
+
   detail::IndexCompareFn compare = [&](int left, int right) -> std::optional<detail::ComparisonWinner> {
+    // 报在解码之前：挂在这个钩子里的取消检查要能在这一对的解码开销发生
+    // 之前生效。判负决出的那些场次同样报 - 那一场真实发生过。
+    if (on_match_start && !on_match_start(rank_index, ++matches_in_rank)) return std::nullopt;
     auto left_image = decode_at(left);
     auto right_image = decode_at(right);
     if (left_image && right_image) return compare_fn(*left_image, *right_image);
@@ -109,6 +118,8 @@ TopKSelection select_top_k(db::Database& db, const std::string& root_path,
   detail::LoserTree tree(member_count);
   selection.ranked.reserve(static_cast<std::size_t>(wanted));
   for (int taken = 0; taken < wanted; ++taken) {
+    rank_index = taken + 1;
+    matches_in_rank = 0;
     auto extracted = tree.extract_next(compare);
     if (extracted.status == detail::ExtractStatus::Aborted) {
       // 一场没比完的锦标赛没有名次可言：已经取到的几名一并丢掉，调用方

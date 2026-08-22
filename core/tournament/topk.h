@@ -64,10 +64,23 @@ struct TopKSelection {
 // decode_fn/compare_fn 都可注入，所以单测不需要真的解码 JPEG 或真的连
 // 网络 - 跟 core/dedup 的 detail::find_duplicates_impl、core/ai/compare.h
 // 的 detail::request_comparison_impl 是同一个模式。
+//
+// on_match_start：**每一场比较发起之前**(且在这一对的解码之前)调一次，
+// 参数是"正在取第几名"与"取这一名过程中的第几场"，两个都是 1-based。
+// 没有它的话调用方最细只能报到"取第几名"，而取第 1 名要跑完整棵树的
+// m-1 场，那期间画面完全静止。放在解码之前调用，是为了让挂在这个钩子
+// 里的取消检查能在解码这一对的开销发生之前生效。
+//
+// 返回 false = 别比了：与 compare_fn 返回 nullopt 走同一条出口
+// (aborted=true、ranked 清空)。解码失败**不**经过这个钩子决出的胜负仍然
+// 会先报一次 - 那一场真实发生过，只是没有人需要按键。
+using MatchStartFn = std::function<bool(int rank_index, int match_index)>;
+
 TopKSelection select_top_k(db::Database& db, const std::string& root_path,
                            const std::vector<project::ImageId>& members, int k,
                            const dedup::detail::PreviewDecodeFn& decode_fn,
-                           const detail::CompareFn& compare_fn);
+                           const detail::CompareFn& compare_fn,
+                           const MatchStartFn& on_match_start = nullptr);
 
 namespace detail {
 
