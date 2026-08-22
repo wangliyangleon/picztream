@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/media/media.h"
+
 namespace pzt::core::tournament {
 
 namespace {
@@ -24,9 +26,101 @@ int max_comparisons_for_top_k(int member_count, int k) {
   return (member_count - 1) + (wanted - 1) * ceil_log2(member_count);
 }
 
-TopKSelection select_top_k(db::Database&, const std::string&, const std::vector<project::ImageId>&, int,
-                           const dedup::detail::PreviewDecodeFn&, const detail::CompareFn&) {
-  return TopKSelection{};
+namespace {
+
+// 一个成员在整场里反复要用的那几样东西。像素不在里面 - 那是逐对惰性解
+// 码的。
+struct MemberMeta {
+  project::ImageId id = 0;
+  std::string preview_path;
+  std::optional<std::int64_t> captured_at;
+  // project::get_image 查得到这张图。查不到时当作"永远解码失败"，但 id
+  // 仍然是调用方给的那个，所以下面的兜底规则照样能用。
+  bool resolvable = false;
+};
+
+// 一对里两张都解码失败时谁晋级：captured_at 较新的赢，时间也相同则 id
+// 较小的赢，与 core/dedup 挑 keep_id 的规则同一套。
+//
+// captured_at 缺失按"最旧"处理：有时间的一方赢，两边都没有时间就落到
+// id 这条兜底上。dedup 那边挑 keep_id 时手上只有 captured_at 非 NULL
+// 的图片，这里的候选池不保证这一点(没有拍摄时间的照片照样是候选)，所
+// 以规则要多铺这一格才完整。
+bool wins_without_pixels(const MemberMeta& left, const MemberMeta& right) {
+  if (left.captured_at && right.captured_at) {
+    if (*left.captured_at != *right.captured_at) return *left.captured_at > *right.captured_at;
+    return left.id < right.id;
+  }
+  if (left.captured_at) return true;
+  if (right.captured_at) return false;
+  return left.id < right.id;
+}
+
+}  // namespace
+
+TopKSelection select_top_k(db::Database& db, const std::string& root_path,
+                           const std::vector<project::ImageId>& members, int k,
+                           const dedup::detail::PreviewDecodeFn& decode_fn,
+                           const detail::CompareFn& compare_fn) {
+  TopKSelection selection;
+  int member_count = static_cast<int>(members.size());
+  int wanted = std::clamp(k, 0, member_count);
+  if (wanted == 0) return selection;
+
+  // 元数据一次查完：预览图路径与 captured_at 在整场里会被反复用到，每
+  // 比一次再查一遍是白花的查询。像素仍然逐对惰性解码，跟
+  // tournament.cpp 的 bracket 推进同一个模式 - 同一时刻最多两张解码图
+  // 片存活，不随成员数变大。
+  std::vector<MemberMeta> metas;
+  metas.reserve(members.size());
+  for (auto id : members) {
+    MemberMeta meta;
+    meta.id = id;
+    if (auto info = project::get_image(db, id)) {
+      meta.preview_path =
+          media::resolve_preview_path(root_path, info->file_path, info->kind, info->preview_cache_path);
+      meta.captured_at = info->captured_at;
+      meta.resolvable = true;
+    }
+    metas.push_back(std::move(meta));
+  }
+
+  auto decode_at = [&](int index) -> std::optional<decode::DecodedImage> {
+    const MemberMeta& meta = metas[static_cast<std::size_t>(index)];
+    if (!meta.resolvable) return std::nullopt;
+    auto decoded = decode_fn(meta.preview_path);
+    if (!decoded.ok()) return std::nullopt;
+    return decoded.value();
+  };
+
+  detail::IndexCompareFn compare = [&](int left, int right) -> std::optional<detail::ComparisonWinner> {
+    auto left_image = decode_at(left);
+    auto right_image = decode_at(right);
+    if (left_image && right_image) return compare_fn(*left_image, *right_image);
+    // 解码失败的一方判负。屏幕上只画得出一张，那张晋级是用户看到的画面
+    // 唯一能支持的结论；问都不用问，所以这两支不进 compare_fn。
+    if (left_image) return detail::ComparisonWinner::Left;
+    if (right_image) return detail::ComparisonWinner::Right;
+    return wins_without_pixels(metas[static_cast<std::size_t>(left)], metas[static_cast<std::size_t>(right)])
+               ? detail::ComparisonWinner::Left
+               : detail::ComparisonWinner::Right;
+  };
+
+  detail::LoserTree tree(member_count);
+  selection.ranked.reserve(static_cast<std::size_t>(wanted));
+  for (int taken = 0; taken < wanted; ++taken) {
+    auto extracted = tree.extract_next(compare);
+    if (extracted.status == detail::ExtractStatus::Aborted) {
+      // 一场没比完的锦标赛没有名次可言：已经取到的几名一并丢掉，调用方
+      // 按"这次什么都没发生"处理。
+      selection.ranked.clear();
+      selection.aborted = true;
+      return selection;
+    }
+    if (extracted.status == detail::ExtractStatus::Exhausted) break;
+    selection.ranked.push_back(members[static_cast<std::size_t>(extracted.member)]);
+  }
+  return selection;
 }
 
 namespace detail {
