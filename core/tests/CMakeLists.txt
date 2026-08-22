@@ -21,6 +21,7 @@ add_executable(core_tests
   dedup_test.cpp
   curate_test.cpp
   tournament_test.cpp
+  topk_test.cpp
   settings_test.cpp
 )
 

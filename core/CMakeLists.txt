@@ -48,6 +48,7 @@ add_library(core STATIC
   dedup/dedup.cpp
   curate/curate.cpp
   tournament/tournament.cpp
+  tournament/topk.cpp
   settings/settings.cpp
 )
 
