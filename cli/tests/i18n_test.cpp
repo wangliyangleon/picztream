@@ -831,3 +831,97 @@ TEST_CASE("T-15：批量确认第一行同时报出 N 与 M") {
   CHECK(clear_line.find("90") != std::string::npos);
   CHECK(clear_line.find("7") != std::string::npos);
 }
+
+// T-17 票 E（#39）：`/pick` 得能在两个发现入口(usage 与 /help)里被找到，
+// 详情要说清 PRD 点名不能省的三件事:范围固定为当前视图、未入选会被打
+// 废片、撤销路径是 /filter reject + x。
+TEST_CASE("T-17：/help 总览与详情都认识 /pick") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK(msg_help_overview().find("/pick") != std::string::npos);
+    CHECK(usage_main().find("/pick") != std::string::npos);
+    auto detail = msg_help_command("pick");
+    REQUIRE(detail.has_value());
+    CHECK(detail->find("/pick") != std::string::npos);
+    // 范围固定为当前视图，不接受范围参数。
+    bool mentions_view =
+        detail->find("视图") != std::string::npos || detail->find("view") != std::string::npos;
+    CHECK(mentions_view);
+    // 未入选会被打上废片标签。
+    bool mentions_reject =
+        detail->find("废片") != std::string::npos || detail->find("Reject") != std::string::npos;
+    CHECK(mentions_reject);
+    // 撤销路径:/filter reject 之后逐张 x。
+    CHECK(detail->find("/filter reject") != std::string::npos);
+    CHECK(detail->find("x") != std::string::npos);
+  }
+  g_lang = Lang::zh;
+}
+
+TEST_CASE("err_pick_bad_args is non-empty and follows language") {
+  g_lang = Lang::zh;
+  CHECK(err_pick_bad_args().find("/pick") != std::string::npos);
+  g_lang = Lang::en;
+  CHECK(err_pick_bad_args().find("/pick") != std::string::npos);
+  g_lang = Lang::zh;
+}
+
+// D-13：开跑前的两行确认，报四个数——C/m/X 在第一行，Y 在第二行。
+TEST_CASE("msg_pick_confirm_line1/line2 report all four numbers from PickCost") {
+  g_lang = Lang::zh;
+  auto line1 = msg_pick_confirm_line1(200, 40, 313);
+  CHECK(line1.find("200") != std::string::npos);
+  CHECK(line1.find("40") != std::string::npos);
+  CHECK(line1.find("313") != std::string::npos);
+
+  auto line2 = msg_pick_confirm_line2(180);
+  CHECK(line2.find("180") != std::string::npos);
+  // 按键提示两个都要在:D-13 沿用"y 开始/其它键取消"的既有形态。
+  CHECK(line2.find("y") != std::string::npos);
+}
+
+// 两级进度的分母必须能在文案里核对到——分母对不上分母是 /dedup --ai 踩过
+// 的坑(见 msg_pick_progress_cluster 的头注释)，这里钉住两级各自的四个
+// 数字都出现，且两级文案彼此可区分(不会读起来像同一句)。
+TEST_CASE("msg_pick_progress_cluster/final report their own denominators and stay distinguishable") {
+  g_lang = Lang::zh;
+  auto cluster = msg_pick_progress_cluster(3, 40, 2, 4, 7, 313);
+  CHECK(cluster.find("3") != std::string::npos);
+  CHECK(cluster.find("40") != std::string::npos);
+  CHECK(cluster.find("2") != std::string::npos);
+  CHECK(cluster.find("4") != std::string::npos);
+  CHECK(cluster.find("7") != std::string::npos);
+  CHECK(cluster.find("313") != std::string::npos);
+
+  auto final_stage = msg_pick_progress_final(5, 20, 210, 313);
+  CHECK(final_stage.find("5") != std::string::npos);
+  CHECK(final_stage.find("20") != std::string::npos);
+  CHECK(final_stage.find("210") != std::string::npos);
+  CHECK(final_stage.find("313") != std::string::npos);
+  CHECK(cluster != final_stage);
+}
+
+TEST_CASE("msg_pick_insufficient_candidates reports both the candidate and requested counts") {
+  g_lang = Lang::zh;
+  auto msg = msg_pick_insufficient_candidates(15, 20);
+  CHECK(msg.find("15") != std::string::npos);
+  CHECK(msg.find("20") != std::string::npos);
+}
+
+TEST_CASE("msg_pick_cancelled and err_pick_failed are distinct, non-empty, follow language") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK_FALSE(msg_pick_cancelled().empty());
+    CHECK_FALSE(err_pick_failed().empty());
+    CHECK(msg_pick_cancelled() != err_pick_failed());
+  }
+  g_lang = Lang::zh;
+}
+
+// D-20：回执报 N(已选)与 Y(打上废片)两个数。
+TEST_CASE("msg_pick_result reports both the selected and rejected counts") {
+  g_lang = Lang::zh;
+  auto msg = msg_pick_result(20, 180);
+  CHECK(msg.find("20") != std::string::npos);
+  CHECK(msg.find("180") != std::string::npos);
+}

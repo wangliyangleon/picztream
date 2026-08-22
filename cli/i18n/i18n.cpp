@@ -101,6 +101,7 @@ std::string usage_main() {
            "不显示也不产生这些日志)\n"
            "      控制台(在 pzt open 里按 : 进入):/dedup <范围> [--ai] "
            "近似重复检测,/ai_eval [范围] AI 评估,/recipe <范围> 批量套配方,"
+           "/pick <N> 两图对比人工选片,"
            "/filter <条件> 二级筛选,/tasks 评估队列状态,/help [命令] 详情\n"
            "  pzt delete <project_name>\n"
            "  pzt rescan <project_name> [--no-prune]  (默认会清除磁盘上已消失的"
@@ -128,6 +129,7 @@ std::string usage_main() {
            "      Console (press : inside pzt open): /dedup <scope> [--ai] "
            "near-duplicate detection, /ai_eval [scope] AI evaluation, "
            "/recipe <scope> apply one recipe in bulk, "
+           "/pick <N> manual two-up pick, "
            "/filter <criterion> narrow the view, /tasks evaluation queue, "
            "/help [command] details\n"
            "  pzt delete <project_name>\n"
@@ -1088,10 +1090,10 @@ std::string msg_ai_unknown_command(const std::string &command) {
 
 std::string msg_help_overview() {
   if (g_lang == Lang::zh) {
-    return " 可用命令: /ai_eval /dedup /recipe /tasks /filter /help —— /help <命令> 查看详情 ";
+    return " 可用命令: /ai_eval /dedup /recipe /pick /tasks /filter /help —— /help <命令> 查看详情 ";
   } else {
-    return " Available commands: /ai_eval /dedup /recipe /tasks /filter /help — /help <command> for "
-           "details ";
+    return " Available commands: /ai_eval /dedup /recipe /pick /tasks /filter /help — /help <command> "
+           "for details ";
   }
 }
 
@@ -1109,6 +1111,10 @@ std::optional<std::string> msg_help_command(const std::string &command) {
       return " /recipe * 或 /recipe #标签 或 /recipe .(当前视图)：对范围内全部图片套用同一个配方"
              "；作用域写在命令里，配方回车之后在菜单上选(0 或 r 是批量清除)；执行前会报张数并等确"
              "认 ";
+    }
+    if (command == "pick") {
+      return " /pick <N>：两图并排人工选出 N 张，作用域固定为当前视图(不接受范围参数)；"
+             "未入选的全部打上废片标签；没有撤销机制，想反悔就 /filter reject 之后逐张 x 取消 ";
     }
     if (command == "tasks") {
       return " /tasks：查看评估队列排队中/处理中的数量 ";
@@ -1134,6 +1140,11 @@ std::optional<std::string> msg_help_command(const std::string &command) {
       return " /recipe *, /recipe #tag or /recipe . (current view): applies one recipe to every "
              "photo in scope; the scope goes on the command line, the recipe is picked from the "
              "menu after Enter (0 or r clears in bulk); asks for confirmation, showing the counts ";
+    }
+    if (command == "pick") {
+      return " /pick <N>: manually picks N photos by two-up comparison; scope is always the current "
+             "view (no scope argument); everything not picked gets tagged Reject; there is no undo - "
+             "to reverse it, run /filter reject then untag with x one photo at a time ";
     }
     if (command == "tasks") {
       return " /tasks: shows how many evaluations are queued/processing ";
@@ -1309,6 +1320,98 @@ std::string err_dedup_bad_args() {
     return " 用法: /dedup <范围> [--ai]，范围是 * 或 . 或 #标签名 ";
   } else {
     return " Usage: /dedup <scope> [--ai], where scope is *, . or #tag ";
+  }
+}
+
+std::string err_pick_bad_args() {
+  if (g_lang == Lang::zh) {
+    return " 用法: /pick <N>，N 是正整数，作用域固定为当前视图 ";
+  } else {
+    return " Usage: /pick <N>, where N is a positive integer; scope is always the current view ";
+  }
+}
+
+std::string msg_pick_confirm_line1(int candidate_count, int champion_count, int max_comparisons) {
+  if (g_lang == Lang::zh) {
+    return " 当前视图 " + std::to_string(candidate_count) + " 张候选，分成 " +
+           std::to_string(champion_count) + " 组，最多需要 " + std::to_string(max_comparisons) +
+           " 次比较 ";
+  } else {
+    return " " + std::to_string(candidate_count) + " candidate(s) in the current view, " +
+           std::to_string(champion_count) + " group(s), up to " + std::to_string(max_comparisons) +
+           " comparison(s) ";
+  }
+}
+
+std::string msg_pick_confirm_line2(int reject_count) {
+  if (g_lang == Lang::zh) {
+    return " 结束后 " + std::to_string(reject_count) + " 张会被打上废片标签，" +
+           menu_item("y", "开始") + " / " + menu_item("其它键", "取消") + " ";
+  } else {
+    return " " + std::to_string(reject_count) + " photo(s) will be tagged Reject when done, " +
+           menu_item("y", "Start") + " / " + menu_item("other keys", "Cancel") + " ";
+  }
+}
+
+std::string msg_pick_progress_cluster(int group_index, int group_total, int match_index,
+                                       int match_total, int comparisons_done, int max_comparisons) {
+  if (g_lang == Lang::zh) {
+    return " 第 " + std::to_string(group_index) + "/" + std::to_string(group_total) + " 组 · 本组第 " +
+           std::to_string(match_index) + "/" + std::to_string(match_total) + " 场 · 已比 " +
+           std::to_string(comparisons_done) + " 次 / 最多 " + std::to_string(max_comparisons) + " 次 ";
+  } else {
+    return " Group " + std::to_string(group_index) + "/" + std::to_string(group_total) + " · match " +
+           std::to_string(match_index) + "/" + std::to_string(match_total) + " · " +
+           std::to_string(comparisons_done) + "/" + std::to_string(max_comparisons) +
+           " comparison(s) so far ";
+  }
+}
+
+std::string msg_pick_progress_final(int rank_index, int rank_total, int comparisons_done,
+                                     int max_comparisons) {
+  if (g_lang == Lang::zh) {
+    return " 选第 " + std::to_string(rank_index) + "/" + std::to_string(rank_total) + " 张 · 已比 " +
+           std::to_string(comparisons_done) + " 次 / 最多 " + std::to_string(max_comparisons) + " 次 ";
+  } else {
+    return " Picking " + std::to_string(rank_index) + "/" + std::to_string(rank_total) + " · " +
+           std::to_string(comparisons_done) + "/" + std::to_string(max_comparisons) +
+           " comparison(s) so far ";
+  }
+}
+
+std::string msg_pick_insufficient_candidates(int candidate_count, int requested_count) {
+  if (g_lang == Lang::zh) {
+    return " 候选 " + std::to_string(candidate_count) + " 张不足 " + std::to_string(requested_count) +
+           " 张，全部保留 ";
+  } else {
+    return " Only " + std::to_string(candidate_count) + " candidate(s), fewer than " +
+           std::to_string(requested_count) + " requested - none of them are touched ";
+  }
+}
+
+std::string msg_pick_cancelled() {
+  if (g_lang == Lang::zh) {
+    return " 已放弃，没有写入任何标签 ";
+  } else {
+    return " Abandoned, no tags were written ";
+  }
+}
+
+std::string err_pick_failed() {
+  if (g_lang == Lang::zh) {
+    return " 选片失败，废片标签一张都没打上 ";
+  } else {
+    return " Pick failed, no Reject tags were written ";
+  }
+}
+
+std::string msg_pick_result(int selected_count, int rejected_count) {
+  if (g_lang == Lang::zh) {
+    return " 已选 " + std::to_string(selected_count) + " 张，" + std::to_string(rejected_count) +
+           " 张打上废片 ";
+  } else {
+    return " Picked " + std::to_string(selected_count) + " photo(s), tagged " +
+           std::to_string(rejected_count) + " Reject ";
   }
 }
 

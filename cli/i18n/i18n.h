@@ -281,6 +281,34 @@ std::string msg_dedup_ai_confirm_line2();
 // err_console_invalid_filter_criterion 同一个理由。
 std::string err_dedup_bad_args();
 
+// T-17 票 E：`/pick <N>` 两图对比人工选片，见 GitHub issue #39（T-17 PRD
+// #34）。N 不是正整数(`/pick`、`/pick 0`、`/pick -1`、`/pick abc`)时报这
+// 句 - D-1 不设默认值，四种坏写法是同一件事的四个例子。
+std::string err_pick_bad_args();
+// 开跑前**总是**确认，两行报四个数：C=候选、m=簇冠军池、X=比较次数上界
+// (最多)、Y=结束后会判废的张数。C/m/Y 是精确值，X 是上界(D-13) - 跟
+// msg_dedup_ai_confirm_line1 报精确开销的既有口径不同，理由见 pick.h
+// PickCost::max_comparisons 的说明。
+std::string msg_pick_confirm_line1(int candidate_count, int champion_count, int max_comparisons);
+std::string msg_pick_confirm_line2(int reject_count);
+// 两级进度，分母必须跟 msg_pick_confirm_line1 报的是同一批数(D-18)：第一
+// 级"第 i/m 组 · 本组第 j/k 场"，第二级"选第 p/N 张"，两级都带"已比 t
+// 次 / 最多 X 次"。
+std::string msg_pick_progress_cluster(int group_index, int group_total, int match_index,
+                                       int match_total, int comparisons_done, int max_comparisons);
+std::string msg_pick_progress_final(int rank_index, int rank_total, int comparisons_done,
+                                     int max_comparisons);
+// C <= N(含 C == 0)：一次比较都没发起、一个标签都没打(D-9)。
+std::string msg_pick_insufficient_candidates(int candidate_count, int requested_count);
+// Esc 二次确认之后真正放弃：零写入，但已经花掉了时间和按键，跟"闸门被
+// 拒"分开报是同一个理由，见 msg_dedup_cancelled 的说明。
+std::string msg_pick_cancelled();
+// 落库失败(core::pick::PickError::RejectTagWriteFailed)：选完了但一个标
+// 签都没打上，不能报成功。
+std::string err_pick_failed();
+// 结束回执：D-20 形如"已选 N 张，Y 张打上废片"。
+std::string msg_pick_result(int selected_count, int rejected_count);
+
 // M3：`/ai_eval * | #标签名 [额外指引]` 批量提交，见
 // docs/history/M3_Eng_Design.md"`/` 命令解析"一节。count 为 0 时文案要能自然表
 // 达"没有需要处理的"(比如"所有图片都已评估过")，不是"提交了 0 张"这种
