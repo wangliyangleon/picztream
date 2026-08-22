@@ -20,6 +20,7 @@ add_executable(core_tests
   selection_test.cpp
   dedup_test.cpp
   curate_test.cpp
+  pick_test.cpp
   tournament_test.cpp
   topk_test.cpp
   settings_test.cpp

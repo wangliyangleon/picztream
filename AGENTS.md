@@ -28,7 +28,7 @@ PicZTream（简称 PZT）是终端内全键盘的图片筛选与色彩处理工�
 
 | 层 | 是什么 | 子模块 |
 |---|---|---|
-| `core/` | 核心业务逻辑库，不得含任何终端渲染或按键交互依赖 | `project` `db` `decode` `media` `raw` `color` `recipe` `dedup` `curate` `tournament` `tagging` `scope` `export` `ai` `settings` `browse` `api` |
+| `core/` | 核心业务逻辑库，不得含任何终端渲染或按键交互依赖 | `project` `db` `decode` `media` `raw` `color` `recipe` `dedup` `curate` `tournament` `pick` `tagging` `scope` `export` `ai` `settings` `browse` `api` |
 | `cli/` | 终端全键盘交互前端，只调用 `core` 暴露的接口 | `commands` `menu` `ui` `term` `kitty` `text` `i18n` `compare` |
 | `agent/` | Python headless 编排层，只通过 `pzt --json` 子进程驱动 `core`，不直接链接 C++ | `session`（多线程运行时） `stages` `orchestrator` `compose` `transport` `store` `router` |
 
