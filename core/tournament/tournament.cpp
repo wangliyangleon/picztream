@@ -9,6 +9,7 @@
 #include "core/media/media.h"
 #include "core/scope/scope.h"
 #include "core/tagging/tagging.h"
+#include "core/tournament/topk.h"
 
 namespace pzt::core::tournament {
 
@@ -31,50 +32,49 @@ std::optional<decode::DecodedImage> decode_member(db::Database& db, const std::s
   return decoded.value();
 }
 
-// 簇内单淘汰锦标赛。members 是簇内全部成员(size>=2)，两两 compare_fn 比
-// 较、奇数个时最后一个轮空直接晋级，直到只剩一个。任意一步解码失败或
-// compare_fn 返回 nullopt 都视为"这一簇比较失败"，返回 nullopt 让调用方
-// 退化成 keep_id，不中断其它簇。N 个成员恰好 N-1 次比较，不管轮空怎么分
-// 布。比较由谁做出来这一层不知道，也不需要知道(见 tournament.h 上
-// CompareFn 的说明)。
-// 配对规则(哪个位置跟哪个位置比、轮空落在哪)逐轮不变，改动前后一字未
-// 动 - CompareFn 的契约里没有传递性(A 赢 B、B 赢 C，不代表 A 赢 C)，换一
-// 种配对方式可能真的换出一个不同的赢家；这不是纯内部实现细节，
-// 换配对等于换了这个函数对外可观察的行为，T-28 只该修峰值内存，不该顺带
-// 改这个。
+// 簇内单淘汰锦标赛。members 是簇内全部成员(size>=2)，建一棵 LoserTree、
+// 取第 1 名就是簇冠军。配对规则(哪个位置跟哪个位置比、轮空落在哪)收在
+// LoserTree 里，这一层不再自己写一遍 - CompareFn 的契约里没有传递性(A 赢
+// B、B 赢 C，不代表 A 赢 C)，换一种配对方式可能真的换出一个不同的赢家，
+// 所以配对规则只能有一份，两处各写一遍迟早会换出两个不同的答案。N 个成
+// 员恰好 N-1 次比较，不管轮空怎么分布(建树把每个内部节点比一遍，而内部
+// 节点恰好 N-1 个)。比较由谁做出来这一层不知道，也不需要知道(见
+// tournament.h 上 CompareFn 的说明)。
 //
-// 解码是逐对惰性做的，不是开赛前把整簇一次性解码完——跟
-// dedup.cpp::find_duplicates_impl 逐张解码、用完就让局部变量出作用域释放
-// 是同一个模式(T-28)。round 全程只存 ImageId 不存解码结果，一对成员只在
-// 真的要送进 compare_fn 前才解码，解码结果是 for 循环体内的局部变量，比
-// 较完这对就跟着出作用域释放，峰值内存从 O(簇大小)降到常数(同一时刻最多
-// 两张解码图片存活，不管簇有多大)。代价是晋级的赢家在下一轮会被重新解码
-// 一次(round 只在轮次之间传 ImageId，不传已经解出来的图片)：每次比较固
-// 定解码 2 张，N 个成员共 N-1 次比较，总解码次数恒为 2*(N-1)，相对"每张
-// 只解一次"的下限最多多 2 倍且不随簇大小继续变大(1.6x@N=5、1.9x@N=32、
-// 2.0x@N→∞)——不是 O(簇大小×log 簇大小) 那种会随簇变大而变大的开销。用
-// 这最多 2 倍、封顶的重复解码换峰值内存从 O(N) 砍到 O(1)，且不碰配对顺序
-// 半个字，是这里权衡下来的选择。
+// 任意一步解码失败或 compare_fn 返回 nullopt 都视为"这一簇比较失败"，返
+// 回 nullopt 让调用方退化成 keep_id，不中断其它簇。这一条与 topk.h 的
+// select_top_k **有意不同**：那边是人在环，整簇退化意味着用户已经按过的
+// 比较全部白按、还会看到一个自己没选过的结果进决赛，所以那边让解码失败
+// 的一方判负；AI 这条路上退化不产生用户可感知的损失。
 //
-// 另一个代价：旧版把整簇解码完才开始比较，所以任何一张解码失败都是"零成
-// 本失败"(退化前一次 compare_fn 都没发生过)；现在解码跟比较交替进行，
-// 靠后的成员解码失败时，前面几轮的真实 AI 比较已经发生过、结果被这次退
-// 化整个扔掉。终态不变(仍然是这一簇整体退化成 keep_id)，变的只是"退化前
-// 已经花掉的网络调用数"这个不影响正确性的成本细节。
+// 解码是逐对惰性做的，不是开赛前把整簇一次性解码完 - 跟 dedup.cpp::
+// find_duplicates_impl 逐张解码、用完就让局部变量出作用域释放是同一个模
+// 式(T-28)。树里全程只存成员下标、不存解码结果，一对成员只在真的要送进
+// compare_fn 前才解码，解码结果是 lambda 体内的局部变量，比较完这对就跟
+// 着出作用域释放，峰值内存从 O(簇大小)降到常数(同一时刻最多两张解码图片
+// 存活，不管簇有多大)。代价是晋级的赢家在后面几轮会被重新解码：每次比较
+// 固定解码 2 张，N 个成员共 N-1 次比较，总解码次数恒为 2*(N-1)，相对"每
+// 张只解一次"的下限最多多 2 倍且不随簇大小继续变大(1.6x@N=5、1.9x@N=32、
+// 2.0x@N→∞) - 不是 O(簇大小×log 簇大小) 那种会随簇变大而变大的开销。
+//
+// 另一个代价：解码跟比较交替进行，靠后的成员解码失败时，前面几轮的真实
+// AI 比较已经发生过、结果被这次退化整个扔掉。终态不变(仍然是这一簇整体
+// 退化成 keep_id)，变的只是"退化前已经花掉的网络调用数"这个不影响正确性
+// 的成本细节。
 //
 // on_comparison_start 在每次 compare_fn 之前(且在这对的解码之前)调一次，
 // 参数是这一簇内的第几次比较(1-based)。簇内比较是串行网络调用、每次可能
 // 几十秒，没有这个钩子的话调用方最细只能报到簇粒度，大簇期间画面完全静
-// 止。轮空不算一次比较——它不发请求，报了会让计数虚高、对不上 AiGateFn 给
-// 用户看的总数。放在解码之前调用是为了让挂在这个钩子里的取消检查能在解码
-// 这对成员的开销发生之前生效，跟 dedup.cpp"取消检查放在解码之前"同一个理
-// 由。
+// 止。轮空不算一次比较 - 它不发请求，报了会让计数虚高、对不上 AiGateFn 给
+// 用户看的总数(LoserTree 对轮空根本不建节点，所以这里天然不会被调到)。放
+// 在解码之前调用是为了让挂在这个钩子里的取消检查能在解码这对成员的开销发
+// 生之前生效，跟 dedup.cpp"取消检查放在解码之前"同一个理由。
 //
 // 返回 false = 别比了，直接收手(返回 nullopt)。这是取消唯一能插进来的地
 // 方：比较边界。用返回值而不是再加一个 CancelFn 参数，是因为"在每次比较
 // 之前"这个时机两者完全一样，多一个参数只会多一处要保持同步的调用点。
 // 调用方靠自己那份 CancelFn(粘性的)区分收到的 nullopt 是"取消"还是"AI 失
-// 败要退化"——run_bracket 自己不需要知道这个区别。
+// 败要退化" - run_bracket 自己不需要知道这个区别。
 using ComparisonStartFn = std::function<bool(int index_in_cluster)>;
 
 std::optional<project::ImageId> run_bracket(db::Database& db, const std::string& root_path,
@@ -82,29 +82,20 @@ std::optional<project::ImageId> run_bracket(db::Database& db, const std::string&
                                              const dedup::detail::PreviewDecodeFn& decode_fn,
                                              const detail::CompareFn& compare_fn,
                                              const ComparisonStartFn& on_comparison_start = nullptr) {
-  std::vector<project::ImageId> round(members.begin(), members.end());
-
   int comparisons_done = 0;
-  while (round.size() > 1) {
-    std::vector<project::ImageId> next_round;
-    next_round.reserve((round.size() + 1) / 2);
-    for (std::size_t i = 0; i < round.size(); i += 2) {
-      if (i + 1 < round.size()) {
-        if (on_comparison_start && !on_comparison_start(++comparisons_done)) return std::nullopt;
-        auto left = decode_member(db, root_path, round[i], decode_fn);
-        if (!left) return std::nullopt;
-        auto right = decode_member(db, root_path, round[i + 1], decode_fn);
-        if (!right) return std::nullopt;
-        auto winner = compare_fn(*left, *right);
-        if (!winner) return std::nullopt;
-        next_round.push_back(*winner == detail::ComparisonWinner::Left ? round[i] : round[i + 1]);
-      } else {
-        next_round.push_back(round[i]);  // 奇数个，轮空直接晋级，不解码
-      }
-    }
-    round = std::move(next_round);
-  }
-  return round.front();
+  detail::IndexCompareFn compare = [&](int left, int right) -> std::optional<detail::ComparisonWinner> {
+    if (on_comparison_start && !on_comparison_start(++comparisons_done)) return std::nullopt;
+    auto left_image = decode_member(db, root_path, members[static_cast<std::size_t>(left)], decode_fn);
+    if (!left_image) return std::nullopt;
+    auto right_image = decode_member(db, root_path, members[static_cast<std::size_t>(right)], decode_fn);
+    if (!right_image) return std::nullopt;
+    return compare_fn(*left_image, *right_image);
+  };
+
+  detail::LoserTree tree(static_cast<int>(members.size()));
+  auto champion = tree.extract_next(compare);
+  if (champion.status != detail::ExtractStatus::Ok) return std::nullopt;
+  return members[static_cast<std::size_t>(champion.member)];
 }
 
 }  // namespace

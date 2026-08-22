@@ -91,10 +91,11 @@ struct Extracted {
 // 这与经典 loser tree(内部节点存败者)存的东西不同，取名沿用这个项目里
 // 「败者树」的既有叫法。
 //
-// 配对规则与 tournament.cpp 的 bracket 推进一致：同一轮里相邻两个位置相
-// 比，奇数个时最后一个轮空直接晋级。这不是可以随手换的实现细节 -
-// CompareFn 的契约里没有传递性，换一种配对方式可能真的换出一个不同的赢
-// 家。
+// 配对规则：同一轮里相邻两个位置相比，奇数个时最后一个轮空直接晋级。
+// 这是这个项目里**唯一**一套 bracket 推进 - tournament.cpp 的 run_bracket
+// 就是"建一棵树、取第 1 名"，不另外写一遍配对。这不是可以随手换的实现
+// 细节：CompareFn 的契约里没有传递性，换一种配对方式可能真的换出一个不
+// 同的赢家，两处各写一遍迟早会换出两个不同的答案。
 //
 // 建树本身不发起任何比较：第一次 extract_next 才把 m-1 场比完(内部节点
 // 是按"子节点下标一定小于父节点"的顺序建的，所以一遍正序扫描就够，不需
@@ -106,8 +107,9 @@ struct Extracted {
 // 场，补位的那条路记在第 2 名头上，k 名合计才是
 // (m-1) + (k-1)*ceil(log2 m)。
 //
-// **中途 Aborted 之后这棵树不能再用**：那一场没比完，路径上的节点停在
-// 一个算了一半的状态。调用方拿到 Aborted 就该把整个结果丢掉。
+// **中途 Aborted 之后这棵树就废了**：那一场没比完，路径上的节点停在一个
+// 算了一半的状态。之后再调 extract_next 只会继续拿到 Aborted，调用方该
+// 把整个结果丢掉。
 class LoserTree {
  public:
   explicit LoserTree(int member_count);
@@ -121,6 +123,16 @@ class LoserTree {
     int parent = -1;  // 根是 -1
   };
 
+  // 节点与成员下标全程用 int，只在真的要索引 vector 时转一次。算法本身
+  // 一行都不该被 static_cast 淹掉。
+  Node& node_at(int index) { return nodes_[static_cast<std::size_t>(index)]; }
+  const Node& node_at(int index) const { return nodes_[static_cast<std::size_t>(index)]; }
+  int winner_at(int index) const { return winner_[static_cast<std::size_t>(index)]; }
+  void set_winner(int index, int member) { winner_[static_cast<std::size_t>(index)] = member; }
+
+  // 算出一个内部节点当前的赢家。返回 false = 比较函数放弃了。
+  bool resolve(int node, const IndexCompareFn& compare);
+
   // 前 member_count 个是叶子，下标即成员下标；其后是内部节点。
   std::vector<Node> nodes_;
   // 每个节点当前的赢家(成员下标)，-1 = 这棵子树已经空了。
@@ -129,6 +141,10 @@ class LoserTree {
   bool seeded_ = false;
   // 上一次取走的成员，它的摘除与补位推迟到下一次 extract_next 开头做。
   int last_taken_ = -1;
+  // 放弃过一次就永远放弃：那一场没比完，路径上的节点停在算了一半的状
+  // 态，再取下去只会给出没有意义的名次。用一个闩把这条不变量钉死，而不
+  // 是只写在注释里指望调用方守规矩。
+  bool aborted_ = false;
 };
 
 }  // namespace detail

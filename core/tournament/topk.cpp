@@ -130,12 +130,11 @@ LoserTree::LoserTree(int member_count) {
 
   nodes_.resize(static_cast<std::size_t>(member_count));  // 叶子：下标即成员下标
   winner_.resize(static_cast<std::size_t>(member_count));
-  for (int i = 0; i < member_count; ++i) winner_[static_cast<std::size_t>(i)] = i;
+  for (int i = 0; i < member_count; ++i) set_winner(i, i);
 
-  // 逐轮建内部节点，配对规则与 tournament.cpp 的 bracket 推进一致：相邻
-  // 两个位置相比，奇数个时最后一个轮空(不建节点，原样进下一轮)。内部节
-  // 点总是在它的两个孩子之后被 push_back，所以 nodes_ 的下标顺序天然就
-  // 是一个可以正序扫描的拓扑序。
+  // 逐轮建内部节点：相邻两个位置配一对，奇数个时最后一个轮空(不建节点，
+  // 原样进下一轮)。内部节点总是在它的两个孩子之后 push_back，所以
+  // nodes_ 的下标顺序天然就是一个可以正序扫描的拓扑序，seed 不需要递归。
   std::vector<int> round(static_cast<std::size_t>(member_count));
   for (int i = 0; i < member_count; ++i) round[static_cast<std::size_t>(i)] = i;
 
@@ -147,8 +146,8 @@ LoserTree::LoserTree(int member_count) {
         int node = static_cast<int>(nodes_.size());
         nodes_.push_back(Node{round[i], round[i + 1], -1});
         winner_.push_back(-1);
-        nodes_[static_cast<std::size_t>(round[i])].parent = node;
-        nodes_[static_cast<std::size_t>(round[i + 1])].parent = node;
+        node_at(round[i]).parent = node;
+        node_at(round[i + 1]).parent = node;
         next_round.push_back(node);
       } else {
         next_round.push_back(round[i]);  // 轮空，直接进下一轮
@@ -159,19 +158,37 @@ LoserTree::LoserTree(int member_count) {
   root_ = round.front();
 }
 
+bool LoserTree::resolve(int node, const IndexCompareFn& compare) {
+  int left = winner_at(node_at(node).left);
+  int right = winner_at(node_at(node).right);
+
+  if (left < 0 || right < 0) {
+    // 有一边已经空了就不用比：活着的那个直接上，两边都空则这棵子树也空。
+    // 这正是"实际次数会比上界少"的来源。
+    set_winner(node, left < 0 ? right : left);
+    return true;
+  }
+
+  auto result = compare(left, right);
+  if (!result) return false;
+  set_winner(node, *result == ComparisonWinner::Left ? left : right);
+  return true;
+}
+
 Extracted LoserTree::extract_next(const IndexCompareFn& compare) {
+  if (aborted_) return Extracted{ExtractStatus::Aborted};
   if (root_ < 0) return Extracted{ExtractStatus::Exhausted};
 
   if (!seeded_) {
-    // 第一次取名次时才把整棵树比出来(m-1 场)。建树本身不发起比较，所以
-    // m == 1 时这个循环一次都不进，零比较直接出结果。
-    for (std::size_t node = 0; node < nodes_.size(); ++node) {
-      if (nodes_[node].left < 0) continue;  // 叶子
-      int left = winner_[static_cast<std::size_t>(nodes_[node].left)];
-      int right = winner_[static_cast<std::size_t>(nodes_[node].right)];
-      auto result = compare(left, right);
-      if (!result) return Extracted{ExtractStatus::Aborted};
-      winner_[node] = *result == ComparisonWinner::Left ? left : right;
+    // 第一次取名次时才把整棵树比出来。此时所有成员都还活着，每个内部节
+    // 点都真的比一场，恰好 m-1 场。建树本身不发起比较，所以 m == 1 时
+    // 这个循环一次都不进，零比较直接出结果。
+    for (int node = 0; node < static_cast<int>(nodes_.size()); ++node) {
+      if (node_at(node).left < 0) continue;  // 叶子
+      if (!resolve(node, compare)) {
+        aborted_ = true;
+        return Extracted{ExtractStatus::Aborted};
+      }
     }
     seeded_ = true;
   } else {
@@ -180,26 +197,21 @@ Extracted LoserTree::extract_next(const IndexCompareFn& compare) {
     // (m-1) + k*ceil(log2 m)，比 max_comparisons_for_top_k 报给用户的上
     // 界正好多出一条路径。推迟之后第 1 名恰好 m-1 场、之后每名至多一条
     // 路径，合计才落在 (m-1) + (k-1)*ceil(log2 m) 上。
-    winner_[static_cast<std::size_t>(last_taken_)] = -1;
-    for (int node = last_taken_; nodes_[static_cast<std::size_t>(node)].parent >= 0;) {
-      int parent = nodes_[static_cast<std::size_t>(node)].parent;
-      int left = winner_[static_cast<std::size_t>(nodes_[static_cast<std::size_t>(parent)].left)];
-      int right = winner_[static_cast<std::size_t>(nodes_[static_cast<std::size_t>(parent)].right)];
-
-      if (left < 0 || right < 0) {
-        // 有一边已经空了就不用比：活着的那个直接上，两边都空则这棵子树
-        // 也空。这正是"实际次数会比上界少"的来源。
-        winner_[static_cast<std::size_t>(parent)] = left < 0 ? right : left;
-      } else {
-        auto result = compare(left, right);
-        if (!result) return Extracted{ExtractStatus::Aborted};
-        winner_[static_cast<std::size_t>(parent)] = *result == ComparisonWinner::Left ? left : right;
+    //
+    // 只重算这一条根到叶的路：其余子树的赢家一个都没变，边际成本因此是
+    // 路径长度而不是 m。
+    set_winner(last_taken_, -1);
+    for (int node = last_taken_; node_at(node).parent >= 0;) {
+      int parent = node_at(node).parent;
+      if (!resolve(parent, compare)) {
+        aborted_ = true;
+        return Extracted{ExtractStatus::Aborted};
       }
       node = parent;
     }
   }
 
-  int taken = winner_[static_cast<std::size_t>(root_)];
+  int taken = winner_at(root_);
   if (taken < 0) return Extracted{ExtractStatus::Exhausted};
   last_taken_ = taken;
   return Extracted{ExtractStatus::Ok, taken};
