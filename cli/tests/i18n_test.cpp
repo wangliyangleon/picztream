@@ -866,7 +866,7 @@ TEST_CASE("err_pick_bad_args is non-empty and follows language") {
   g_lang = Lang::zh;
 }
 
-// D-13：开跑前的两行确认，报四个数——C/m/X 在第一行，Y 在第二行。
+// D-13：开跑前的两行确认，报四个数 - C/m/X 在第一行，Y 在第二行。
 TEST_CASE("msg_pick_confirm_line1/line2 report all four numbers from PickCost") {
   g_lang = Lang::zh;
   auto line1 = msg_pick_confirm_line1(200, 40, 313);
@@ -880,7 +880,7 @@ TEST_CASE("msg_pick_confirm_line1/line2 report all four numbers from PickCost") 
   CHECK(line2.find("y") != std::string::npos);
 }
 
-// 两级进度的分母必须能在文案里核对到——分母对不上分母是 /dedup --ai 踩过
+// 两级进度的分母必须能在文案里核对到 - 分母对不上分母是 /dedup --ai 踩过
 // 的坑(见 msg_pick_progress_cluster 的头注释)，这里钉住两级各自的四个
 // 数字都出现，且两级文案彼此可区分(不会读起来像同一句)。
 TEST_CASE("msg_pick_progress_cluster/final report their own denominators and stay distinguishable") {

@@ -160,7 +160,7 @@ TEST_CASE("is_batch_scope_token recognizes the three explicit scope markers") {
 }
 
 // T-17 票 E（#39 决策 D-1）：`/pick <N>` 的 N 必须是正整数，不设默认值。
-// `/pick`、`/pick 0`、`/pick -1`、`/pick abc` 全部报错——不是四条各自的
+// `/pick`、`/pick 0`、`/pick -1`、`/pick abc` 全部报错 - 不是四条各自的
 // 判断，是同一个"不是一个正整数 token"的否定。
 TEST_CASE("parse_positive_int_arg accepts exactly one positive decimal integer") {
   CHECK(parse_positive_int_arg("20") == 20);
