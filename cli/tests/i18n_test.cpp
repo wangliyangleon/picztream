@@ -265,6 +265,21 @@ TEST_CASE("msg_console_filter_no_images and err_console_invalid_filter_criterion
   g_lang = Lang::zh;  // 还原
 }
 
+// T-17 票 E 真机反馈：`/pick` 跑完一批之后废片占大多数，`reject` 只挑得
+// 出刚判废的那批，没有反过来"挑幸存者"的写法，补第五支 `fine` = 不带废
+// 片也不带重复标签。这里钉住"合法值"报错文案与 /help filter 都认识它，
+// 不是只在 browse.cpp 的 dispatch 里悄悄加一支没人能从文案发现的分支。
+TEST_CASE("err_console_invalid_filter_criterion and /help filter both know about fine") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    CHECK(err_console_invalid_filter_criterion().find("fine") != std::string::npos);
+    auto detail = msg_help_command("filter");
+    REQUIRE(detail.has_value());
+    CHECK(detail->find("fine") != std::string::npos);
+  }
+  g_lang = Lang::zh;  // 还原
+}
+
 // T-15（#30）：`.`（当前视图）这一支的作用域错误有自己的文案，不能复用
 // err_console_invalid_scope。整条决策（PRD #28 D-6 第二条）就是"`.` 是合
 // 法写法，报语法错是撒谎"，两句话说成一句等于把那条决策原地取消，所以这

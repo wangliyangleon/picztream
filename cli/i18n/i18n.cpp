@@ -1125,7 +1125,8 @@ std::optional<std::string> msg_help_command(const std::string &command) {
       return " /tasks：查看评估队列排队中/处理中的数量 ";
     }
     if (command == "filter") {
-      return " /filter unevaluated|fail|reject|dup：在当前视图上再筛一层；/filter clear：清除 ";
+      return " /filter unevaluated|fail|reject|dup|fine：在当前视图上再筛一层(fine=不带废片也不带重复"
+             "标签)；/filter clear：清除 ";
     }
     if (command == "help") {
       return " /help [命令名]：不带参数列出全部命令，带参数显示该命令的详细用法 ";
@@ -1155,7 +1156,8 @@ std::optional<std::string> msg_help_command(const std::string &command) {
       return " /tasks: shows how many evaluations are queued/processing ";
     }
     if (command == "filter") {
-      return " /filter unevaluated|fail|reject|dup: narrows the current view further; /filter clear resets it ";
+      return " /filter unevaluated|fail|reject|dup|fine: narrows the current view further (fine = has "
+             "neither the Reject nor the Duplicate tag); /filter clear resets it ";
     }
     if (command == "help") {
       return " /help [command]: lists all commands, or shows detailed usage for one ";
@@ -1215,9 +1217,9 @@ std::string err_console_dedup_system_tag_scope(const std::string &canonical_tag_
 
 std::string err_console_invalid_filter_criterion() {
   if (g_lang == Lang::zh) {
-    return " 筛选条件必须是 unevaluated/fail/reject/dup 之一 ";
+    return " 筛选条件必须是 unevaluated/fail/reject/dup/fine 之一 ";
   } else {
-    return " Filter criterion must be one of unevaluated/fail/reject/dup ";
+    return " Filter criterion must be one of unevaluated/fail/reject/dup/fine ";
   }
 }
 

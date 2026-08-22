@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -547,7 +548,15 @@ std::string handle_tasks_command(pzt::core::EvaluationWorker& evaluation_worker)
 // (没有 f 筛选时就是全项目)再筛一层，不是 f 菜单的第三种选项，可以
 // 跟 g 标签筛选同时生效。词汇表(拍板已定):未评估/评估不达标/废片/重
 // 复，不做 `/sort`/`/reject_failed` 这类原方案里被否掉的其它变体。
-enum class ConsoleFilterCriterion { Unevaluated, Fail, Reject, Dup };
+//
+// T-17 票 E 真机反馈追加第五支 `fine`：`/pick` 跑完一批之后废片占大多
+// 数,`reject` 只挑得出刚判废的那批,没有反过来"挑幸存者"的写法。语义是
+// 废片和重复都不占的那些 - `reject`/`dup` 各自只问一个标签,`fine` 是两
+// 者的补集,不是又一个"只问一个标签"的第五个平级分支。命名特意避开
+// "keep"：那个词在这个项目里已经是 dedup 簇内选中项(`keep_id`)的专属叫
+// 法,`fine` 讲的是完全不同的一件事(有没有被两个系统标签盯上),混用会让
+// 人以为这条筛选跟去重簇有关系。
+enum class ConsoleFilterCriterion { Unevaluated, Fail, Reject, Dup, Fine };
 
 // `handle_ai_console_command` 原来只需要"发起动作、报个状态"，返回纯
 // `std::string` 就够；`/filter` 要改 cmd_open 主循环的浏览池状态，所
@@ -582,6 +591,8 @@ const char* console_filter_criterion_keyword(ConsoleFilterCriterion criterion) {
       return "reject";
     case ConsoleFilterCriterion::Dup:
       return "dup";
+    case ConsoleFilterCriterion::Fine:
+      return "fine";
   }
   return "";
 }
@@ -609,6 +620,24 @@ std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId proje
     auto matched = pzt::core::images_with_tag(ids, *tag_id);
     for (const auto& r : base) {
       if (matched.count(r.id)) result.push_back(r);
+    }
+    return result;
+  }
+  if (criterion == ConsoleFilterCriterion::Fine) {
+    // `reject`/`dup` 各自只问一个标签，`fine` 是两者的补集：一张图只要
+    // 没沾上废片或重复中的任何一个，就算"幸存者"。项目还没跑过 /dedup
+    // 时"重复"标签不存在，这不该读成"所有图都算重复"(那样 fine 会被清
+    // 空)，而是"重复"这条约束没有任何图片能满足，即 duplicated 恒为空
+    // 集，fine 单纯退化成 reject 的补集。
+    std::vector<pzt::core::ImageId> ids;
+    ids.reserve(base.size());
+    for (const auto& r : base) ids.push_back(r.id);
+    auto rejected = pzt::core::images_with_tag(ids, reject_tag_id);
+    auto duplicate_tag_id = pzt::core::find_tag_by_name(project_id, pzt::core::tagging::kDuplicateTagName);
+    std::unordered_set<pzt::core::ImageId> duplicated;
+    if (duplicate_tag_id) duplicated = pzt::core::images_with_tag(ids, *duplicate_tag_id);
+    for (const auto& r : base) {
+      if (!rejected.count(r.id) && !duplicated.count(r.id)) result.push_back(r);
     }
     return result;
   }
@@ -902,6 +931,8 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
       criterion = ConsoleFilterCriterion::Reject;
     } else if (rest == "dup") {
       criterion = ConsoleFilterCriterion::Dup;
+    } else if (rest == "fine") {
+      criterion = ConsoleFilterCriterion::Fine;
     }
     if (!criterion) {
       return ConsoleCommandResult{pzt::cli::i18n::err_console_invalid_filter_criterion()};
