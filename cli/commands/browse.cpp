@@ -18,6 +18,7 @@
 
 #include <unistd.h>
 
+#include "cli/compare/compare_view.h"
 #include "cli/kitty/kitty.h"
 #include "cli/menu/filter_menu.h"
 #include "cli/menu/recipe_menu.h"
@@ -40,6 +41,14 @@ using namespace pzt::cli::menu;
 
 namespace pzt::cli::commands {
 namespace {
+
+// 浏览主循环里"正在看的这张图"用的 Kitty image id。T-17 票 E 之前只有
+// cmd_open 自己用得到它，是函数体内的局部变量；`/pick` 接线之后
+// handle_pick_command 也要用同一个 id(进两图比较界面之前得先把它清掉,
+// 见那里的说明),所以提到文件作用域来，两处共用同一个数字，不是各自
+// 声明一份 1。跟 cli/compare/compare_view.h 里的 kLeftImageId=2/
+// kRightImageId=3 是同一批"占住的 id"，彼此不冲突。
+constexpr int kImageId = 1;
 
 // T-10：一次性的会话提示("你的终端可能不显示图片"、"这张渲染失败了")。
 // 跟 status_override 是平行的两套,notice 不置 showing_status、不拼"按任
@@ -711,6 +720,130 @@ ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
   return result;
 }
 
+// T-17 票 E（issue #39）：`/pick <N>` - 两图并排的人工两两比较锦标赛，把
+// 票 C(core::pick，两级选片与批量落库)与票 D(cli::compare，比较界面)接
+// 到控制台上。
+//
+// **N 是这条命令唯一的语义参数，作用域固定为当前视图，不接受范围参数**
+// (决策 D-2) - 跟 `/dedup`/`/recipe`/`/ai_eval` 三条刻意不同构，理由见
+// PRD #34：选片是要连续按上百次键的沉浸动作，自然起点就是"我现在正在看
+// 的这批"，让用户在这个时刻再打一遍 `#标签` 是多余的一步。core 侧仍然走
+// `scope::resolve` 的 `.` 那一支(视图由 resolve_scope_with_view 传进
+// 去)，不新增解析分支 - 变的只是这个 token 由 cli 写死而不是用户输入。
+ConsoleCommandResult handle_pick_command(pzt::core::ProjectId project_id, const std::string& rest,
+                                          const std::vector<pzt::core::ImageRef>& view,
+                                          const pzt::cli::kitty::TerminalMode& mode, int banner_row,
+                                          int start_col, int content_cols) {
+  auto count = pzt::cli::text::parse_positive_int_arg(rest);
+  if (!count) return ConsoleCommandResult{pzt::cli::i18n::err_pick_bad_args()};
+
+  auto scope_result = resolve_scope_with_view(project_id, ".", view);
+  if (!scope_result.ok()) return ConsoleCommandResult{scope_error_message(scope_result.error())};
+  const auto image_ids = std::move(scope_result.value().image_ids);
+
+  // D-5：分簇复用 curate 那组粗参数(时间窗口/汉明距离)，不新开旋钮 - pick
+  // 要的是"同一场景"的粒度，正是 curate 参数的既有定义。
+  auto settings = pzt::core::load_settings();
+
+  // 比较界面要到闸门点头之后才接管屏幕:开销确认本身画在浏览界面的
+  // banner 上，跟 `/dedup --ai` 的既有约定一致(见下面 msg_pick_confirm_*
+  // 的 prompt_and_read_key_2line 调用)。候选不足那条短路(D-9)不会调到
+  // 这个闸门，所以这个 optional 在那条路径上始终是空的 - 不会有多余的
+  // 清屏或占位符残留。
+  std::optional<pzt::cli::compare::CompareView> compare_view;
+  pzt::core::PickGateFn on_gate = [&](const pzt::core::PickCost& cost) {
+    char c = prompt_and_read_key_2line(
+        pzt::cli::i18n::msg_pick_confirm_line1(cost.candidate_count, cost.champion_count,
+                                                cost.max_comparisons),
+        pzt::cli::i18n::msg_pick_confirm_line2(cost.reject_count), banner_row, start_col,
+        content_cols);
+    if (c != 'y' && c != 'Y') return false;
+    // 接管屏幕前先清掉浏览界面自己那张图的 placement - CompareView 构造
+    // 时的清屏只擦文字(见 compare_view.cpp 的说明)，Kitty 的图像
+    // placement 不会跟着一起消失，不清的话它会在两张比较图旁边露出来，
+    // 违反 D-18"画面上只有两张图和进度行"。
+    (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
+    compare_view.emplace(mode);
+    return true;
+  };
+
+  // 每一场比较发起之前回调一次(在解码之前)，这里只是把这一批数字格式化
+  // 成一行文字存起来 - compare_fn 稍后真正画这一场的时候才用得上它，两
+  // 者由 core::pick::pick 分两步调用(见 pick.h 的说明)。
+  std::string progress_line;
+  int progress_comparisons_done = 0;
+  pzt::core::PickProgressFn on_progress = [&](const pzt::core::PickProgress& p) {
+    progress_comparisons_done = p.comparisons_done;
+    progress_line = p.stage == pzt::core::PickStage::Cluster
+                        ? pzt::cli::i18n::msg_pick_progress_cluster(p.group_index, p.group_total,
+                                                                     p.match_index, p.match_total,
+                                                                     p.comparisons_done,
+                                                                     p.max_comparisons)
+                        : pzt::cli::i18n::msg_pick_progress_final(p.rank_index, p.rank_total,
+                                                                   p.comparisons_done,
+                                                                   p.max_comparisons);
+  };
+
+  // 人在环的比较原语:compare_view 只会在闸门通过之后才被构造，而
+  // compare_fn 只会在闸门通过之后才被 core 调到(候选不足/闸门被拒都在
+  // 发起第一场比较之前短路)，所以这里解引用总是安全的。
+  pzt::core::PickCompareFn compare_fn =
+      [&](const pzt::core::DecodedImage& left,
+          const pzt::core::DecodedImage& right) -> std::optional<pzt::core::PickComparisonWinner> {
+    auto choice = compare_view->compare(left, right, progress_line, progress_comparisons_done);
+    switch (choice) {
+      case pzt::cli::compare::CompareChoice::Left:
+        return pzt::core::PickComparisonWinner::Left;
+      case pzt::cli::compare::CompareChoice::Right:
+        return pzt::core::PickComparisonWinner::Right;
+      case pzt::cli::compare::CompareChoice::Abandon:
+        return std::nullopt;  // 与 select_top_k 里"别比了"走同一条出口
+    }
+    return std::nullopt;
+  };
+
+  auto result = pzt::core::pick_images(project_id, image_ids, *count,
+                                        settings.curate_time_window_seconds,
+                                        settings.curate_hash_threshold, compare_fn, on_gate,
+                                        on_progress);
+  // 析构清掉两张比较图的 placement - 不管上面走到哪条分支都要做这一步:
+  // reset() 对空 optional 是无操作，候选不足/闸门被拒那两条路径上它本来
+  // 就没构造过。
+  bool screen_was_taken_over = compare_view.has_value();
+  compare_view.reset();
+
+  // D-20：回到浏览主循环之后整屏重绘 - 当前浏览的那张可能刚被判废，画面
+  // 必须刷新。这里需要的不只是"重新传一次当前图片"：CompareView 铺满整
+  // 个终端宽度(不套用浏览界面居中 70% 的框，见 compare_view.h)，浏览主
+  // 循环每帧只在自己那个居中框内重画边框/信息栏，两侧留白之外 CompareView
+  // 画过的分隔线、进度行不会被那套局部重画擦掉 - 必须在这里主动清一次整
+  // 屏，跟 CompareView 构造时"接管画面先清一次"对称。候选不足/闸门被拒/
+  // 参数错误那几条路径上屏幕从未离开过浏览界面，不需要这一下。
+  if (screen_was_taken_over) write_stdout("\x1b[2J");
+
+  ConsoleCommandResult console_result;
+  console_result.restyle = screen_was_taken_over;
+
+  if (!result.ok()) {
+    console_result.status = pzt::cli::i18n::err_pick_failed();
+    return console_result;
+  }
+  const auto& value = result.value();
+  if (value.insufficient_candidates) {
+    console_result.status =
+        pzt::cli::i18n::msg_pick_insufficient_candidates(value.cost.candidate_count, *count);
+    return console_result;
+  }
+  if (value.declined) return console_result;  // 没点头,静默返回,跟 /dedup --ai 同一个约定
+  if (value.cancelled) {
+    console_result.status = pzt::cli::i18n::msg_pick_cancelled();
+    return console_result;
+  }
+  console_result.status = pzt::cli::i18n::msg_pick_result(static_cast<int>(value.selected.size()),
+                                                            value.rejected_count);
+  return console_result;
+}
+
 // `:` 输入以 `/` 开头时的命令分发。`ai_eval` 一条命令兼顾三种用法——
 // 第一个 token 是范围标记(`*` / `.` / `#标签名`)时走批量提交；不是的话，
 // 说明用户没写范围，整段剩余文本都当成对**当前图片**的额外指引，直接提
@@ -725,8 +858,10 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
                                                 pzt::core::ProjectId project_id,
                                                 pzt::core::ImageId current_image_id,
                                                 const std::vector<pzt::core::ImageRef>& view,
-                                                const std::string& input, int banner_row, int start_col,
-                                                int content_cols, const LiveDebugContext& debug_ctx) {
+                                                const std::string& input,
+                                                const pzt::cli::kitty::TerminalMode& mode,
+                                                int banner_row, int start_col, int content_cols,
+                                                const LiveDebugContext& debug_ctx) {
   auto [command, rest] = split_console_command(input);
   if (command == "help") {
     if (rest.empty()) {
@@ -745,6 +880,9 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
   if (command == "recipe") {
     return handle_recipe_command(project_id, rest, view, current_image_id, banner_row, start_col,
                                  content_cols);
+  }
+  if (command == "pick") {
+    return handle_pick_command(project_id, rest, view, mode, banner_row, start_col, content_cols);
   }
   if (command == "tasks") {
     return ConsoleCommandResult{handle_tasks_command(evaluation_worker)};
@@ -813,7 +951,8 @@ ConsoleCommandResult handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluati
                                             pzt::core::ProjectId project_id,
                                             pzt::core::ImageId image_id,
                                             const std::vector<pzt::core::ImageRef>& view,
-                                            int banner_row, int start_col, int content_cols,
+                                            const pzt::cli::kitty::TerminalMode& mode, int banner_row,
+                                            int start_col, int content_cols,
                                             const LiveDebugContext& debug_ctx) {
   auto input = read_text_line_with_placeholder(pzt::cli::i18n::msg_ai_prompt_placeholder(),
                                                  banner_row, start_col, content_cols);
@@ -821,8 +960,8 @@ ConsoleCommandResult handle_ai_prompt_flow(pzt::core::EvaluationWorker& evaluati
   if (input->empty() || (*input)[0] != '/') {
     return ConsoleCommandResult{pzt::cli::i18n::msg_console_requires_slash()};
   }
-  return handle_ai_console_command(evaluation_worker, project_id, image_id, view, *input, banner_row,
-                                    start_col, content_cols, debug_ctx);
+  return handle_ai_console_command(evaluation_worker, project_id, image_id, view, *input, mode,
+                                    banner_row, start_col, content_cols, debug_ctx);
 }
 
 // space/x/g/r/e 这几个键要阻塞读一整套 banner 交互(prompt_and_read_key/
@@ -1041,7 +1180,6 @@ int cmd_open(const std::vector<std::string>& args) {
 
   const int kDebugRows = 8;
   std::size_t frame = 0;
-  const int kImageId = 1;
   // 平时(空闲提示/单行状态提示)只用第一行(banner_row);space/g/r 这三
   // 个顶层选项多、容易一行放不下的二级菜单,拆成两行——第一行放带编号的
   // 选项,第二行放字母/Esc 这些固定操作,见 tag_menu.cpp/filter_menu.cpp/
@@ -1940,7 +2078,7 @@ int cmd_open(const std::vector<std::string>& args) {
           // 后正在浏览的)，从这里一路传到 resolve_scope_with_view - 全 cli
           // 只有这一处把视图交出去。
           auto console_result =
-              handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, images, banner_row,
+              handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, images, mode, banner_row,
                                     start_col, content_cols, debug_ctx);
           status_override = console_result.status;
           // T-15 票 C：`/recipe` 改到了当前这张的 recipe_id。跟 `r` 键
