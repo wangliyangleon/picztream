@@ -20,11 +20,12 @@ namespace pzt::cli::ui {
 // 弃——正常路径下 stdout 是终端、量也小,基本不触发,但一旦发生就是转义序
 // 列/图片数据被截断的花屏,且无从察觉。循环写到全部字节落地,EINTR 重试;
 // 其它错误没有可行的补救(马上就要退出或继续渲染),直接返回。
-void write_stdout(const std::string& s) {
+namespace {
+void write_all(int fd, const std::string& s) {
   const char* data = s.data();
   std::size_t remaining = s.size();
   while (remaining > 0) {
-    ssize_t written = write(STDOUT_FILENO, data, remaining);
+    ssize_t written = write(fd, data, remaining);
     if (written < 0) {
       if (errno == EINTR) continue;
       return;
@@ -34,8 +35,20 @@ void write_stdout(const std::string& s) {
   }
 }
 
-void move_cursor(int row, int col) {
-  write_stdout("\x1b[" + std::to_string(row) + ";" + std::to_string(col) + "H");
+std::string cup(int row, int col) {
+  return "\x1b[" + std::to_string(row) + ";" + std::to_string(col) + "H";
+}
+
+}  // namespace
+
+void write_stdout(const std::string& s) { write_all(STDOUT_FILENO, s); }
+
+void move_cursor(int row, int col) { write_stdout(cup(row, col)); }
+
+// 定位与内容拼成同一次 write:分两次发,终端有机会先把光标挪过去、再等下
+// 一个系统调用才收到内容,那中间态是可见的。
+void write_at(int fd, int row, int col, const std::string& text) {
+  write_all(fd, cup(row, col) + text);
 }
 
 // 画一条横线(边框顶/底/分隔线用):起止两端用 left_char/right_char,如果
@@ -69,10 +82,13 @@ void draw_vlines(int row, int start_col, int width, int mid_offset) {
 
 // 两层菜单(选标签、cap 超限选替换对象)都只需要读一个字节就能得出最终结
 // 果,不需要为"取消"单独过滤——EOF/出错和 Esc(0x1B)一样当取消处理。
-char read_one_byte() {
+char read_one_byte() { return read_one_byte_or_eof().value_or(0x1B); }
+
+std::optional<char> read_one_byte_or_eof() {
   char c = 0;
   ssize_t n = read(STDIN_FILENO, &c, 1);
-  return n <= 0 ? 0x1B : c;
+  if (n <= 0) return std::nullopt;
+  return c;
 }
 
 // 几乎所有单层菜单(space/g/r 顶层及各自的子选择)都是同一套尾巴:把拼

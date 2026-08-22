@@ -21,6 +21,11 @@ void write_stdout(const std::string& s);
 // 移动光标到 (row, col)(1-based,ANSI CUP)。
 void move_cursor(int row, int col);
 
+// 把文本写到 fd 的 (row, col)(1-based)。move_cursor + write_stdout 是它在
+// STDOUT 上的特例;带 fd 的版本给的是"整帧字节流要能被收进一根管道核对"
+// 的输出路径,让 CUP 转义序列的写法仍然只有这一处。
+void write_at(int fd, int row, int col, const std::string& text);
+
 // 画边框横线:起止两端用 left_char/right_char,mid_offset >= 0 时在那一列
 // 插 mid_char(竖线交汇处),其余用 "─" 填满。
 void draw_hline(int row, int start_col, int width, const std::string& left_char,
@@ -33,6 +38,12 @@ void draw_vlines(int row, int start_col, int width, int mid_offset = -1);
 
 // 阻塞读一个字节;EOF/出错返回 0x1B(跟 Esc 一样当取消处理)。
 char read_one_byte();
+
+// 阻塞读一个字节;EOF/出错返回 nullopt。read_one_byte 把这两种情形折叠成
+// Esc,对"读到取消键就结束"的菜单够用;反复读键直到用户给出结论的循环不
+// 能这么折叠 - EOF 之后每一次读都返回 Esc,而 Esc 在那种循环里不是终止条
+// 件,会空转。
+std::optional<char> read_one_byte_or_eof();
 
 // 把提示行画到 banner 那一行(补齐到 content_cols),再读一个字节。
 char prompt_and_read_key(const std::string& line, int banner_row, int start_col, int content_cols);
