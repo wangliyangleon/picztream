@@ -1,4 +1,5 @@
 add_executable(cli_tests
+  compare_view_test.cpp
   debug_log_test.cpp
   i18n_test.cpp
   kitty_test.cpp
@@ -19,7 +20,7 @@ target_compile_definitions(cli_tests PRIVATE
 # cli_menu 进来是为了 tag_menu_test 能直接测 tags_for_menu(T-24 的截断/上限判
 # 定)。这一层依赖 cli_ui 的终端 io 原语,但被测函数只查库不碰终端,链进来
 # 不会让测试需要一个真 tty。
-target_link_libraries(cli_tests PRIVATE cli_kitty cli_menu cli_text cli_i18n)
+target_link_libraries(cli_tests PRIVATE cli_kitty cli_menu cli_compare cli_text cli_i18n)
 
 include(CTest)
 add_test(NAME cli_tests COMMAND cli_tests)

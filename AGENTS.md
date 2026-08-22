@@ -29,7 +29,7 @@ PicZTream（简称 PZT）是终端内全键盘的图片筛选与色彩处理工�
 | 层 | 是什么 | 子模块 |
 |---|---|---|
 | `core/` | 核心业务逻辑库，不得含任何终端渲染或按键交互依赖 | `project` `db` `decode` `media` `raw` `color` `recipe` `dedup` `curate` `tournament` `tagging` `scope` `export` `ai` `settings` `browse` `api` |
-| `cli/` | 终端全键盘交互前端，只调用 `core` 暴露的接口 | `commands` `menu` `ui` `term` `kitty` `text` `i18n` |
+| `cli/` | 终端全键盘交互前端，只调用 `core` 暴露的接口 | `commands` `menu` `ui` `term` `kitty` `text` `i18n` `compare` |
 | `agent/` | Python headless 编排层，只通过 `pzt --json` 子进程驱动 `core`，不直接链接 C++ | `session`（多线程运行时） `stages` `orchestrator` `compose` `transport` `store` `router` |
 
 - **对外有两个命令面**：面向人的 `pzt` CLI，和面向 agent 的 headless `--json` 命令面。一个能力落在哪一面由**决策归谁**决定，不由它实现在哪里决定；同一个 core 能力可以两面都接。headless 的契约是「stdout 原子 + stderr 带外」：stdout 只在跑完时写一个 JSON 对象，进度与开销走 stderr。

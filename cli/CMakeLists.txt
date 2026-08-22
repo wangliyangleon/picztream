@@ -32,6 +32,14 @@ target_include_directories(cli_menu PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(cli_menu PUBLIC core cli_ui cli_text cli_i18n)
 # cli_menu 是 space/g/r 交互菜单,依赖 core + cli_ui + cli_text + cli_i18n。
 
+add_library(cli_compare STATIC
+  compare/compare_view.cpp
+)
+target_include_directories(cli_compare PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(cli_compare PUBLIC core cli_kitty cli_ui cli_text cli_i18n)
+# cli_compare 是两图并排比较界面。它必须自己画图,所以链 cli_kitty - 这正是
+# 它不能并进 cli_menu 的原因:那一层按约定只收回调、不依赖 cli/kitty。
+
 add_executable(pzt
   main.cpp
   commands/commands.cpp
@@ -46,7 +54,7 @@ configure_file(
   @ONLY)
 target_include_directories(pzt PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
-target_link_libraries(pzt PRIVATE core cli_kitty cli_menu cli_ui cli_text cli_i18n)
+target_link_libraries(pzt PRIVATE core cli_kitty cli_menu cli_compare cli_ui cli_text cli_i18n)
 
 # 分发:brew formula 与 `cmake --install` 靠这条把 pzt 装到 <prefix>/bin。
 install(TARGETS pzt RUNTIME DESTINATION bin)

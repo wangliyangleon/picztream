@@ -1981,6 +1981,27 @@ std::string msg_recipe_scope_no_images() {
   }
 }
 
+std::string msg_pick_abandon_confirm_line1(int comparisons_done) {
+  if (g_lang == Lang::zh) {
+    if (comparisons_done <= 0) return " 放弃这次选片，不会有任何标签变化 ";
+    return " 放弃这次选片，已经比过的 " + std::to_string(comparisons_done) +
+           " 次全部作废，不会有任何标签变化 ";
+  } else {
+    if (comparisons_done <= 0) return " Abandon this pick? No tags will change ";
+    return " Abandon this pick? The " + std::to_string(comparisons_done) +
+           " comparison(s) made so far are discarded and no tags will change ";
+  }
+}
+
+std::string msg_pick_abandon_confirm_line2() {
+  if (g_lang == Lang::zh) {
+    return " " + menu_item("y", "放弃") + " / " + menu_item("其它键", "继续比较") + " ";
+  } else {
+    return " " + menu_item("y", "Abandon") + " / " + menu_item("other keys", "Keep comparing") +
+           " ";
+  }
+}
+
 std::string err_recipe_bad_args() {
   // 决策 D-2 否掉了 `/recipe <作用域> <配方名>` 一行式(自定义配方的名字可
   // 以为空且无唯一约束，一行式会把它们整个排除在批量之外)，所以作用域后面

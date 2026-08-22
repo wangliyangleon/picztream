@@ -55,7 +55,7 @@ PicZTream（简称 PZT）是一个基于终端、全键盘的图片筛选与色�
 
 依赖方向严格单向：`agent` → `pzt`（cli 二进制）→ `core`。这个分层从项目第一天就确立，目的是让 AI 辅助与 agent 能力直接复用同一套被验证过的核心引擎，只新增可插拔旁路或编排层，而不重写底层算法。新增代码前先判断归属：业务逻辑进 `core`，交互展示进 `cli`，编排进 `agent`，三者不互相渗透。
 
-`core/` 内部按能力域进一步分模块（`project`/`db`/`decode`/`raw`/`color`/`recipe`/`dedup`/`curate`/`tagging`/`export`/`ai`/`settings`/`browse` 等），`cli/` 按交互职责分模块（`commands`/`menu`/`ui`/`term`/`kitty`/`text`/`i18n`），`agent/` 按编排职责分模块（`session` 多线程运行时/`stages`/`orchestrator`/`compose`/`transport`/`store`/`router` 仅剩纯函数 `collecting`）。模块粒度与依赖细节以代码现状为准。
+`core/` 内部按能力域进一步分模块（`project`/`db`/`decode`/`raw`/`color`/`recipe`/`dedup`/`curate`/`tagging`/`export`/`ai`/`settings`/`browse` 等），`cli/` 按交互职责分模块（`commands`/`menu`/`ui`/`term`/`kitty`/`text`/`i18n`/`compare`），`agent/` 按编排职责分模块（`session` 多线程运行时/`stages`/`orchestrator`/`compose`/`transport`/`store`/`router` 仅剩纯函数 `collecting`）。模块粒度与依赖细节以代码现状为准。
 
 ### 2.2 双层流水线：culling / processing
 

@@ -410,6 +410,14 @@ std::string msg_recipe_batch_confirm_line2();
 std::string msg_recipe_batch_applied(int total, const std::string& recipe_name);
 std::string msg_recipe_batch_cleared(int total);
 std::string msg_recipe_scope_no_images();
+
+// 两图并排比较界面里按 Esc 之后的二次确认。Esc 离 h/l 很近,而误触的代价是
+// 此前所有按键全部作废,所以这里必须把代价说全:作废多少次、以及不会有任
+// 何标签变化(后半句是让用户敢按 y 的那一半 - 放弃不留痕迹)。
+// comparisons_done 是此前已经比过的次数;为 0 时不提次数,"作废 0 次"是句
+// 没有信息量的怪话。
+std::string msg_pick_abandon_confirm_line1(int comparisons_done);
+std::string msg_pick_abandon_confirm_line2();
 std::string err_recipe_bad_args();
 std::string msg_recipe_batch_failed();
 std::string recipe_menu_clear_failed();
