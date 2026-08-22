@@ -525,3 +525,95 @@ TEST_CASE("images_with_tag correctly spans more than one 500-id chunk") {
   CHECK(result.size() == 1);
   CHECK(result.count(fx.images[0]) == 1);
 }
+
+TEST_CASE("add_tag_to_images tags every image in one call and reports how many are new") {
+  auto fx = make_fixture("bulk_add_all", 4);
+  auto tag = create_tag(fx.db, fx.project_id, "选中", std::nullopt, false);
+  REQUIRE(tag.ok());
+
+  auto added = add_tag_to_images(fx.db, {fx.images[0], fx.images[1], fx.images[2]}, tag.value());
+  REQUIRE(added.ok());
+  CHECK(added.value() == 3);
+
+  auto tagged = images_with_tag(fx.db, fx.images, tag.value());
+  CHECK(tagged.size() == 3);
+  CHECK(tagged.count(fx.images[3]) == 0);
+}
+
+TEST_CASE("add_tag_to_images is idempotent and counts only the newly tagged") {
+  auto fx = make_fixture("bulk_add_idempotent", 3);
+  auto tag = create_tag(fx.db, fx.project_id, "选中", std::nullopt, false);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  // 输入里 images[1] 出现两次：同一批里的重复 id 跟"上一次已经打过"是同
+  // 一回事，都只算一张。
+  auto added =
+      add_tag_to_images(fx.db, {fx.images[0], fx.images[1], fx.images[1], fx.images[2]}, tag.value());
+  REQUIRE(added.ok());
+  CHECK(added.value() == 2);
+  CHECK(images_with_tag(fx.db, fx.images, tag.value()).size() == 3);
+
+  auto again = add_tag_to_images(fx.db, fx.images, tag.value());
+  REQUIRE(again.ok());
+  CHECK(again.value() == 0);
+  CHECK(images_with_tag(fx.db, fx.images, tag.value()).size() == 3);
+}
+
+TEST_CASE("add_tag_to_images empty input is a no-op, but a missing tag is still an error") {
+  auto fx = make_fixture("bulk_add_empty", 1);
+  auto tag = create_tag(fx.db, fx.project_id, "选中", std::nullopt, false);
+  REQUIRE(tag.ok());
+
+  auto empty = add_tag_to_images(fx.db, {}, tag.value());
+  REQUIRE(empty.ok());
+  CHECK(empty.value() == 0);
+
+  auto missing = add_tag_to_images(fx.db, {fx.images[0]}, 999999);
+  REQUIRE(!missing.ok());
+  CHECK(missing.error().kind == AddTagFailureKind::TagNotFound);
+}
+
+TEST_CASE("add_tag_to_images fails the whole batch when the cap cannot hold it") {
+  auto fx = make_fixture("bulk_add_cap", 4);
+  auto tag = create_tag(fx.db, fx.project_id, "封面", /*cap=*/2, /*is_ordered=*/true);
+  REQUIRE(tag.ok());
+  REQUIRE(add_tag(fx.db, fx.images[0], tag.value()).ok());
+
+  // 剩下 1 个名额，要打 3 张：整批失败，不静默截断成"只打进去 1 张"。
+  auto result = add_tag_to_images(fx.db, {fx.images[1], fx.images[2], fx.images[3]}, tag.value());
+  REQUIRE(!result.ok());
+  CHECK(result.error().kind == AddTagFailureKind::CapExceeded);
+  REQUIRE(result.error().cap_info.has_value());
+  CHECK(result.error().cap_info->cap == 2);
+  CHECK(result.error().cap_info->existing_entries.size() == 1);
+  CHECK(images_with_tag(fx.db, fx.images, tag.value()).size() == 1);
+
+  // 已经打过的那张不占新名额：恰好填满上限的一批照样成功。
+  auto fits = add_tag_to_images(fx.db, {fx.images[0], fx.images[1]}, tag.value());
+  REQUIRE(fits.ok());
+  CHECK(fits.value() == 1);
+}
+
+TEST_CASE("add_tag_to_images writes nothing when any image is missing or from another project") {
+  auto fx = make_fixture("bulk_add_bad_image", 3);
+  auto tag = create_tag(fx.db, fx.project_id, "选中", std::nullopt, false);
+  REQUIRE(tag.ok());
+
+  auto missing_image = add_tag_to_images(fx.db, {fx.images[0], 999999, fx.images[1]}, tag.value());
+  REQUIRE(!missing_image.ok());
+  CHECK(missing_image.error().kind == AddTagFailureKind::ImageNotFound);
+  CHECK(images_with_tag(fx.db, fx.images, tag.value()).empty());
+
+  auto other_photos = fresh_photo_dir("bulk_add_bad_image_other");
+  touch(other_photos / "z.jpg");
+  auto other = create_project(fx.db, "other", other_photos.string());
+  REQUIRE(other.ok());
+  auto foreign = find_image_by_path(fx.db, other.value(), "z.jpg");
+  REQUIRE(foreign.has_value());
+
+  auto mismatched = add_tag_to_images(fx.db, {fx.images[0], *foreign}, tag.value());
+  REQUIRE(!mismatched.ok());
+  CHECK(mismatched.error().kind == AddTagFailureKind::ProjectMismatch);
+  CHECK(images_with_tag(fx.db, fx.images, tag.value()).empty());
+}

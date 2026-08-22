@@ -81,6 +81,25 @@ struct AddTagError {
 // 幂等：图片已经打过这个标签，再打一次直接算成功，不重复插入、不报错。
 Result<void, AddTagError> add_tag(db::Database& db, ImageId image_id, TagId tag_id);
 
+// 一批图片打同一个标签。**一个事务包住全部写入**：要么全打上、要么一张
+// 都没打，中途没有可观测的半截状态。这与 recipe::set_images_recipe 是同
+// 构的 - 批量这件事的语义留在 core，不让调用方循环调 add_tag N 次，那样
+// 得到的是"打到第 k 张失败、前 k-1 张留在库里"。
+//
+// 返回**新增**的张数：已经带着这个标签的图片跳过、不计数，跟 add_tag 的
+// 幂等语义一致；同一批输入里重复出现的 id 也只算一张。
+//
+// 校验一次不是每张一次：标签不存在(TagNotFound)、任何一张图片不存在
+// (ImageNotFound)或不属于这个标签的项目(ProjectMismatch)，整批失败、零
+// 写入。撞上限时同样**整批失败**(CapExceeded，cap_info 照 add_tag 的形状
+// 带上现存条目)，不静默截断成"能塞几张塞几张" - 调用方拿到 Ok 就该能相
+// 信这批全打上了。已经带着这个标签的图片不占新名额。
+//
+// 空 image_ids 直接算成功(新增 0 张)，但标签本身仍然照验：一个不存在的
+// tag_id 无论批次空不空都是调用方的错。
+Result<int, AddTagError> add_tag_to_images(db::Database& db, const std::vector<ImageId>& image_ids,
+                                            TagId tag_id);
+
 enum class RemoveTagError {
   TagNotFound,
   ImageNotFound,

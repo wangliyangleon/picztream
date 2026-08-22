@@ -256,6 +256,76 @@ Result<void, AddTagError> add_tag(db::Database& db, ImageId image_id, TagId tag_
   return Result<void, AddTagError>::Ok();
 }
 
+Result<int, AddTagError> add_tag_to_images(db::Database& db, const std::vector<ImageId>& image_ids,
+                                           TagId tag_id) {
+  sqlite3* conn = db.handle();
+
+  auto tag = get_tag(conn, tag_id);
+  if (!tag) {
+    return Result<int, AddTagError>::Err(AddTagError{AddTagFailureKind::TagNotFound, std::nullopt});
+  }
+
+  // 先把整批要新增的挑出来再写：上限是对**整批**判的，而判上限需要先知
+  // 道这批到底新增几张。校验与写入分成两段，也让失败路径根本走不到
+  // BEGIN，不依赖回滚来保证零写入。
+  auto already_tagged = images_with_tag(db, image_ids, tag_id);
+  std::unordered_set<ImageId> seen;
+  std::vector<ImageId> to_insert;
+  to_insert.reserve(image_ids.size());
+  for (ImageId image_id : image_ids) {
+    if (!seen.insert(image_id).second) continue;
+    auto image = project::get_image(db, image_id);
+    if (!image) {
+      return Result<int, AddTagError>::Err(
+          AddTagError{AddTagFailureKind::ImageNotFound, std::nullopt});
+    }
+    if (image->project_id != tag->project_id) {
+      return Result<int, AddTagError>::Err(
+          AddTagError{AddTagFailureKind::ProjectMismatch, std::nullopt});
+    }
+    if (already_tagged.count(image_id)) continue;  // 幂等
+    to_insert.push_back(image_id);
+  }
+
+  if (tag->cap.has_value() &&
+      tagged_count(conn, tag_id) + static_cast<std::int64_t>(to_insert.size()) > *tag->cap) {
+    CapExceededInfo info;
+    info.cap = *tag->cap;
+    info.existing_entries = ordered_entries(conn, tag_id, tag->is_ordered);
+    return Result<int, AddTagError>::Err(
+        AddTagError{AddTagFailureKind::CapExceeded, std::move(info)});
+  }
+  if (to_insert.empty()) return Result<int, AddTagError>::Ok(0);
+
+  std::int64_t position = tag->is_ordered ? next_position(conn, tag_id) : 0;
+  std::int64_t tagged_at = now_unix();
+  exec_simple(conn, "BEGIN;");
+  try {
+    Stmt stmt(conn,
+              "INSERT INTO image_tags (image_id, tag_id, position, tagged_at) VALUES (?, ?, ?, ?);");
+    for (ImageId image_id : to_insert) {
+      sqlite3_reset(stmt.get());
+      sqlite3_bind_int64(stmt.get(), 1, image_id);
+      sqlite3_bind_int64(stmt.get(), 2, tag_id);
+      if (tag->is_ordered) {
+        sqlite3_bind_int64(stmt.get(), 3, position++);
+      } else {
+        sqlite3_bind_null(stmt.get(), 3);
+      }
+      sqlite3_bind_int64(stmt.get(), 4, tagged_at);
+      if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        throw std::runtime_error(std::string("insert image_tags failed: ") + sqlite3_errmsg(conn));
+      }
+    }
+    exec_simple(conn, "COMMIT;");
+  } catch (...) {
+    exec_simple(conn, "ROLLBACK;");
+    throw;
+  }
+
+  return Result<int, AddTagError>::Ok(static_cast<int>(to_insert.size()));
+}
+
 Result<void, RemoveTagError> remove_tag(db::Database& db, ImageId image_id, TagId tag_id) {
   sqlite3* conn = db.handle();
 
