@@ -996,12 +996,17 @@ std::string msg_ai_prompt_placeholder() {
   // T-15 票 D：`.` 加进来之后逐条列举(`* | . | #标签` × 两条命令)会把这行
   // 撑到把 /help 挤出屏幕，所以改成"命令列表 + 范围写法列一次"。这样这行
   // 的长度不随作用域支数增长，而 `.` 这种没有别处可发现的写法照样露面。
+  //
+  // 真机反馈补了两条一直漏掉的命令(`/recipe`、`/pick`)：这行是用户按
+  // `:` 那一刻唯一能看到的东西，跟 `/help` 总览是两份独立维护的文案，加
+  // 新命令时这里也要跟着改，不然命令能用、但没人知道它存在。
   if (g_lang == Lang::zh) {
-    return "命令必须以 / 开头: /ai_eval [范围] [指引] | /tasks | /dedup <范围> [--ai] | /filter <条件> "
-           "| /filter clear | /help ; 范围是 * 或 . (当前视图) 或 #标签";
+    return "命令必须以 / 开头: /ai_eval [范围] [指引] | /tasks | /dedup <范围> [--ai] | /recipe <范围> "
+           "| /pick <N> | /filter <条件> | /filter clear | /help ; 范围是 * 或 . (当前视图) 或 #标签";
   } else {
     return "Commands must start with /: /ai_eval [scope] [note] | /tasks | /dedup <scope> [--ai] "
-           "| /filter <criterion> | /filter clear | /help ; scope is *, . (current view) or #tag";
+           "| /recipe <scope> | /pick <N> | /filter <criterion> | /filter clear | /help ; scope is "
+           "*, . (current view) or #tag";
   }
 }
 

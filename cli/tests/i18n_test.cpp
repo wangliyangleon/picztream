@@ -298,6 +298,25 @@ TEST_CASE("msg_ai_prompt_placeholder mentions /filter usage") {
   g_lang = Lang::zh;  // 还原
 }
 
+// 真机反馈：按 `:` 之后看到的这行提示曾经漏了 `/recipe`(T-15 票 C 添加
+// 命令时没有回来补这一行)和 `/pick`(T-17 票 E 犯了同样的疏漏) - 用户在
+// 这一刻能看到的命令列表跟 `/help` 的总览是两份独立维护的文案，加新命
+// 令时两处都要动,漏一处的失效模式是命令能用但用户第一眼看不到它存在。
+TEST_CASE("msg_ai_prompt_placeholder mentions every console command, not just /filter") {
+  for (auto lang : {Lang::zh, Lang::en}) {
+    g_lang = lang;
+    auto placeholder = msg_ai_prompt_placeholder();
+    CHECK(placeholder.find("/ai_eval") != std::string::npos);
+    CHECK(placeholder.find("/dedup") != std::string::npos);
+    CHECK(placeholder.find("/recipe") != std::string::npos);
+    CHECK(placeholder.find("/pick") != std::string::npos);
+    CHECK(placeholder.find("/tasks") != std::string::npos);
+    CHECK(placeholder.find("/filter") != std::string::npos);
+    CHECK(placeholder.find("/help") != std::string::npos);
+  }
+  g_lang = Lang::zh;  // 还原
+}
+
 // /help：不带参数列出全部命令；带一个已知命令名返回该命令的详细用
 // 法；带一个不认识的命令名返回 nullopt，调用方据此转去
 // err_help_unknown_command。
