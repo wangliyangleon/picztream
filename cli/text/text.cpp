@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 
 namespace pzt::cli::text {
@@ -232,6 +233,28 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s) {
 // `.` 要求整个 token 相等,不是前缀匹配 - `.jpg`、`..` 都不是作用域。
 bool is_batch_scope_token(const std::string& token) {
   return token == "*" || token == "." || (!token.empty() && token[0] == '#');
+}
+
+std::optional<int> parse_positive_int_arg(const std::string& rest) {
+  std::size_t start = rest.find_first_not_of(' ');
+  if (start == std::string::npos) return std::nullopt;  // 空、或者全是空格
+  std::size_t end = rest.find_last_not_of(' ');
+  std::string token = rest.substr(start, end - start + 1);
+
+  // 只认十进制数字串 - `+`/`-`/`.` 都不在这个字符集里，"20 30"这种多写了
+  // 一个 token 的输入在 trim 之后中间还留着一个空格，同样过不了这一关。
+  if (token.empty() || token.find_first_not_of("0123456789") != std::string::npos) return std::nullopt;
+
+  try {
+    std::size_t consumed = 0;
+    long value = std::stol(token, &consumed);
+    if (consumed != token.size() || value <= 0 || value > std::numeric_limits<int>::max()) {
+      return std::nullopt;
+    }
+    return static_cast<int>(value);
+  } catch (const std::exception&) {
+    return std::nullopt;  // stol 在数字过长(溢出 long)时抛 out_of_range
+  }
 }
 
 }  // namespace pzt::cli::text

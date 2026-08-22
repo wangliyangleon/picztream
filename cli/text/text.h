@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,5 +69,14 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s);
 // 在**查库之前**(core::resolve 要 db 与 project_id,而这里只是决定调哪个
 // handler),让 cli 为了问一句"这是不是个标记"先开库是本末倒置。
 bool is_batch_scope_token(const std::string& token);
+
+// `/pick <N>` 这类"命令只接受一个正整数参数"的通用解析器:去掉首尾空格之
+// 后必须恰好是一串十进制数字(不接受符号、小数点、多余 token)，值 > 0 且
+// 不超过 int 上限。nullopt = 不合法。
+//
+// 不拆成"是不是数字"/"是不是正数"/"有没有多写"三条各自判断 - D-1 要的是
+// 一句"N 不是一个正整数就报错"，四种坏输入(`/pick`、`/pick 0`、
+// `/pick -1`、`/pick abc`)在这里是同一件事的四个例子，不是四条分支。
+std::optional<int> parse_positive_int_arg(const std::string& rest);
 
 }  // namespace pzt::cli::text

@@ -158,3 +158,26 @@ TEST_CASE("is_batch_scope_token recognizes the three explicit scope markers") {
   CHECK_FALSE(is_batch_scope_token(".."));
   CHECK_FALSE(is_batch_scope_token(".jpg"));
 }
+
+// T-17 票 E（#39 决策 D-1）：`/pick <N>` 的 N 必须是正整数，不设默认值。
+// `/pick`、`/pick 0`、`/pick -1`、`/pick abc` 全部报错——不是四条各自的
+// 判断，是同一个"不是一个正整数 token"的否定。
+TEST_CASE("parse_positive_int_arg accepts exactly one positive decimal integer") {
+  CHECK(parse_positive_int_arg("20") == 20);
+  CHECK(parse_positive_int_arg("1") == 1);
+  // 前后空格是控制台输入里正常出现的东西(split_console_command 已经掐掉
+  // 了命令名和第一个参数之间的空格，但这里独立测试要覆盖调用方直接传入
+  // 未 trim 字符串的情况)。
+  CHECK(parse_positive_int_arg("  20  ") == 20);
+}
+
+TEST_CASE("parse_positive_int_arg rejects everything D-1 requires to error") {
+  CHECK_FALSE(parse_positive_int_arg("").has_value());        // /pick
+  CHECK_FALSE(parse_positive_int_arg("0").has_value());       // /pick 0
+  CHECK_FALSE(parse_positive_int_arg("-1").has_value());      // /pick -1
+  CHECK_FALSE(parse_positive_int_arg("abc").has_value());     // /pick abc
+  CHECK_FALSE(parse_positive_int_arg("20abc").has_value());   // 数字带尾巴
+  CHECK_FALSE(parse_positive_int_arg("2.5").has_value());     // 小数
+  CHECK_FALSE(parse_positive_int_arg("20 30").has_value());   // 多写了一个 token
+  CHECK_FALSE(parse_positive_int_arg("+20").has_value());     // 显式正号不是十进制数字串
+}
