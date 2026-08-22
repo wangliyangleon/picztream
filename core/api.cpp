@@ -155,6 +155,15 @@ CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_
                          std::move(on_eval_progress), std::move(on_cancel), selection_brief);
 }
 
+Result<PickResult, PickError> pick_images(ProjectId project_id, const std::vector<ImageId>& image_ids,
+                                           int count, int time_window_seconds, int hash_threshold,
+                                           PickCompareFn compare_fn, PickGateFn on_gate,
+                                           PickProgressFn on_progress) {
+  db::Database db = db::Database::open_default();
+  return pick::pick(db, project_id, image_ids, count, time_window_seconds, hash_threshold,
+                     std::move(compare_fn), std::move(on_gate), std::move(on_progress));
+}
+
 Result<RescanSummary, ProjectNotFoundError> rescan_project(ProjectId project_id, bool prune,
                                                              bool support_raw,
                                                              ScanProgressFn on_progress) {

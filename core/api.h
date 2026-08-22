@@ -14,6 +14,7 @@
 #include "core/decode/decode.h"
 #include "core/dedup/dedup.h"
 #include "core/export/export.h"
+#include "core/pick/pick.h"
 #include "core/project/project.h"
 #include "core/recipe/recipe.h"
 #include "core/result.h"
@@ -223,6 +224,34 @@ CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_
                             EvalProgressFn on_eval_progress = nullptr,
                             dedup::CancelFn on_cancel = nullptr,
                             const std::string& selection_brief = "");
+
+// T-17 票 E：`/pick <N>` 两图对比人工选片，见 docs 里 T-17 PRD（issue
+// #34）与 core/pick/pick.h。跟上面 dedup/curate 同一个门面模式：开默认库
+// 转调 pick::pick。门面名同样避开 pick::pick 会跟 pzt::core::pick 这个命
+// 名空间撞名的问题(跟 curate_images 避开 curate::curate 是同一个理由)。
+//
+// time_window_seconds/hash_threshold 复用 curate 那组粗参数(PRD 决策
+// D-5)，不新开旋钮 - 调用方(`/pick` 控制台命令)从
+// Settings.curate_time_window_seconds/curate_hash_threshold 显式传入，
+// core 不读 Settings。compare_fn 是人在环的比较原语(一次按键给出一个赢
+// 家)，没有默认实现 - production 与测试各自注入，语义见 pick.h。on_gate/
+// on_progress 语义同样见 pick.h；`/pick` 不接 AI(PRD D-17)，门面因此不暴
+// 露 CancelFn 参数 - Ctrl-C 在这个命令期间维持默认的"还原终端后干净退出
+// pzt"，取消走的是比较界面自己的 Esc 二次确认(票 D)，不是 dedup 那套信
+// 号路径。
+using PickResult = pick::PickResult;
+using PickCost = pick::PickCost;
+using PickError = pick::PickError;
+using PickStage = pick::PickStage;
+using PickProgress = pick::PickProgress;
+using PickGateFn = pick::PickGateFn;
+using PickProgressFn = pick::PickProgressFn;
+using PickCompareFn = pick::CompareFn;
+using PickComparisonWinner = pick::ComparisonWinner;
+Result<PickResult, PickError> pick_images(ProjectId project_id, const std::vector<ImageId>& image_ids,
+                                           int count, int time_window_seconds, int hash_threshold,
+                                           PickCompareFn compare_fn, PickGateFn on_gate = nullptr,
+                                           PickProgressFn on_progress = nullptr);
 
 // 补录项目建好之后新增到磁盘上、但还不在 images 表里的文件；prune(默认
 // true)时还会清掉磁盘上已消失的文件对应的记录(级联清掉标签),见
