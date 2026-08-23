@@ -1,9 +1,10 @@
-"""AI 开跑前的开销告知（票 10）。
+"""AI 开跑前的开销告知。
 
-PRD G5"用户可以在 AI 开跑前拒绝"此前只在 core 里可达：headless 那一侧
-两个钩子都传 nullptr，真机上 `pzt curate --ai` 不问任何人就开始花钱。
+"用户可以在 AI 开跑前拒绝"这件事，在 headless 上只能靠这条消息兑现：那
+一侧没有可以当场问的人，两个钩子都传 nullptr 的话，`pzt curate --ai` 就
+是不问任何人直接开始花钱。
 
-拍板决策一把 headless 的闸门从"阻塞式确认"改成"告知 + 随时可撤"：core
+所以 headless 的闸门不是"阻塞式确认"而是"告知 + 随时可撤"：core
 报完精确开销就继续跑，consumer 收到之后立刻发一条独立消息并给可取消入
 口。因此这里的每一条断言都在守同一件事 - **这条消息要早、要准、要能
 停**。
@@ -24,7 +25,7 @@ def _running_env(tmp_path, interval: float = 60.0):
     return env, job
 
 
-# -- 措辞（纯函数，表驱动）--
+# -- 措辞（纯函数，表驱动） --
 
 
 def test_cost_wording_covers_comparisons_only():
@@ -70,7 +71,7 @@ def test_both_messages_say_where_stopping_takes_you_back_to(tmp_path):
 
 def test_second_message_reads_as_a_continuation():
     """真机上 Dedup 先报一次、Curate 再报一次。第二条照抄第一条的措辞会
-    读成"怎么又要跑一遍"，而它其实是同一笔账的后半段（决策五）。"""
+    读成"怎么又要跑一遍"，而它其实是同一笔账的后半段。"""
     first = describe_ai_cost(comparisons=18, evaluations=0, provider="local", first=True)
     second = describe_ai_cost(comparisons=0, evaluations=6, provider="local", first=False)
     assert first != second
@@ -96,7 +97,7 @@ def test_stage_cost_is_announced_immediately(tmp_path):
 
 
 def test_cost_message_carries_a_cancel_entry_point(tmp_path):
-    # 决策一的另一半：没有可取消入口的话这条消息只是通知，G5 仍然不可达。
+    # 另一半：没有可取消入口的话这条消息只是通知，"能拒绝"仍然不可达。
     env, job = _running_env(tmp_path)
 
     env.put_event(StageCost(env.consumer.generation, job.run_id, "Dedup", 18, 0))
@@ -169,11 +170,11 @@ def test_cost_message_does_not_clobber_the_progress_slot(tmp_path):
     assert "1/18次" in env.transport.texts()[-1]
 
 
-# -- 取消回执的诚实（票 10 决策二/四）--
+# -- 取消回执的诚实 --
 
 
 def test_cancel_receipt_during_evaluation_says_the_records_stay(tmp_path):
-    """票 05 定的语义：curate 的评估逐张写库，喊停时已评估完的那几张留在
+    """curate 的评估逐张写库，喊停时已评估完的那几张留在
     库里。这不是遗漏 - 每条记录本身完整，留着正好被下次运行的缓存判据命
     中，回滚等于下次再花一次钱。用户话术必须如实反映，只说"已取消"等于让
     用户以为那几次调用白花了。"""
@@ -206,7 +207,7 @@ def test_cancel_receipt_during_comparison_claims_nothing_was_written(tmp_path):
 
 
 def test_cancel_receipt_for_styling_is_unchanged(tmp_path):
-    # 票 05/T-8 已有的那条一个字不动。
+    # 套滤镜那条回执一个字不动。
     from orchestrator.types import RunStatus
     from session.protocol import RunFinished
 
@@ -220,10 +221,9 @@ def test_cancel_receipt_for_styling_is_unchanged(tmp_path):
 
 
 def test_cancel_confirmation_during_evaluation_does_not_contradict_the_receipt(tmp_path):
-    """决策二说"用户话术必须如实反映"，而用户读到的**决策时刻**是二次确认
-    那条，不是事后回执。原文"取消后这批照片和已处理的结果都会作废"跟本票
-    刚改诚实的回执正好相反 - 只把事后那句改对，等于在用户做决定的那一刻
-    仍然骗他。"""
+    """用户话术必须如实反映，而用户读到的**决策时刻**是二次确认那条，不
+    是事后回执。一句笼统的"取消后这批照片和已处理的结果都会作废"跟诚实的
+    回执正好相反 - 只把事后那句改对，等于在用户做决定的那一刻仍然骗他。"""
     env, job = _running_env(tmp_path)
     env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 4, 12, "evaluations"))
     env.consumer.step()

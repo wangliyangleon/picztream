@@ -1,4 +1,4 @@
-"""Driver 把开销回调接到 stage 上（票 10）- cost 链路的第一段。
+"""Driver 把开销回调接到 stage 上 - cost 链路的第一段。
 
 跟 test_driver_progress.py 同构：Driver 不知道开销送去哪，只负责绑上当
 前 stage 名再塞进 StageContext。分开一个 sink 而不是复用 progress_sink，

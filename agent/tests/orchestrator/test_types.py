@@ -104,7 +104,7 @@ def test_run_state_from_dict_defaults_last_progress_notified_at_when_missing():
 
 
 def test_stage_spec_gate_answered_defaults_when_missing_from_disk():
-    """票 12 新增的字段。已经落盘的 run 里没有这个 key，`StageSpec(**s)`
+    """后加的字段。更早落盘的 run 里没有这个 key，`StageSpec(**s)`
     不能因此炸掉 - 那会让升级后所有在途的 run 都读不出来。"""
     run = make_sample_run()
     data = json.loads(json.dumps(asdict(run)))

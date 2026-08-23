@@ -103,7 +103,7 @@ def test_local_happy_path_does_not_require_an_api_key(monkeypatch):
 
 
 def test_local_model_defaults_and_env_override(monkeypatch):
-    # AG-13：本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，默认 gemma4:e2b。
+    # 本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，默认 gemma4:e2b。
     captured = {}
 
     def fake_http_post(url, headers, body):

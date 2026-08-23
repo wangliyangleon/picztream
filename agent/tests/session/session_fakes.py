@@ -158,7 +158,7 @@ def bare_compose_plan() -> Plan:
 
 
 def bare_compose_plan_deferred_curate() -> Plan:
-    # W2026-07-21 目标三案例二：只说去重没给数量，Curate 待定（count=None,
+    # 只说去重没给数量，Curate 待定（count=None,
     # gate="required"），跟 bare_compose_plan() 同形状只是 Curate 不同。
     return Plan(stages=[
         StageSpec(name="Ingest"),
@@ -227,7 +227,7 @@ def worker_saves_gate(env: "ConsumerEnv", run_id: str, stage: str) -> None:
 def worker_saves_curate_followup_gate(env: "ConsumerEnv", run_id: str,
                                        image_count: int, tagged: int) -> None:
     """worker_saves_gate 的 Curate 追问版：额外把 Ingest/Dedup 跑完的
-    StageOutput 落盘（W2026-07-21 目标三），因为 _dedup_remaining/
+    StageOutput 落盘，因为 _dedup_remaining/
     _prepare_gate_payload 都要现读这两个 stage 的 outputs 算 remaining。"""
     from orchestrator.types import StageOutput
 

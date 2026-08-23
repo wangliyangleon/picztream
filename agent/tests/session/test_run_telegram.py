@@ -82,7 +82,7 @@ def test_build_runtime_wires_queues_stages_and_real_functions(tmp_path, monkeypa
     # worker 与 consumer 用不同 client 实例（布防 vs 只读）
     assert worker.client is not consumer.readonly_client
     # 真函数接上（含三个新分类器），classify_fns 注册表 + 各包一层 partial
-    # 绑定 meta_provider（AG-13/AG-20）
+    # 绑定 meta_provider
     assert worker.compose_plan_fn.func is compose_plan
     assert worker.classify_fns["gate_reply"].func is classify_gate_reply
     assert worker.classify_fns["refine_plan"].func is refine_plan_confirmation
@@ -101,7 +101,7 @@ def test_build_runtime_wires_queues_stages_and_real_functions(tmp_path, monkeypa
 
 
 def test_build_runtime_meta_provider_from_env(tmp_path, monkeypatch):
-    # AG-13：PZT_AGENT_META_PROVIDER 一处读、partial 注入各语言函数。
+    # PZT_AGENT_META_PROVIDER 一处读、partial 注入各语言函数。
     monkeypatch.setenv("PZT_AGENT_META_PROVIDER", "claude")
     _, worker = build_runtime(state_dir=tmp_path, transport=ScriptedTransport(), chat_id="42")
     assert worker.compose_plan_fn.keywords == {"meta_provider": "claude"}
@@ -128,7 +128,7 @@ def _wait_until(predicate, timeout=3.0):
 def test_two_thread_end_to_end_smoke(tmp_path):
     # 验证 consumer 主循环 + 两条真 worker 线程（classify + drive）+ 三个
     # 队列在真并发下把整条链路走通。确认点用 inline 按钮回调（确定性路
-    # 径，不需要假一堆分类器）；风格描述这步经 style_describe 分类器（AG-02），
+    # 径，不需要假一堆分类器）；风格描述这步经 style_describe 分类器，
     # 冒烟里假成 describe。
     from compose.adjustment_parser import CollectingReply, StyleDescribeReply
 

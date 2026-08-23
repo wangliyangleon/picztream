@@ -1,4 +1,4 @@
-"""dedup/curate 把跨进程进度接到 ctx.on_progress 上（T-8 A.5）。
+"""dedup/curate 把跨进程进度接到 ctx.on_progress 上。
 
 这是 A.1/A.3（cli 往 stderr 写）和 B.1a（agent 内的进度事件链路）之间
 最后一段接线。转发规则见 stages/progress.py 的 docstring。
@@ -74,14 +74,14 @@ def test_curate_forwards_progress_the_same_way():
     assert seen == [(1, 9, "comparisons"), (5, 9, "comparisons")]
 
 
-# -- 票 05 之后 curate 多了第三个 phase：逐张评估预选集（票 09）--
+# -- curate 的第三个 phase：逐张评估预选集 --
 
 _CURATE_AI_PHASES = [("cluster", 4, 4), ("compare", 9, 9), ("evaluate", 1, 6), ("evaluate", 6, 6)]
 
 
 def test_curate_with_ai_forwards_both_the_comparison_and_the_evaluation_phase():
     # 只转发一个的话评估那段（分钟级、逐张一次视觉调用）整段静默，而它正
-    # 是票 09 要解决的那段沉默。
+    # 正是这条 sink 要消除的那段沉默。
     seen = []
     client = _ProgressingClient(_CURATE_AI_PHASES)
 

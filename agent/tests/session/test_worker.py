@@ -136,7 +136,7 @@ def test_classify_refine_plan_passes_context(tmp_path):
 
 def test_classify_dedup_followup_passes_remaining(tmp_path):
     # 回归钉子：_execute_classify 漏了 "dedup_followup" 分支，落进单 text 的
-    # 兜底分支，真机上直接 TypeError 崩掉（W2026-07-21 目标三真机验证发现）。
+    # 兜底分支，真机上直接 TypeError 崩掉。
     seen = {}
 
     def fake_dedup_followup(text, remaining):
@@ -189,7 +189,7 @@ def test_drive_start_runs_to_style_gate(tmp_path):
 
     events = env.drain_events()
     started = [e.stage for e in events if isinstance(e, StageStarted)]
-    # Style 停在闸门、这一轮并不运行，不发 StageStarted（AG-05）。
+    # Style 停在闸门、这一轮并不运行，不发 StageStarted。
     assert started == ["Ingest", "Dedup", "Curate"]
     gate = events[-1]
     assert isinstance(gate, GateReached)
@@ -213,7 +213,7 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     env.put_drive(DriveJob(generation=1, action="start", run_id=run.run_id))
     env.step()
     events = env.drain_events()
-    # 跑到 Style 闸门停下：只发真运行过的 stage，不发被闸门挡住的 Style（AG-05）。
+    # 跑到 Style 闸门停下：只发真运行过的 stage，不发被闸门挡住的 Style。
     started = _started_stages(events)
     assert started == ["Ingest", "Dedup", "Curate"]
     gate = events[-1]
@@ -223,7 +223,7 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
     assert gate.payload == {"selected_count": 2, "preview_failed_count": 0,
                             "export_error": None, "ai_fallback_count": 0}
     assert len(env.transport.sent_photos) == 2  # 选片预览
-    # 选片预览逐张带"第 N 张"编号（AG-15）。
+    # 选片预览逐张带"第 N 张"编号。
     assert env.transport.sent_photo_captions == ["第 1 张", "第 2 张"]
 
     # Style 闸门收到描述 -> rerun_style -> 停在 StyleApplyAll 预览闸门
@@ -255,7 +255,7 @@ def test_full_gate_walk_style_then_apply_all_then_deliver(tmp_path):
 
 
 def test_preview_send_total_failure_emits_ordered_placeholder(tmp_path):
-    # AG-15：某张图和文件都发不出去时，发"第 N 张预览发送失败"文本占位保序，
+    # 某张图和文件都发不出去时，发"第 N 张预览发送失败"文本占位保序，
     # 并计入 failed。
     env = make_worker(tmp_path)
     run = env.make_running_run()
@@ -279,7 +279,7 @@ def test_preview_send_total_failure_emits_ordered_placeholder(tmp_path):
 
 
 def test_deliver_export_failure_fails_run(tmp_path):
-    # AG-06：交付 export-images 失败 = run FAILED（而非旧的 optional 吞成
+    # 交付 export-images 失败 = run FAILED（而非旧的 optional 吞成
     # SKIPPED -> DONE -> 误报"这批就处理完啦"）。Style/StyleApplyAll 的闸门
     # 预览也调 export-images，但预览失败只降级成 payload 里的 export_error
     # （不挡路，见 _prepare_gate_payload）；真正致命的是 Deliver stage 自
@@ -306,7 +306,7 @@ def test_deliver_export_failure_fails_run(tmp_path):
 
 
 def test_rerun_style_match_failure_reprompts_style_gate(tmp_path):
-    # AG-01：描述匹配不上任何 preset（Style 软失败 match_failed）-> 退回 Style
+    # 描述匹配不上任何 preset（Style 软失败 match_failed）-> 退回 Style
     # 闸门重新问，不报废整批、不往下推进。
     env = make_worker(tmp_path)
     run = env.make_running_run()
@@ -330,7 +330,7 @@ def test_rerun_style_match_failure_reprompts_style_gate(tmp_path):
 
 
 def test_rerun_style_skip_empty_description_runs_no_style(tmp_path):
-    # AG-16.1：原图直出（空描述）-> Style 空跑 chosen_recipe None -> 越过 Style
+    # 原图直出（空描述）-> Style 空跑 chosen_recipe None -> 越过 Style
     # 停在 StyleApplyAll 闸门，payload chosen_recipe None（consumer 会自动推进）。
     env = make_worker(tmp_path)
     run = env.make_running_run()
@@ -397,7 +397,7 @@ def test_cancelled_error_mid_dedup_finishes_run_as_cancelled(tmp_path):
 
 
 def test_prepare_gate_payload_curate_computes_remaining(tmp_path):
-    # W2026-07-21 目标三决策四：remaining = Ingest.image_count - Dedup.tagged。
+    # remaining = Ingest.image_count - Dedup.tagged。
     env = make_worker(tmp_path)
     plan = Plan(stages=[StageSpec(name="Ingest"), StageSpec(name="Curate", gate="required")])
     run = RunState(
@@ -479,7 +479,7 @@ def _mark_ingest_dedup_done(run, image_count=2, tagged=0):
 
 
 def test_drive_rerun_curate_runs_passthrough_and_continues_to_next_gate(tmp_path):
-    # W2026-07-21 目标三决策四：追问回复用 rerun_curate 直接跑 Curate，
+    # 追问回复用 rerun_curate 直接跑 Curate，
     # 不重新触发它自己的闸门，continue 到下一个闸门（Style）。
     env = make_worker(tmp_path)
     run = env.make_running_run()
@@ -492,7 +492,7 @@ def test_drive_rerun_curate_runs_passthrough_and_continues_to_next_gate(tmp_path
 
     events = env.drain_events()
     assert _started_stages(events) == ["Curate"]
-    # count=None -> passthrough：走 pzt images，不是 pzt curate（目标三决策三）。
+    # count=None -> passthrough：走 pzt images，不是 pzt curate。
     assert any(c[0] == "images" for c in env.client.calls)
     assert not any(c[0] == "curate" for c in env.client.calls)
     gate = events[-1]
@@ -529,11 +529,11 @@ def _deferred_curate_run(env):
     {"count": 3},                       # set_count
     {"apply_tag": "ins"},               # set_apply_tag
     {"exclude": ["c.jpg"]},             # swap_out
-    {"selection_brief": "要活泼点的"},    # set_selection_brief（票 11）
+    {"selection_brief": "要活泼点的"},    # set_selection_brief
 ])
 def test_adjusting_after_an_answered_followup_reruns_curate_instead_of_reasking(
         tmp_path, delta_params):
-    """票 12 的第一、二条验收，端到端跑真 Driver。
+    """端到端跑真 Driver。
 
     deferred 流程里追问答完（rerun_curate）之后，用户在选片确认闸门上做调
     整，Curate 必须真的重跑并回到选片确认（Style 闸门），而不是把"去重后
@@ -562,7 +562,7 @@ def test_adjusting_after_an_answered_followup_reruns_curate_instead_of_reasking(
 
 
 def test_answered_followup_does_not_disable_the_stop_path_reask(tmp_path):
-    """票 12 第四条验收：票 10 的"停下"路径判据是 `curate.gate != "off"`。
+    """"停下"路径的判据是 `curate.gate != "off"`。
     答完追问之后 `gate` 必须仍是 "required"，否则 consumer 会静默改走
     方案确认、不再重问"要不要用 AI"。"""
     env = make_worker(tmp_path)
@@ -644,7 +644,7 @@ def test_export_previews_clears_stale_files_before_reexport(tmp_path):
     assert not stale.exists()  # 旧预览已清，不会把旧滤镜图又发一遍
 
 
-# -- 运行期进度（T-8 G2/G3）--
+# -- 运行期进度 --
 
 
 @dataclass
@@ -710,7 +710,7 @@ def test_progress_sink_is_detached_even_when_the_stage_raises(tmp_path):
     assert any(isinstance(e, JobCrashed) for e in env.drain_events())
 
 
-# -- 取消覆盖面补全（T-8 D）--
+# -- 取消覆盖面补全 --
 
 
 def _walk_to_style_gate(env, run):
@@ -779,7 +779,7 @@ class _CancelOnNthRecipeApply(FakeClient):
 
 
 def test_cancel_during_style_apply_all_reports_how_many_were_already_styled(tmp_path):
-    # PRD 决策五：这个 stage 的写入是逐张的，取消一定留下部分成果。回执
+    # 这个 stage 的写入是逐张的，取消一定留下部分成果。回执
     # 不能只说"已取消"，那等于假装什么都没发生。
     env = make_worker(tmp_path, client=_CancelOnNthRecipeApply(cancel_on=3))
     run = env.make_running_run()
@@ -815,7 +815,7 @@ def test_cancel_during_dedup_reports_no_partial_work(tmp_path):
     assert finished.cancelled_partial is None
 
 
-# -- AI 开销（票 10）--
+# -- AI 开销 --
 
 
 @dataclass
@@ -878,7 +878,7 @@ def test_cost_sink_is_detached_even_when_the_stage_raises(tmp_path):
 
 
 def test_cancel_during_evaluation_reports_the_evaluations_already_written(tmp_path):
-    """票 10 决策四：curate 的评估段逐张写库，取消一定留下部分成果。判据
+    """curate 的评估段逐张写库，取消一定留下部分成果。判据
     按 kind 而不是按 stage - 同一个 Curate，比较段取消是零写入。"""
     env = make_worker(tmp_path)
     run = env.make_running_run()
@@ -935,7 +935,7 @@ class _ComparingStage:
         raise PztCancelledError(["pzt", "dedup"])
 
 
-# -- 停下 = 回退这一步，不作废整批（真机反馈 2026-08-02）--
+# -- 停下 = 回退这一步，不作废整批（真机反馈 2026-08-02） --
 
 
 def test_stop_rewinds_the_stage_instead_of_cancelling_the_run(tmp_path):

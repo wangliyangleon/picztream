@@ -20,7 +20,7 @@ def clean_agent_logger():
 
 
 def test_configure_logging_writes_timestamped_file(tmp_path, clean_agent_logger):
-    # AG-21：配置后日志落盘 state_dir/agent.log，带级别/logger 名。
+    # 配置后日志落盘 state_dir/agent.log，带级别/logger 名。
     configure_logging(tmp_path)
     logging.getLogger("pzt.agent.consumer").info("hello world")
 

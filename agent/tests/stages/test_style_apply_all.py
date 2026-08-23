@@ -86,7 +86,7 @@ def test_total_apply_failure_of_remaining_photos_reports_stage_failure():
     assert len(output.skipped) == 2
 
 
-# -- 进度上报（T-8 G2）--
+# -- 进度上报 --
 
 
 def _ctx_with_progress(selected, chosen_recipe, preview_photo, seen):

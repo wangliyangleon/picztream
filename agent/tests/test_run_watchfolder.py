@@ -108,7 +108,7 @@ def test_crash_before_checkpoint_persists_does_not_resend_via_deliver_marker(tmp
     # 前进程崩了"：完整跑一遍到 Deliver 完成后，手动把 Deliver 的
     # stage_states 拨回 PENDING(模拟丢失的检查点)，再 advance 一次，
     # 断言 transport 没有收到第二次发送——DeliverStage 自己的 marker
-    # 挡住了重发，这是 PRD"幂等交付"验收标准的直接体现。
+    # 挡住了重发 - "幂等交付"就落在这里。
     client = _make_fake_client({
         "new": '{"project": "run-1", "image_count": 1}',
         "dedup": '{"groups": 1, "tagged": 0, "skipped_no_capture_time": 0}',

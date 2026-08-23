@@ -252,7 +252,7 @@ def test_cancel_confirmation_declined_keeps_run(tmp_path):
 
 
 def test_photo_during_cancel_confirm_dismisses_it(tmp_path):
-    # AG-20：取消二次确认挂起时又发照片，显然不想取消了，安全撤销待确认。
+    # 取消二次确认挂起时又发照片，显然不想取消了，安全撤销待确认。
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")
     env.consumer.step()
@@ -265,7 +265,7 @@ def test_photo_during_cancel_confirm_dismisses_it(tmp_path):
 
 
 def test_drive_cancel_marks_cancelling_and_receipt_clears_it(tmp_path):
-    # AG-12：drive 期取消落 cancelling 标记（worker 崩了 bootstrap 靠它补
+    # drive 期取消落 cancelling 标记（worker 崩了 bootstrap 靠它补
     # cancel）；worker 正常收尾的 CANCELLED 回执到达后标记被清。
     env = make_consumer(tmp_path)
     job = to_running(env)
@@ -412,7 +412,7 @@ def test_gate_style_prompts_then_rerun_with_description(tmp_path):
     assert env.consumer.view.status == RunStatus.AWAITING_GATE
     assert env.consumer.run is not None  # 所有权交回
 
-    # 文本现在过 style_describe 分类器（AG-02）：describe -> rerun_style。
+    # 文本现在过 style_describe 分类器：describe -> rerun_style。
     env.push_text("复古暖色调")
     env.consumer.step()
     [classify_job] = env.drain_jobs()
@@ -427,7 +427,7 @@ def test_gate_style_prompts_then_rerun_with_description(tmp_path):
 
 
 def test_gate_style_describe_skip_runs_original_no_filter(tmp_path):
-    # AG-16.1：说"原图就行" -> skip -> rerun_style 空描述（chosen_recipe None 空跑）。
+    # 说"原图就行" -> skip -> rerun_style 空描述（chosen_recipe None 空跑）。
     env = make_consumer(tmp_path)
     job = to_running(env)
     _skip_to_style_phase_two(env, job)
@@ -446,7 +446,7 @@ def test_gate_style_describe_skip_runs_original_no_filter(tmp_path):
 
 
 def test_gate_style_describe_cancel_prompts_confirmation(tmp_path):
-    # AG-02：说"算了不弄了" -> cancel -> 二次确认，而不是被当风格描述。
+    # 说"算了不弄了" -> cancel -> 二次确认，而不是被当风格描述。
     env = make_consumer(tmp_path)
     job = to_running(env)
     _skip_to_style_phase_two(env, job)
@@ -464,7 +464,7 @@ def test_gate_style_describe_cancel_prompts_confirmation(tmp_path):
 
 
 def test_gate_style_describe_query_lists_presets(tmp_path):
-    # AG-16.4 基础版：说"有哪些风格" -> query -> 列出 9 个 preset。
+    # 说"有哪些风格" -> query -> 列出 9 个 preset。
     env = make_consumer(tmp_path)
     job = to_running(env)
     _skip_to_style_phase_two(env, job)
@@ -482,7 +482,7 @@ def test_gate_style_describe_query_lists_presets(tmp_path):
 
 
 def test_gate_style_match_failed_reprompts_without_failing(tmp_path):
-    # AG-01：GateReached(Style, match_failed) -> 原地重问，不报"处理失败"。
+    # GateReached(Style, match_failed) -> 原地重问，不报"处理失败"。
     env = make_consumer(tmp_path)
     job = to_running(env)
     worker_saves_gate(env, job.run_id, "Style")
@@ -515,7 +515,7 @@ def test_gate_style_describe_classify_failure_falls_back_to_description(tmp_path
 
 
 def test_style_describe_infra_failure_says_service_down(tmp_path):
-    # AG-10：Ollama 挂掉(retryable)时回"AI 连不上", 不误当描述去 rerun_style。
+    # Ollama 挂掉(retryable)时回"AI 连不上", 不误当描述去 rerun_style。
     env = make_consumer(tmp_path)
     job = to_running(env)
     _skip_to_style_phase_two(env, job)
@@ -558,7 +558,7 @@ def test_gate_style_apply_all_renders_preview_and_approve_resolves(tmp_path):
 
 
 def test_gate_style_apply_all_without_chosen_recipe_auto_proceeds(tmp_path):
-    # AG-16.1：原图直出（chosen_recipe None）在 StyleApplyAll 无预览可确认，
+    # 原图直出（chosen_recipe None）在 StyleApplyAll 无预览可确认，
     # 自动推进到交付闸门，不再问"没能选出风格"。
     env = make_consumer(tmp_path)
     job = to_running(env)
@@ -622,7 +622,7 @@ def test_gate_classify_not_understood_replies_guidance(tmp_path):
 
 
 def test_gate_reply_infra_failure_says_service_down(tmp_path):
-    # AG-10：闸门回复分类因 Ollama 连不上(retryable)失败 -> "AI 连不上"而非"没听懂"。
+    # 闸门回复分类因 Ollama 连不上(retryable)失败 -> "AI 连不上"而非"没听懂"。
     env = make_consumer(tmp_path)
     job = to_running(env)
     worker_saves_gate(env, job.run_id, "Style")
@@ -696,7 +696,7 @@ def test_job_crash_marks_idle_and_next_message_resumes(tmp_path):
 
 
 def test_classify_crash_does_not_touch_active_drive(tmp_path):
-    # AG-03：drive 正常跑时，classify lane 崩溃只清在途分类，不碰 drive 状态，
+    # drive 正常跑时，classify lane 崩溃只清在途分类，不碰 drive 状态，
     # 否则会误触 resume 与真 DriveJob 排两个（预览重发、闸门重复提问）。
     env = make_consumer(tmp_path)
     job = to_running(env)
@@ -713,7 +713,7 @@ def test_classify_crash_does_not_touch_active_drive(tmp_path):
 
 
 def test_drive_crash_does_not_touch_inflight_classify(tmp_path):
-    # AG-03 对称情形：drive 崩溃时保留 classify lane 的在途分类，否则那条文
+    # drive 崩溃时保留 classify lane 的在途分类，否则那条文
     # 本会没有任何回复。
     env = make_consumer(tmp_path)
     to_running(env)
@@ -728,7 +728,7 @@ def test_drive_crash_does_not_touch_inflight_classify(tmp_path):
 
 
 def test_inbound_error_does_not_drop_rest_of_batch(tmp_path):
-    # AG-11：同批第一条消息处理炸了，不该连累后面的消息（故障半径=单条）。
+    # 同批第一条消息处理炸了，不该连累后面的消息（故障半径=单条）。
     env = make_consumer(tmp_path)
 
     def boom(_msg):
@@ -744,7 +744,7 @@ def test_inbound_error_does_not_drop_rest_of_batch(tmp_path):
 
 
 def test_event_error_does_not_drop_rest_of_batch(tmp_path):
-    # AG-11：一个事件的 handler 炸了，不该连累同批后续事件。
+    # 一个事件的 handler 炸了，不该连累同批后续事件。
     env = make_consumer(tmp_path)
     job = to_running(env)
 
@@ -760,7 +760,7 @@ def test_event_error_does_not_drop_rest_of_batch(tmp_path):
 
 
 def test_send_retries_once_then_gives_up(tmp_path):
-    # AG-11：transport 发送失败退避重试一次后放弃，不外抛。
+    # transport 发送失败退避重试一次后放弃，不外抛。
     env = make_consumer(tmp_path)
     calls = []
 
@@ -774,7 +774,7 @@ def test_send_retries_once_then_gives_up(tmp_path):
 
 
 def test_help_command_lists_all_quick_paths(tmp_path):
-    # AG-16.2：/help 逐条列出全部命令快路径。
+    # /help 逐条列出全部命令快路径。
     env = make_consumer(tmp_path)
     env.push_text("/help")
     env.consumer.step()
@@ -886,7 +886,7 @@ def test_gate_reject_via_llm_prompts_confirmation_not_immediate_cancel(tmp_path)
 
 
 def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
-    # W2026-07-21 目标三决策四：去重后追问"还剩几张，要不要再筛"。
+    # 去重后追问"还剩几张，要不要再筛"。
     env = make_consumer(tmp_path)
     job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)
     worker_saves_curate_followup_gate(env, job.run_id, image_count=4, tagged=1)
@@ -895,13 +895,13 @@ def test_gate_curate_followup_renders_remaining_and_skip_button(tmp_path):
     env.consumer.step()
 
     assert any("留全部点\"不筛选了\"；要筛选就告诉我留几张、想发去哪" in t for t in env.transport.texts())
-    # 票 02：示例文案收敛成 _intent_hint_example 后，这一处的动词仍得是
+    # 示例文案收敛成 _intent_hint_example 后，这一处的动词仍得是
     # "留"（上文是"告诉我留几张"），不能被顺手统一成其余四处的"选"。此前
-    # 没有断言钉住它，收敛时最容易在这里悄悄改掉用户看到的字。票 08 扩写
+    # 没有断言钉住它，收敛时最容易在这里悄悄改掉用户看到的字。扩写
     # 之后这条继续钉着同一件事：例子带上了题材偏好，动词仍然是"留"。
     assert any("比如\"留三张有景有人、表情活泼的照片发朋友圈\"" in t
                 for t in env.transport.texts())
-    # ai_enabled 默认 False，追问闸门也带 AI 快捷按钮（目标三决策五）。
+    # ai_enabled 默认 False，追问闸门也带 AI 快捷按钮。
     assert env.transport.button_tokens() == ["skip_curate", "ai_narrow"]
 
 
@@ -1082,7 +1082,7 @@ def test_gate_curate_followup_cancel_prompts_confirmation(tmp_path):
 
 
 def test_planned_deferred_curate_confirmation_text_mentions_dedup_first(tmp_path):
-    # W2026-07-21 目标三：deferred 形状下 count 是 None，确认文案不能是
+    # deferred 形状下 count 是 None，确认文案不能是
     # "留 None 张"；真机反馈后这一步也不再预告"去重完还要问什么"。
     env = make_consumer(tmp_path)
     to_planned(env, plan_factory=bare_compose_plan_deferred_curate)
@@ -1094,7 +1094,7 @@ def test_planned_deferred_curate_confirmation_text_mentions_dedup_first(tmp_path
 
 
 def test_planned_confirmation_ai_hint_and_button_when_count_given_and_ai_disabled(tmp_path):
-    # 目标三决策五：count 已定分支，ai_enabled 默认 False 时提醒 + 给按钮。
+    # count 已定分支，ai_enabled 默认 False 时提醒 + 给按钮。
     env = make_consumer(tmp_path)
     to_planned(env)  # bare_compose_plan，ai_enabled 默认 False
 
@@ -1162,7 +1162,7 @@ def test_click_ai_dedup_button_enables_ai_on_both_dedup_and_curate(tmp_path):
 
 
 def test_planned_refine_deferred_curate_giving_count_clears_pending_gate(tmp_path):
-    # 目标三决策七：PLANNED 阶段提前给数量 = 提前回答了 Dedup 后才会问的
+    # PLANNED 阶段提前给数量 = 提前回答了 Dedup 后才会问的
     # 追问，解除 Curate 的待定状态，不能再挂着 gate="required"。这也是
     # _on_refine_reply 面对"Dedup 缺席"分支不崩的回归测试(用的是 deferred
     # 形状，Dedup 是存在的，但同一条代码路径也覆盖了防 StopIteration 的
@@ -1187,7 +1187,7 @@ def test_planned_refine_deferred_curate_giving_count_clears_pending_gate(tmp_pat
 
 
 def test_run_finished_done_cleans_run_files_keeps_deliver_out(tmp_path):
-    # AG-14：终态即删该 run 的 incoming/preview/staging，保留 deliver-out 与 JSON。
+    # 终态即删该 run 的 incoming/preview/staging，保留 deliver-out 与 JSON。
     env = make_consumer(tmp_path)
     job = to_running(env)
     (tmp_path / "incoming" / job.run_id).mkdir(parents=True, exist_ok=True)
@@ -1208,7 +1208,7 @@ def test_run_finished_done_cleans_run_files_keeps_deliver_out(tmp_path):
 
 
 def test_photo_staging_discards_the_download_source(tmp_path):
-    # AG-14：照片入 incoming 后删掉 telegram-inbox 下载源，不落两份。
+    # 照片入 incoming 后删掉 telegram-inbox 下载源，不落两份。
     env = make_consumer(tmp_path)
     src = env.push_photo("a.jpg", b"a")  # push_photo 返回下载源路径
     assert src.exists()
@@ -1236,7 +1236,7 @@ def test_intent_before_photos_is_kept_as_draft(tmp_path):
 
 
 def test_second_intent_while_draft_no_photos_merges_into_draft(tmp_path):
-    # AG-08：草稿态（0 照片）再来一句意图 -> 并入草稿、不组空方案、不整句覆盖。
+    # 草稿态（0 照片）再来一句意图 -> 并入草稿、不组空方案、不整句覆盖。
     env = make_consumer(tmp_path)
     env.push_text("选三张发朋友圈")
     env.consumer.step()
@@ -1254,7 +1254,7 @@ def test_second_intent_while_draft_no_photos_merges_into_draft(tmp_path):
 
 
 def test_intent_with_photos_and_draft_merges_before_compose(tmp_path):
-    # AG-08：有草稿 + 有照片时再补一句意图 -> 拼接后再 compose，旧约束不丢。
+    # 有草稿 + 有照片时再补一句意图 -> 拼接后再 compose，旧约束不丢。
     env = make_consumer(tmp_path)
     env.push_text("选三张发朋友圈")
     env.consumer.step()
@@ -1273,7 +1273,7 @@ def test_intent_with_photos_and_draft_merges_before_compose(tmp_path):
 
 
 def test_start_with_draft_but_no_photos_asks_for_photos(tmp_path):
-    # AG-08：草稿态（0 照片）说"开始" -> 提示等照片，不用 0 张组方案。
+    # 草稿态（0 照片）说"开始" -> 提示等照片，不用 0 张组方案。
     env = make_consumer(tmp_path)
     env.push_text("选三张发朋友圈")
     env.consumer.step()
@@ -1341,7 +1341,7 @@ def test_idle_with_draft_and_photos_auto_composes(tmp_path):
     assert compose_job.intent_text == "选三张发朋友圈"
 
 
-# -- 降级信号进话术（T-8 G4/C.2）--
+# -- 降级信号进话术 --
 
 
 def _selection_gate(env, job, payload_extra=None):
@@ -1386,7 +1386,7 @@ def test_selection_gate_tolerates_a_payload_without_the_key(tmp_path):
             ) in env.transport.texts()
 
 
-# -- 票 13：方案确认阶段改题材要求 --
+# -- 方案确认阶段改题材要求 --
 
 
 def test_plan_confirmation_applies_a_new_selection_brief_and_echoes_it(tmp_path):
@@ -1412,7 +1412,7 @@ def test_plan_confirmation_applies_a_new_selection_brief_and_echoes_it(tmp_path)
 
 
 def test_ai_shortcut_button_does_not_drop_the_selection_brief(tmp_path):
-    # 快捷按钮走同一条参数应用路径。票 13 之前它逐个位置传四个字段，多出
+    # 快捷按钮走同一条参数应用路径。逐个位置传字段的话，多出
     # 第五个字段时最容易在这里被漏掉、把简述清空。
     env = make_consumer(tmp_path)
     run = to_planned(env, plan_factory=_plan_with_brief("要有景有人的"))
@@ -1425,7 +1425,7 @@ def test_ai_shortcut_button_does_not_drop_the_selection_brief(tmp_path):
     assert curate.params["selection_brief"] == "要有景有人的"
 
 
-# -- 票 11：选片确认阶段改题材要求 --
+# -- 选片确认阶段改题材要求 --
 
 
 def _plan_with_brief(brief):
@@ -1437,7 +1437,7 @@ def _plan_with_brief(brief):
 
 
 def test_selection_gate_echoes_the_selection_brief_in_effect(tmp_path):
-    # 票 11 决策二绑定的安全网：简述替换是"新的整个盖掉旧的"，用户必须每
+    # 替换语义绑定的安全网：简述替换是"新的整个盖掉旧的"，用户必须每
     # 轮都看得见此刻生效的是哪一句，否则替换会变成静默丢失。
     env = make_consumer(tmp_path)
     job = to_running(env, plan_factory=_plan_with_brief("表情活泼、有人的"))
@@ -1480,7 +1480,7 @@ def test_gate_reply_brief_adjustment_reaches_the_drive_job(tmp_path):
 
 
 def test_gate_message_and_status_query_agree_on_the_brief_after_a_change(tmp_path):
-    # 票 11 决策二的替换语义靠"处处可见"兜底，那就不能一处新一处旧。闸门消
+    # 替换语义靠"处处可见"兜底，那就不能一处新一处旧。闸门消
     # 息读的是 self.run.plan（活的），describe() 读的是 view.plan_summary（快
     # 照）- 两个不同的源，值得一条测试钉住它们不会分叉。它们之所以一致，是
     # 因为 _on_gate_reached 每次都重新 load run 再 view_from_run 一遍。
@@ -1508,7 +1508,7 @@ def test_gate_message_and_status_query_agree_on_the_brief_after_a_change(tmp_pat
 
 
 def test_gate_curate_followup_narrow_carries_selection_brief_into_rerun_curate(tmp_path):
-    # 票 08：追问那一处的引导语现在也举了带题材偏好的例子，用户照着说的话
+    # 追问那一处的引导语现在也举了带题材偏好的例子，用户照着说的话
     # 必须一路走到 rerun_curate 的参数里，否则 core 那边根本收不到。
     env = make_consumer(tmp_path)
     job = to_running(env, plan_factory=bare_compose_plan_deferred_curate)

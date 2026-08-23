@@ -56,7 +56,7 @@ def test_deliver_inputs_default_to_curate():
 
 
 def test_deliver_is_critical():
-    # AG-06 拍板：交付是用户点"满意"后的明确诉求，导出失败必须让 run FAILED，
+    # 交付是用户点"满意"后的明确诉求，导出失败必须让 run FAILED，
     # 不能被 optional 吞成 SKIPPED 让 run 误报"这批就处理完啦"。
     stage = DeliverStage(client=None, transport=None, marker_dir=None, staging_dir=None)
     assert stage.criticality == "critical"
@@ -285,7 +285,7 @@ def test_deliver_retries_transient_send_failure_then_succeeds(tmp_path):
     assert len(list(marker_dir.glob("run-1-*.json"))) == 1  # marker 正常落盘
 
 
-# -- 文案（票 07 / PRD 决策十五、验收 23）--
+# -- 文案 --
 
 
 def _stub_export_client():
@@ -313,7 +313,7 @@ def test_deliver_sends_the_caption_as_its_own_message_after_the_photos(tmp_path)
 
 
 def test_deliver_says_nothing_extra_when_there_is_no_caption(tmp_path):
-    # 验收 24/25：没有文案时收尾话术与票 07 之前逐字相同，不发空消息、也
+    # 没有文案时收尾话术一个字不变，不发空消息、也
     # 不解释"这次没有文案"，那是拿一句噪音去报告一个附赠品的缺席。
     transport = FakeTransport()
     stage = DeliverStage(client=_stub_export_client(), transport=transport,

@@ -57,7 +57,7 @@ def test_style_matches_a_preset_and_applies_it_to_the_representative_photo_only(
 
 def test_style_without_a_description_is_skip_no_style():
     # 空描述 = 不套滤镜/原图直出（skip 路径），软化为 chosen_recipe=None 空跑，
-    # 不再是失败（AG-16.1）。
+    # 不再是失败。
     call_log = []
     client = _make_client(call_log)
     stage = StyleStage(client=client, http_post=_fake_http_post())
@@ -95,7 +95,7 @@ def test_style_with_no_selected_photos_is_a_no_op():
 
 def test_style_soft_fails_when_the_matcher_hallucinates():
     # 描述没匹配上任何 preset：软失败（ok=True + match_failed），不报废整批；
-    # worker 会据此退回 Style 闸门重新问（AG-01）。
+    # worker 会据此退回 Style 闸门重新问。
     call_log = []
     client = _make_client(call_log)
     stage = StyleStage(client=client, http_post=_fake_http_post("Not A Real Preset"))

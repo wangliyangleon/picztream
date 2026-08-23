@@ -12,8 +12,8 @@ def _fake_gemini_http_post(decision_json):
 
 
 def test_compose_plan_builds_five_stage_plan_when_count_is_given(monkeypatch):
-    # W2026-07-21 目标三：给了目标张数就不单独跑 Dedup，curate 的粗聚类已
-    # 经隐含去重效果（决策一）。
+    # 给了目标张数就不单独跑 Dedup，curate 的粗聚类已
+    # 经隐含去重效果。
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     fake_http_post = _fake_gemini_http_post(
         {"provider": "claude", "ai_enabled": True, "count": 12, "apply_tag": "朋友圈"}
@@ -56,7 +56,7 @@ def test_compose_plan_skips_dedup_and_defaults_count_when_llm_omits_fields(monke
 
 
 def test_compose_plan_defers_curate_when_dedup_requested_without_count(monkeypatch):
-    # W2026-07-21 目标三案例二：只说去重没给数量，Curate 的决定推迟到
+    # 只说去重没给数量，Curate 的决定推迟到
     # Dedup 跑完之后（Commit 8 接的闸门）。
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     fake_http_post = _fake_gemini_http_post({"dedup_requested": True})
@@ -73,7 +73,7 @@ def test_compose_plan_defers_curate_when_dedup_requested_without_count(monkeypat
 
 
 def test_compose_plan_skips_dedup_even_when_requested_if_count_given(monkeypatch):
-    # 决策一容易写反的一条：dedup_requested=True 但也给了 count 时，仍然
+    # 容易写反的一条：dedup_requested=True 但也给了 count 时，仍然
     # 走"不单独跑 Dedup"分支（count 存在优先于 dedup_requested）。
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     fake_http_post = _fake_gemini_http_post({"dedup_requested": True, "count": 5})
@@ -128,7 +128,7 @@ def test_compose_plan_defaults_meta_provider_to_local(monkeypatch):
 
 
 def test_compose_plan_carries_selection_brief_into_curate_params(monkeypatch):
-    # 票 08（PRD 决策二）：题材偏好与叙事要求提炼成一段自由文本，随 Curate
+    # 题材偏好与叙事要求提炼成一段自由文本，随 Curate
     # 的参数往下走，最终成为 `pzt curate --brief` 的值。不拆成用途/题材/叙
     # 事三个字段 - core 拿到之后唯一要做的就是把它们拼回一段提示词。
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
@@ -180,8 +180,8 @@ def test_compose_plan_normalizes_a_missing_or_null_selection_brief_to_empty_stri
 
 
 def test_compose_plan_falls_back_to_the_default_tag_when_the_model_returns_a_null_apply_tag(monkeypatch):
-    # 票 08 之前就有的缺陷，跑真实本地模型时撞出来的：`.get(k, 默认)` 只在
-    # key 缺席时兜底，模型显式回 null 时给的是 None，validate_plan 会把整
+    # 跑真实本地模型时撞出来的：`.get(k, 默认)` 只在 key 缺席时兜底，模型
+    # 显式回 null 时给的是 None，validate_plan 会把整
     # 次方案组装打成失败。没提目的地的意图("先去重，然后挑5张有小孩的")真
     # 机上就会走到这一条。
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")

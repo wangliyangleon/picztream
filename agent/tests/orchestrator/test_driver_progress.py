@@ -1,4 +1,4 @@
-"""Driver 把进度回调接到 stage 上 - T-8 进度链路的第一段。
+"""Driver 把进度回调接到 stage 上 - 进度链路的第一段。
 
 Driver 自己不知道进度要送去哪，它只负责把 progress_sink（由 worker 挂
 上，跟 client.cancel_event 同一个套路）绑上当前 stage 名之后塞进

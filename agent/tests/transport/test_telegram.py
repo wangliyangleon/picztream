@@ -199,7 +199,7 @@ def _drain(transport, want, timeout=2.0):
 
 
 def test_photo_with_caption_also_emits_a_text_message(tmp_path):
-    # AG-09：发图时把意图写在 caption 里 -> 图之后追加一条 text 消息，复用文本管线。
+    # 发图时把意图写在 caption 里 -> 图之后追加一条 text 消息，复用文本管线。
     updates = [FakeUpdate(1, FakeMessage("123", photo=[{"file_id": "abc", "file_size": 100}],
                                           caption="帮我选3张发朋友圈"))]
     fake = FakeBotClientWithUpdates(updates)
@@ -239,7 +239,7 @@ def test_document_image_with_caption_also_emits_a_text_message(tmp_path):
 
 
 def test_send_text_returns_id_and_edit_text_passes_through(tmp_path):
-    # AG-16.3：send_text 返回 message_id，edit_text 透传到 bot.edit_message_text。
+    # send_text 返回 message_id，edit_text 透传到 bot.edit_message_text。
     fake = FakeBotClient()
     transport = TelegramTransport(
         token="t", chat_id="123", download_dir=tmp_path,
@@ -256,7 +256,7 @@ def test_send_text_returns_id_and_edit_text_passes_through(tmp_path):
 
 
 def test_register_commands_calls_set_my_commands(tmp_path):
-    # AG-16.2：register_commands 透传到 bot.set_my_commands。
+    # register_commands 透传到 bot.set_my_commands。
     fake = FakeBotClient()
     transport = TelegramTransport(
         token="t", chat_id="123", download_dir=tmp_path,
@@ -271,7 +271,7 @@ def test_register_commands_calls_set_my_commands(tmp_path):
 
 
 def test_send_photo_passes_caption_through(tmp_path):
-    # AG-15：send_photo 的 caption 透传到 bot 层。
+    # send_photo 的 caption 透传到 bot 层。
     fake = FakeBotClient()
     transport = TelegramTransport(
         token="t", chat_id="123", download_dir=tmp_path,
@@ -454,7 +454,7 @@ def test_callback_query_from_other_chat_is_dropped_but_still_answered(tmp_path):
 
 
 def test_next_backoff_doubles_and_caps_at_30():
-    # AG-17：get_updates 失败退避 0.1->0.2->0.4...，封顶 30。
+    # get_updates 失败退避 0.1->0.2->0.4...，封顶 30。
     b = 0.1
     seen = []
     for _ in range(12):
@@ -488,7 +488,7 @@ class FakeBotClientGetUpdatesFailsOnce(FakeBotClient):
 
 
 def test_poll_loop_recovers_after_get_updates_failure(tmp_path):
-    # AG-17：get_updates 故障不拖死轮询，退避后恢复，update 最终到达。
+    # get_updates 故障不拖死轮询，退避后恢复，update 最终到达。
     updates = [FakeUpdate(1, FakeMessage("123", text="hello"))]
     fake = FakeBotClientGetUpdatesFailsOnce(updates)
     transport = TelegramTransport(
@@ -505,7 +505,7 @@ def test_poll_loop_recovers_after_get_updates_failure(tmp_path):
 
 
 def test_unknown_message_shape_replies_to_user(tmp_path):
-    # AG-18：视频/语音/贴纸等不认识的消息，用户侧也回一句，别静默。
+    # 视频/语音/贴纸等不认识的消息，用户侧也回一句，别静默。
     updates = [FakeUpdate(1, FakeMessage("123"))]  # 无 photo/document/text
     fake = FakeBotClientWithUpdates(updates)
     transport = TelegramTransport(

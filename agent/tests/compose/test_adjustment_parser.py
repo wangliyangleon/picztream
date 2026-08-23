@@ -130,7 +130,7 @@ def test_classify_gate_reply_unknown_action_raises(monkeypatch):
     assert exc_info.value.code == "unknown_action"
 
 
-# -- 票 11：选片确认阶段改题材要求 --
+# -- 选片确认阶段改题材要求 --
 
 
 def test_classify_gate_reply_set_selection_brief_becomes_a_curate_delta(monkeypatch):
@@ -148,7 +148,7 @@ def test_classify_gate_reply_set_selection_brief_becomes_a_curate_delta(monkeypa
 
 
 def test_selection_brief_change_leaves_existing_exclude_alone(monkeypatch):
-    # 票 11 决策一：exclude 是对具体某张照片的否定，换题材要求不撤销它。
+    # exclude 是对具体某张照片的否定，换题材要求不撤销它。
     # 这里断言的是 delta 里**没有** exclude 这个 key - PlanDelta 走
     # params.update()，不放 key 就是"不动它"，放个空列表才是清空。
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"], exclude=["x.jpg"])
@@ -164,8 +164,8 @@ def test_selection_brief_change_leaves_existing_exclude_alone(monkeypatch):
 
 
 def test_swap_out_and_brief_in_one_sentence_both_take_effect(monkeypatch):
-    # 票 11 验收：一句话里两件事都给了，两件事都生效，且互不擦除。这正是
-    # 决策一选"保留"的理由之一 - 清空的话，同一句话里产生的 exclude 会
+    # 一句话里两件事都给了，两件事都生效，且互不擦除。这正是 exclude 在简
+    # 述变更时保留不动的理由之一 - 清空的话，同一句话里产生的 exclude 会
     # 被同一句话里的 brief 变更擦掉，结果取决于两个字段的应用先后。
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"], exclude=["x.jpg"])
 
@@ -204,7 +204,7 @@ def test_set_apply_tag_and_brief_in_one_sentence_both_take_effect(monkeypatch):
 
 
 def test_adjustment_without_a_brief_does_not_touch_the_existing_one(monkeypatch):
-    # 票 11 决策二的边界：没提题材要求的轮次不能把旧简述清空。缺席与
+    # 替换语义的边界：没提题材要求的轮次不能把旧简述清空。缺席与
     # 显式 null 都是"这次没提"，key 整个不放。
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
@@ -220,7 +220,7 @@ def test_adjustment_without_a_brief_does_not_touch_the_existing_one(monkeypatch)
 
 def test_empty_brief_is_an_explicit_clear_not_an_omission(monkeypatch):
     # 空串 = 用户明确要求去掉题材限制（"不用管题材了，随便选"），是一次
-    # 有意的覆盖，key 必须放进去。沿用票 08 在 DedupFollowupReply 上立的
+    # 有意的覆盖，key 必须放进去。跟 DedupFollowupReply 上那套是同一条
     # 同一套 None/"" 约定。
     run = _make_run(["a.jpg", "b.jpg", "c.jpg"])
 
@@ -245,7 +245,7 @@ def test_set_selection_brief_without_a_brief_raises(monkeypatch):
 
 
 def test_parse_adjustment_does_not_learn_the_new_gate_action(monkeypatch):
-    # 票 11 只扩 gate 那条路径。run_intent 的 parse_adjustment 提示词里
+    # 只有 gate 那条路径认这个动作。run_intent 的 parse_adjustment 提示词里
     # 从没有这个 action，它出现就说明模型在幻觉，仍按未知动作拒掉。
     run = _make_run(["a.jpg"])
 
@@ -257,7 +257,7 @@ def test_parse_adjustment_does_not_learn_the_new_gate_action(monkeypatch):
     assert exc_info.value.code == "unknown_action"
 
 
-# -- 票 13：方案确认阶段也能改题材要求 --
+# -- 方案确认阶段也能改题材要求 --
 
 
 def test_refine_plan_confirmation_changes_the_selection_brief(monkeypatch):
@@ -280,7 +280,7 @@ def test_refine_plan_confirmation_changes_the_selection_brief(monkeypatch):
 
 
 def test_refine_plan_confirmation_keeps_the_brief_when_not_mentioned(monkeypatch):
-    # 票 11 决策二的同一条边界：没提题材要求的轮次不能把旧简述清空。
+    # 同一条边界：没提题材要求的轮次不能把旧简述清空。
     current_params = {"count": 9, "apply_tag": "精选", "ai_enabled": False,
                       "provider": "local", "selection_brief": "要有景有人的"}
 
@@ -506,7 +506,7 @@ def test_classify_dedup_followup_unknown_action_raises():
 
 
 def test_classify_dedup_followup_narrow_carries_a_selection_brief():
-    # 票 08：去重后追问那一处的引导语现在也带题材偏好的例子（五处共用同一
+    # 去重后追问那一处的引导语现在也带题材偏好的例子（五处共用同一
     # 个示例函数），用户照着说了就必须接得住，否则那句引导是死的。
     reply = classify_dedup_followup(
         "留三张有景有人、表情活泼的照片发朋友圈", 8,

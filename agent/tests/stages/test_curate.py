@@ -21,7 +21,7 @@ def _make_client(responses_by_subcommand, call_log):
 
 
 def test_driver_advances_ingest_to_curate_when_dedup_is_absent_from_plan(tmp_path):
-    # W2026-07-21 目标三决策二的回归钉子：这是 CurateStage.inputs 声明
+    # 这是 CurateStage.inputs 声明
     # "Dedup" 时会炸的场景（Driver._next_pending 把 Dedup 当成永远解不开
     # 的依赖），用真实的 IngestStage/CurateStage（而非抽象 FakeStage）跑
     # 一遍才测得出来。
@@ -51,7 +51,7 @@ def test_driver_advances_ingest_to_curate_when_dedup_is_absent_from_plan(tmp_pat
 
 
 def test_curate_stage_declares_ingest_not_dedup_as_input():
-    # W2026-07-21 目标三：Dedup 可能不在这次 Plan 里，声明依赖 "Dedup" 会
+    # Dedup 可能不在这次 Plan 里，声明依赖 "Dedup" 会
     # 让 Driver 的拓扑检查把它当成永远解不开的依赖（回归钉子）。
     stage = CurateStage(client=_make_client({}, []))
 
@@ -167,11 +167,11 @@ def test_curate_passthrough_when_count_is_none_lists_images_excluding_duplicate_
     assert len(call_log) == 4
 
 
-# -- T-25：passthrough 按机读标记过滤，不按中文字面量 --
+# -- passthrough 按机读标记过滤，不按中文字面量 --
 
 
 def test_curate_passthrough_filters_on_system_tags_not_on_the_displayed_tag_name():
-    # 这是 T-25 修的那个失效模式：core 改 canonical 存储名、或未来把系统标
+    # 这里守的失效模式是：core 改 canonical 存储名、或未来把系统标
     # 签名 i18n 化之后，system_tags 照旧是 Reject/Duplicate，而 tags 里换成
     # 了别的词。此前按 "废片"/"重复" 比对 tags 的写法在这里会**静默地一张
     # 都不排**，把废片和重复项当入选结果交付出去。
@@ -212,8 +212,8 @@ def test_curate_passthrough_ignores_the_literal_when_it_is_not_marked_as_a_syste
 
 def test_curate_passthrough_fails_loudly_when_the_pzt_binary_predates_system_tags():
     # 下标不是 .get：字段缺席只可能是接到了过旧的 pzt（CLAUDE.md 记的那个
-    # 静默回落到 brew 的坑）。退回成"一张都不排"会把 T-25 刚消灭的无声失效
-    # 原样请回来，所以这里要求它打成 stage 失败。
+    # 静默回落到 brew 的坑）。退回成"一张都不排"就是上一条用例守的那个无
+    # 声失效，所以这里要求它打成 stage 失败。
     call_log = []
     client = _make_client({
         "images": json.dumps({"project": "proj-1", "images": [
@@ -263,7 +263,7 @@ def test_curate_passthrough_ignores_ai_enabled():
     assert output.ok is True
 
 
-# -- 降级信号（T-8 G4）--
+# -- 降级信号 --
 
 
 def test_ai_fallback_count_survives_into_the_stage_output():
@@ -284,8 +284,8 @@ def test_ai_fallback_count_survives_into_the_stage_output():
 
 
 def test_missing_ai_fallback_count_defaults_to_zero():
-    # PRD 风险三：不带 --ai 时 pzt curate 的 JSON 里这个 key 根本不出现
-    # （不是"出现但恒为 0"，是 W2026-07-21 目标二刻意定的），直接下标会
+    # 不带 --ai 时 pzt curate 的 JSON 里这个 key 根本不出现
+    # （不是"出现但恒为 0"），直接下标会
     # KeyError 把整个 stage 打成失败。
     call_log = []
     client = _make_client({"curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg"]}',
@@ -313,7 +313,7 @@ def test_passthrough_reports_no_fallback():
 
 
 def test_curate_passes_selection_brief_to_pzt_when_present(tmp_path):
-    # 票 08 的最后一段管子：agent 抽出来的简述经 `--brief` 传抵 core，
+    # 简述这条管子的最后一段：agent 抽出来的简述经 `--brief` 传抵 core，
     # core 那边把它拼进模型的选择提示词。
     call_log = []
     client = _make_client({
@@ -332,8 +332,8 @@ def test_curate_passes_selection_brief_to_pzt_when_present(tmp_path):
 
 
 def test_curate_omits_brief_flag_when_there_is_no_selection_brief(tmp_path):
-    # 没有题材要求时不发这个参数，命令行与票 08 之前逐字相同（空串传下去
-    # core 也会整段省掉，但少一个参数少一处能出错的地方）。
+    # 没有题材要求时整个参数不发（空串传下去 core 也会整段省掉，但少一个
+    # 参数就少一处能出错的地方）。
     call_log = []
     client = _make_client({
         "curate": '{"requested": 2, "returned": 2, "selected": ["a.jpg", "b.jpg"]}',
@@ -349,7 +349,7 @@ def test_curate_omits_brief_flag_when_there_is_no_selection_brief(tmp_path):
         assert "--brief" not in argv
 
 
-# -- 文案（票 07 / PRD 决策十五）--
+# -- 文案 --
 
 
 def test_caption_survives_into_the_stage_output():

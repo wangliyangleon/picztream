@@ -1,4 +1,4 @@
-"""PztClient 的流式 stderr 读取（T-8 A.4）。
+"""PztClient 的流式 stderr 读取。
 
 改造前 `_run_cancellable` 轮询 `communicate(timeout=)`，而 communicate
 超时时输出留在内部缓冲区、拿不到已到达的部分，只有子进程退出那一刻才
@@ -147,7 +147,7 @@ def test_error_object_is_still_the_last_stderr_line_after_progress_lines():
 
 
 def test_unparseable_stderr_lines_are_ignored():
-    # dedup 的 F-08 调参明细就是纯文本行，跟进度行混在同一条管道里。解析
+    # dedup 的调参明细就是纯文本行，跟进度行混在同一条管道里。解析
     # 不出来是正常情况，不是异常：为自己的格式假设过期而报错，等于把自己
     # 的 bug 报成用户的错。
     good = json.dumps({"progress": {"phase": "cluster", "done": 1, "total": 1}})

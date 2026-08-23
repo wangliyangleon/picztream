@@ -26,7 +26,7 @@ def _valid_plan_without_dedup(**overrides):
 
 
 def _valid_plan_deferred_curate(count=None):
-    # W2026-07-21 目标三案例二：Dedup 存在、Curate 待定（count=None,
+    # Dedup 存在、Curate 待定（count=None,
     # gate="required"）。count 参数只用于构造"本该是 None 却给了数字"的
     # 非法样例（见 test_rejects_count_present_when_curate_gate_required）。
     plan = _valid_plan(Curate={"count": count})
@@ -164,7 +164,7 @@ def test_rejects_bad_curate_apply_tag(apply_tag):
 
 
 def test_rejects_non_string_selection_brief():
-    # 票 08：简述原样进模型的选择提示词，模型这一步吐出个 dict/数字就是输
+    # 简述原样进模型的选择提示词，模型这一步吐出个 dict/数字就是输
     # 出污染，跟 apply_tag 同一个处置 - 这道护栏的本意就是不让它流进确定性
     # 驱动器。compose_plan 已经把 null 归一成空串，走到这里的非字符串只可
     # 能是别的形状。
@@ -175,8 +175,8 @@ def test_rejects_non_string_selection_brief():
 
 
 def test_accepts_empty_selection_brief_and_treats_a_missing_one_as_empty():
-    # 空串是"这次没有题材要求"的正常表达（验收标准三），不是错误；整个 key
-    # 缺席同理 - 票 08 之前存下来的 Plan 里根本没有这个字段。
+    # 空串是"这次没有题材要求"的正常表达，不是错误；整个 key 缺席同理 -
+    # 更早存下来的 Plan 里根本没有这个字段。
     validate_plan(_valid_plan(Curate={"selection_brief": ""}))
 
     plan = _valid_plan()

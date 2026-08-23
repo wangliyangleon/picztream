@@ -47,7 +47,7 @@ def test_list_active_excludes_terminal_runs(tmp_path):
 
 
 def test_cancelling_marker_crud(tmp_path):
-    # AG-12：cancelling sidecar 标记的 mark/is/list/clear。
+    # cancelling sidecar 标记的 mark/is/list/clear。
     store = RunStore(tmp_path)
     assert store.is_cancelling("run-1") is False
     assert store.list_cancelling() == []
@@ -71,7 +71,7 @@ def test_cancelling_marker_does_not_leak_into_list_active(tmp_path):
 
 
 def test_terminal_runs_older_than_only_picks_old_terminal(tmp_path):
-    # AG-14：只挑"终态 + JSON mtime 够老"的 run。
+    # 只挑"终态 + JSON mtime 够老"的 run。
     import os as _os
     store = RunStore(tmp_path)
     store.save(make_run("old-done", RunStatus.DONE))

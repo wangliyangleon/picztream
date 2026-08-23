@@ -48,7 +48,7 @@ def test_collecting_progress_broadcast_waits_full_interval(tmp_path):
 
 
 def test_collecting_progress_edits_in_place_on_later_ticks(tmp_path):
-    # AG-16.3：同一批的收图进度只占一条消息，后续 tick 走 editMessageText。
+    # 同一批的收图进度只占一条消息，后续 tick 走 editMessageText。
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")
     env.consumer.step()
@@ -67,7 +67,7 @@ def test_collecting_progress_edits_in_place_on_later_ticks(tmp_path):
 
 
 def test_progress_unchanged_text_is_not_resent_or_edited(tmp_path):
-    # AG-16.3：内容没变（照片数没变）就既不发也不编辑，不刷屏。
+    # 内容没变（照片数没变）就既不发也不编辑，不刷屏。
     env = make_consumer(tmp_path)
     env.push_photo("a.jpg")
     env.consumer.step()
@@ -131,7 +131,7 @@ def test_bootstrap_adopts_planned_run(tmp_path):
 
 
 def test_bootstrap_sweeps_stale_terminal_runs(tmp_path):
-    # AG-14：启动清扫终态超保留窗口的 run —— pzt delete 项目 + 删 JSON/文件；
+    # 启动清扫终态超保留窗口的 run —— pzt delete 项目 + 删 JSON/文件；
     # 未超龄的终态 run 保留。
     import os as _os
     from session_fakes import FakeClock
@@ -154,7 +154,7 @@ def test_bootstrap_sweeps_stale_terminal_runs(tmp_path):
 
 
 def test_bootstrap_self_heals_multiple_active_runs(tmp_path):
-    # AG-12：取消/崩溃竞态留下多个非终态 run，bootstrap 不再 assert 拒绝启动，
+    # 取消/崩溃竞态留下多个非终态 run，bootstrap 不再 assert 拒绝启动，
     # 保留 last_activity_at 最新的、其余 cancel 落盘。
     older = _prefill_run(tmp_path, "tg-old", RunStatus.RUNNING)
     newer = _prefill_run(tmp_path, "tg-new", RunStatus.RUNNING)
@@ -173,7 +173,7 @@ def test_bootstrap_self_heals_multiple_active_runs(tmp_path):
 
 
 def test_bootstrap_does_not_revive_a_cancelling_run(tmp_path):
-    # AG-12：用户明确取消过、worker 崩在收尾前的 RUNNING run，bootstrap 补
+    # 用户明确取消过、worker 崩在收尾前的 RUNNING run，bootstrap 补
     # cancel、不复活。
     _prefill_run(tmp_path, "tg-cxl", RunStatus.RUNNING)
     store = RunStore(tmp_path / "runs")

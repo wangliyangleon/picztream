@@ -24,7 +24,7 @@ def test_plan_confirmation_attaches_approve_and_ai_buttons(tmp_path):
     to_planned(env)
 
     # 取消不再是按钮（危险操作）；ai_enabled 默认 False，所以"好的"之外还
-    # 带一个 AI 快捷按钮（W2026-07-21 目标三决策五）。
+    # 带一个 AI 快捷按钮。
     assert env.transport.button_tokens() == ["approve", "ai_curate"]
     chat, text, options = env.transport.sent_buttons[-1]
     run_id = env.consumer.view.run_id
@@ -46,7 +46,7 @@ def test_approve_button_at_planned_starts_drive(tmp_path):
 
 
 def test_approve_button_ignored_while_classify_inflight(tmp_path):
-    # AG-07：打字调整在途(inflight 非空)时点"好的"不该用旧参数抢跑；落地后再点才生效。
+    # 打字调整在途(inflight 非空)时点"好的"不该用旧参数抢跑；落地后再点才生效。
     env = make_consumer(tmp_path)
     run = to_planned(env)
 

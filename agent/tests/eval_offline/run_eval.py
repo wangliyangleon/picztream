@@ -33,11 +33,11 @@ COMPOSE_CASES = [
     "随便挑几张就行，不要太严格",
     "用 claude 评估，留6张，标签叫 精选投稿",
     "这批照片可能有点糊，严格点，多剔除一些",
-    # 票 08 的三条：选片简述抽得对不对，是 prompt 质量问题、不是逻辑问题，
+    # 选片简述这三条：抽得对不对是 prompt 质量问题、不是逻辑问题，
     # 只能靠人读（自动化那边注入假 http_post，验的是接线）。分别要看：
     # 1) 题材偏好与叙事要求进没进简述、张数与用途有没有被它带跑；
-    # 2) 去重/服务商/寒暄这些跟"选哪几张"无关的噪声有没有漏进去（验收标准
-    #    六，透传原文的话必漏）；
+    # 2) 去重/服务商/寒暄这些跟"选哪几张"无关的噪声有没有漏进去（透传原
+    #    文的话必漏）；
     # 3) 什么偏好都没说时是不是干脆给空串，而不是硬编一段出来。
     "选三张有景有人、表情活泼的照片发朋友圈",
     "你好呀～先去重，然后用 gemini 挑5张有小孩的，按拍摄时间顺序排",
@@ -57,16 +57,15 @@ ADJUSTMENT_CASES = [
     {"selected": ["a.jpg", "b.jpg", "c.jpg"], "msg": "标签换成 朋友圈投稿"},
 ]
 
-# 票 11：选片确认闸门上的回复。这一组是本票验收标准最后一条的落点 -
-# 本票往 _GATE_SCHEMA_INSTRUCTION 上加了一个 action 和一个可选字段，而
-# 票 08 的真机教训正是"罐头响应永远绿，往 schema 说明上加规则会挤掉别的
-# 字段"。tests/compose 那边注入假 http_post 验的是接线，挤没挤掉只能真
-# 模型跑一遍、人读。每条要看的：
+# 选片确认闸门上的回复。_GATE_SCHEMA_INSTRUCTION 上每多一个 action 或可
+# 选字段，都要重跑这一组：罐头响应永远绿，而往 schema 说明上加规则是会把
+# 别的字段挤掉的（真机上出过一次）。tests/compose 那边注入假 http_post 验
+# 的是接线，挤没挤掉只能真模型跑一遍、人读。每条要看的：
 #   1-3) 纯题材要求要落成 set_selection_brief，简述里不该混进张数/标签；
 #   4-5) 一句话两件事，count/index 与 selection_brief 必须同时出现（新加
 #        的可选字段最容易在这里把原有字段挤掉）；
 #   6-7) 没提题材要求时 selection_brief 必须缺席或 null，绝不能凭空造一
-#        句出来 - 造出来就等于用户没要求却改了题材（决策二下这是静默覆盖）；
+#        句出来 - 简述是整体替换的，造一句出来就等于静默改掉了用户的题材要求；
 #   8)   明确要求去掉题材限制时才给空串；
 #   9-10) approve/query 不能被新加的 action 抢走。
 GATE_REPLY_CASES = [
@@ -83,7 +82,7 @@ GATE_REPLY_CASES = [
 ]
 
 
-# 票 13：方案确认阶段（PLANNED / refine_plan）。真机 2026-08-03 打出来的那
+# 方案确认阶段（PLANNED / refine_plan）。真机 2026-08-03 打出来的那
 # 两条在这儿：没有 selection_brief 这个可调字段时，"小清新"会被硬塞进
 # apply_tag 或 ai_enabled。每条要看的：
 #   1-2) 纯题材要求 + 数量，两件事都要落到位，且 ai_enabled 不能被带翻；
@@ -120,7 +119,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="compose_plan/parse_adjustment 离线人工 eval(花真实 API 额度)")
     # local 也是一个合法选项：这几个分类器在生产里的默认 meta_provider 就
     # 是 local(Ollama)，拿云端模型验过的 prompt 不等于本地模型也读得懂 -
-    # 票 08 真机踩的正是本地模型把偏好整个吃掉那一次。
+    # 真机上踩过一次本地模型把题材偏好整个吃掉。
     parser.add_argument("--provider", default="gemini", choices=["gemini", "claude", "local"])
     args = parser.parse_args()
 
@@ -149,7 +148,7 @@ def main() -> None:
             continue
         print(f"  PlanDelta(stage_name={delta.stage_name!r}, params={delta.params})")
 
-    print("\n=== classify_gate_reply（票 11）===")
+    print("\n=== classify_gate_reply ===")
     for case in GATE_REPLY_CASES:
         run = _make_run(case["selected"])
         print(f"\n已选：{case['selected']}，闸门回复：{case['msg']!r}")
@@ -161,7 +160,7 @@ def main() -> None:
         params = reply.delta.params if reply.delta is not None else None
         print(f"  action={reply.action!r}, params={params}")
 
-    print("\n=== refine_plan_confirmation（票 13）===")
+    print("\n=== refine_plan_confirmation ===")
     print(f"当前方案：{_CONFIRM_CURRENT}")
     for msg in CONFIRMATION_CASES:
         print(f"\n用户回复：{msg!r}")

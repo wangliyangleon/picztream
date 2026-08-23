@@ -1,4 +1,4 @@
-"""运行期进度播报（T-8 G3）。
+"""运行期进度播报。
 
 在这条改动之前 RUNNING 期间一条周期性消息都没有：`_check_idle_reminder`
 与 `_check_collecting_progress` 都显式跳过 RUNNING，`view.stage_progress`
@@ -47,7 +47,7 @@ def test_first_progress_of_a_stage_is_sent_immediately(tmp_path):
 
 
 def test_progress_between_intervals_updates_the_view_but_does_not_send(tmp_path):
-    # 决策二：core/cli 每次都写，节流在这里做。一个 20 张的簇是 19 次比
+    # core/cli 每次都写，节流在这里做。一个 20 张的簇是 19 次比
     # 较，每次发一条会被 Telegram 限流。
     env, job = _running_env(tmp_path, interval=60.0)
     gen = env.consumer.generation
@@ -77,7 +77,7 @@ def test_progress_sends_again_after_the_interval_elapses(tmp_path):
 
 
 def test_each_stage_starts_a_fresh_progress_message(tmp_path):
-    # 进度是原地编辑的（AG-16.3 的 _send_progress）。不在 StageStarted 时
+    # 进度是原地编辑的（_send_progress）。不在 StageStarted 时
     # 换槽的话，Curate 的进度会去改写 Dedup 那条消息，用户翻回去看到的历
     # 史是错的。
     env, job = _running_env(tmp_path)
@@ -109,7 +109,7 @@ def test_stale_generation_progress_is_dropped(tmp_path):
     assert len(env.transport.sent_texts) == sent_before
 
 
-# -- 取消回执带上部分成果（T-8 决策五）--
+# -- 取消回执带上部分成果 --
 
 
 def test_cancel_receipt_says_how_many_were_already_styled(tmp_path):
@@ -136,7 +136,7 @@ def test_cancel_receipt_stays_bare_when_nothing_was_written(tmp_path):
 
 
 def test_reset_session_clears_the_stage_progress_slot(tmp_path):
-    # 进度消息是原地编辑的（AG-16.3）。槽不随会话重置的话，下一批的第一
+    # 进度消息是原地编辑的。槽不随会话重置的话，下一批的第一
     # 条进度会去编辑上一批那条已经作废的消息。_collecting_progress 一直
     # 是这么做的，运行期这两个是 B.1a 漏掉的。
     env, job = _running_env(tmp_path)
@@ -150,7 +150,7 @@ def test_reset_session_clears_the_stage_progress_slot(tmp_path):
     assert env.consumer._stage_progress_notified_at is None
 
 
-# -- 进度要有个终态（真机反馈）--
+# -- 进度要有个终态（真机反馈） --
 
 
 def test_the_final_tick_is_never_throttled_away(tmp_path):
@@ -198,9 +198,9 @@ def test_progress_message_is_closed_out_at_a_gate(tmp_path):
     assert "正在" not in env.transport.sent_edits[-1][1]
 
 
-# -- 同一个 stage 里换 phase（票 09）--
+# -- 同一个 stage 里换 phase --
 #
-# 票 05 之后，开 AI 的 curate 会在一个 Curate stage 里先比较、后逐张评估。
+# 开 AI 的 curate 会在一个 Curate stage 里先比较、后逐张评估。
 # 两段数的东西不同（次 / 张），挤在同一条消息里原地编辑的话，用户会看到
 # "已完成 160/160 次"直接变成"已完成 1/6 张" - 分子分母同时跳，读起来像
 # 进度条倒退；比较那条的终态句也就永远发不出去了。

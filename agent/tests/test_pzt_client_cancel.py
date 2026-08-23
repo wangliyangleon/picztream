@@ -34,7 +34,7 @@ class FakePopen:
     """可控 Popen 替身：finish_after 次 wait(timeout=...) 超时后才结束；
     terminate/kill 各自记录调用并（可配置地）让进程结束。
 
-    T-8：读取端从轮询 communicate 改成两个读取线程之后，替身也从
+    读取端是两个读取线程而不是轮询 communicate，所以替身也是
     communicate 改成暴露 stdout/stderr 两条管道 + wait()。断言的语义一条
     没变，变的只是 PztClient 跟 Popen 之间的接口面。"""
 

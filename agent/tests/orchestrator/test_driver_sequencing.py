@@ -162,7 +162,7 @@ def test_rerun_stage_resets_downstream_state_and_outputs(tmp_path):
 
 
 def test_rearm_gate_puts_run_back_to_awaiting_gate_at_the_stage(tmp_path):
-    # AG-01：Style 描述没匹配上时退回它自己的闸门重新问——stage 已 DONE，
+    # Style 描述没匹配上时退回它自己的闸门重新问——stage 已 DONE，
     # rearm_gate 把 run 重新挂回 AWAITING_GATE、gate_state 指向该 stage。
     a = FakeStage(name="Style")
     plan = Plan(stages=[StageSpec(name="Style", gate="required")])

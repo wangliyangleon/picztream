@@ -1,4 +1,4 @@
-"""dedup/curate 把跨进程开销接到 ctx.on_cost 上（票 10）。
+"""dedup/curate 把跨进程开销接到 ctx.on_cost 上。
 
 跟进度共用 stages/progress.forwarding 那一个上下文管理器：两条布防在同
 一个地方挂、同一个地方摘，不再各写一份（模块 docstring 里那条"不让某件

@@ -1,4 +1,4 @@
-"""run_telegram.py 启动期的凭证预检（T-10 (b)）。
+"""run_telegram.py 启动期的凭证预检。
 
 只覆盖"凭证不齐时不抛 traceback、给一句指名环境变量的人话、非零退出"这
 一段。main() 后面那半（transport/线程/常驻循环）碰真网络与真线程，不进
@@ -124,7 +124,7 @@ def test_preflight_reports_a_missing_cloud_key_and_skips_ollama(monkeypatch):
 
 
 def test_preflight_never_raises_so_startup_is_never_blocked():
-    # PRD 决策 2：探活失败仅告警,不拒绝启动。这条用例锁的就是"不抛"。
+    # 探活失败仅告警,不拒绝启动。这条用例锁的就是"不抛"。
     def _explode(url):
         raise RuntimeError("something totally unexpected")
 

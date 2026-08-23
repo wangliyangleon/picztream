@@ -63,10 +63,10 @@ def _deferred_curate_driver(tmp_path):
 
 
 def test_answered_gate_stays_answered_so_a_later_adjustment_actually_reruns(tmp_path):
-    """票 12：`rerun_stage(mark_gate_answered=True)` 之后，选片闸门上的调整
+    """`rerun_stage(mark_gate_answered=True)` 之后，选片闸门上的调整
     必须真的重跑 Curate，而不是把"去重后还剩 N 张，要不要再筛选一下？"再问
-    一遍。这个测试此前钉的是缺陷本身（calls 停在 1、status 回到
-    AWAITING_GATE），票 12 把它**有意**翻了过来。"""
+    一遍。不标 gate_answered 的话就是后者：calls 停在 1、status 回到
+    AWAITING_GATE，而 Curate 根本没重跑。"""
     run, stages, curate_spec, driver = _deferred_curate_driver(tmp_path)
 
     driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)  # 追问答完
@@ -83,7 +83,7 @@ def test_answered_gate_stays_answered_so_a_later_adjustment_actually_reruns(tmp_
 def test_answering_a_gate_does_not_rewrite_its_gate_setting(tmp_path):
     """`gate`（配置）与 `gate_answered`（这问题已经有答案了）必须是两个东西。
 
-    票 10 的 rewind 路径用 `curate.gate != "off"` 判断要不要重问"要不要用
+    rewind 路径用 `curate.gate != "off"` 判断要不要重问"要不要用
     AI"（consumer.py `_on_run_rewound`），把 `gate` 直接改成 "off" 会静默
     掐掉那条路径。"""
     run, _, curate_spec, driver = _deferred_curate_driver(tmp_path)
@@ -96,7 +96,7 @@ def test_answering_a_gate_does_not_rewrite_its_gate_setting(tmp_path):
 
 def test_rerun_stage_does_not_answer_the_gate_unless_asked(tmp_path):
     """opt-in：默认不动 `gate_answered`。rerun_style 依赖这条 - Style 的闸门
-    在描述没匹配上 preset 时要靠 AG-01 重新问一次。"""
+    在描述没匹配上 preset 时确实要重新问一次。"""
     run, stages = make_pipeline_run()
     style_spec = next(s for s in run.plan.stages if s.name == "Style")
     style_spec.gate = "required"
@@ -111,7 +111,7 @@ def test_rerun_stage_does_not_answer_the_gate_unless_asked(tmp_path):
 
 
 def test_rearm_gate_reopens_an_already_answered_question(tmp_path):
-    """重新挂闸门 = 又要问一遍，之前那个答案不再算数。票 10 的"停下"路径
+    """重新挂闸门 = 又要问一遍，之前那个答案不再算数。开销告知那条"停下"路径
     正是这个形状：追问答过了，但用户把 Curate 停了，要回到"要不要用 AI"。"""
     run, _, curate_spec, driver = _deferred_curate_driver(tmp_path)
     driver.rerun_stage(run, "Curate", {"count": 5}, mark_gate_answered=True)

@@ -36,7 +36,7 @@ def _planned_run(ai_enabled: bool = False, selection_brief: str = "") -> RunStat
 
 
 def _planned_run_deferred_curate() -> RunState:
-    # W2026-07-21 目标三案例二：Curate 待定（count=None, gate="required"）。
+    # Curate 待定（count=None, gate="required"）。
     plan = Plan(stages=[
         StageSpec(name="Ingest"),
         StageSpec(name="Dedup"),
@@ -130,7 +130,7 @@ def test_from_run_awaiting_gate_restores_selected_count(tmp_path):
 
 
 def test_from_run_awaiting_gate_describe_carries_the_selection_brief(tmp_path):
-    # 票 11：状态查询是用户核对选片简述的第二个入口（同 PLANNED 分支已有
+    # 状态查询是用户核对选片简述的第二个入口（同 PLANNED 分支已有
     # 的理由）。简述替换之后，用户在闸门上问一句"选了几张"，这里说法必须
     # 跟闸门消息一致，否则会读成"方案又变了"。
     run = _planned_run(selection_brief="人物表情活泼")
@@ -190,7 +190,7 @@ def test_describe_running_picks_the_wording_by_what_is_being_counted(tmp_path):
     assert describe("groups") == "正在处理需要比较筛选的照片组，已完成 1/1组"
     assert describe("comparisons") == "正在两两比较、挑出更好的那张，已完成 1/1次"
     assert describe("photos") == "正在套滤镜，已完成 1/1张"
-    # 票 09 的第四类。单位跟 photos 一样是"张"，但活动不同 - 复用 photos
+    # 第四类。单位跟 photos 一样是"张"，但活动不同 - 复用 photos
     # 会让用户在评估阶段看到"正在套滤镜"。
     assert describe("evaluations") == "正在逐张看照片、记下画面内容与优缺点，已完成 1/1张"
 
