@@ -115,7 +115,7 @@ enum class ReplaceTagError {
 };
 
 // 新图片接管旧图片的 position（无序标签则是 NULL 接 NULL），不是追加到末尾
-// ——对应 PRD"替换已有的某一张"这个语义，而不是"删一张、加一张到最后"。
+// ——语义是"替换已有的某一张"，不是"删一张、加一张到最后"。
 Result<void, ReplaceTagError> replace_tag_entry(db::Database& db, TagId tag_id, ImageId old_image,
                                                  ImageId new_image);
 

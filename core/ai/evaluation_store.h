@@ -18,8 +18,8 @@ namespace pzt::core::ai {
 // auto_reject 且模型判了 unusable 时打上废片标签。
 //
 // extra_guidance/provider 是 provenance：模型没返回它们，是发起请求时调用
-// 方就知道的上下文，跟着结果一起落库。curate 那条路径不注入用途(PRD 决策
-// 五：描述保持用途中立，否则缓存只对一种用途有效)，传空串。
+// 方就知道的上下文，跟着结果一起落库。curate 那条路径不注入用途(描述保持
+// 用途中立，否则缓存只对一种用途有效)，传空串。
 //
 // 失败只有一种：写库本身没成功(磁盘满、库损坏)，映射成 StorageFailed。
 // 不抛异常 - worker 那边跑在后台 jthread 上，未捕获异常会 std::terminate。

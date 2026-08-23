@@ -75,7 +75,7 @@ Result<SelectionResult, SelectionError> request_selection(
 //
 // 本模块的**成功路径**（提示词形状、序号解析、约束解码 schema）全部只能这
 // 样测：curate 现有的 AI 用例一律是"让调用必然失败、只验证退化"，照抄等于
-// 零覆盖（PRD 测试决策的现状警告）。
+// 零覆盖。
 namespace detail {
 
 Result<SelectionResult, SelectionError> request_selection_impl(

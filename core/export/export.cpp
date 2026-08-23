@@ -87,8 +87,8 @@ std::optional<SkipReason> write_one_export(db::Database& db, ImageId image_id,
   auto recipe_id = recipe::get_image_recipe(db, image_id);
 
   if (kind == "raw") {
-    // 全量解码：不管有没有 recipe 都要走这一步（M2_PRD.md 已经定了 RAW
-    // 图片导出永远落地成可直接查看的 JPEG），只是有没有 recipe 决定后面
+    // 全量解码：不管有没有 recipe 都要走这一步（RAW 图片导出永远落地成
+    // 可直接查看的 JPEG），只是有没有 recipe 决定后面
     // 要不要再调 render。
     auto decoded = raw_decode_fn(source.string());
     if (!decoded.ok()) return SkipReason::RawDecodeFailed;

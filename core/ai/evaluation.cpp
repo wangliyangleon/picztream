@@ -16,7 +16,7 @@ namespace {
 // 判据从"badly"（要求极端模糊）降到"不足以当作清晰可用的照片"，不再要求
 // 灾难级；(2) 补一条"意外/无意义构图"（没有可辨识主体，比如误拍身体部
 // 位/口袋/地面），覆盖"膝盖照"这类technically 没爆炸但根本不构成一张照片
-// 的情况——这仍然是"硬伤"范畴（PRD 定义的技术/实用性判据），不是转向宽
+// 的情况——这仍然是"硬伤"范畴（判据是技术性与实用性），不是转向宽
 // 泛的审美评分，没打算让 unusable 变成"不够好看就拒"。
 std::string build_evaluation_prompt(const std::string& extra_guidance, Language language) {
   const char* lang_word = language == Language::Chinese ? "Chinese" : "English";
@@ -33,7 +33,7 @@ std::string build_evaluation_prompt(const std::string& extra_guidance, Language 
       "Otherwise unusable is false. Write the assessment in ";
   prompt += lang_word;
   prompt += ".";
-  // content 的措辞是本增量最需要真机调参的地方(PRD 风险二，标高风险)：不点
+  // content 的措辞是这条提示词里最需要真机调参的地方：不点
   // 名这四个要素、不明确禁止重复摄影评语的话，模型会顺着上面 assessment 的
   // 调子继续写"构图均衡、色彩温暖"，两个字段变成同义反复，而下游的跨簇选片
   // 和文案手里就只剩摄影评语、没有画面事实可用。

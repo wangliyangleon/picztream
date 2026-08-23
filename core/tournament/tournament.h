@@ -18,8 +18,8 @@
 // keep_id(见 dedup.h pick_keep_id 的说明)，AI 开时才真的两两送进
 // core::ai::request_comparison 跑单淘汰锦标赛。bracket 推进(谁跟谁比、如
 // 何晋级)是纯确定性算法，不含需要 agent 判断的业务逻辑，所以整个锦标赛
-// (分簇 + 场次推进 + 判定胜者)都收在这一层，一次调用做完——不是像 PRD
-// 最初设想那样把 bracket 推进摆到 agent(Python)侧。见
+// (分簇 + 场次推进 + 判定胜者)都收在这一层，一次调用做完，不摆到
+// agent(Python)侧。见
 // docs/history/W2026-07-21_Tournament_Eng_Design.md 决策一。
 namespace pzt::core::tournament {
 

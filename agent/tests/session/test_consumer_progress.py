@@ -36,8 +36,8 @@ def test_stage_progress_fills_the_view_and_gets_broadcast(tmp_path):
 
 
 def test_first_progress_of_a_stage_is_sent_immediately(tmp_path):
-    # 刚进一个 stage 就等满一个 interval 才吭声，等于 U-10 抱怨的沉默又
-    # 回来了一遍（只是短一点）。第一条必须立刻出去。
+    # 刚进一个 stage 就等满一个 interval 才吭声，等于把这条 sink 要消除
+    # 的那段沉默又请回来一遍（只是短一点）。第一条必须立刻出去。
     env, job = _running_env(tmp_path, interval=600.0)
 
     env.put_event(StageProgress(env.consumer.generation, job.run_id, "Curate", 1, 20, "comparisons"))

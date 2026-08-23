@@ -285,8 +285,8 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
     }
 
     // groups_by_root 是 unordered_map，遍历序不稳定，直接灌进 result
-    // 会让 DuplicateGroup 的顺序跨进程运行不确定，违反 Dedup PRD 的确定性
-    // NFR 字面（打标签集合本身一致，但输出顺序不定）。先把本簇的组收进局部
+    // 会让 DuplicateGroup 的顺序跨进程运行不确定（打标签集合本身一致，
+    // 但输出顺序不定），而这条路径要求确定。先把本簇的组收进局部
     // vector，按组内最小 id（group_ids 已升序，即 front）排序后再 append。
     // cluster 本身已按 captured_at 有序，整体输出即完全确定。
     std::vector<DuplicateGroup> cluster_groups;
