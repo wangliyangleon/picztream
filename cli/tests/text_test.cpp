@@ -19,7 +19,7 @@ TEST_CASE("is_wide_codepoint separates CJK/fullwidth from ASCII/Latin") {
   CHECK_FALSE(is_wide_codepoint('a'));
   CHECK_FALSE(is_wide_codepoint(' '));
   CHECK_FALSE(is_wide_codepoint(0x00E9));  // é 拉丁扩展,窄
-  // F-35：emoji 按宽字符(占 2 列)算,文件名带 emoji 时边框不再错位。
+  // emoji 按宽字符(占 2 列)算,否则文件名带 emoji 时边框会错位。
   CHECK(is_wide_codepoint(0x1F600));   // 😀 表情
   CHECK(is_wide_codepoint(0x1F4F7));   // 📷 相机
   CHECK(is_wide_codepoint(0x1F300));   // 区间下边界
@@ -87,9 +87,9 @@ TEST_CASE("expand_home_path expands a leading ~ only") {
   CHECK(expand_home_path("~user") == "~user");          // 不处理 ~user 形式
 }
 
-// F-22：三个控制台/文本纯函数从 browse.cpp 匿名空间抽到这里,补上此前因位置
-// (编进可执行文件的 TU)而缺失的单元测试。take_scope_token 的引号解析是 E2E
-// 修过的高危区,重点覆盖引号闭合/未闭合边界。
+// 三个控制台/文本纯函数。它们住在 cli/text 而不是 browse.cpp 的匿名空间
+// 里,正是为了能这样不带 tty 地测。take_scope_token 的引号解析是高危区,
+// 重点覆盖引号闭合/未闭合边界。
 
 TEST_CASE("split_console_command splits on first whitespace, tolerating extra spaces") {
   CHECK(split_console_command("/cmd") == std::pair<std::string, std::string>{"cmd", ""});
@@ -141,15 +141,15 @@ TEST_CASE("wrap_tokens breaks only between tokens, counting CJK width as 2") {
 }
 
 TEST_CASE("is_batch_scope_token recognizes the three explicit scope markers") {
-  // T-15 票 D：`.`(当前视图)是第三个批量标记 - 没有这一支的话
+  // `.`(当前视图)是第三个批量标记 - 没有这一支的话
   // `/ai_eval .` 会落进"对当前这一张、额外指引是一个点"那条路径。
   CHECK(is_batch_scope_token("*"));
   CHECK(is_batch_scope_token("."));
   CHECK(is_batch_scope_token("#城市"));
   CHECK(is_batch_scope_token("#\"foo bar\""));
 
-  // 省略作用域 = 对当前这一张，不是批量(PRD #28 决策 D-4 否决了"省略作用
-  // 域"当视图讲的方案)。
+  // 省略作用域 = 对当前这一张，不是批量：空 token 不当视图讲，视图要显式
+  // 写 `.`。
   CHECK_FALSE(is_batch_scope_token(""));
   // 裸词不是标记:忘了打 `#` 的典型误输入形态，照样走单张路径。
   CHECK_FALSE(is_batch_scope_token("城市"));
@@ -159,7 +159,7 @@ TEST_CASE("is_batch_scope_token recognizes the three explicit scope markers") {
   CHECK_FALSE(is_batch_scope_token(".jpg"));
 }
 
-// T-17 票 E（#39 决策 D-1）：`/pick <N>` 的 N 必须是正整数，不设默认值。
+// `/pick <N>` 的 N 必须是正整数，没有默认值。
 // `/pick`、`/pick 0`、`/pick -1`、`/pick abc` 全部报错 - 不是四条各自的
 // 判断，是同一个"不是一个正整数 token"的否定。
 TEST_CASE("parse_positive_int_arg accepts exactly one positive decimal integer") {
@@ -171,7 +171,7 @@ TEST_CASE("parse_positive_int_arg accepts exactly one positive decimal integer")
   CHECK(parse_positive_int_arg("  20  ") == 20);
 }
 
-TEST_CASE("parse_positive_int_arg rejects everything D-1 requires to error") {
+TEST_CASE("parse_positive_int_arg rejects every non-positive-integer form") {
   CHECK_FALSE(parse_positive_int_arg("").has_value());        // /pick
   CHECK_FALSE(parse_positive_int_arg("0").has_value());       // /pick 0
   CHECK_FALSE(parse_positive_int_arg("-1").has_value());      // /pick -1

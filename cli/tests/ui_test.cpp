@@ -7,10 +7,10 @@
 
 using namespace pzt::cli::ui;
 
-// issue #19：向导要在"当前输入为空时按 Backspace"这一种情况上回退到上一
-// 个字段，而这个判断原来埋在 read_line_edit_step 里(直接读 stdin,没有
-// tty 就测不了)。把退格这一步抽成纯函数之后，"空 buffer" 与"删一个完整
-// UTF-8 码点"两种语义都能不碰终端地测。
+// 向导要在"当前输入为空时按 Backspace"这一种情况上回退到上一个字段。这
+// 个判断摘成纯函数而不是埋在 read_line_edit_step 里(那个直接读 stdin,没
+// 有 tty 就测不了)，"空 buffer" 与"删一个完整 UTF-8 码点"两种语义才能不
+// 碰终端地测。
 TEST_CASE("apply_backspace: 空 buffer 上的退格报告出来,交给调用方决定语义") {
   std::string buffer;
   std::size_t cursor = 0;

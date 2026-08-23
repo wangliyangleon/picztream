@@ -92,8 +92,9 @@ TEST_CASE("tags_for_menu 正好到上限时全部显示,没有隐藏项,但已�
   CHECK(menu.at_limit == true);
 }
 
-// T-24 的核心场景:老项目(在"建到上限就挡住"之前建的)可能已经有 8 个以上
-// 标签。截断必须保留,但超出的数量要报出来,不能像以前那样静默丢掉。
+// 老项目(在"建到上限就挡住"这条规则之前建的)可能已经有 8 个以上标签。截
+// 断必须保留,但超出的数量要报出来,静默丢掉的话那些标签在菜单里就不存在
+// 了,而 `pzt tag list` 还看得到。
 TEST_CASE("tags_for_menu 超过上限时截断,并报出被藏起来的数量") {
   ScopedConfigHome guard("menu_tags_over");
   auto project_id = make_project("menu_tags_over");

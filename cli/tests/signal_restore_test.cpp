@@ -9,7 +9,7 @@
 
 using namespace pzt::cli::term::signal_restore;
 
-// T-9a：信号路径上的终端还原。真正的端到端行为(Ctrl-C 之后终端是否干
+// 信号路径上的终端还原。真正的端到端行为(Ctrl-C 之后终端是否干
 // 净)只能在真机上验,这里覆盖的是可测的那部分——登记/撤销登记的状态机
 // 与写出的字节序列。信号处理函数本身不在这里触发:它最后会把处置改回
 // SIG_DFL 再 raise,会直接杀掉测试进程。
@@ -124,7 +124,7 @@ TEST_CASE("termios arming is independent of alt-screen arming") {
   reset_arming();
 }
 
-// T-9b：CancelScope。真机行为(按 Ctrl-C 之后 /dedup 停下来)只能人工验，
+// CancelScope。真机行为(按 Ctrl-C 之后 /dedup 停下来)只能人工验，
 // 这里覆盖状态机——作用域内外的 SIGINT 处置、粘性、回显字节。
 // 用 raise(SIGINT) 直接触发：作用域内的处理函数不再终止进程，可以安全地
 // 在测试进程里跑。

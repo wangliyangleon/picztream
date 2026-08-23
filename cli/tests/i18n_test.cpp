@@ -10,10 +10,10 @@
 using namespace pzt::cli::i18n;
 
 TEST_CASE("i18n language initialization and switching") {
-  // F-12 之后 init_lang() 会读 Settings.lang，Settings 又是从
+  // init_lang() 会读 Settings.lang，Settings 又是从
   // XDG_CONFIG_HOME/pzt/config.json 加载的——不隔离这个环境变量的话，
   // 这条用例读的是开发者/用户真实的 config.json，一旦那份文件里写了
-  // "lang" 字段（比如手动测过 F-12 之后忘记还原），就会盖过这里
+  // "lang" 字段（比如手动测过之后忘记还原），就会盖过这里
   // setenv("LANG", ...) 想测的系统 LANG 兜底逻辑，测试变得依赖运行机
   // 器上的真实文件内容。指向一个确定不存在的目录，保证 Settings 全程
   // 是默认值(lang = nullopt)。
@@ -71,8 +71,7 @@ TEST_CASE("i18n localized text strings") {
 // 那条原本也有个 banner 短版,真机验收之后改成进备用屏幕之前打(见
 // warn_terminal_detail 的注释),现在还走 banner 的就是 B.1 这两条。
 // 80 列终端 -> content_cols 54。留两列余量,这个预算的意义是"以后谁想给这
-// 些走 banner 的文案加内容,先过这一关"。T-24 又加了两个使用点,提到文件作
-// 用域共用一份。
+// 些走 banner 的文案加内容,先过这一关"。多个用例共用,所以提到文件作用域。
 const std::size_t kNarrowestBanner = 52;
 
 TEST_CASE("messages that go through the banner fit the narrowest common terminal") {
@@ -117,7 +116,7 @@ TEST_CASE("terminal warning detail names the fix and points at the off switch") 
   g_lang = Lang::zh;  // 还原
 }
 
-// F-11：dedup 结果文案在实际标记到重复图片时带上"按 f 9 查看"入口提
+// dedup 结果文案在实际标记到重复图片时带上"按 f 9 查看"入口提
 // 示；标记数为 0 时不带（范围内没有新重复组，提示了也是空列表）。
 // 键名断言的是 f 不是 g:筛选入口从 g 改成 f 时这句文案漏改了，真机反馈
 // (2026-07-29)才发现，而这条用例当时还在断言旧键、跟着一起绿——所以现在
@@ -144,7 +143,7 @@ TEST_CASE("msg_dedup_result includes entry hint only when images were tagged") {
   g_lang = Lang::zh;  // 还原
 }
 
-// F-08：范围内有图片因为没有拍摄时间被跳过时,结果文案带一句提示;
+// 范围内有图片因为没有拍摄时间被跳过时,结果文案带一句提示;
 // 没有跳过的常见路径不受影响,不多带一句空话。
 TEST_CASE("msg_dedup_result mentions skipped-no-capture-time count only when nonzero") {
   g_lang = Lang::zh;
@@ -165,7 +164,7 @@ TEST_CASE("msg_dedup_result mentions skipped-no-capture-time count only when non
   g_lang = Lang::zh;  // 还原
 }
 
-// W2026-07-21 目标二 + `/dedup --ai`：某几组因为 AI 比较失败而退化成"保
+// `/dedup --ai`：某几组因为 AI 比较失败而退化成"保
 // 留最新的一张"时带一句说明,不开 --ai 的常见路径(恒为 0)不受影响。
 TEST_CASE("msg_dedup_result mentions ai fallback count only when nonzero") {
   g_lang = Lang::zh;
@@ -250,7 +249,7 @@ TEST_CASE("info_active_filters_label joins tag name and console criterion compac
   g_lang = Lang::zh;  // 还原
 }
 
-// F-09：`/filter` 计算结果为空、以及非法筛选条件这两条独立文案,分别跟
+// `/filter` 计算结果为空、以及非法筛选条件这两条独立文案,分别跟
 // msg_filter_no_images(标签语义)和 err_console_invalid_scope(范围语
 // 法)区分开,不复用。
 TEST_CASE("msg_console_filter_no_images and err_console_invalid_filter_criterion follow language") {
@@ -265,7 +264,7 @@ TEST_CASE("msg_console_filter_no_images and err_console_invalid_filter_criterion
   g_lang = Lang::zh;  // 还原
 }
 
-// T-17 票 E 真机反馈：`/pick` 跑完一批之后废片占大多数，`reject` 只挑得
+// `/pick` 跑完一批之后废片占大多数，`reject` 只挑得
 // 出刚判废的那批，没有反过来"挑幸存者"的写法，补第五支 `fine` = 不带废
 // 片也不带重复标签。这里钉住"合法值"报错文案与 /help filter 都认识它，
 // 不是只在 browse.cpp 的 dispatch 里悄悄加一支没人能从文案发现的分支。
@@ -280,10 +279,10 @@ TEST_CASE("err_console_invalid_filter_criterion and /help filter both know about
   g_lang = Lang::zh;  // 还原
 }
 
-// T-15（#30）：`.`（当前视图）这一支的作用域错误有自己的文案，不能复用
-// err_console_invalid_scope。整条决策（PRD #28 D-6 第二条）就是"`.` 是合
-// 法写法，报语法错是撒谎"，两句话说成一句等于把那条决策原地取消，所以这
-// 里连内容一起断言，不只断言两种语言都非空。
+// `.`（当前视图）这一支的作用域错误有自己的文案，不能复用
+// err_console_invalid_scope：`.` 是合法写法，报语法错是撒谎。两句话说成
+// 一句就是原地取消这条区分，所以这里连内容一起断言，不只断言两种语言都
+// 非空。
 TEST_CASE("err_console_scope_no_view is its own text, not the invalid-scope one") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
@@ -301,7 +300,7 @@ TEST_CASE("err_console_scope_no_view is its own text, not the invalid-scope one"
   g_lang = Lang::zh;  // 还原
 }
 
-// F-09：placeholder 提示要包含新命令的用法,不然用户按 `:` 之后完全不
+// placeholder 提示要包含每条命令的用法,不然用户按 `:` 之后完全不
 // 知道 /filter 存在。
 TEST_CASE("msg_ai_prompt_placeholder mentions /filter usage") {
   g_lang = Lang::zh;
@@ -313,10 +312,9 @@ TEST_CASE("msg_ai_prompt_placeholder mentions /filter usage") {
   g_lang = Lang::zh;  // 还原
 }
 
-// 真机反馈：按 `:` 之后看到的这行提示曾经漏了 `/recipe`(T-15 票 C 添加
-// 命令时没有回来补这一行)和 `/pick`(T-17 票 E 犯了同样的疏漏) - 用户在
-// 这一刻能看到的命令列表跟 `/help` 的总览是两份独立维护的文案，加新命
-// 令时两处都要动,漏一处的失效模式是命令能用但用户第一眼看不到它存在。
+// 这行提示漏过命令不止一次:加新控制台命令时容易只改 `/help` 的总览、忘
+// 了回来补这一行。两处是独立维护的文案，漏一处的失效模式是命令能用但用
+// 户按 `:` 的第一眼看不到它存在。
 TEST_CASE("msg_ai_prompt_placeholder mentions every console command, not just /filter") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
@@ -356,8 +354,8 @@ TEST_CASE("msg_help_overview lists every command and msg_help_command covers eac
   g_lang = Lang::zh;  // 还原
 }
 
-// T-15 票 D（#32 验收）：`.` 接进 `/dedup` 与 `/ai_eval` 之后，两条命令
-// 的 `/help` 详情必须说出这种写法 - `.` 是**没有别处可发现**的：`*` 与
+// `/dedup` 与 `/ai_eval` 的 `/help` 详情必须说出 `.` 这种写法 - 它是
+// **没有别处可发现**的：`*` 与
 // `#标签` 用户在别处见得到(标签栏、filter 提示)，一个孤零零的点只可能从
 // 文档或这里学到。文案漏了它，等于这一票只做了一半。
 TEST_CASE("msg_help_command documents the `.` (current view) scope for dedup and ai_eval") {
@@ -377,7 +375,7 @@ TEST_CASE("msg_help_command documents the `.` (current view) scope for dedup and
 
 // 同上的另一半：`.` 成为合法写法之后，"范围写错了"那句话不能还在只列
 // `*` 和 `#标签名` - 用户照它改，改出来的还是不含 `.` 的两种写法。这跟
-// err_console_scope_no_view 那条是同一个"不撒谎"的要求(PRD #28 D-6)。
+// err_console_scope_no_view 那条是同一个"不撒谎"的要求。
 TEST_CASE("err_console_invalid_scope lists `.` alongside the other two forms") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
@@ -461,7 +459,7 @@ TEST_CASE("msg_console_requires_slash points users at /help") {
   g_lang = Lang::zh;  // 还原
 }
 
-// F-05:main() 的异常边界兜底提示——只验证文案本身正确拼接、跟着语言切
+// main() 的异常边界兜底提示——只验证文案本身正确拼接、跟着语言切
 // 换,异常真正被捕获、终端状态被正确还原这件事只能靠真机验证(main()
 // 本身不是单元测试能覆盖的粒度)。
 TEST_CASE("err_internal_error includes the exception message and follows language") {
@@ -476,7 +474,7 @@ TEST_CASE("err_internal_error includes the exception message and follows languag
   g_lang = Lang::zh;  // 还原
 }
 
-// F-03：评估失败提示——只验证文案包含图片 id 和一句能区分错误类型的原
+// 评估失败提示——只验证文案包含图片 id 和一句能区分错误类型的原
 // 因，具体措辞不是接口契约。
 TEST_CASE("msg_unknown_key names the key pressed and points at the real filter key") {
   g_lang = Lang::zh;
@@ -493,7 +491,7 @@ TEST_CASE("msg_unknown_key names the key pressed and points at the real filter k
 }
 
 // usage 里的按键说明必须跟 browse.cpp 主循环实际接受的键一致。这条长期
-// 不一致(写 g、实际是 f)，是 T-3 的起因。
+// 不一致过(写 g、实际是 f)，所以钉住它。
 TEST_CASE("usage_main advertises f as the filter key, not g") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
@@ -507,9 +505,9 @@ TEST_CASE("usage_main advertises f as the filter key, not g") {
   g_lang = Lang::zh;  // 还原
 }
 
-// T-18：`:` 控制台是 /dedup(近似重复检测的唯一交互入口)、/ai_eval、/filter、
-// /tasks 的唯一入口，此前在 usage 里一个字都没有 - 只看 usage 的人不会知道
-// 去重功能存在。这条钉住"入口本身可发现"，不钉具体命令清单的排版。
+// `:` 控制台是 /dedup(近似重复检测的唯一交互入口)、/ai_eval、/filter、
+// /tasks 的唯一入口。usage 里不提它的话，只看 usage 的人不会知道去重功能
+// 存在。这条钉住"入口本身可发现"，不钉具体命令清单的排版。
 TEST_CASE("usage_main advertises the : console and the commands behind it") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
@@ -528,7 +526,7 @@ TEST_CASE("usage_main advertises the : console and the commands behind it") {
   g_lang = Lang::zh;  // 还原
 }
 
-// T-18：这句空标签提示曾把用户指向 `pzt tag create`，而 cmd_tag 只 dispatch
+// 这句空标签提示曾把用户指向 `pzt tag create`，而 cmd_tag 只 dispatch
 // list/apply/clear - 那个命令从来不存在。标签只能在 `pzt open` 里建(space 进
 // 标签菜单、c 新建)，提示必须指向真实存在的路径。
 TEST_CASE("msg_tag_list_empty points at a path that actually exists") {
@@ -558,9 +556,9 @@ TEST_CASE("err_db_schema_too_new carries both versions and follows language") {
   g_lang = Lang::zh;  // 还原
 }
 
-// T-23：文案原来只有裸数据库 ID("图 47")，而用户手上只有文件名，界面
-// 其它每一处也都用 file_name 展示,那个数字无从对照。现在优先报文件名，
-// 只在图片记录查不到(比如"图片已不存在"这类失败本身)时才回落到 ID。
+// 必须优先报文件名:裸数据库 ID("图 47")对用户毫无意义 - 他手上只有文件
+// 名，界面其它每一处也都用 file_name 展示。只在图片记录查不到(比如"图片
+// 已不存在"这类失败本身)时才回落到 ID。
 TEST_CASE("msg_ai_evaluation_failed reports the file name and a reason, follows language") {
   g_lang = Lang::zh;
   auto zh_text =
@@ -599,7 +597,7 @@ TEST_CASE("msg_ai_evaluation_failed falls back to the image id when the file nam
   g_lang = Lang::zh;  // 还原
 }
 
-// T-23 的另一半：一次批量评估里失败不止一条时，光报最近那一条会让用户
+// 上一条的另一半：一次批量评估里失败不止一条时，光报最近那一条会让用户
 // 以为只错了一张。累计失败张数要出现在文案里，那才是"值得停下来检查环
 // 境"的信号；最近一条仍然报出来，因为它带着具体原因。
 TEST_CASE("msg_ai_evaluation_failed reports the running total when more than one has failed") {
@@ -643,8 +641,8 @@ TEST_CASE("msg_ai_tasks_status mentions the cumulative failure count only when t
   g_lang = Lang::zh;  // 还原
 }
 
-// T-24：超出上限的标签在菜单里选不到,以前是完全静默的。截断本身保留(老项
-// 目可能已经有 8 个以上),但必须报出被藏起来的数量。
+// 超出上限的标签在菜单里选不到。截断本身保留(老项目可能已经有 8 个以
+// 上),但必须报出被藏起来的数量,不能静默。
 TEST_CASE("tag/filter 菜单在有标签被截断时报出隐藏数量,没截断时不加噪音") {
   for (Lang lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
@@ -659,11 +657,11 @@ TEST_CASE("tag/filter 菜单在有标签被截断时报出隐藏数量,没截断
   g_lang = Lang::zh;  // 还原
 }
 
-// T-24：这两条注记必须挂在操作行,不能挂在编号行。编号行排满 8 个标签就要
+// 这两条注记必须挂在操作行,不能挂在编号行。编号行排满 8 个标签就要
 // 100 列开外,而 content_cols 只有终端宽度的 70%(120 列的终端上是 82),
 // pad_to 从尾部截,挂在编号行的话恰恰在标签最多、最该提示的时候第一个被切
 // 掉。这条用例守的就是这件事:操作行连同注记必须能在窄终端里放下。
-TEST_CASE("菜单操作行连同 T-24 的注记一起,在窄终端里放得下") {
+TEST_CASE("菜单操作行连同截断/已满注记一起,在窄终端里放得下") {
   for (Lang lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
     // 最坏情况:已满标记和隐藏数量同时出现,数量取两位数。
@@ -674,7 +672,7 @@ TEST_CASE("菜单操作行连同 T-24 的注记一起,在窄终端里放得下")
   g_lang = Lang::zh;  // 还原
 }
 
-// T-24：`c` 新建在已满时会被挡住,菜单上就得先说清楚,不能让用户按下去才
+// `c` 新建在已满时会被挡住,菜单上就得先说清楚,不能让用户按下去才
 // 知道-跟 recipe_menu 那条 version 上限一样的处理。
 TEST_CASE("tag_menu_actions_line 在已满时标记 c,未满时不标记") {
   for (Lang lang : {Lang::zh, Lang::en}) {
@@ -694,7 +692,7 @@ TEST_CASE("tag_menu_actions_line 在已满时标记 c,未满时不标记") {
   g_lang = Lang::zh;  // 还原
 }
 
-// T-24：挡住之后必须说清楚上限是多少、怎么才能继续建,否则只是把静默截断
+// 挡住之后必须说清楚上限是多少、怎么才能继续建,否则只是把静默截断
 // 换成一句静默拒绝。
 TEST_CASE("tag_menu_limit_reached 报出上限数字并指出出路") {
   g_lang = Lang::zh;
@@ -748,17 +746,17 @@ std::vector<std::string> string_literals_in(const std::string& path) {
   return literals;
 }
 
-// T-15 票 E：cli 显示文案里表示 recipe 这个概念的词统一成"配方"/Recipe。
+// cli 显示文案里表示 recipe 这个概念的词统一成"配方"/Recipe。
 // 依据是 ADR-0002：配方(recipe)是 cli/core 的词-精确、可执行的那个调色对
 // 象;风格(style)是 agent 的词-用户口语里"我想要什么感觉",模糊、不可直接
 // 执行。坐在终端前按 r 的人做的是"在 10 个预设里选第 3 个",他选的是精确
 // 对象,不是在表达偏好,所以 cli 这一侧不该出现"风格"。
 //
 // 守卫扫的是 i18n.cpp 里的字符串字面量,不是挨个调用几个函数-枚举只能盖住
-// 立项时就存在的那几条,拦不住以后新写的文案,而票 C 马上要写一批新文案。
+// 写它的那一刻存在的那几条,拦不住以后新写的文案。
 // 注释不在扫描范围内:那里面的"风格"多数是"vim 风格"/"留白风格"这种通用词
 // 义,本来就不该改。
-TEST_CASE("T-15：cli 显示文案里不出现\"风格\"/Style") {
+TEST_CASE("cli 显示文案里不出现\"风格\"/Style") {
   auto literals = string_literals_in(PZT_I18N_SOURCE);
   // 扫出来的量级不对就说明扫描器本身坏了(比如路径变了、或者剥注释剥过头),
   // 那样后面每条断言都会"通过",守卫静默失效。
@@ -772,7 +770,7 @@ TEST_CASE("T-15：cli 显示文案里不出现\"风格\"/Style") {
 
 // 上面那条只保证"风格"没了。光删词不算统一-概念本身还得在文案里露出来,
 // 否则用户在菜单和 usage 里都找不到这个功能。
-TEST_CASE("T-15：配方这个概念仍然出现在菜单、usage 和报错里") {
+TEST_CASE("配方这个概念仍然出现在菜单、usage 和报错里") {
   g_lang = Lang::zh;
   CHECK(info_style_label() == "配方:");
   CHECK(usage_main().find("配方") != std::string::npos);
@@ -795,11 +793,11 @@ TEST_CASE("T-15：配方这个概念仍然出现在菜单、usage 和报错里")
   g_lang = Lang::zh;  // 还原
 }
 
-// T-15 票 C 决策 D-14：批量菜单是 `r` 菜单的**子集**。`v`/`c`/`d` 不是
-// "画上去按下给一句不可用",是根本不出现在图例上-三个选项各自的理由见
-// issue #33。图例是用户判断"这个菜单能做什么"的唯一依据,多画一个就是在
-// 承诺一件做不到的事。
-TEST_CASE("T-15：批量配方菜单的图例只有清除和取消,没有 v/c/d") {
+// 批量菜单是 `r` 菜单的**子集**。`v`/`c`/`d` 不是"画上去按下给一句不可
+// 用",是根本不出现在图例上(理由见 cli/i18n/i18n.cpp 那个函数的注释)。图
+// 例是用户判断"这个菜单能做什么"的唯一依据,多画一个就是在承诺一件做不到
+// 的事。
+TEST_CASE("批量配方菜单的图例只有清除和取消,没有 v/c/d") {
   // 图例里每个选项都是 menu_item 拼的 "键:[文案]",且前面必有空格(行首一
   // 个、选项之间两个)，所以连空格一起找。只找 "键:[" 不带空格会误报:
   // "Esc:[" 里就含着一个 "c:["，那会让这条守卫在一份完全正确的图例上红。
@@ -813,7 +811,7 @@ TEST_CASE("T-15：批量配方菜单的图例只有清除和取消,没有 v/c/d"
     CHECK_FALSE(has_key(batch, "v"));
     CHECK_FALSE(has_key(batch, "c"));
     CHECK_FALSE(has_key(batch, "d"));
-    // 清除留着:D-8 定了不做撤销,批量清除是唯一的兜底路径。
+    // 清除留着:这条路上没有撤销,批量清除是唯一的兜底路径。
     CHECK(has_key(batch, "r"));
     CHECK(has_key(batch, "Esc"));
   }
@@ -821,7 +819,7 @@ TEST_CASE("T-15：批量配方菜单的图例只有清除和取消,没有 v/c/d"
 }
 
 // 单张那份必须原样保留 v/c/d,否则"子集"这个说法就变成了"两边都砍了"。
-TEST_CASE("T-15：单张配方菜单的图例仍然带 v/c/d") {
+TEST_CASE("单张配方菜单的图例仍然带 v/c/d") {
   g_lang = Lang::zh;
   auto single = recipe_menu_actions_line(/*has_recipe=*/true);
   CHECK(single.find(" v:[") != std::string::npos);
@@ -831,7 +829,7 @@ TEST_CASE("T-15：单张配方菜单的图例仍然带 v/c/d") {
 
 // `/recipe` 得能在 /help 里被找到。总览漏一条的失效模式是"功能上线了但没
 // 人知道",而这正是控制台命令唯一的发现入口。
-TEST_CASE("T-15：/help 总览与详情都认识 /recipe") {
+TEST_CASE("/help 总览与详情都认识 /recipe") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
     CHECK(msg_help_overview().find("/recipe") != std::string::npos);
@@ -840,23 +838,23 @@ TEST_CASE("T-15：/help 总览与详情都认识 /recipe") {
     CHECK(usage_main().find("/recipe") != std::string::npos);
     auto detail = msg_help_command("recipe");
     REQUIRE(detail.has_value());
-    // 详情要说清两件事:作用域写在命令里、配方在回车之后选(决策 D-2)。
+    // 详情要说清两件事:作用域写在命令里、配方在回车之后选。
     CHECK(detail->find("/recipe *") != std::string::npos);
     CHECK(detail->find("/recipe .") != std::string::npos);
   }
   g_lang = Lang::zh;
 }
 
-// 确认文案的主角是 M(见 D-9)。N 与 M 都必须真的出现在第一行里-把数字
+// 确认文案的主角是 M。N 与 M 都必须真的出现在第一行里-把数字
 // 漏掉的失效模式是用户看着一句没有量的话按 y。
-TEST_CASE("T-15：批量确认第一行同时报出 N 与 M") {
+TEST_CASE("批量确认第一行同时报出 N 与 M") {
   g_lang = Lang::zh;
   auto apply_line = msg_recipe_batch_confirm_line1(90, 7, std::string("City Pop"));
   CHECK(apply_line.find("90") != std::string::npos);
   CHECK(apply_line.find("7") != std::string::npos);
   CHECK(apply_line.find("City Pop") != std::string::npos);
 
-  // M=0 时文案照出(D-9 否决了"只在 M>0 时确认"),只是不可逆那部分为零。
+  // M=0 时文案照出(确认是**总是**弹的),只是不可逆那部分为零。
   CHECK(msg_recipe_batch_confirm_line1(90, 0, std::string("City Pop")).find("90") !=
         std::string::npos);
 
@@ -866,10 +864,10 @@ TEST_CASE("T-15：批量确认第一行同时报出 N 与 M") {
   CHECK(clear_line.find("7") != std::string::npos);
 }
 
-// T-17 票 E（#39）：`/pick` 得能在两个发现入口(usage 与 /help)里被找到，
-// 详情要说清 PRD 点名不能省的三件事:范围固定为当前视图、未入选会被打
-// 废片、撤销路径是 /filter reject + x。
-TEST_CASE("T-17：/help 总览与详情都认识 /pick") {
+// `/pick` 得能在两个发现入口(usage 与 /help)里被找到，详情要说清三件不
+// 能省的事:范围固定为当前视图、未入选会被打废片、撤销路径是
+// /filter reject + x。
+TEST_CASE("/help 总览与详情都认识 /pick") {
   for (auto lang : {Lang::zh, Lang::en}) {
     g_lang = lang;
     CHECK(msg_help_overview().find("/pick") != std::string::npos);
@@ -900,7 +898,7 @@ TEST_CASE("err_pick_bad_args is non-empty and follows language") {
   g_lang = Lang::zh;
 }
 
-// D-13：开跑前的两行确认，报四个数 - C/m/X 在第一行，Y 在第二行。
+// 开跑前的两行确认，报四个数 - C/m/X 在第一行，Y 在第二行。
 TEST_CASE("msg_pick_confirm_line1/line2 report all four numbers from PickCost") {
   g_lang = Lang::zh;
   auto line1 = msg_pick_confirm_line1(200, 40, 313);
@@ -910,7 +908,7 @@ TEST_CASE("msg_pick_confirm_line1/line2 report all four numbers from PickCost") 
 
   auto line2 = msg_pick_confirm_line2(180);
   CHECK(line2.find("180") != std::string::npos);
-  // 按键提示两个都要在:D-13 沿用"y 开始/其它键取消"的既有形态。
+  // 按键提示两个都要在:沿用"y 开始/其它键取消"的既有形态。
   CHECK(line2.find("y") != std::string::npos);
 }
 
@@ -952,7 +950,7 @@ TEST_CASE("msg_pick_cancelled and err_pick_failed are distinct, non-empty, follo
   g_lang = Lang::zh;
 }
 
-// D-20：回执报 N(已选)与 Y(打上废片)两个数。
+// 回执报 N(已选)与 Y(打上废片)两个数。
 TEST_CASE("msg_pick_result reports both the selected and rejected counts") {
   g_lang = Lang::zh;
   auto msg = msg_pick_result(20, 180);

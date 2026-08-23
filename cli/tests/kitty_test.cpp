@@ -158,7 +158,7 @@ TEST_CASE("kitty_support_likely inside tmux relies on GHOSTTY_* only") {
 }
 
 TEST_CASE("kitty_support_likely inside tmux ignores TERM and TERM_PROGRAM entirely") {
-  // 这条锁住决策二:tmux 内这两个变量的值只可能来自 tmux 自己,看它们会稳
+  // tmux 内这两个变量的值只可能来自 tmux 自己,看它们会稳
   // 定误判。即便 TERM_PROGRAM 恰好是 ghostty(比如用户手动 export 过),没有
   // GHOSTTY_* 就仍然判不命中 - 依据必须是那条真正残留下来的信号。
   CHECK(kitty_support_likely(env_with({{"TERM_PROGRAM", "ghostty"},
