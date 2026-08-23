@@ -462,7 +462,7 @@ TEST_CASE("ensure_reject_tag and ensure_duplicate_tag coexist as two distinct sy
   CHECK(list_tags(fx.db, fx.project_id).size() == 2);
 }
 
-// T-25：系统标签的稳定 ASCII 别名。纯函数，不碰库。
+// 系统标签的稳定 ASCII 别名。纯函数，不碰库。
 TEST_CASE("system_tag_alias maps the two system tags to their stable ASCII identifiers") {
   auto reject = system_tag_alias(kRejectTagName);
   REQUIRE(reject.has_value());
@@ -491,7 +491,7 @@ TEST_CASE("the scope alias and the machine-readable marker are the same tokens")
   CHECK(*system_tag_alias(kDuplicateTagName) == std::string(kDuplicateTagAlias));
 }
 
-// F-26/F-09：只返回请求范围内、确实打了目标标签的图片，不是"这个标签下
+// 只返回请求范围内、确实打了目标标签的图片，不是"这个标签下
 // 所有图片"（那是 filter_by_tag 的职责）。
 TEST_CASE("images_with_tag returns only the images in scope that carry the given tag") {
   auto fx = make_fixture("images_with_tag_basic", 3);

@@ -168,7 +168,7 @@ TEST_CASE("request_json builds a request body containing the image, prompt and s
   CHECK(captured_body.find("\"data\"") != std::string::npos);
 }
 
-// W2026-07-21：多图重载(pairwise 比较发两张图)——三个 provider 的请求体里
+// 多图重载(pairwise 比较发两张图)——三个 provider 的请求体里
 // 都要按顺序带上全部图片，图在前、text 在后。
 TEST_CASE("request_json (multi-image) sends every image to each provider") {
   auto first = make_image(4, 4);
@@ -231,7 +231,7 @@ TEST_CASE("request_json (multi-image) sends every image to each provider") {
   }
 }
 
-// F-02：request_json 内部在编码上传之前会把图片降采样，纯色测试图片压
+// request_json 内部在编码上传之前会把图片降采样，纯色测试图片压
 // 缩后几乎不随分辨率变化，没法从 base64 载荷大小反推有没有真的缩小，
 // 直接测 detail::downscale_for_upload 的输出宽高更准确、更稳定。
 TEST_CASE("downscale_for_upload shrinks large images to the upload cap, preserving aspect ratio") {
@@ -440,10 +440,10 @@ TEST_CASE("compact_for_debug_log keeps a complete multi-byte character landing e
   CHECK(result == std::string(237, 'a') + "\xe4\xb8\xad" + "...");
 }
 
-// 票 06 真机踩出来的：AI 请求的墙钟上限此前是 perform_curl_post 里写死的
-// 60 秒,而本地模型跑一次跨簇选择实测 45-80 秒(自报计算只有 2-6 秒,其余
-// 是加载与排队),恰好骑在这条线上 - 表现为"有时退化有时不退化"。改成由
-// cli 启动时从 Settings 读一次推进来,core 自己仍然不读 Settings。
+// AI 请求的墙钟上限必须可配,不能写死在 perform_curl_post 里：本地模型跑
+// 一次跨簇选择实测 45-80 秒(自报计算只有 2-6 秒,其余是加载与排队),写死
+// 60 秒会恰好骑在这条线上 - 表现为"有时退化有时不退化"。值由 cli 启动时
+// 从 Settings 读一次推进来,core 自己仍然不读 Settings。
 //
 // 只测得到 setter/getter 与钳制：真正生效的那一步是 curl_easy_setopt,
 // 要验证它得起一个会挂起的 HTTP 服务器,那是集成测试不是单元测试。

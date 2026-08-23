@@ -238,15 +238,15 @@ TEST_CASE("cluster_and_choose with ai enabled: bracket advances to a single winn
   CHECK(result.value().ai_fallback_count == 0);
 }
 
-// T-28：锦标赛不该在开赛前把整簇一次性解码完，峰值内存应该是常数级，不
-// 是 O(簇大小)。没有解码结果的析构钩子可以直接测峰值内存，但可以钉住一
-// 个更强的必要条件：解码跟比较必须逐对交替、以严格的
+// 锦标赛不该在开赛前把整簇一次性解码完，峰值内存应该是常数级，不是
+// O(簇大小)。没有解码结果的析构钩子可以直接测峰值内存，但可以钉住一个更
+// 强的必要条件：解码跟比较必须逐对交替、以严格的
 // "decode,decode,compare" 三元组重复出现，不能"先把 N 张全解码完，再发起
-// N-1 次比较"——旧版恰好是后者(round 在进入淘汰赛循环前就把全部成员解码
-// 进一个存活到结束的 vector)。8 个成员共 7 次比较，每次比较固定解码 2
+// N-1 次比较"(那样全部成员会活在一个存活到结束的 vector 里)。8 个成员共
+// 7 次比较，每次比较固定解码 2
 // 张(配对逐轮不变，见 run_bracket 的说明)，所以锦标赛阶段总解码次数是
 // 2*7=14，不是 8。
-TEST_CASE("cluster_and_choose: decoding interleaves with comparing, not fully upfront (T-28)") {
+TEST_CASE("cluster_and_choose: decoding interleaves with comparing, not fully upfront") {
   auto fx = make_fixture("t28_interleave", 8);
   for (int i = 0; i < 8; ++i) set_captured_at(fx.db, fx.images[i], 1000 + i);
 
@@ -521,7 +521,7 @@ TEST_CASE("cluster_and_choose: on_ai_gate sees the exact group and comparison co
   // 估算——闸门报给用户的数字必须跟真实发出的请求数对得上。
   CHECK(seen_comparisons == 3);
   // 候选集 = 每簇一张代表，5 张图聚成 2 簇、没有单例，所以是 2 而不是 5。
-  // 这个数就是 curate 拿去算"要评估多少张"的那个池子大小(票 05)，跟
+  // 这个数就是 curate 拿去算"要评估多少张"的那个池子大小，跟
   // clusters 最终的大小必须一致。
   CHECK(seen_candidates == 2);
   CHECK(seen_candidates == static_cast<int>(result.value().clusters.size()));
@@ -748,7 +748,7 @@ TEST_CASE("cluster_and_choose: on_ai_progress stays silent when ai is disabled")
   CHECK(calls == 0);
 }
 
-// T-9b：中途取消。PRD 见 docs/history/Dedup_Cancel_PRD.md。三条不变量：取消是零
+// 中途取消，见 docs/history/Dedup_Cancel_PRD.md。三条不变量：取消是零
 // 写入、在下一次比较边界生效(不打断当前这次)、跟"闸门被拒"和"AI 失败退
 // 化"三者互相分得开。
 

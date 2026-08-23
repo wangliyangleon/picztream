@@ -184,7 +184,7 @@ struct EnvVarGuard {
 }  // namespace
 
 TEST_CASE("compute_dhash reproduces the exact bit pattern used to construct the source image") {
-  // F-36：compute_dhash 现返回 optional(resize 失败时 nullopt);9x8 合成图必
+  // compute_dhash 返回 optional(resize 失败时 nullopt);9x8 合成图必
   // 然成功,解包断言精确 bit pattern。
   REQUIRE(compute_dhash(make_dhash_source(0)).value() == 0);
   REQUIRE(compute_dhash(make_dhash_source(~ImageHash{0})).value() == ~ImageHash{0});
@@ -259,9 +259,9 @@ TEST_CASE("union-find merges transitively: A-B and B-C close, A-C over threshold
   CHECK(groups[0].image_ids.size() == 3);
 }
 
-// F-39：同一候选簇里分出多个重复组时，输出顺序以前跟着 unordered_map 的
-// 遍历序走、跨进程运行不稳定，违反 Dedup PRD 的确定性 NFR 字面。现在每簇
-// 的组按组内最小 id 升序输出——这里在一个时间簇内造两组({a,b} 同哈希、
+// 同一候选簇里分出多个重复组时，输出顺序必须是确定的：内部用的是
+// unordered_map，遍历序跨进程不稳定。每簇的组按组内最小 id 升序输出——这
+// 里在一个时间簇内造两组({a,b} 同哈希、
 // {c,d} 另一个哈希、两组间距离超阈值不合并)，直接验证返回的组按 front(即
 // 组内最小 id)升序，不依赖 images 表实际的 id 分配顺序。
 TEST_CASE("groups from one cluster come out ordered by their smallest image id (deterministic)") {
@@ -280,13 +280,13 @@ TEST_CASE("groups from one cluster come out ordered by their smallest image id (
 
   auto groups = detail::find_duplicates_impl(fx.db, fx.root_path, fx.images, 10, 5, nullptr, decoder);
   REQUIRE(groups.size() == 2);
-  // 每组内部升序(已有保证)，且组间按组内最小 id 升序(F-39)。
+  // 每组内部升序(已有保证)，且组间按组内最小 id 升序。
   CHECK(std::is_sorted(groups[0].image_ids.begin(), groups[0].image_ids.end()));
   CHECK(std::is_sorted(groups[1].image_ids.begin(), groups[1].image_ids.end()));
   CHECK(groups[0].image_ids.front() < groups[1].image_ids.front());
 }
 
-// W2026-07-21：keep 统一"留最新"，不再依赖评估分数——这里只验证纯时间
+// keep 统一"留最新"，不依赖评估分数——这里只验证纯时间
 // 规则(评估记录已从 dedup 剥离)。全组都没评估，时间最新的 images[2] 被
 // 选中保留；分数场景整块删除。captured_at 打平兜底 id 最小的极端分支由
 // 上面的 grouping fallback 用例覆盖。
@@ -420,7 +420,7 @@ TEST_CASE("find_and_tag_duplicates tags non-keep members and reports a correct s
   CHECK(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));
 }
 
-// W2026-07-21：聚类前排除废片。keep 改成"留最新"后，一张废片若 captured_at
+// 聚类前排除废片：keep 是"留最新"，一张废片若 captured_at
 // 最新会成为 keep 把它的好邻居打成重复。a(好图) 和 b(同字节近邻,更新) 本会
 // 成一组，但 b 被打了废片标签——b 应被排除在聚类之外，a 落单不成组、不被
 // 打成重复。
@@ -443,21 +443,20 @@ TEST_CASE("find_and_tag_duplicates excludes reject-tagged images from clustering
   CHECK_FALSE(has_duplicate_tag(fx.db, fx.images[0], duplicate_tag_id));  // 好图 a 不被打成重复
 }
 
-// T-16/#27 的回归守卫。这里钉的不是一个新行为，是**排废片这件事归 core、
-// 且不可配置**这条契约 —— 上一次它被打破时没有任何测试会红：
+// 回归守卫。这里钉的不是一个新行为，是**排废片这件事归 core、且不可配
+// 置**这条契约 —— 它被打破过一次，而当时没有任何测试会红：
 //
-// F-26(2026-07-11) 在 cli 层做了一份受 settings.dedup_reject 控制的条件排
-// 除，还配了真机验证。W2026-07-21 的 4cc6549 为了防"废片当上 keeper"，在
-// core 里又加了一份**无条件**的，两份叠加之后 core 那份赢 —— 开关自此完
-// 全无效，`/dedup #废片` 变成静默 no-op(范围全被排空、报"0 组")。两处失效
-// 都是用户可见的，坏了 22 天没人发现，因为 cli 那个开关零测试覆盖，而 core
-// 侧改排除策略时没有任何东西把两边联系起来。
+// cli 层曾有一份受开关控制的条件排除，core 里为了防"废片当上 keeper"又加
+// 了一份**无条件**的，两份叠加之后 core 那份赢 —— 开关自此完全无效，
+// `/dedup #废片` 变成静默 no-op(范围全被排空、报"0 组")。两处失效都是用户
+// 可见的，坏了 22 天没人发现，因为 cli 那个开关零测试覆盖，而 core 侧改排
+// 除策略时没有任何东西把两边联系起来。
 //
 // 所以这个用例断言的是"整批都是废片时结果为空"——它正是让 `/dedup #废片`
 // 没有意义的那个事实。谁要是把 core 这份排除改成有条件的或加上对称例外，
-// 这里会红，然后从这段注释找到 #27 的 D-1/D-2：那不是 bug，是拍板过的；
-// 真要改，先回去改那两条决策，别再在 cli 层加第二份开关。
-TEST_CASE("reject exclusion is core-owned and unconditional (T-16 regression guard)") {
+// 这里会红：那不是 bug，是刻意的，真要改先想清楚上面那段账，别再在 cli 层
+// 加第二份开关。
+TEST_CASE("reject exclusion is core-owned and unconditional") {
   auto fx = make_fixture("reject_exclusion_contract", 2);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
@@ -470,15 +469,15 @@ TEST_CASE("reject exclusion is core-owned and unconditional (T-16 regression gua
   REQUIRE(add_tag(fx.db, fx.images[1], reject_tag_id).ok());
 
   // 整批都是废片 = 候选集被排空。没有任何参数能让这两张图参与聚类，这正是
-  // "范围本身是废片"那条路径注定拿不到结果的原因，也是 D-2 改成显式拒绝
-  // (而不是让它继续静默报 0 组)的依据。
+  // "范围本身是废片"那条路径注定拿不到结果的原因，也是 scope 层把它改成
+  // 显式拒绝(而不是让它继续静默报 0 组)的依据。
   auto result = find_and_tag_duplicates(fx.db, fx.project_id, fx.images);
   REQUIRE(result.ok());
   CHECK(result.value().group_count == 0);
   CHECK(result.value().tagged_count == 0);
 }
 
-// F-18：以前不检查 add_tag 的返回值，tagged_count 无条件自增。如果用户
+// tagged_count 必须只数真正打上的：无条件自增的话，如果用户
 // 在这个功能之前就手动建过一个带 cap 的同名"重复"标签(ensure_duplicate_
 // tag 会直接复用它，不区分是不是系统创建的，见该函数的说明)，超出 cap
 // 的图实际打不上标签，汇总却照样报"打了 N 张"——这里用 cap=0 制造一个
@@ -556,8 +555,8 @@ TEST_CASE("find_and_tag_duplicates clears stale marks before re-tagging on re-ru
   CHECK(has_duplicate_tag(fx.db, fx.images[1], duplicate_tag_id));        // 新一轮的非保留项
 }
 
-// F-08：范围内 captured_at 为 NULL 的图片(微信图/截图/编辑过的导出件常
-// 见)完全不参与任何比较,以前被静默忽略,现在要如实报数量。
+// 范围内 captured_at 为 NULL 的图片(微信图/截图/编辑过的导出件常见)完全
+// 不参与任何比较,数量要如实报出来,不能静默忽略。
 TEST_CASE("find_and_tag_duplicates reports skipped_no_capture_time for images with no captured_at") {
   auto fx = make_fixture("facade_skipped", 3);
   auto dir = fs::path(fx.root_path);
@@ -586,9 +585,9 @@ TEST_CASE("find_and_tag_duplicates skipped_no_capture_time is 0 when every image
   CHECK(result.value().skipped_no_capture_time == 0);
 }
 
-// F-08：time_window_seconds/hash_threshold 以前在 find_and_tag_duplicates
-// 里写死 10/5,这次改成显式参数——用时间窗口的边界验证参数真的从门面
-// 一路传到了算法层,不是摆设。两张字节相同的图(hamming 距离必为 0,
+// time_window_seconds/hash_threshold 是显式参数,不是写死的——用时间窗口
+// 的边界验证参数真的从门面一路传到了算法层,不是摆设。两张字节相同的图
+// (hamming 距离必为 0,
 // hash_threshold 不是这里的变量)拍摄时间差 20 秒:默认 10 秒时间窗把
 // 它们拆进两个候选簇,谁都不跟谁比较,不成组;显式传 30 秒时间窗则落进
 // 同一簇,成组。
@@ -617,7 +616,7 @@ TEST_CASE("find_and_tag_duplicates returns ProjectNotFoundError for an unknown p
   CHECK(result.error() == ProjectNotFoundError::NotFound);
 }
 
-// W2026-07-21 目标二：ai_enabled=true 时走真实的 tournament::
+// ai_enabled=true 时走真实的 tournament::
 // cluster_and_choose(不是注入假 compare_fn)。用 evaluation_test.cpp/
 // compare_test.cpp 同一个技巧——Provider::Claude 在 ANTHROPIC_API_KEY 没
 // 设时，request_comparison 在真正发起网络请求之前就确定性地返回

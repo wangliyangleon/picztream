@@ -55,9 +55,8 @@ void write_real_jpeg(const fs::path& p) {
   REQUIRE(result.ok());
 }
 
-// W2026-07-21：eval 结果是"一段文字 assessment + unusable flag"。2026-08 又
-// 加了第三个字段 content(画面内容描述)。默认样本 unusable=false(可用)，大多
-// 数测试复用它。
+// eval 结果是"一段文字 assessment + unusable flag + content(画面内容描
+// 述)"。默认样本 unusable=false(可用)，大多数测试复用它。
 EvaluationResult make_evaluation_result() {
   return EvaluationResult{"balanced composition, warm color, sharp", false,
                           "two kids laughing on a beach at sunset"};
@@ -168,7 +167,7 @@ TEST_CASE("a failed request leaves no evaluation row") {
   CHECK(!worker.has_pending());
 }
 
-// F-03：失败原因原来只打 stderr，用户在 --debug 之外完全看不到。
+// 失败原因只打 stderr 的话，用户在 --debug 之外完全看不到。
 // take_failure_report() 把它暴露出来，一次取走就清空,避免同一次失败被
 // 反复报出来（跟 consume_new_result 的"消费一次"精神一致）。
 TEST_CASE("a failed request is recorded in take_failure_report, consumed exactly once") {
@@ -209,10 +208,9 @@ TEST_CASE("a successful request leaves take_failure_report empty") {
   CHECK(!worker.take_failure_report().has_value());
 }
 
-// T-23：原来只留最后一条失败(`last_failure_ = ...` 无条件覆盖)，一次
-// `/ai_eval *` 全批失败时，前面那些在下一次 poll 取走之前就被后面的盖
-// 掉了，用户只看到零星几条、既不知道失败了多少张，也没有"该停下来检
-// 查环境"的信号。现在张数报的是累计值。
+// 张数必须是累计值。只留最后一条失败(无条件覆盖)的话，一次 `/ai_eval *`
+// 全批失败时，前面那些在下一次 poll 取走之前就被后面的盖掉了，用户只看到
+// 零星几条、既不知道失败了多少张，也没有"该停下来检查环境"的信号。
 TEST_CASE("failures accumulate into a total instead of overwriting one another") {
   Fixture fx("evaluation_worker_failure_count");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
@@ -241,12 +239,11 @@ TEST_CASE("failures accumulate into a total instead of overwriting one another")
   CHECK(worker.queue_status().failed == 3);
 }
 
-// T-23 的关键约束，单独立一条：报出去的张数必须是累计值，不能是"自上
-// 次取走以来的增量"。失败一条一条落地时(网络超时那种,每条都要烧掉一
-// 次超时，落地间隔远大于 poll 周期)，增量语义下每次都只增了 1，状态行
-// 退化成"某某评估失败"刷屏、一个总数都看不到 - 正是 U-12 点名的场景，
-// 也是本条要修的东西。这里用"取走 -> 再失败一次 -> 再取走"精确复现那
-// 个节奏。
+// 上一条的关键约束，单独立一条：报出去的张数是累计值，不是"自上次取走以
+// 来的增量"。失败一条一条落地时(网络超时那种,每条都要烧掉一次超时，落地
+// 间隔远大于 poll 周期)，增量语义下每次都只增了 1，状态行退化成"某某评估
+// 失败"刷屏、一个总数都看不到。这里用"取走 -> 再失败一次 -> 再取走"精确
+// 复现那个节奏。
 TEST_CASE("the reported total keeps climbing across takes, one failure at a time") {
   Fixture fx("evaluation_worker_failure_total_across_takes");
   auto fake_evaluation = [](const decode::DecodedImage&, const std::string&,
@@ -282,8 +279,8 @@ TEST_CASE("queue_status reports no failures when everything succeeds") {
 
 // auto_reject 现在是 request() 的显式参数，不再从 Settings.auto_ai_reject
 // 读取,process_request 不知道调用方是交互路径还是 agent，物理隔离见
-// docs/history/M4_PRD.md P6。W2026-07-21：判据从 passes_gate 三项阈值改成模型直接
-// 给的 unusable flag,unusable=true 且 auto_reject=true 时，落库之后自动
+// docs/history/M4_PRD.md。判据就是模型直接给的 unusable flag(没有阈值计
+// 算),unusable=true 且 auto_reject=true 时，落库之后自动
 // 给这张图打上"废片"系统标签。
 TEST_CASE("auto_reject tags an unusable evaluation with the reject tag when true") {
   Fixture fx("evaluation_worker_auto_reject_fail");
@@ -339,11 +336,11 @@ TEST_CASE("auto_reject leaves unusable evaluations untagged when false") {
   CHECK(!has_reject_tag(db, fx.image_id));
 }
 
-// F-17：process_request 落库那一步以前不检查 sqlite3_step 的返回值,
-// AI 已经给出结果，但写库失败(磁盘满/库损坏)时会静默发生，generation_
-// 照样 +1 触发一次什么都没变的空重绘。这里用真实的只读文件权限强迫写
-// 入失败(而不是伪造返回码)，验证这条路径现在会被 take_failure_report()
-// 捕获成 StorageFailed，跟其它失败路径统一走 F-03 建的通道，不 throw
+// process_request 落库那一步必须检查 sqlite3_step 的返回值：AI 已经给出
+// 结果、写库却失败(磁盘满/库损坏)时会静默发生，generation_ 照样 +1 触发一
+// 次什么都没变的空重绘。这里用真实的只读文件权限强迫写入失败(而不是伪造
+// 返回码)，验证这条路径会被 take_failure_report() 捕获成 StorageFailed，
+// 跟其它失败路径走同一条通道，不 throw
 // (process_request 跑在后台 jthread 上，未捕获异常会 std::terminate)。
 TEST_CASE("a DB write failure after a successful AI response is reported as StorageFailed") {
   Fixture fx("evaluation_worker_storage_failed");
@@ -518,7 +515,7 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   REQUIRE(wait_for_result(worker, generation));
   CHECK(!worker.has_pending());
 
-  // F-03：请求真正发出去之前(图片记录都找不到)的失败,也要走同一条
+  // 请求真正发出去之前(图片记录都找不到)的失败,也要走同一条
   // 失败通道,不是只有"AI 请求本身失败"才算数。
   auto failure = worker.take_failure_report();
   REQUIRE(failure.has_value());
@@ -526,10 +523,10 @@ TEST_CASE("a request for a nonexistent image completes without crashing or getti
   CHECK(failure->last_error == EvaluationError::ImageUnavailable);
 }
 
-// T-7：process_request 跑在后台 jthread 上,过去它任何一处 throw 都是
-// std::terminate,整个 pzt 直接死掉。用"库的 schema 版本比程序新"来触发
-// 是最干净的provocation:Database::open_at 必定抛,而且抛在函数第一行。
-// 修之前这个用例会把整个 core_tests 二进制拖垮,而不是红一条。
+// process_request 跑在后台 jthread 上,任何一处逃逸的 throw 都是
+// std::terminate,整个 pzt 直接死掉。用"库的 schema 版本比程序新"来触发是
+// 最干净的 provocation:Database::open_at 必定抛,而且抛在函数第一行。没接
+// 住的话这个用例会把整个 core_tests 二进制拖垮,而不是红一条。
 TEST_CASE("a request against an unopenable database fails instead of terminating the worker") {
   auto db_path = fresh_db_path("evaluation_worker_db_too_new");
   Database::open_at(db_path);  // 建库(此时被盖章成当前版本)

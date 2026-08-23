@@ -131,9 +131,9 @@ struct EnvVarGuard {
 
 }  // namespace
 
-// 票 04：预选集大小的纯函数。表驱动穷举边界，不需要数据库或网络(PRD
-// 测试决策的第二条缝隙) - 这一块最容易写错的是钳制的三个方向(下界
-// 1.5、上界候选集大小、ceil 的取整方向)，摘出来才能穷举。
+// 预选集大小的纯函数。表驱动穷举边界，不需要数据库或网络 - 这一块最容易
+// 写错的是钳制的三个方向(下界 1.5、上界候选集大小、ceil 的取整方向)，摘
+// 出来才能穷举。
 TEST_CASE("preselect_size clamps by lower bound 1.5, candidate count, and ceils") {
   struct Case {
     int candidate_count;
@@ -176,9 +176,9 @@ TEST_CASE("preselect_size clamps by lower bound 1.5, candidate count, and ceils"
   }
 }
 
-// 票 06：模型返回的原始序号 -> 最终选择的纯函数(PRD 测试决策的第一条缝
-// 隙)。决策十三的全部分支都在这里穷举：越界剔除、去重保序、≥N 取前 N、
-// <N 整体退化。不碰网络也不碰数据库，所以这些边界不需要注入就能钉死。
+// 模型返回的原始序号 -> 最终选择的纯函数。四条分支都在这里穷举：越界剔
+// 除、去重保序、≥N 取前 N、<N 整体退化。不碰网络也不碰数据库，所以这些边
+// 界不需要注入就能钉死。
 TEST_CASE("resolve_selection cleans out-of-range and duplicate indices, then decides fallback") {
   struct Case {
     std::vector<int> raw;
@@ -219,8 +219,7 @@ TEST_CASE("resolve_selection cleans out-of-range and duplicate indices, then dec
   }
 }
 
-// W2026-07-21：curate 不再看 evaluation 记录，纯标签排除。原来"未评估就
-// 排除""未达标(gate)就排除"两条用例整合成这一条——未评估的图照样进候选。
+// curate 不看 evaluation 记录，纯标签排除：未评估的图照样进候选。
 TEST_CASE("curate includes unevaluated images (no evaluation dependency)") {
   auto fx = make_fixture("no_eval_included", 2);
   set_captured_at(fx.db, fx.images[0], 1000);
@@ -274,7 +273,7 @@ TEST_CASE("curate picks one representative per cluster when clusters >= N") {
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
   REQUIRE(result.returned == 2);
-  // W2026-07-21：去分数后是纯时间多样性。代表 = {b(簇{a,b}的 keep), c, d}，
+  // 纯时间多样性。代表 = {b(簇{a,b}的 keep), c, d}，
   // a 因为跟 b 同簇被排除在代表之外，不会入选——多样性保护的核心断言。
   // farthest-point：seed 取最新 d(200000)，再选离 d 时间最远的 b(1005)。
   CHECK(result.selected == std::vector<ImageId>{fx.images[3], fx.images[1]});
@@ -293,12 +292,12 @@ TEST_CASE("curate spreads selection across captured_at (time diversity)") {
   set_captured_at(fx.db, fx.images[2], 100);     // 离 a 差 100
 
   auto result = curate(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10);
-  // W2026-07-21：纯时间多样性。seed 取最新 b(100000)；第二名额 a vs c，
+  // 纯时间多样性。seed 取最新 b(100000)；第二名额 a vs c，
   // 选离已选集(b)时间更远的 -> a(差 100000 > c 的 99900)。
   CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
 }
 
-// 票 01：选出来是哪几张由 farthest-point 决定，但交出去的顺序不该是它的
+// 选出来是哪几张由 farthest-point 决定，但交出去的顺序不该是它的
 // 挑选顺序——那个算法每次挑离已选集最远的一张，产出的排列在时间上必然跳
 // 跃，而这个列表顺序一路决定 Deliver 的发送次序。注意上面那条多样性用例
 // 证明不了本条：它的挑选顺序恰好已经是时间降序。这里 4 张各自独立成簇，
@@ -332,9 +331,9 @@ TEST_CASE("curate orders the result by captured_at, not by farthest-point pick o
         std::vector<ImageId>{fx.images[3], fx.images[1], fx.images[0]});
 }
 
-// 票 01：没有 captured_at 的照片必须有确定落位，且排序不引入不确定性。
+// 没有 captured_at 的照片必须有确定落位，且排序不引入不确定性。
 //
-// 这条用例必须自己会因为本票而改变结果，否则它什么也没证明。三张（两张
+// 这条用例必须自己能因为排序规则改变而改变结果，否则它什么也没证明。三张（两张
 // 有时间 + 一张 NULL）是不够的：greedy_pick 在还有带时间的候选时结构上
 // 永远不会挑走 NULL 那张，挑选顺序恰好等于时间序，改动前后完全一样。
 //
@@ -415,7 +414,7 @@ TEST_CASE("curate is deterministic across repeated calls with identical input") 
   CHECK(first.selected == second.selected);
 }
 
-// W2026-07-21 目标二：ai_enabled=true 时走真实的 tournament::
+// ai_enabled=true 时走真实的 tournament::
 // cluster_and_choose(不是注入假 compare_fn)。用 dedup_test.cpp 同一个技
 // 巧——Provider::Claude 没设 ANTHROPIC_API_KEY 时确定性地 MissingApiKey、
 // 不连真网络——让每个 size>=2 的簇退化成 keep_id，等价于 ai_enabled=false
@@ -440,10 +439,10 @@ TEST_CASE("curate with ai_enabled=true and clusters<count returns the same winne
   CHECK(result.ai_fallback_count == 1);  // 只有 {a,b} 这一簇尝试过 AI 并退化，单例 c 不算
 }
 
-// 簇数(4 个 winner:两个 size>=2 簇的 keep_id + 两个单例) >= count(3)，验
-// 证随机采样这一步：结果大小正确、是 winner 集合的子集、无重复——不断
-// 言具体挑中哪几个(随机，PRD 已拍板接受不可复现)。同样用 Claude 无 key
-// 的确定性退化，让 winner 集合本身可预测。
+// 簇数(4 个 winner:两个 size>=2 簇的 keep_id + 两个单例) >= count(3)。这
+// 里守的是**集合层面的不变量**：结果大小正确、是 winner 集合的子集、无重
+// 复 - 具体挑中哪几个由上面那条"按 captured_at 交付"的用例钉着，这条不重
+// 复断言它。同样用 Claude 无 key 的确定性退化，让 winner 集合本身可预测。
 TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-sized subset of winners") {
   EnvVarGuard key("ANTHROPIC_API_KEY", nullptr);
   auto fx = make_fixture("ai_sample_subset", 6);
@@ -472,7 +471,7 @@ TEST_CASE("curate with ai_enabled=true and clusters>=count samples a correctly-s
   CHECK(std::adjacent_find(sorted_selected.begin(), sorted_selected.end()) == sorted_selected.end());
 }
 
-// 票 04：候选集在选择之前先按时间多样性裁成预选集，AI 开的那条路也走这
+// 候选集在选择之前先按时间多样性裁成预选集，AI 开的那条路也走这
 // 一刀。6 个单例簇(全是 size=1，不发起任何 AI 比较)，count=2、M=1.5 =>
 // 预选集 3 张。farthest-point 是确定性的：seed 取最新 f(500000)，再取离
 // 它最远的 a(0)，第三名额 c 与 d 的最小距离打平(都是 200000)、按 id 小
@@ -495,9 +494,9 @@ TEST_CASE("curate clamps the candidate set to the preselection before the AI pat
   }
 }
 
-// 票 04：AI 关的那条路同样经过裁剪，且输出一字不变。farthest-point 是增
-// 量贪心，"先挑 K 张再从这 K 张里挑 N 张"与"直接挑 N 张"选出同一个集合
-// (每一步的 argmax 都落在 K 里)，而交付顺序自票 01 起一律由
+// AI 关的那条路同样经过裁剪，且输出一字不变。farthest-point 是增量贪心，
+// "先挑 K 张再从这 K 张里挑 N 张"与"直接挑 N 张"选出同一个集合(每一步的
+// argmax 都落在 K 里)，而交付顺序一律由
 // by_captured_at_desc 决定、与挑选顺序无关，两头都不受裁剪影响，所以裁
 // 剪在这条路上外部不可观测 - 这条用例守的就是这个不变量，而不是某个新
 // 行为。
@@ -515,8 +514,8 @@ TEST_CASE("curate preselection leaves the non-AI selection unchanged") {
   CHECK(unclamped.selected == clamped.selected);
 }
 
-// 票 04：候选集小于 N 时裁剪不参与，沿用既有行为(全部返回、captured_at
-// 降序的确定性排序)。M 取一个会把预选集算成 2 张的值也不影响。
+// 候选集小于 N 时裁剪不参与(全部返回、captured_at 降序的确定性排序)。
+// M 取一个会把预选集算成 2 张的值也不影响。
 TEST_CASE("curate skips preselection when the candidate set is smaller than N") {
   auto fx = make_fixture("preselect_shortfall", 2);
   set_captured_at(fx.db, fx.images[0], 1000);
@@ -529,11 +528,8 @@ TEST_CASE("curate skips preselection when the candidate set is smaller than N") 
   CHECK(result.selected == std::vector<ImageId>{fx.images[1], fx.images[0]});
 }
 
-// T-8 A.2：进度回调。改造前 core/curate 连钩子都没有——dedup 是"有钩子
-// 但 cmd_dedup 传 nullptr"，curate 是"签名里根本没这几个参数"。根因是
-// 四个回调（on_progress/on_ai_gate/on_ai_progress/on_cancel）全部由 TUI
-// 的 /dedup 驱动加进来，而 curate 没有 TUI 入口，从来没人走在那条路上。
-// 只补有消费者的两个，理由与不补的那四项见 PRD 决策七。
+// 进度回调。curate 只暴露有消费者的那两个钩子 - 它没有 TUI 入口，
+// on_ai_gate/on_cancel 那一路是 /dedup 驱动出来的需求。
 TEST_CASE("curate reports local clustering progress") {
   auto fx = make_fixture("cluster_progress", 3);
   auto dir = fs::path(fx.root_path);
@@ -580,8 +576,7 @@ TEST_CASE("curate reports AI comparison progress") {
 }
 
 TEST_CASE("curate with no progress callbacks behaves exactly as before") {
-  // 默认 nullptr 保证现有调用点零改动，跟 W2026-07-21 给 dedup 加这些
-  // 参数时同一个约定。
+  // 默认 nullptr，跟 dedup 的同类参数同一个约定。
   auto fx = make_fixture("no_progress_cb", 2);
   auto dir = fs::path(fx.root_path);
   REQUIRE(write_solid_jpeg(dir / "a.jpg", 16, 16, 120));
@@ -595,7 +590,7 @@ TEST_CASE("curate with no progress callbacks behaves exactly as before") {
 }
 
 // ---------------------------------------------------------------------------
-// 票 05：curate 内部评估预选集 - 闸门 + 进度 + ai_declined/cancelled
+// curate 内部评估预选集 - 闸门 + 进度 + ai_declined/cancelled
 //
 // 这一组用例全部走 detail::curate_impl 注入假 evaluate_fn。理由见
 // curate.h 上 EvaluateFn 的说明：本票要覆盖的行为(闸门报的张数跟真实发
@@ -637,7 +632,7 @@ Fixture make_singletons(const std::string& tag, int n) {
 
 TEST_CASE("curate --ai evaluates exactly the preselection, not the whole library") {
   // 12 个单例簇、count=2、M=2 => 预选集 4 张。评估次数跟着预选集走，跟
-  // 图库大小(12)无关 - 这是 PRD 决策十"由构造保证有界"的可观测形式。
+  // 图库大小(12)无关 - "评估次数由构造保证有界"的可观测形式。
   auto fx = make_singletons("eval_preselection", 12);
   FakeEvaluator eval;
 
@@ -653,7 +648,7 @@ TEST_CASE("curate --ai evaluates exactly the preselection, not the whole library
   // farthest-point 打平时按 image id 兜底，而 id 是按目录扫描顺序分配
   // 的、不保证跟文件名同序，写死等于把测试钉在文件系统的返回顺序上。
   // 改成断言一个不变量-预选集就是"关 AI 时挑 k 张"的结果，两者走的是
-  // 同一个 take_farthest_points(票 04 的裁剪与最终选片共用同一个循环)。
+  // 同一个 take_farthest_points(裁剪与最终选片共用同一个循环)。
   auto deterministic = detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/4, 20, 10,
                                             2.0, /*ai_enabled=*/false, Provider::Local,
                                             pzt::core::ai::LocalModelConfig{}, std::ref(eval));
@@ -673,7 +668,7 @@ TEST_CASE("curate --ai skips photos that already have an evaluation") {
   REQUIRE(first.evaluated.size() == 4);
 
   // 同一批照片再跑一次：预选集是确定性的，四张全都已经有评估记录了，一
-  // 次请求都不该再发出去(PRD 决策七：有记录就跳过，不做字段完整性检查)。
+  // 次请求都不该再发出去(缓存判据：有记录就跳过，不做字段完整性检查)。
   FakeEvaluator second;
   detail::curate_impl(fx.db, fx.project_id, std::nullopt, /*count=*/2, 20, 10, 2.0,
                        /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
@@ -744,8 +739,8 @@ TEST_CASE("curate --ai gate returning false writes absolutely nothing and is dis
   CHECK(eval.evaluated.empty());
   for (auto id : fx.images) CHECK_FALSE(has_evaluation(fx.db, id));
 
-  // PRD 决策十九的整条理由就在这两行：拒绝之前，"selected 为空"唯一的含
-  // 义是"这个项目里没有可选的照片"。两者必须能分辨，否则用户点了"不跑"
+  // ai_declined 存在的整条理由就在这两行：没有它，"selected 为空"唯一的
+  // 含义是"这个项目里没有可选的照片"。两者必须能分辨，否则用户点了"不跑"
   // 会收到一句"没选出照片"。
   // 候选池真的为空：唯一那张图被打了废片标签，排除之后一个候选都不剩。
   auto empty_fx = make_singletons("eval_gate_empty_pool", 1);
@@ -827,7 +822,7 @@ TEST_CASE("curate with ai disabled neither gates nor evaluates nor reports evalu
 }
 
 TEST_CASE("curate --ai carries on when a single evaluation fails") {
-  // 一张图评估失败只是它没有描述可用(票 06 起由选择那一步处理)，不该让
+  // 一张图评估失败只是它没有描述可用(由选择那一步处理)，不该让
   // 整批选片失败 - 跟锦标赛里"某簇比较失败就那一簇退化、不中断其它簇"是
   // 同一个立场。
   auto fx = make_singletons("eval_failure", 12);
@@ -893,19 +888,18 @@ TEST_CASE("curate --ai gate reports the cache-adjusted count, not the raw presel
 }
 
 // ---------------------------------------------------------------------------
-// 票 06：模型连选带排接进 curate
+// 模型连选带排接进 curate
 //
 // 这一组同样走 detail::curate_impl 注入假 select_fn。本票要覆盖的行为(校
 // 验、排序、退化分界)**全部只存在于成功路径上**，而这个文件既有的 AI 用例
-// 一律是"让调用必然失败、只验证退化"-照抄等于零覆盖(PRD 测试决策的现状
-// 警告)。
+// 一律是"让调用必然失败、只验证退化"-照抄等于零覆盖。
 // ---------------------------------------------------------------------------
 
 namespace {
 
 // 记账用的假选择：把模型看到的候选录下来，按需返回一组序号或者汇报调用失
-// 败(nullopt)。票 07 起顺带带一段文案 - reply_caption 默认空串，等价于"模
-// 型没给文案"，既有用例因此一个字都不用改。
+// 败(nullopt)。顺带带一段文案 - reply_caption 默认空串，等价于"模型没给
+// 文案"。
 struct FakeSelector {
   std::vector<pzt::core::ai::SelectionCandidate> seen;
   std::optional<std::vector<int>> reply;
@@ -941,7 +935,7 @@ TEST_CASE("curate --ai delivers exactly the photos the model picked, in the mode
   CHECK(select.calls == 1);
   CHECK(select.seen_count == 2);
   CHECK(result.returned == 2);
-  // 顺序即交付顺序(PRD 决策十四)：3 在前、1 在后，不重排成时间序。
+  // 模型返回的顺序即交付顺序：3 在前、1 在后，不重排成时间序。
   CHECK(result.selected == std::vector<ImageId>{eval.evaluated[2], eval.evaluated[0]});
   CHECK_FALSE(result.ai_selection_fallback);
   // 选择结果不再来自 std::sample：同样的输入重复跑，结果逐字相同。
@@ -965,7 +959,7 @@ TEST_CASE("curate --ai hands the model both the quality assessment and the conte
                        /*ai_enabled=*/true, Provider::Local, pzt::core::ai::LocalModelConfig{},
                        std::ref(eval), std::ref(select));
 
-  // PRD 决策六：两个字段一起。候选的条数与顺序跟预选集一一对应(模型返回的
+  // 两个字段一起给。候选的条数与顺序跟预选集一一对应(模型返回的
   // 序号靠这个对应关系翻译回照片)。
   REQUIRE(select.seen.size() == 4);
   for (const auto& c : select.seen) {
@@ -1004,9 +998,9 @@ TEST_CASE("curate --ai falls back wholesale when too few picks survive cleaning"
 
   CHECK(result.ai_selection_fallback);
   CHECK(result.returned == 2);
-  // 退化成**确定性**选择，不是拿模型那一个再补一张(PRD 决策十三：补进来的
-  // 照片既不符合用户偏好、也不在模型排的顺序里，交付的会是两套逻辑拼接的
-  // 结果，而用户看到的话术只有一种)。这里断言它跟关 AI 走同一条路的结果
+  // 退化成**确定性**选择，不是拿模型那一个再补一张：补进来的照片既不符合
+  // 用户偏好、也不在模型排的顺序里，交付的会是两套逻辑拼接的结果，而用户
+  // 看到的话术只有一种。这里断言它跟关 AI 走同一条路的结果
   // 逐字相同 - 关 AI 那条路自己有独立用例钉着行为。
   FakeEvaluator unused;
   FakeSelector never;
@@ -1036,7 +1030,7 @@ TEST_CASE("curate --ai falls back wholesale when the selection call itself fails
 }
 
 TEST_CASE("curate --ai keeps the whole-batch fallback signal independent from ai_fallback_count") {
-  // PRD 决策二十一：ai_fallback_count 的语义是"**整簇**因为比较失败退化"，
+  // ai_fallback_count 的语义是"**整簇**因为比较失败退化"，
   // 已经进了用户话术("哪几组不是 AI 挑的")；整批的选择退化是另一回事，混
   // 进同一个数字会让那句话直接说错。这条用例让两者同时可观测：两个 size>=2
   // 的簇因为没有 API key 必然比较失败(ai_fallback_count=2)，而选择这一步
@@ -1147,7 +1141,7 @@ TEST_CASE("curate --ai does not consult the model after the caller cancels or de
 }
 
 // ---------------------------------------------------------------------------
-// 票 07：文案端到端（core 这一段）
+// 文案端到端（core 这一段）
 // ---------------------------------------------------------------------------
 
 TEST_CASE("curate --ai carries the caption out alongside the selection") {
@@ -1169,7 +1163,7 @@ TEST_CASE("curate --ai carries the caption out alongside the selection") {
 }
 
 TEST_CASE("curate --ai delivers the selection unchanged when the model gives no caption") {
-  // PRD 决策十五 / 验收 24：附赠品缺席，关键结果一个字不变。
+  // 附赠品缺席，关键结果一个字不变。
   auto fx = make_singletons("caption_missing", 12);
   FakeEvaluator eval;
   FakeSelector select;
@@ -1187,10 +1181,9 @@ TEST_CASE("curate --ai delivers the selection unchanged when the model gives no 
 }
 
 TEST_CASE("curate --ai drops the caption when the whole selection falls back") {
-  // 本票拍板的边界：整批退化时文案**跟着作废**。它写的是模型挑的那几张，而
-  // 交付的是确定性路径挑的另一批 - 留着就是让一段讲 A 的话配着 B 发出去。
-  // 这与决策十三拒绝"不足时用确定性结果补齐"是同一个立场：不交付两套逻辑拼
-  // 接的结果。
+  // 整批退化时文案**跟着作废**。它写的是模型挑的那几张，而交付的是确定性
+  // 路径挑的另一批 - 留着就是让一段讲 A 的话配着 B 发出去。同一个立场贯穿
+  // 整条选择路径：不交付两套逻辑拼接的结果。
   auto fx = make_singletons("caption_fallback", 12);
 
   SUBCASE("too few picks survive cleaning") {

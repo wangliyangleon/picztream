@@ -52,7 +52,7 @@ void touch(const fs::path& p, std::size_t bytes = 10) {
   f << std::string(bytes, 'x');
 }
 
-// F-07：evaluated_image_ids 只关心"这张图有没有一行 image_evaluations
+// evaluated_image_ids 只关心"这张图有没有一行 image_evaluations
 // 记录"，不像"get_image returns nullopt evaluation..."那个测试那样需
 // 要具体分数字段——占位值就够。
 void insert_evaluation_stub(Database& db, pzt::core::project::ImageId id) {
@@ -199,10 +199,10 @@ TEST_CASE("create_project rejects an empty (no-JPEG) folder") {
   CHECK(list_projects(db).empty());
 }
 
-// T-2 proposal: a folder that's all RAW with support_raw=false used to fall
-// into the same NoImagesFound bucket as a truly empty folder, and the error
-// message claimed no JPEG/RAW files existed at all - false when RAW files
-// are sitting right there, just silently skipped.
+// A folder that's all RAW with support_raw=false must not land in the same
+// NoImagesFound bucket as a truly empty folder: that error message claims no
+// JPEG/RAW files exist at all, which is false when RAW files are sitting
+// right there, just silently skipped.
 TEST_CASE("create_project reports NoImagesFoundRawIgnored for a pure-RAW folder without support_raw") {
   auto db = Database::open_at(fresh_db_path("pure_raw_no_support"));
   auto photos = fresh_photo_dir("pure_raw_no_support");
@@ -215,10 +215,10 @@ TEST_CASE("create_project reports NoImagesFoundRawIgnored for a pure-RAW folder 
   CHECK(list_projects(db).empty());
 }
 
-// F-06：scan_media 以前用会抛异常的 recursive_directory_iterator 重载,
-// 目标目录根本不存在时会让 create_project(进而 `pzt new`)直接崩溃,而
-// 不是走 Result<T,E> 的 NoImagesFound 错误路径。改用 error_code 版本之
-// 后,这种情况应该跟"目录存在但没有图片"一样干净地报错,不抛异常。
+// scan_media 必须用 error_code 版本的 recursive_directory_iterator：会抛
+// 异常的那个重载在目标目录根本不存在时会让 create_project(进而 `pzt new`)
+// 直接崩溃,而不是走 Result<T,E> 的 NoImagesFound 错误路径。这种情况要跟
+// "目录存在但没有图片"一样干净地报错,不抛异常。
 TEST_CASE("create_project cleanly reports NoImagesFound for a nonexistent folder, doesn't throw") {
   auto db = Database::open_at(fresh_db_path("nonexistent_folder"));
   fs::path missing = fs::temp_directory_path() / "pzt_test" / "definitely_does_not_exist_12345";
@@ -242,9 +242,9 @@ TEST_CASE("create_project rejects a duplicate project name") {
   CHECK(second.error() == CreateProjectError::NameAlreadyExists);
 }
 
-// T-32：归档能力删掉之后 ORDER BY 只剩名字这一项。这个用例特意留着一个
-// 曾经会被归档态顶到后面去的名字组合(aaa 建得晚、zzz 建得早)，钉住"现在
-// 纯按名字排、插入顺序和 archived_at 都不再影响结果"。
+// 项目没有归档态，ORDER BY 只剩名字这一项。这个用例特意用一个插入顺序与
+// 名字顺序相反的组合(aaa 建得晚、zzz 建得早)，钉住"纯按名字排，插入顺序和
+// archived_at 都不影响结果"。
 TEST_CASE("list_projects sorts by name") {
   auto db = Database::open_at(fresh_db_path("name_sort"));
   auto photos_a = fresh_photo_dir("name_sort_a");
@@ -261,9 +261,9 @@ TEST_CASE("list_projects sorts by name") {
   CHECK(projects[1].name == "zzz_second");
 }
 
-// T-32：archived_at 作为死列保留(理由见 core/db/schema.cpp)，代价是老库里
-// 真的存着非 NULL 的值:凡是在删除归档能力之前 pzt archive 过的项目都是。
-// 这个用例走的就是那条升级路径：把列填上，然后确认它对 list_projects 与
+// archived_at 是保留的死列(理由见 core/db/schema.cpp)，代价是老库里真的
+// 存着非 NULL 的值:凡是归档能力还在时被归档过的项目都是。这个用例走的就
+// 是那条升级路径：把列填上，然后确认它对 list_projects 与
 // get_project_summary 都不再有任何影响。这同时是"没有任何代码读它"这句话
 // 的哨兵，将来谁把它重新接回查询，这里会红。
 TEST_CASE("a populated archived_at no longer affects listing or summary") {
@@ -277,7 +277,7 @@ TEST_CASE("a populated archived_at no longer affects listing or summary") {
   REQUIRE(aaa.ok());
   REQUIRE(create_project(db, "zzz_second", photos_b.string()).ok());
 
-  // 模拟一个在 T-32 之前被 pzt archive 过的老项目。
+  // 模拟一个在归档能力还在时被归档过的老项目。
   char* err = nullptr;
   sqlite3_exec(db.handle(), "UPDATE projects SET archived_at = 1 WHERE name = 'aaa_first';",
                nullptr, nullptr, &err);
@@ -506,7 +506,7 @@ TEST_CASE("get_image reads back the content field when the stored result_json ha
   CHECK(after->evaluation->assessment == "sharp and well exposed");
 }
 
-// F-07：批量版 get_image，只回答"这些图片里哪些已经有评估结果"，一条
+// 批量版 get_image，只回答"这些图片里哪些已经有评估结果"，一条
 // IN 查询代替逐张 get_image()。
 TEST_CASE("evaluated_image_ids returns only the ids that actually have an evaluation row") {
   auto db = Database::open_at(fresh_db_path("evaluated_image_ids_basic"));
@@ -558,7 +558,7 @@ TEST_CASE("evaluated_image_ids ignores ids outside the requested list and handle
   CHECK(evaluated_image_ids(db, {}).empty());
 }
 
-// F-07：500 是分块大小，不是什么魔法上限——超过一个分块也要能正确合并
+// 500 是分块大小，不是什么魔法上限——超过一个分块也要能正确合并
 // 所有分块的结果，不是只返回第一块。600 个 id(没有真实图片，故意传入
 // 数据库里根本不存在的 id)验证分块逻辑本身，不依赖真的建 600 张图片。
 TEST_CASE("evaluated_image_ids correctly spans more than one 500-id chunk") {
@@ -933,7 +933,7 @@ TEST_CASE("rescan_project with prune=false preserves the old add-only behavior")
   CHECK(find_image_by_path(db, created.value(), "b.jpg").has_value());
 }
 
-// F-24 会话续点：last_image_id 默认 nullopt(迁移态/从没浏览过),set 之后
+// 会话续点：last_image_id 默认 nullopt(迁移态/从没浏览过),set 之后
 // open_project 能读回；这一并覆盖了 last_image_id 迁移列的读写。
 TEST_CASE("set_last_image_id persists and round-trips via open_project") {
   auto db = Database::open_at(fresh_db_path("last_image_id"));

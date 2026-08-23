@@ -72,7 +72,7 @@ TEST_CASE("max_comparisons_for_top_k 给出 (m-1)+(k-1)*ceil(log2 m)") {
   CHECK(max_comparisons_for_top_k(2, 2) == 2);
   CHECK(max_comparisons_for_top_k(8, 1) == 7);
   CHECK(max_comparisons_for_top_k(8, 8) == 7 + 7 * 3);
-  // PRD 里那个 200 张分 40 组取 20 张的算例：第二级 39 + 19*6。
+  // 200 张分 40 组取 20 张：第二级 39 + 19*6。
   CHECK(max_comparisons_for_top_k(40, 20) == 39 + 19 * 6);
 }
 

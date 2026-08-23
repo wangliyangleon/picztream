@@ -577,7 +577,7 @@ TEST_CASE("render reports RecipeNotFound for a nonexistent id") {
   CHECK(result.error() == RenderRecipeError::RecipeNotFound);
 }
 
-// T-29:自建 version 的向导要在每个字段填完之后就重渲染一次预览,而那时这
+// 自建 version 的向导要在每个字段填完之后就重渲染一次预览,而那时这
 // 组参数还没有落库、没有 recipe_id 可传给 render。下面这组用例钉住的是
 // render_preview 与"先 create_version 再 render"的**等价性**:不是"效果差
 // 不多",是逐字节相同。预览与保存之后看到的必须是同一张图,否则用户按着预
@@ -837,7 +837,7 @@ TEST_CASE("render applies contrast even when the four original params are all ze
   CHECK(result.value().rgba[0] > 200);  // has_adjustments 必须认出新字段非零,不能被旧的 4 字段判断漏掉
 }
 
-// T-15 票 C：批量确认里的 M（"其中已有配方、会被覆盖且无法还原的张数"）。
+// 批量确认里的 M（"其中已有配方、会被覆盖且无法还原的张数"）。
 // 它是确认文案的主角,所以它算错的失效模式是"用户看着一个错的数字按下
 // y"-不崩、不报错,只能靠测试盯住。
 TEST_CASE("count_images_with_recipe counts only the ids that actually have one") {

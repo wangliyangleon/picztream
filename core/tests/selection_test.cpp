@@ -84,7 +84,7 @@ TEST_CASE("request_selection_impl returns the model's picks in the order the mod
   auto result = detail::request_selection_impl(three_candidates(), /*count=*/2, Provider::Claude,
                                                 post);
   REQUIRE(result.ok());
-  // 顺序即交付顺序（PRD 决策十四），这一层原样交还，不排序也不清洗。
+  // 模型返回的顺序即交付顺序，这一层原样交还，不排序也不清洗。
   CHECK(result.value().picks == std::vector<int>{3, 1});
 }
 
@@ -97,13 +97,13 @@ TEST_CASE("request_selection_impl hands the model both the quality assessment an
                                                 post);
   REQUIRE(result.ok());
 
-  // PRD 决策六：两个字段一起进上下文。只传 content 会丢掉质量维度，而几张
+  // 两个字段一起进上下文。只传 content 会丢掉质量维度，而几张
   // 都符合题材时，决定选谁的恰恰是 assessment。
   std::string prompt = claude_instruction_text(body);
   CHECK(prompt.find("锐利、构图均衡") != std::string::npos);
   CHECK(prompt.find("一只猫趴在窗台上晒太阳") != std::string::npos);
   CHECK(prompt.find("夜市摊位前热闹的人群") != std::string::npos);
-  // 每张照片带着它的序号出现（模型只吐序号，PRD 决策十三）。
+  // 每张照片带着它的序号出现（模型只吐序号，不吐路径）。
   CHECK(prompt.find("1.") != std::string::npos);
   CHECK(prompt.find("3.") != std::string::npos);
 }
@@ -119,7 +119,7 @@ TEST_CASE("request_selection_impl puts the selection brief in the prompt only wh
   CHECK(claude_instruction_text(with_brief_body).find("多要几张有人的，发朋友圈") !=
         std::string::npos);
 
-  // 票 08 之前没有人传选片简述，为空时整段省略而不是留一句空的"用户要求："。
+  // 选片简述为空时整段省略，而不是留一句空的"用户要求："。
   std::string empty_brief_body;
   auto empty_brief = capturing_post(empty_brief_body, nlohmann::json{{"picks", nlohmann::json::array({1})}});
   auto r2 = detail::request_selection_impl(three_candidates(), 1, Provider::Claude, empty_brief,
@@ -157,8 +157,8 @@ TEST_CASE("request_selection_impl sends no images and constrains picks to intege
 TEST_CASE("request_selection_impl skips non-integer entries instead of discarding the whole array") {
   EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
   std::string body;
-  // 决策十三的立场往上一层也成立：局部不合法不该把真信号一起扔掉。越界与
-  // 重复由 curate 的清洗函数管，这一层只负责"能读出哪些整数"。
+  // 跟越界序号同一个立场：局部不合法不该把真信号一起扔掉。越界与重复由
+  // curate 的清洗函数管，这一层只负责"能读出哪些整数"。
   auto post = capturing_post(
       body, nlohmann::json{{"picks", nlohmann::json::array({2, "three", 1, nullptr})}});
 
@@ -229,7 +229,7 @@ TEST_CASE("request_selection (public entry point) reports MissingApiKey without 
 }
 
 // ---------------------------------------------------------------------------
-// 票 07：文案与选择同一次调用产出，失败隔离（PRD 决策十五）
+// 文案与选择同一次调用产出，失败隔离
 //
 // 这一组钉的是"附赠品坏了不能把关键结果拖下水"：下面每一条不合法的文案，
 // picks 都必须原样活着。
@@ -313,9 +313,9 @@ TEST_CASE("request_selection_impl asks for the caption in the same call as the p
                                                 /*selection_brief=*/"发朋友圈，多要几张有人的");
   REQUIRE(result.ok());
 
-  // PRD 决策十五：同一次调用，不是第二次请求。提示词里既要有 caption 这个
-  // 键名（schema instruction 与提示词形状必须对得上），也要说清它是给人直接
-  // 发出去的话，而不是又一段摄影评语（风险二）。
+  // 同一次调用，不是第二次请求。提示词里既要有 caption 这个键名（schema
+  // instruction 与提示词形状必须对得上），也要说清它是给人直接发出去的话，
+  // 而不是又一段摄影评语。
   std::string prompt = claude_instruction_text(body);
   CHECK(prompt.find("caption") != std::string::npos);
   // 简述带着用途("发朋友圈")，语气与平台适配由它驱动，不需要新的输入。
@@ -324,8 +324,8 @@ TEST_CASE("request_selection_impl asks for the caption in the same call as the p
   // 不点破的话它会把落选的那几张也写进去，而那些照片根本不会被交付。
   CHECK(prompt.find("the photos you picked") != std::string::npos);
   CHECK(prompt.find("not about the ones you left out") != std::string::npos);
-  // 决策十五/六：两栏都在上下文里(选片本来就要用 assessment)，被约束的是成
-  // 品不许点评拍摄手法，而不是把 quality 那一栏从材料里剔除。
+  // 两栏都在上下文里(选片本来就要用 assessment)，被约束的是成品不许点评拍
+  // 摄手法，而不是把 quality 那一栏从材料里剔除。
   CHECK(prompt.find("never critique or mention the photography itself") != std::string::npos);
 }
 
@@ -343,7 +343,7 @@ TEST_CASE("request_selection_impl leaves the caption optional in the Local const
 
   auto parsed_body = nlohmann::json::parse(captured_body);
   CHECK(parsed_body["format"]["properties"]["caption"]["type"] == "string");
-  // 决策十五说的"返回 schema 里是可选字段"就落在这里：required 只有 picks，
+  // caption 是可选字段，就落在这里：required 只有 picks，
   // 本地模型漏掉文案时产出的仍是合法输出，不会被约束解码逼着编一段出来、也
   // 不会整个响应作废。
   auto required = parsed_body["format"]["required"];

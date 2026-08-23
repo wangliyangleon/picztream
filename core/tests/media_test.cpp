@@ -8,8 +8,8 @@
 using pzt::core::media::is_raw_path;
 using pzt::core::media::resolve_preview_path;
 
-// F-16：core/media 把此前散落在 api.cpp/dedup.cpp/evaluation_worker.cpp/
-// project.cpp 的 RAW 预览判断与路径解析收成单一来源。这里锁住纯函数行为；
+// core/media 是 RAW 预览判断与路径解析的单一来源(它们曾经散落在
+// api.cpp/dedup.cpp/evaluation_worker.cpp/project.cpp)。这里锁住纯函数行为；
 // decode_preview_file 需要真实文件，由 evaluation_worker/dedup 的集成测试覆盖。
 
 TEST_CASE("is_raw_path recognizes DNG/RAF case-insensitively") {

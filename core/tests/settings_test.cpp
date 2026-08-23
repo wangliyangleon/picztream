@@ -65,8 +65,8 @@ TEST_CASE("load returns all defaults when the top-level JSON value isn't an obje
   CHECK(s.dedup_time_window_seconds == 10);
 }
 
-// T-16/#27：dedup_reject 已删除。装过旧版本的用户 config.json 里还留着这
-// 个字段，升级之后必须照常加载、不报错 —— 逐字段 assign_if_present 天然
+// dedup_reject 这个字段已经不存在了。装过旧版本的用户 config.json 里还留
+// 着它，升级之后必须照常加载、不报错 —— 逐字段 assign_if_present 天然
 // 满足，但这是对外的数据兼容性承诺(见 docs/RELEASE.md)，要有东西守住。
 TEST_CASE("load ignores fields that no longer exist instead of failing") {
   auto path = fresh_config_path("removed_field");
@@ -123,7 +123,7 @@ TEST_CASE("load reads every field correctly when the file is fully populated") {
   CHECK(s.prefetch_window == 5);
 }
 
-// F-12：局部容错——一个字段类型不对/取值不认识，不该拖累其它合法字段
+// 局部容错——一个字段类型不对/取值不认识，不该拖累其它合法字段
 // 也一起回退到默认值。
 TEST_CASE("load falls back per-field on bad types or unrecognized values, others still apply") {
   auto path = fresh_config_path("partial_bad");

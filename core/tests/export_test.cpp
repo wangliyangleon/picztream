@@ -256,7 +256,7 @@ TEST_CASE("export_tag disambiguates a filename collision in the output folder") 
   CHECK(fs::exists(out_dir / "img_000_2.jpg"));  // 新导出的加了 _2
 }
 
-// F-26：默认排除废片/重复，即便它们打了要导出的目标标签。
+// 默认排除废片/重复，即便它们打了要导出的目标标签。
 TEST_CASE("export_tag excludes images also tagged reject or duplicate by default") {
   auto fx = make_fixture("export_exclude_default", 3);
   auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
@@ -573,9 +573,8 @@ TEST_CASE("export_tag's progress callback fires once per image with correct done
   CHECK(calls[2] == std::make_pair(3, 3));
 }
 
-// T-6：这条以前断言的是"纯 JPEG 批次一次都不报进度"，那正是要修的 bug
-// 本身：分母原来取的是批次里的 RAW 张数，纯 JPEG 批次 raw_total==0，回调
-// 全程不触发，导 300 张 JPEG 在终端上完全静默。
+// 纯 JPEG 批次也要报进度。分母若取批次里的 RAW 张数，纯 JPEG 批次
+// raw_total==0、回调全程不触发，导 300 张 JPEG 在终端上完全静默。
 TEST_CASE("export_tag's progress callback fires for a pure-jpeg batch too") {
   auto fx = make_fixture("export_jpeg_progress", 2);
   auto tag = create_tag(fx.db, fx.project_id, "精选", std::nullopt, false);
@@ -592,7 +591,7 @@ TEST_CASE("export_tag's progress callback fires for a pure-jpeg batch too") {
   CHECK(calls[1] == std::make_pair(2, 2));
 }
 
-// T-6：按整数百分比节流。300 张时每张只占 0.33%，回调次数应该远少于张数，
+// 按整数百分比节流。300 张时每张只占 0.33%，回调次数应该远少于张数，
 // 但首尾必须报到，且 done 单调递增、total 恒等于批次大小。不这样节流的话
 // 一次导出就是几百次 banner 重画，本身会拖慢导出。
 TEST_CASE("export_tag's progress callback is throttled by whole percent on large batches") {

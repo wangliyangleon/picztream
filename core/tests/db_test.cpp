@@ -121,7 +121,7 @@ TEST_CASE("default_db_path respects XDG_CONFIG_HOME") {
   unsetenv("XDG_CONFIG_HOME");
 }
 
-// F-04：每条新打开的连接都要设置忙等超时,不能让并发写(比如后台
+// 每条新打开的连接都要设置忙等超时,不能让并发写(比如后台
 // EvaluationWorker 的独立连接)一撞上写锁就立刻抛异常。`PRAGMA
 // busy_timeout;`(不带参数)是查询当前值的标准写法,直接断言开出来的连
 // 接确实带着这个设置,不用真的起两个线程去竞争锁。
@@ -138,10 +138,10 @@ TEST_CASE("opening a database sets a non-zero busy_timeout") {
   CHECK(timeout_ms > 0);
 }
 
-// T-7：schema 版本闸门。SQLite 给每个库留了一个 4 字节的 user_version
-// 供应用自己用,默认 0。PZT 把"当前 schema"定为 1,于是"读到 0"同时覆盖
-// 了全新空文件和任何 T-7 之前建的老库,两者走同一条全量初始化路径,跑完
-// 盖章;读到 1 就直接跳过全部建表与加列检查。
+// schema 版本闸门。SQLite 给每个库留了一个 4 字节的 user_version 供应用
+// 自己用,默认 0。PZT 把"当前 schema"定为 1,于是"读到 0"同时覆盖了全新空
+// 文件和任何在版本闸门之前建的老库,两者走同一条全量初始化路径,跑完盖
+// 章;读到 1 就直接跳过全部建表与加列检查。
 TEST_CASE("a freshly created database is stamped at the current schema version") {
   std::string path = temp_db_path("schema_version_fresh");
 
@@ -160,7 +160,7 @@ TEST_CASE("reopening an already-stamped database leaves user_version unchanged")
   CHECK(read_int_pragma(db2.handle(), "PRAGMA user_version;") == 1);
 }
 
-// T-7：WAL。默认的 rollback journal 下写者阻塞读者,而 PZT 现在确实是多
+// WAL。默认的 rollback journal 下写者阻塞读者,而 PZT 确实是多
 // 写者(EvaluationWorker 后台 jthread 一条连接 + 主线程 + agent 每图派生
 // 的 pzt 子进程)。
 TEST_CASE("opening a database enables WAL journal mode") {
@@ -201,8 +201,8 @@ TEST_CASE("initialize_schema skips all DDL when the database is already stamped"
   sqlite3_close(raw);
 }
 
-// T-7 之前的二进制建的库长这样:结构是现代的,但没有版本号(默认 0)。迁移
-// 要把它盖章成 1,且一行数据都不能碰,尤其是 image_evaluations,它的结构
+// 版本闸门之前的二进制建的库长这样:结构是现代的,但没有版本号(默认 0)。
+// 迁移要把它盖章成 1,且一行数据都不能碰,尤其是 image_evaluations,它的结构
 // 已经是现代形态,结构校验不该误伤它。
 TEST_CASE("a legacy v0 database with the modern schema is stamped without losing data") {
   std::string path = temp_db_path("schema_v0_modern");
@@ -226,7 +226,7 @@ TEST_CASE("a legacy v0 database with the modern schema is stamped without losing
   sqlite3_close(raw);
 }
 
-// W2026-07-21 之前的 image_evaluations 是另一套列。那种表里存的东西跟现
+// 早期的 image_evaluations 是另一套列。那种表里存的东西跟现
 // 在的读法对不上,必须 drop 重建;但只有这张表该被牺牲,其它表的数据一行
 // 都不能少。
 TEST_CASE("a legacy v0 database with the old image_evaluations shape gets that table rebuilt") {

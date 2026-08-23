@@ -132,7 +132,7 @@ TEST_CASE("resolve matches tag names case-insensitively") {
   }
 }
 
-// D-3：系统标签的英文别名是标识符，不是显示文案 - 不读任何界面语言状态，
+// 系统标签的英文别名是标识符，不是显示文案 - 不读任何界面语言状态，
 // 中英两种拼法在任何语言设置下都认。
 TEST_CASE("resolve accepts stable ASCII aliases for system tags") {
   auto fx = make_fixture("alias", 3);
@@ -190,8 +190,8 @@ TEST_CASE("failure carries the canonical tag name, not what the user typed") {
   CHECK(resolve(fx.db, fx.project_id, "乱写").error().tag_name.empty());
 }
 
-// #27 (D-2) 会用到：dedup 要拒绝系统标签范围，eval/export 仍然允许。参数
-// 在本票就位，默认 Allow 保证现有调用点行为不变。
+// dedup 要拒绝系统标签范围，eval/export 仍然允许。默认 Allow，所以只有明
+// 确要求拒绝的调用方才拿得到 SystemTagNotAllowed。
 TEST_CASE("resolve can be told to refuse a system tag as the scope") {
   auto fx = make_fixture("policy", 2);
   auto reject = ensure_reject_tag(fx.db, fx.project_id);
@@ -220,7 +220,7 @@ TEST_CASE("resolve can be told to refuse a system tag as the scope") {
   }
 }
 
-// T-15 票 A（#30，决策 D-4/D-6）：第四种指法 `.`，语义是"用调用方给定的
+// 第四种指法 `.`，语义是"用调用方给定的
 // 那一组 id"。core 不知道那组 id 从哪来，交互层传的是当前视图，headless
 // 一侧压根没有可传的东西 - 所以"没给集合"是一个独立的错误，不是语法错。
 TEST_CASE("resolve('.') uses the explicit id set the caller handed in") {
@@ -232,7 +232,7 @@ TEST_CASE("resolve('.') uses the explicit id set the caller handed in") {
   // 原样透传，包括顺序 - 调用方给的那批就是屏幕上那批，重排会让"不多不
   // 少"这条验收失去意义。
   CHECK(result.value().image_ids == view);
-  // 视图不是标签，所以没有 scope_tag，F-26 的对称例外接不上它（D-7）。
+  // 视图不是标签，所以没有 scope_tag，对称例外接不上它。
   CHECK(!result.value().scope_tag.has_value());
 }
 
@@ -242,7 +242,7 @@ TEST_CASE("resolve('.') without an explicit set is its own error, not bad syntax
   auto result = resolve(fx.db, fx.project_id, ".");
   REQUIRE(!result.ok());
   // 不是 InvalidSyntax：`.` 是合法写法，只是这一侧没有集合可指。报语法错
-  // 会让 headless 说出"既不是 * 也不以 # 开头"这句假话（D-6 第二条）。
+  // 会让 headless 说出"既不是 * 也不以 # 开头"这句假话。
   CHECK(result.error().error == ScopeError::NoExplicitSet);
   CHECK(result.error().tag_name.empty());
 }
@@ -323,7 +323,7 @@ TEST_CASE("exclude_by_tags drops images carrying any of the named tags") {
   }
 }
 
-// F-26 的对称例外：范围本身就是这个标签时，用户已经显式要求处理它，不再排除。
+// 对称例外：范围本身就是这个标签时，用户已经显式要求处理它，不再排除。
 TEST_CASE("exclude_by_tags honours the symmetric exception for the scope tag") {
   auto fx = make_fixture("symmetric", 3);
   auto reject = ensure_reject_tag(fx.db, fx.project_id);

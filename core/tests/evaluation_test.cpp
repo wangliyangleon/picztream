@@ -320,7 +320,7 @@ TEST_CASE("request_evaluation_impl extracts content alongside the assessment") {
 }
 
 // 严格而非宽松退化为空：`image_evaluations` 以 image_id 为主键，缓存判据是
-// "有评估记录就跳过"(PRD 决策七)，一条 content 为空的记录永远不会被刷新。
+// "有评估记录就跳过"，一条 content 为空的记录永远不会被刷新。
 // 宁可整条失败让下次 run 重跑，也不留哑数据。
 TEST_CASE("request_evaluation_impl reports ParseError when content is missing or wrong type") {
   EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");
@@ -350,7 +350,7 @@ TEST_CASE("request_evaluation_impl reports ParseError when content is missing or
   }
 }
 
-// PRD 风险二(高)：提示词不明确的话，模型会顺着 assessment 的调子继续写摄影
+// 提示词不明确的话，模型会顺着 assessment 的调子继续写摄影
 // 评语，两个字段变成同义反复，下游文案就只能是空洞的漂亮话。
 TEST_CASE("request_evaluation_impl's prompt asks for scene content, distinct from the assessment") {
   EnvVarGuard key("ANTHROPIC_API_KEY", "fake-key-for-test");

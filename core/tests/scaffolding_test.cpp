@@ -1,6 +1,6 @@
 // Scaffolding smoke tests only: prove the build pipeline actually works
 // (SQLite link, doctest vendoring, std::jthread availability). Real module
-// tests come in later sessions per docs/history/M0_Eng_Design.md 任务分解.
+// tests live in the per-module test files alongside them.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
 
