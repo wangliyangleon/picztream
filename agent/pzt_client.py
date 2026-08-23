@@ -28,8 +28,7 @@ class PztCancelledError(Exception):
     """用户取消导致的子进程终止。故意不继承 PztCommandError：stages 的
     `except PztCommandError` 会把命令失败降级成 StageOutput(ok=False)，
     而取消必须穿透 stage.run 和 driver.advance 直达 worker 的推进循环，
-    走 CANCELLED 收尾而不是 FAILED（见 docs/W2026-07-15_AgentRuntime_
-    Eng_Design.md 第六节）。"""
+    走 CANCELLED 收尾而不是 FAILED。"""
 
     def __init__(self, argv: List[str]) -> None:
         super().__init__(f"cancelled: {' '.join(argv)}")

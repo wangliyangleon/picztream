@@ -1,8 +1,7 @@
-"""SessionView 是 consumer 私有的内存视图（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第四节）：从 RunState 重建、被事件更新、渲染 describe()
-快速应答。这里测三件事：from_run 重建各状态、describe 各分支文案（
-COLLECTING/PLANNED/AWAITING_GATE 逐字对齐旧 _status_snapshot_text，
-RUNNING 是新增分支）、photo_count 的目录现算。
+"""SessionView 是 consumer 私有的内存视图：从 RunState 重建、被事件更新、
+渲染 describe() 快速应答。这里测三件事：from_run 重建各状态、describe
+各分支文案（COLLECTING / PLANNED / AWAITING_GATE / RUNNING）、
+photo_count 的目录现算。
 """
 from __future__ import annotations
 

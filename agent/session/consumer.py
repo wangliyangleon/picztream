@@ -1,7 +1,6 @@
-"""SessionConsumer：2.0 运行时的消息线程（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第七节）：会话逻辑按状态分派，LLM 调用点全部走投 job + 等
-事件（取代了早期单线程同步 router）。它是唯一渲染与发送对话文本的
-线程；对话文案逐字对齐旧实现（对齐清单见 Eng Design 第八节）。
+"""SessionConsumer：会话的消息线程。会话逻辑按状态分派，LLM 调用点全部
+走投 job + 等事件，自己不阻塞在模型上。它是唯一渲染与发送对话文本的
+线程 - 发送口收在一处，两个线程各发各的会让消息乱序。
 
 所有权：非 DriveJob 活跃期间独占 RunState（self.run 非 None 即持有）；
 投出 DriveJob 的同时放手（self.run = None），此后只凭 SessionView 应
@@ -191,8 +190,8 @@ class SessionConsumer:
     # -- 生命周期 --
 
     def bootstrap(self) -> None:
-        """启动恢复（Eng Design 第七节第 7 条）+ 取消/崩溃竞态自愈（AG-12）
-        + 低频清扫超龄终态 run（AG-14）。"""
+        """进程起来时跑一次：续跑上次没跑完的 run、修掉取消/崩溃留下的
+        中间态、清扫超龄的终态 run。"""
         _terminal = (RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED)
         self._sweep_terminal_runs()
         # 曾被取消但 worker 没来得及收尾就崩了：补 cancel、不复活。标记无论如

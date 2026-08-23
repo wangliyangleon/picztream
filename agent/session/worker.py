@@ -1,6 +1,5 @@
-"""SessionWorker：2.0 运行时的工作线程（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第五、六节）。单队列 FIFO 串行执行三类 job，事件上报给
-consumer，不做任何会话决策、不渲染对话文本。
+"""SessionWorker：会话的工作线程。单队列 FIFO 串行执行三类 job，事件上报
+给 consumer，不做任何会话决策、不渲染对话文本。
 
 所有权：DriveJob 活跃期间它独占对应 run 的变更与落盘（Driver 内部每个
 stage 边界 save 就是断点续跑检查点），交接靠"落盘 + 事件"，不共享内存
@@ -66,9 +65,9 @@ PARTIAL_ON_CANCEL_KINDS = (PROGRESS_PHOTOS, PROGRESS_EVALUATIONS)
 
 class SessionWorker:
     """双 lane：分类/编排 lane（`classify_jobs`，纯 LLM，轻）和 drive lane
-    （`drive_jobs`，pzt 子进程，重）各一条线程并发跑（见 Eng Design 真机
-    反馈"彻底去关键词"一节）。拆开是为了让"处理中"也能跑取消/进度的 LLM
-    分类——单 lane 时 classify 会排在几分钟的 drive 后面饿死。两 lane 无
+    （`drive_jobs`，pzt 子进程，重）各一条线程并发跑。拆开是为了让"处理
+    中"也能跑取消/进度的 LLM 分类——单 lane 时 classify 会排在几分钟的
+    drive 后面饿死。两 lane 无
     共享可变态：classify/compose 是纯 LLM（不碰 self.client、不改 run），
     drive 独占 run 的变更与落盘；唯一交集是线程安全的 event 队列。"""
 
@@ -355,7 +354,7 @@ class SessionWorker:
             self.events.put(GateReached(job.generation, run.run_id, stage, payload))
             return
         if run.status == RunStatus.AWAITING_REVIEW:
-            # 全部 stage 跑完的自动收尾，对齐旧 router 各路径的自动 approve。
+            # 全部 stage 跑完的自动收尾：没有待人复核的东西了，直接 approve。
             self.driver.approve(run)
         detail = self._first_failure_detail(run) if run.status == RunStatus.FAILED else None
         self.events.put(RunFinished(job.generation, run.run_id, run.status.value, detail,

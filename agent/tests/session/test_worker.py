@@ -1,8 +1,7 @@
-"""SessionWorker：单队列串行 job 执行器（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第五、六节）。测四类协议：classify/compose job 的事件映
-射、DriveJob 的推进与事件序列、取消（loop-top 检查 + 可杀布防 +
-PztCancelledError 收尾）、未预期异常的 JobCrashed 兜底。全部单步
-step() 驱动，不起真线程。
+"""SessionWorker：单队列串行 job 执行器。测四类协议：classify/compose job
+的事件映射、DriveJob 的推进与事件序列、取消（loop-top 检查 + 可杀布防 +
+PztCancelledError 收尾）、未预期异常的 JobCrashed 兜底。全部单步 step()
+驱动，不起真线程。
 """
 from __future__ import annotations
 

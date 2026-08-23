@@ -1,12 +1,10 @@
-"""SessionView：consumer 私有的会话内存视图（docs/W2026-07-15_AgentRuntime_
-Eng_Design.md 第四节）。它回答"现在到哪一步/进度多少"，让 consumer 在
-worker 独占 RunState 期间（DriveJob 活跃）也能秒级应答——**不是**持久
-真相，重启从 RunStore 重建，平时被 worker 事件更新。
+"""SessionView：consumer 私有的会话内存视图。它回答"现在到哪一步/进度
+多少"，让 consumer 在 worker 独占 RunState 期间（DriveJob 活跃）也能秒级
+应答——**不是**持久真相，重启从 RunStore 重建，平时被 worker 事件更新。
 
-photo_count 故意不做成字段：照片数的真相是 incoming 目录本身，惰性现算
-（旧 router 同款），缓存进字段只会跟目录漂移。用户设想的
-ai_eval_in_progress 这类步骤枚举也不单独建：(status, current_stage,
-stage_progress) 组合已完整表达，平行枚举只会漂移。
+photo_count 故意不做成字段：照片数的真相是 incoming 目录本身，惰性现算，
+缓存进字段只会跟目录漂移。同理不建 ai_eval_in_progress 这类步骤枚举：
+(status, current_stage, stage_progress) 组合已完整表达，平行枚举只会漂移。
 """
 from __future__ import annotations
 
@@ -155,9 +153,8 @@ class SessionView:
         return len(list(incoming_dir_for(self.incoming_root, self.run_id).iterdir()))
 
     def describe(self) -> str:
-        # COLLECTING/PLANNED/AWAITING_GATE 三条逐字对齐旧
-        # _status_snapshot_text；RUNNING 是 2.0 新增分支（旧实现跑批期间
-        # 根本收不到消息，没有这个应答场景）。
+        # RUNNING 这条分支只有在 drive 期间也能收消息时才用得上 - 它正是
+        # SessionView 存在的理由（此时 RunState 归 worker 独占）。
         if self.status == RunStatus.COLLECTING:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:

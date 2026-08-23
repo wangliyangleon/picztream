@@ -298,8 +298,8 @@ class WorkerEnv:
                 return out
 
     def make_running_run(self, run_id: str = "tg-w1") -> RunState:
-        # consumer 在投 DriveJob(start) 前就把 run 置成 RUNNING 并落盘
-        # （见 Eng Design 第七节），这里直接从那个交接点开始。
+        # consumer 在投 DriveJob(start) 前就把 run 置成 RUNNING 并落盘，
+        # 这里直接从那个交接点开始。
         incoming = incoming_dir_for(self.tmp_path / "incoming", run_id)
         plan = make_fixed_plan(str(incoming), str(self.tmp_path / "deliver-out"))
         run = RunState(

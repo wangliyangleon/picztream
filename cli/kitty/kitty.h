@@ -56,7 +56,8 @@ using EnvLookupFn = std::function<std::optional<std::string>(std::string_view)>;
 // 下带超时读 stdin,跟全键盘主循环抢同一个 fd,且与 render_rgba_via_tmpfile
 // 里 `q=2`("终端永远不要回发响应")的约定直接冲突 - 而那条约定是为修一次
 // 真实死循环立的。所以这里只按环境变量猜,判定结果只用来决定"要不要提示
-// 一句",不用来拦人(见 docs/Env_Preflight_PRD.md 决策一)。
+// 一句",不用来拦人 - 白名单会漏判(没收录的终端、改过环境变量的),拿一个
+// 会漏判的信号去拦截,代价是把能用的终端挡在门外。
 //
 // inside_tmux 显式传入而不是内部再探一次:调用方已经算过,且单测要能独立
 // 构造 tmux 内/外两种情形。tmux 内 TERM/TERM_PROGRAM 只反映 tmux 自己,这

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Telegram 长驻会话 runner（W2026-07-15 目标五）：consumer/worker 双线程
-运行时。consumer（主线程）只做秒级消息反应/事件应用/timers；长活（LLM
-分类/编排、pzt drive）经两条 job 队列交给两条 worker 线程（classify lane
-+ drive lane）并发处理。见 docs/history/W2026-07-15_AgentRuntime_Eng_Design.md。
+"""Telegram 长驻会话 runner：consumer/worker 多线程运行时。consumer
+（主线程）只做秒级消息反应/事件应用/timers；长活（LLM 分类/编排、pzt
+drive）经两条 job 队列交给两条 worker 线程（classify lane + drive lane）
+并发处理。
 
-同一个 bot 同时只能跑一个入口（Telegram getUpdates 单消费者，双开会 409
-Conflict）。取代了早期的单线程同步主循环 + 旧 router.SessionRouter。
+同一个 bot 同时只能跑一个入口：Telegram getUpdates 是单消费者，双开会 409
+Conflict。
 """
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
         d.mkdir(parents=True, exist_ok=True)
 
     # 两个 client 实例：worker 专属的挂可取消布防点；consumer 只读查询
-    # （eval 进度轮询）用另一个，互不影响（Eng Design 第六节）。
+    # （eval 进度轮询）用另一个，互不影响。
     worker_client = PztClient()
     readonly_client = PztClient()
 
