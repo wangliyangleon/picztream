@@ -19,7 +19,7 @@ from .telegram_client import TelegramBotClient
 
 _log = logging.getLogger("pzt.agent.transport")
 
-# get_updates 失败的指数退避（AG-17）：0.1s 起、每次翻倍、封顶 30s，成功即复位。
+# get_updates 失败的指数退避：0.1s 起、每次翻倍、封顶 30s，成功即复位。
 _POLL_BACKOFF_MIN = 0.1
 _POLL_BACKOFF_MAX = 30.0
 
@@ -75,7 +75,7 @@ class TelegramTransport:
             try:
                 updates = await self._bot_client.get_updates(offset=self._offset, timeout=self.poll_timeout)
             except Exception as e:  # noqa: BLE001
-                # 断网/Telegram 故障期指数退避，别 10 次/秒空转刷屏（AG-17）。
+                # 断网/Telegram 故障期指数退避，别 10 次/秒空转刷屏。
                 _log.warning(f"[TelegramTransport] get_updates 失败，{backoff:.1f}s 后重试：{e!r}")
                 await asyncio.sleep(backoff)
                 backoff = _next_backoff(backoff)
@@ -133,7 +133,7 @@ class TelegramTransport:
             _log.info(f"[TelegramTransport] 收到不认识的消息形状，已跳过：photo={getattr(message, 'photo', 'N/A')!r} "
                       f"text={getattr(message, 'text', 'N/A')!r} caption={getattr(message, 'caption', 'N/A')!r} "
                       f"document={getattr(message, 'document', 'N/A')!r}")
-            # 视频/语音/贴纸等：用户侧也回一句，别让人以为没收到（AG-18）。
+            # 视频/语音/贴纸等：用户侧也回一句，别让人以为没收到。
             # best-effort：发失败别触发外层 _poll_loop 的"收一条消息失败了"误导文案。
             try:
                 await self._bot_client.send_text(
@@ -143,7 +143,7 @@ class TelegramTransport:
 
     def _enqueue_caption(self, message: Any) -> None:
         # 发图带的文字说明（caption）当一条普通文本入站消息接着投进队列，
-        # 复用现有文本管线当意图处理（AG-09）。排在照片/文件消息之后：消费
+        # 复用现有文本管线当意图处理。排在照片/文件消息之后：消费
         # 端先 mint/加照片、再处理意图。相册只有第一张带 caption，天然只触
         # 发一次。
         caption = (getattr(message, "caption", None) or "").strip()
@@ -175,7 +175,7 @@ class TelegramTransport:
         return messages
 
     def register_commands(self, commands: List[Any]) -> None:
-        # 注册 bot 命令菜单（AG-16.2）。best-effort：注册失败（网络等）不该拦
+        # 注册 bot 命令菜单。best-effort：注册失败（网络等）不该拦
         # 启动，命令能不能用不依赖它（拦截在 consumer 侧）。
         try:
             future = asyncio.run_coroutine_threadsafe(
@@ -189,7 +189,7 @@ class TelegramTransport:
         return future.result(timeout=30)
 
     def edit_text(self, chat_id: str, message_id: str, text: str) -> None:
-        # 原地更新一条已发消息（进度播报，AG-16.3）。调用方对失败降级发新。
+        # 原地更新一条已发消息（进度播报）。调用方对失败降级发新。
         future = asyncio.run_coroutine_threadsafe(
             self._bot_client.edit_message_text(chat_id, message_id, text), self._loop)
         future.result(timeout=30)

@@ -1,12 +1,11 @@
 """意图到 Plan 组装的那"一次性"LLM 步骤，见 docs/history/M4_Agent_Workflow_Design.md
-五"意图到 Plan 组装"。LLM 只决定 Curate/Style 用到的参数（W2026-07-21：
-Evaluate stage 已删除，agent 不再整批跑评估，见
-docs/history/W2026-07-21_PRD.md 已拍板决策 4）：Ingest/Deliver 的文件夹路径由调
-用方(run_intent.py)在 compose_plan 返回之后另行填入，模型不该、也没有
-信息去编文件路径。
-profile/last_config 是 docs/history/M4_Eng_Design.md 四已锁定的签名，子增量 E
-不实现 Profile/上次配置(见本模块对应的实现计划 Global Constraints)，
-接收但不用。
+五"意图到 Plan 组装"。LLM 只决定 Curate/Style 用到的参数：Ingest/Deliver
+的文件夹路径由调用方(run_intent.py)在 compose_plan 返回之后另行填入，模
+型不该、也没有信息去编文件路径。agent 不整批跑评估，所以这里没有对应的
+stage 可组装。
+
+last_config 是签名上收下但**还没有实现**的参数：它要让"跟上次一样"这类相
+对表述可被解读，没有它这类说法不会报错、而是静默落回默认值。
 """
 from __future__ import annotations
 
@@ -81,9 +80,9 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
     # `.get(k, 默认)` 只在 key 缺席时给默认值，模型显式回 null 时给的是
     # None，会被 validate_plan 拒掉、整次方案组装失败。真机上确实会发生
     # （"先去重，然后挑5张有小孩的" 这种没提目的地的说法，同一句话跑两次
-    # 一次 null 一次正常），是票 08 之前就有的缺陷，随手修掉。
+    # 一次 null 一次正常）。
     apply_tag = decision.get("apply_tag") or "精选"
-    # 票 08：null 与字段缺席都归一成空串（= 这次没有题材要求），不留给
+    # null 与字段缺席都归一成空串（= 这次没有题材要求），不留给
     # validate_plan 去拒。模型在"用户什么偏好都没说"时回 null 是常态，为一
     # 个纯增量的字段把整次方案组装打成失败，代价与收益完全不成比例。别的
     # 形状（dict/数字）仍然原样交给 validate_plan 拦，那才是输出污染。
@@ -91,8 +90,8 @@ def compose_plan(intent: str, profile: Optional[str], last_config: Optional[Plan
 
     stages = [StageSpec(name="Ingest")]
     if count is None and dedup_requested:
-        # W2026-07-21 目标三案例二：只说去重没给数量，Curate 的决定推迟到
-        # Dedup 跑完之后用一个闸门问（agent/session 侧接线见 Commit 8）。
+        # 只说去重没给数量：Curate 的决定推迟到 Dedup 跑完之后用一个闸门
+        # 问。
         stages.append(StageSpec(name="Dedup", params={
             "ai_enabled": ai_enabled,
             "provider": provider,

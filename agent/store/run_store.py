@@ -38,7 +38,7 @@ class RunStore:
         runs = [self.load(p.stem) for p in self.root.glob("*.json")]
         return [r for r in runs if r.status not in _TERMINAL_STATUSES]
 
-    # -- cancelling 标记（AG-12）--
+    # -- cancelling 标记 --
     # drive 期取消是"置 cancel_event + 立即重置会话"，盘上 run 要等 worker
     # 收尾才变 CANCELLED。落一个 sidecar 标记，worker 若在收尾前崩了，下次
     # bootstrap 见标记即补 cancel、不把取消过的批次当"中断"复活。
@@ -58,7 +58,7 @@ class RunStore:
     def clear_cancelling(self, run_id: str) -> None:
         self._cancelling_path(run_id).unlink(missing_ok=True)
 
-    # -- 保留/清扫（AG-14）--
+    # -- 保留/清扫 --
 
     def terminal_runs_older_than(self, cutoff_seconds: float, now: float) -> list[str]:
         """终态且其 JSON 落盘时间早于 now-cutoff_seconds 的 run_id（低频清扫

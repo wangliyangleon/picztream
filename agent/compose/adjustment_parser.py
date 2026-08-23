@@ -82,7 +82,7 @@ _GATE_SCHEMA_INSTRUCTION = (
 
 _ADJUST_ACTIONS = ("set_count", "set_apply_tag", "swap_out")
 
-# 票 11：选片确认阶段多认一个"只改题材要求"的动作。故意不并进
+# 选片确认阶段多认一个"只改题材要求"的动作。故意不并进
 # `_ADJUST_ACTIONS` - 那个元组还管着 `parse_adjustment`，而
 # `_SCHEMA_INSTRUCTION` 从没提过这个 action，并进去等于让 run_intent 那
 # 条路径接受一个它从不索取的形状。
@@ -159,23 +159,24 @@ def classify_gate_reply(msg: str, run: RunState, http_post: Optional[HttpPostFn]
 
 
 def _brief_override(decision: dict) -> dict:
-    """票 11 决策二：新简述**整体替换**旧简述。返回的是要并进 `PlanDelta`
+    """新简述**整体替换**旧简述。返回的是要并进 `PlanDelta`
     的那部分 params，"这次没提"就返回空 dict。
 
     缺席 / null / 非字符串都归成"没提"：`PlanDelta` 最终走
     `spec.params.update()`，key 不出现才是"不动旧值"，放个 None 进去会把
     旧简述覆盖成 None。空串则相反 - 它是用户明确要求去掉题材限制的一次
-    有意覆盖，必须放进去。这套 None/"" 的区分沿用票 08 在
-    `DedupFollowupReply.selection_brief` 上立的约定，两处不该各有一套。
+    有意覆盖，必须放进去。这套 None/"" 的区分跟
+    `DedupFollowupReply.selection_brief` 上那套是同一条约定，两处不该各有
+    一套。
     """
     brief = decision.get("selection_brief")
     return {"selection_brief": brief} if isinstance(brief, str) else {}
 
 
 def _decision_to_delta(action: str, decision: dict, run: RunState) -> PlanDelta:
-    # 票 11：题材要求可以单独来，也可以搭在另外三个动作上（"把第3张换掉，
-    # 要活泼点的"）。搭车时两件事进同一个 delta 一次 update，谁先谁后不
-    # 影响结果 - 决策一选"exclude 保留"消掉的正是这个顺序歧义。
+    # 题材要求可以单独来，也可以搭在另外三个动作上（"把第3张换掉，要活泼
+    # 点的"）。搭车时两件事进同一个 delta 一次 update，谁先谁后不影响结果
+    # - exclude 在简述变更时保留不动，消掉的正是这个顺序歧义。
     brief = _brief_override(decision)
 
     if action == "set_selection_brief":
@@ -242,12 +243,12 @@ _CONFIRMATION_SCHEMA_INSTRUCTION = (
     '"ins"; "6张，标签叫朋友圈" -> count 6 and apply_tag "朋友圈"; "AI帮我选"/"用AI挑"/"挑最好'
     '的" -> ai_enabled true; "不用AI了"/"按时间选就行"/"别用AI" -> ai_enabled false; "换成'
     'gemini"/"用gemini" -> provider "gemini"; '
-    # 票 13：真机上"小清新"这类纯题材要求，在没有 selection_brief 可落时会被
-    # 硬塞进 apply_tag 或 ai_enabled。所以例子里要把"不是标签、不是开关"点
-    # 明。**必须挤在这个既有的例子列表里、写成同一种紧凑格式**：第一版写成
-    # 了独立一段带四个例子，提示词长度 +36%，本地模型当场把整个返回结构改成
-    # 了嵌套的 {"confirmed": {...}}，连"改成6张"这种改动前好好的用例都一起
-    # 坏掉（票 08 那条"加规则会挤掉别的字段"教训的又一次实证）。
+    # "小清新"这类纯题材要求，没有明确指路的话会被模型硬塞进 apply_tag 或
+    # ai_enabled，所以例子里要把"不是标签、不是开关"点明。**必须挤在这个既
+    # 有的例子列表里、写成同一种紧凑格式**：写成独立一段带四个例子时提示词
+    # 长度 +36%，本地模型当场把整个返回结构改成了嵌套的
+    # {"confirmed": {...}}，连"改成6张"这种本来好好的用例都一起坏掉。给这
+    # 个提示词加规则，是会把别的字段挤掉的。
     '"小清新一点的"/"要活泼点的"/"别都是风景" -> selection_brief, a short phrase for '
     "what kind of photos (never apply_tag, never ai_enabled); omit it or use null when "
     "the reply says nothing about what kind of photos are wanted; "
@@ -268,7 +269,7 @@ class PlanConfirmationReply:
     ai_enabled: Optional[bool] = None
     provider: Optional[str] = None
     question: Optional[str] = None
-    # 票 13：与 count/apply_tag 等四个字段不同，这一个的"没提到"必须靠
+    # 与 count/apply_tag 等四个字段不同，这一个的"没提到"必须靠
     # isinstance(str) 判，不能靠 .get(k, 默认)，见 refine_plan_confirmation。
     selection_brief: Optional[str] = None
 
@@ -302,11 +303,11 @@ def refine_plan_confirmation(original_intent: str, current_params: dict, followu
         return PlanConfirmationReply(action="clarify", question=decision.get("question", "能再说清楚一点吗？"))
 
     if action == "confirmed":
-        # 票 13：brief 不能跟上面四个一样用 `.get(k, 当前值)` 兜底。那个写法
+        # brief 不能跟上面四个一样用 `.get(k, 当前值)` 兜底。那个写法
         # 只在"key 缺席"时回落，而模型回**显式 null** 是常态（用户这一句压根
         # 没提题材要求），null 会一路盖掉旧简述。改判类型：非字符串一律当"这
         # 次没提"、保留旧值；空串是"明确不要题材限制"的有意覆盖，留着。这套
-        # None/"" 的区分沿用票 08 立、票 11 复用的同一条约定。
+        # None/"" 的区分跟 _brief_override 那处是同一条约定。
         brief = decision.get("selection_brief")
         if not isinstance(brief, str):
             brief = current_params.get("selection_brief")
@@ -465,7 +466,7 @@ class DedupFollowupReply:
     action: Literal["narrow", "approve", "skip", "query", "cancel"]
     count: Optional[int] = None
     apply_tag: Optional[str] = None
-    # 票 08：None 与空串在这里不是一回事。None = "这次没说题材偏好"，调用
+    # None 与空串在这里不是一回事。None = "这次没说题材偏好"，调用
     # 方保留组装意图时抽出来的那一份；空串会被当成一次明确的覆盖，把它冲
     # 掉。模型回 null 是常态（用户只说"留5张"），所以这个区分必须留着。
     selection_brief: Optional[str] = None

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from orchestrator.types import Plan
 
-# W2026-07-21 目标三：Dedup 是否存在由这次意图决定，两种形状都合法，不做
+# Dedup 是否存在由这次意图决定，两种形状都合法，不做
 # 宽松的"contains"检查——这道护栏的本意是挡 LLM 输出污染，形状必须精确匹配。
 _STAGE_NAMES_WITH_DEDUP = ["Ingest", "Dedup", "Curate", "Style", "StyleApplyAll", "Deliver"]
 _STAGE_NAMES_WITHOUT_DEDUP = ["Ingest", "Curate", "Style", "StyleApplyAll", "Deliver"]
 _VALID_PROVIDERS = ("local", "gemini", "claude")
 # 1 到 50：下限 1 是"至少选一张"这个最基本的合法性，交给 curate 自己
-# 处理"候选不够"这种更细的场景；上限 50 对齐 PRD 示例(一天出去玩拍
+# 处理"候选不够"这种更细的场景；上限 50 对齐真实场景(一天出去玩拍
 # 40 张、挑 9 到 12 张)的量级上限，用来拦住模型编出"挑 500 张"这种
 # 明显脱离场景的输出，不是精确调出来的数字，真机观察后可以再调。
 _MIN_COUNT = 1
@@ -58,7 +58,7 @@ def validate_plan(plan: Plan) -> Plan:
     count = curate_spec.params.get("count")
     if curate_spec.gate == "required":
         # count 为空 <=> Curate 被挂起等 Dedup 后的追问，这是同一个不变量
-        # 的两面，不是两个独立开关（W2026-07-21 目标三决策六）。
+        # 的两面，不是两个独立开关。
         if count is not None:
             raise ValidationError(
                 "bad_curate_count",
@@ -73,9 +73,9 @@ def validate_plan(plan: Plan) -> Plan:
             f"Curate.params['count'] must be an int in [{_MIN_COUNT}, {_MAX_COUNT}], got {count!r}",
         )
 
-    # 票 08：简述原样进模型的选择提示词，所以形状必须是字符串。空串合法
-    # （"这次没有题材要求"，验收标准三），整个 key 缺席也合法 - 票 08 之前
-    # 组装出来的 Plan 里没有这个字段。compose_plan 已经把 null 归一成空
+    # 简述原样进模型的选择提示词，所以形状必须是字符串。空串合法（"这次
+    # 没有题材要求"），整个 key 缺席也合法 - 老的 Plan 里没有这个字段。
+    # compose_plan 已经把 null 归一成空
     # 串，走到这里的非字符串只可能是别的形状，那就是输出污染。
     selection_brief = curate_spec.params.get("selection_brief", "")
     if not isinstance(selection_brief, str):

@@ -64,7 +64,7 @@ def _real_popen_factory(argv: List[str]) -> subprocess.Popen:
 
 
 ProgressFn = Callable[[str, int, int], None]
-# (comparisons, evaluations)。票 10：AI 开跑前的精确开销，一条命令最多一
+# (comparisons, evaluations)。AI 开跑前的精确开销，一条命令最多一
 # 次。跟进度分开是因为下游处置完全不同 - 进度节流后原地编辑同一条消息，
 # 开销要立刻发一条新消息并带可取消入口。
 CostFn = Callable[[int, int], None]
@@ -73,7 +73,7 @@ CostFn = Callable[[int, int], None]
 def _parse_oob(line: str, key: str) -> Optional[dict]:
     """把一行 stderr 解析成 `key` 那种带外消息的 payload，不是就返回 None。
 
-    宽进严出，全程不抛：stderr 上混着 dedup 的 F-08 调参明细这种纯文本行
+    宽进严出，全程不抛：stderr 上混着 dedup 的调参明细这种纯文本行
     （`core/dedup/dedup.cpp:272` 对每一对比较都打一行），解析不出来是正常
     情况而不是异常。为自己的格式假设过期而报错，等于把自己的 bug 报成用
     户的错 —— 跟启动预检"模型清单解析不出来就闭嘴"同一条原则。
@@ -108,7 +108,7 @@ def _parse_progress(line: str) -> Optional[Tuple[str, int, int]]:
 
 
 def _parse_cost(line: str) -> Optional[Tuple[int, int]]:
-    """一行 stderr -> (comparisons, evaluations)，不是开销行就 None（票 10）。
+    """一行 stderr -> (comparisons, evaluations)，不是开销行就 None。
 
     两个字段都必须在：缺一个说明这行不是我们认识的那种开销，宁可整行丢掉
     也不要拿一半的数字去跟用户报账。"""
@@ -143,12 +143,12 @@ class PztClient:
         # 能力。worker 用自己专属的 client 实例，consumer 的只读查询走另
         # 一个实例，互不影响；单线程挂/摘，无并发写。
         self.cancel_event: Optional[threading.Event] = None
-        # 同一个套路的第二个布防点（T-8）：stage 在调用前后挂上/摘掉，
+        # 同一个套路的第二个布防点：stage 在调用前后挂上/摘掉，
         # 收到的是 (phase, done, total)。只有可取消路径（cancel_event 已
         # 布防）才会流式读 stderr —— 走 subprocess.run 的都是不需要进度的
         # 短命令。挂了也不影响正确性：进度是观测，丢了不改变结果。
         self.progress_sink: Optional[ProgressFn] = None
-        # 第三个布防点（票 10），跟 progress_sink 同一个套路、同一条读取线
+        # 第三个布防点，跟 progress_sink 同一个套路、同一条读取线
         # 程。分成两个属性而不是一个多路 sink：挂进度的地方不一定要挂开销
         # （反之亦然），合成一个的话下游每次都得先判自己收到的是哪种。
         self.cost_sink: Optional[CostFn] = None
@@ -173,7 +173,7 @@ class PztClient:
         这里曾经是轮询 communicate(timeout=)，选它的理由（"比 poll()+PIPE
         手工排水简单且不会管道死锁"）今天依然成立，但它不流式：超时时输
         出留在内部缓冲区、拿不到已到达的部分，只有子进程退出那一刻才一次
-        性交出，进度会变成事后回放（T-8）。
+        性交出，进度会变成事后回放。
 
         换成手工排水就要自己扛那个死锁：只盯一条管道读的话，另一条填满后
         子进程会阻塞在 write 上、父进程等在 wait 上，双方互等。所以两条各
@@ -224,7 +224,7 @@ class PztClient:
     def _drain(pipe, chunks: List[str], progress_sink: Optional[ProgressFn],
                 cost_sink: Optional[CostFn]) -> None:
         """无条件读到 EOF。**没人要进度也照读**——不读就是不排水，输出量
-        大的命令会被管道背压卡死（dedup 的 F-08 明细行量级是 Σ C(簇大小,2)，
+        大的命令会被管道背压卡死（dedup 的明细行量级是 Σ C(簇大小,2)，
         几十个中等簇就能越过 64KB 管道缓冲区）。
 
         iter(readline, "") 而不是 `for line in pipe`：后者带 read-ahead 缓

@@ -18,20 +18,20 @@ PROGRESS_GROUPS = "groups"            # 组（候选簇）
 PROGRESS_COMPARISONS = "comparisons"  # 次（两两比较）
 PROGRESS_EVALUATIONS = "evaluations"  # 张（逐张评估）
 
-# 第四类的单位跟 PROGRESS_PHOTOS 一样是"张"，仍然要单独一类（票 09）：这
-# 个维度同时扛着"单位"和"在干什么"两件事，而"张"那一类的活动已经被套滤镜
-# 占用，复用会让用户在评估阶段看到"正在套滤镜，已完成 7/18 张"。只加一类
-# 不拆这个维度 - 拆是更大的改动，债记在 PRD 决策二十里。
+# 第四类的单位跟 PROGRESS_PHOTOS 一样是"张"，仍然要单独一类：这个维度同
+# 时扛着"单位"和"在干什么"两件事，而"张"那一类的活动已经被套滤镜占用，复
+# 用会让用户在评估阶段看到"正在套滤镜，已完成 7/18 张"。把这两件事拆成两
+# 个维度是更大的改动，先加一类顶着。
 
 # (done, total, kind)。stage 只报数和单位，不报自己叫什么 - 名字由 Driver
 # 在 _run_stage 里绑好（stage 自报名字会跟 Plan 里的 key 对不上）。
 ProgressFn = Callable[[int, int, str], None]
 
-# (comparisons, evaluations)。票 10：这一趟 AI 开跑之前算出来的**精确**开
-# 销，一个 stage 最多报一次。
+# (comparisons, evaluations)。这一趟 AI 开跑之前算出来的**精确**开销，一
+# 个 stage 最多报一次。
 #
 # 跟进度分开一个维度，不塞进 (done, total, kind)：开销不是"完成了几分之
-# 几"，硬塞进去等于让分母再多一种含义，而分母的含义正是 T-8 真机验收踩过
+# 几"，硬塞进去等于让分母再多一种含义，而分母含义模糊正是进度那一侧踩过
 # 的坑。两个数也不合成一个总数 - 单位不同（次比较 / 张评估），耗时量级也
 # 不同，展示层要分别措辞。
 CostFn = Callable[[int, int], None]

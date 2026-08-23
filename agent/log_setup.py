@@ -1,5 +1,5 @@
-"""常驻 agent 的日志配置（AG-21）：把原来散在 consumer/worker/transport 的
-stdout print 收敛到 `pzt.agent` logger 树，带时间戳、级别、logger 名，同时
+"""常驻 agent 的日志配置：把 consumer/worker/transport 的输出统一收在
+`pzt.agent` logger 树下，带时间戳、级别、logger 名，同时
 落盘 `<state_dir>/agent.log`（滚动）+ console。各模块只 `logging.getLogger
 ("pzt.agent.<name>")` 取 logger 打日志，是否落盘/去哪落由这里一处决定。
 """

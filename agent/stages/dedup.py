@@ -22,7 +22,7 @@ class DedupStage:
         if params.get("ai_enabled", False):
             args += ["--ai", "--provider", params.get("provider", "local")]
         try:
-            # T-8：整条命令阻塞期间的进度经 stderr 送过来（见 stages/
+            # 整条命令阻塞期间的进度经 stderr 送过来（见 stages/
             # progress.py），转成 ctx.on_progress 汇入 StageProgress 事件。
             with forwarding(self.client, ctx, params.get("ai_enabled", False)):
                 result = self.client.call(*args)

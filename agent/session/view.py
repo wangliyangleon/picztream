@@ -50,7 +50,7 @@ def describe_progress_done(kind: str, total: int) -> str:
     return _PROGRESS_DONE_PHRASINGS.get(kind, "处理完了，共 {n} 项").format(n=total)
 
 
-# 取消时"已经落地了多少"的措辞，同样按"数的是什么"分（票 10 决策四）。
+# 取消时"已经落地了多少"的措辞，同样按"数的是什么"分。
 # 两条说的是两件不同的事：滤镜留在照片上，评估留在库里且下次还能省钱 - 
 # 后半句是必须说的，不然用户会以为那几次调用白花了。分簇/比较不在表里，
 # 它们的取消是零写入，走裸回执。
@@ -67,13 +67,12 @@ def describe_cancel_partial(kind: str, done: int, total: int) -> Optional[str]:
 
 
 def describe_selection_headline(brief: Optional[str]) -> str:
-    """"选好了"那半句，票 11 起可能带上此刻生效的题材要求。
+    """"选好了"那半句，可能带上此刻生效的题材要求。
 
     两个入口共用：闸门消息（`consumer._render_selection_confirm_gate`）与状
     态查询（下面 `describe()` 的 AWAITING_GATE 分支）。各写一份的话措辞迟早
-    分叉，而票 08 已经定死"简述必须可见"、票 11 决策二又把"用户每轮都看得见
-    此刻生效的是哪一句"当成替换语义的安全网 - 两处说法不一致会直接读成方案
-    自己变过。
+    分叉。"简述必须可见"是硬要求，而"用户每轮都看得见此刻生效的是哪一句"
+    正是简述整体替换语义的安全网 - 两处说法不一致会直接读成方案自己变过。
 
     措辞归给用户（"按你说的"）而不是系统："选好了 2 张（题材要求：…）"读起
     来像系统自己的参数，用户不会意识到那是可以再改的。简述原样拼进去、不改
@@ -83,7 +82,7 @@ def describe_selection_headline(brief: Optional[str]) -> str:
     return f"按你说的「{brief}」选好了" if brief else "选好了"
 
 
-# 本地模型一次视觉调用的实测量级（票 10 拍板时记的真机数据：40 张照片、
+# 本地模型一次视觉调用的实测量级（真机数据：40 张照片、
 # 本地 Ollama，一次约 40 秒）。**只给 local 一个数**：云端 provider 每次
 # 调用要多久没有实测过，而在一条"接下来要花多少"的消息里编一个数字，是让
 # 用户从此不再信这条消息的最快办法。云端那条路只报次数，不报时长。
@@ -92,14 +91,14 @@ _LOCAL_SECONDS_PER_AI_CALL = 40
 
 def describe_ai_cost(comparisons: int, evaluations: int, provider: str,
                       first: bool) -> Optional[str]:
-    """AI 开跑之前那条开销告知（票 10 决策一）。
+    """AI 开跑之前那条开销告知。
 
     它不是"要不要跑"的提问 - headless 那一侧 core 报完数字就继续跑了，
     这条消息的作用是让用户**知道**接下来几分钟要花什么，并且知道可以停。
     所以措辞是陈述 + 一句"想停就说"，不是"要跑吗？"。
 
     两个数分别措辞、不合成一个总数：单位不同（次比较 / 张评估），说成
-    "24 项"用户读不出来那是什么（同 T-8 真机验收推翻"把 phase 压掉"的理
+    "24 项"用户读不出来那是什么（跟进度不能压掉 phase 是同一条理
     由）。
 
     first=False 时改成接续口吻：真机上 Dedup 先报一次、Curate 再报一次，
@@ -159,7 +158,7 @@ class SessionView:
             return f"目前收到 {self.photo_count()} 张照片，还没告诉我想怎么处理"
         if self.status == RunStatus.PLANNED and self.plan_summary is not None:
             if self.plan_summary.get("count") is None:
-                # deferred 形状（W2026-07-21 目标三案例二）：Curate 数量待
+                # deferred 形状：Curate 数量待
                 # 定，这一步只说"去重"，不预告后面还要问什么（真机反馈）。
                 return (f"目前收到 {self.photo_count()} 张照片，方案是："
                         f"先帮你去重，"
@@ -179,7 +178,7 @@ class SessionView:
         if self.status == RunStatus.AWAITING_GATE:
             if self.gate_stage == "Curate":
                 return "去重完了，等你说要不要再筛选一下"
-            # 票 11：简述在这个闸门上是可改的（"要活泼一点的"就地重选），改
+            # 简述在这个闸门上是可改的（"要活泼一点的"就地重选），改
             # 完必须到处都看得见此刻生效的是哪一句，同 PLANNED 分支上面那条
             # 注释的理由。措辞与闸门消息共用 describe_selection_headline。
             brief = (self.plan_summary or {}).get("selection_brief", "")
@@ -212,7 +211,7 @@ def view_from_run(run: RunState, incoming_root: Path) -> SessionView:
             # 归一成空串而不是 None：describe() 只判真假，但 plan_summary
             # 也进 dict 比较的测试断言，两种"没有简述"的表示会让它时灵时不灵。
             "selection_brief": curate.params.get("selection_brief") or "",
-            # 票 10：开销告知要按 provider 决定报不报时长。跟
+            # 开销告知要按 provider 决定报不报时长。跟
             # consumer._plan_summary 保持同一组 key，两处构造出来的
             # plan_summary 形状不该有差别。
             "provider": curate.params.get("provider", "local"),

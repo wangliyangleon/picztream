@@ -93,12 +93,12 @@ class StageStarted:
     stage: str
 
 
-# T-8：stage 运行到一半的进度。两个来源，事件本身不区分：
+# stage 运行到一半的进度。两个来源，事件本身不区分：
 #   - 进程内产生的（StyleApplyAll 是 N 次子进程调用的 Python for 循环，
 #     i/N 在循环里天然就有）；
 #   - 跨进程解析出来的（dedup/curate 的 --ai 在 stderr 上逐行吐进度）。
 # 尽力而为：丢一条不影响正确性，consumer 只拿它刷 SessionView 和播报。
-# 节流在 consumer 侧（决策二），worker 收到多少发多少。
+# 节流在 consumer 侧，worker 收到多少发多少。
 @dataclass
 class StageProgress:
     generation: int
@@ -111,10 +111,11 @@ class StageProgress:
     kind: str
 
 
-# 票 10：这一趟 AI 开跑之前算出来的**精确**开销，一个 stage 最多一条。
-# 它是 PRD G5（用户可以在 AI 开跑前拒绝）在 headless 上的全部兑现方式：
-# core 那一侧的闸门不等人（Telegram 那头的用户不在同一个时间轴上），改成
-# 报完数字继续跑，consumer 收到这条之后立刻告知用户并给可取消入口。
+# 这一趟 AI 开跑之前算出来的**精确**开销，一个 stage 最多一条。
+#
+# 它是"用户可以在 AI 开跑前拒绝"这件事在 headless 上的全部兑现方式：core
+# 那一侧的闸门不等人（Telegram 那头的用户不在同一个时间轴上），报完数字就
+# 继续跑，consumer 收到这条之后立刻告知用户并给可取消入口。
 #
 # 跟 StageProgress 分成两种事件而不是加个字段：consumer 对两者的处置完全
 # 不同 - 进度节流后原地编辑同一条消息，开销必须立刻新发一条独立消息，晚
@@ -142,15 +143,15 @@ class RunFinished:
     run_id: str
     status: str  # RunStatus.value: "done" | "failed" | "cancelled"
     detail: Optional[str] = None
-    # T-8 决策五：取消时已经落地的部分成果 (stage, done, total, kind)。只
+    # 取消时已经落地的部分成果 (stage, done, total, kind)。只
     # 对写入是逐张的进度类别有值（见 worker.PARTIAL_ON_CANCEL_KINDS）：套
     # 滤镜逐张一次 recipe apply，curate 的评估段逐张一条评估记录。分簇与
     # 比较的写库统一在最后一步，取消是零写入，报"已经处理了 N 次"是主动误
     # 导，那些路径恒为 None。
     #
-    # kind 在票 10 加进来：判据从"按 stage"改成"按 kind"，因为同一个
-    # Curate 的比较段零写入、评估段不是，按 stage 分只能一起说对或一起说
-    # 错。文案由 consumer 渲染，这里只给数据。
+    # 判据是"按 kind"而不是"按 stage"：同一个 Curate 的比较段零写入、评估
+    # 段不是，按 stage 分只能一起说对或一起说错。文案由 consumer 渲染，这
+    # 里只给数据。
     cancelled_partial: Optional[Tuple[str, int, int, str]] = None
 
 

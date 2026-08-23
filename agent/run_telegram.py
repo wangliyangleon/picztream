@@ -49,10 +49,10 @@ from transport.telegram_client import TelegramConfigError, chat_id_from_env, tok
 
 _log = logging.getLogger("pzt.agent.runner")
 
-# 启动期凭证缺失时给的人话（T-10 (b)）。token_from_env/chat_id_from_env 抛
-# 的本来就是带 code 的 TelegramConfigError，缺的只是调用方把它翻译出来：
-# 以前 main() 裸调用这两个函数，类型化错误直接以 traceback 形式糊在屏幕
-# 上。每条都指名到具体环境变量，两条之间必须可区分 - 缺 chat id 时提 token
+# 启动期凭证缺失时给的人话。token_from_env/chat_id_from_env 抛的是带 code
+# 的 TelegramConfigError，这里负责把它翻译出来 - 不翻译的话类型化错误会直
+# 接以 traceback 形式糊在屏幕上。每条都指名到具体环境变量，两条之间必须可
+# 区分 - 缺 chat id 时提 token
 # 会把人指向错误的方向。
 _CONFIG_HINTS = {
     "missing_token": "缺少环境变量 TELEGRAM_BOT_TOKEN，连不上 Telegram。"
@@ -74,8 +74,8 @@ def resolve_meta_provider() -> str:
 
 
 def preflight_warnings(provider: str, http_get: Any = None) -> list:
-    """启动前扫一眼环境,返回发现的问题(人话)。**只报告,不抛也不退出**
-    (PRD 决策 2)：常驻会话不该因为一个稍后可能被起来的服务而拒绝拉起,用户
+    """启动前扫一眼环境,返回发现的问题(人话)。**只报告,不抛也不退出**：
+    常驻会话不该因为一个稍后可能被起来的服务而拒绝拉起,用户
     完全可能先起 agent 再起 Ollama。
 
     最后那个兜底的 except 是这条契约的实现:预检本身出任何意外都不许把启动
@@ -104,9 +104,9 @@ def build_runtime(state_dir: Path, transport: Any, chat_id: str,
                   progress_interval_seconds: float = 60.0,
                   ) -> Tuple[SessionConsumer, SessionWorker]:
     state_dir = Path(state_dir)
-    # 语言推理 provider 一处读、一处注入（AG-13）：各 classify/compose 函数
-    # 签名层本就有 meta_provider 参数，但 worker 位置调用不传、全吃 local。
-    # 这里经 PZT_AGENT_META_PROVIDER 读一次、partial 绑好，worker 零改动。
+    # 语言推理 provider 一处读、一处注入：各 classify/compose 函数签名上
+    # 都有 meta_provider 参数，但 worker 是位置调用、不传就全吃 local。这
+    # 里经 PZT_AGENT_META_PROVIDER 读一次、partial 绑好，worker 不必知道。
     meta_provider = resolve_meta_provider()
 
     def _bind(fn: Any) -> Any:
@@ -180,7 +180,7 @@ def main() -> None:
     args = parser.parse_args()
 
     state_dir = Path(args.state_dir) if args.state_dir else Path.home() / ".pzt-agent"
-    configure_logging(state_dir)  # 带时间戳、落盘 state_dir/agent.log + console（AG-21）
+    configure_logging(state_dir)  # 带时间戳、落盘 state_dir/agent.log + console
     # 凭证在构造 TelegramTransport 之前查，缺了就地退出：这一步之后就要连
     # 真网络了，带着半份配置往下走只会在更深的地方以更难读的形式炸。退出码
     # 2 跟 argparse 的用法错误对齐 - 都是"启动前提不对"，不是运行期故障。
@@ -197,9 +197,9 @@ def main() -> None:
         _log.error(str(e))
         raise SystemExit(2)
 
-    # 环境预检只告警,不拦启动(PRD 决策 2)。放在这里是因为再往下就要连真网
-    # 络了,而这几句提示的价值全在"提前":以前用户要把照片传完、意图打完,才
-    # 在编排失败时收到一句"AI 服务好像连不上",还不告诉他该去做什么。
+    # 环境预检只告警,不拦启动。放在这里是因为再往下就要连真网络了,而这几
+    # 句提示的价值全在"提前":否则用户要把照片传完、意图打完,才在编排失败时
+    # 收到一句"AI 服务好像连不上",还不告诉他该去做什么。
     for hint in preflight_warnings(meta_provider):
         _log.warning(hint)
     transport = TelegramTransport(token=token, chat_id=chat_id,
@@ -219,7 +219,7 @@ def main() -> None:
                                      daemon=True, name="pzt-session-drive")
 
     transport.start()
-    transport.register_commands(BOT_COMMANDS)  # Telegram 命令菜单（AG-16.2）
+    transport.register_commands(BOT_COMMANDS)  # Telegram 命令菜单
     classify_thread.start()
     drive_thread.start()
     consumer.bootstrap()  # RUNNING 自动续跑/遗留 AWAITING_REVIEW 收尾在这里

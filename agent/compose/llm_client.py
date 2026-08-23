@@ -37,7 +37,7 @@ def ollama_base_url() -> str:
 
 def effective_ollama_model() -> str:
     """这次真正会发给 Ollama 的模型名。模型名可经 PZT_AGENT_OLLAMA_MODEL 覆
-    盖(AG-13),所以"有效模型名"不等于 _OLLAMA_MODEL 常量 - 预检只看常量的话,
+    盖,所以"有效模型名"不等于 _OLLAMA_MODEL 常量 - 预检只看常量的话,
     用户覆盖过模型名时会报一个他根本没在用的模型。request_json 与 preflight
     都从这里取。"""
     return os.environ.get("PZT_AGENT_OLLAMA_MODEL", _OLLAMA_MODEL)
@@ -97,12 +97,10 @@ def _parse_inner_json(text: str) -> dict:
         raise LlmRequestError("parse_error", str(e)) from e
 
 
-# 原来写死 60 秒，跟 core 那边一模一样的数字、也栽在一模一样的地方（core
-# 的依据见 d8c18a3：本地 gemma4:e2b 一次调用墙钟 45-80 秒，模型自报的计算
-# 只有几秒，差额是模型加载、排队和吐正文之前那段 thinking，中位数正好骑在
-# 60 上，于是同一句话时好时坏）。票 08 给 compose 的提示词加了 selection_
-# brief 一段之后实测复现：短意图 40 秒过，带寒暄和去重的长意图稳定卡满 60
-# 秒报 timed out，用户那一侧看到的是意图没被解析。取跟 core 同一个值。
+# 180 而不是 60：本地 gemma4:e2b 一次调用墙钟 45-80 秒，模型自报的计算只
+# 有几秒，差额是模型加载、排队和吐正文之前那段 thinking，中位数正好骑在 60
+# 上。实测表现是短意图 40 秒过、带寒暄和去重的长意图稳定卡满 60 秒报 timed
+# out，用户那一侧看到的是意图没被解析。core 那边同一个数字、同一个理由。
 _REQUEST_TIMEOUT_SECONDS = 180
 
 
@@ -180,7 +178,7 @@ def request_json(user_prompt: str, schema_instruction: str, provider: str,
         url = f"{ollama_base_url()}/api/chat"
         headers = {"content-type": "application/json"}
         request_body = json.dumps({
-            # 本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，不必改代码（AG-13）。
+            # 本地模型名可经 PZT_AGENT_OLLAMA_MODEL 覆盖，不必改代码。
             "model": effective_ollama_model(),
             "format": "json",
             "stream": False,

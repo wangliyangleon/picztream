@@ -28,7 +28,7 @@ class Driver:
         # 的参数，stages 内部的 ctx.on_progress 才能零改动吃到上报能力。
         # Driver 不关心进度送去哪，只负责绑上 stage 名再交给 StageContext。
         self.progress_sink: Optional[Callable[[str, int, int, str], None]] = None
-        # 同一个套路的第二条（票 10）：AI 开跑前的精确开销。跟进度分开是因
+        # 同一个套路的第二条：AI 开跑前的精确开销。跟进度分开是因
         # 为下游处置不同 - 进度节流后原地编辑一条消息，开销要立刻新发一条
         # 并带上可取消入口。
         self.cost_sink: Optional[Callable[[str, int, int], None]] = None
@@ -60,9 +60,9 @@ class Driver:
         """advance() 会不会停在 spec 的闸门上而不运行它。
 
         单独抽出来是因为 worker._drive_to_stop 要用同一个判据决定发不发
-        StageStarted（发早了会紧贴闸门提问自相矛盾，AG-05），此前它是把
-        条件抄了一份、靠注释"判据同 driver.advance"维持同步 - 票 12 往
-        这个判据里加了 gate_answered，正是那种会让抄写走样的改动。"""
+        StageStarted（发早了会紧贴闸门提问自相矛盾）。抄一份条件、靠注释
+        "判据同 driver.advance"维持同步是行不通的 - 这个判据里的
+        gate_answered 就是后加的，正是那种会让抄写走样的改动。"""
         return spec.gate != "off" and not spec.gate_answered and run.gate_state is None
 
     def peek_next_spec(self, run: RunState) -> StageSpec | None:
@@ -94,13 +94,13 @@ class Driver:
 
     def rearm_gate(self, run: RunState, stage_name: str) -> RunState:
         """把一个已经运行过、但需要重新征询用户的 stage 重新挂回它的闸门。
-        当前用于 Style：描述没匹配上任何 preset 时退回去重新问（AG-01）——
+        当前用于 Style：描述没匹配上任何 preset 时退回去重新问——
         stage 已 DONE，但 rerun_stage 直接调 _run_stage、不看 stage 状态，
         所以重挂闸门后用户再给新描述仍能重跑。
 
-        清掉 gate_answered（票 12）：重新挂闸门就是"这问题又要问一遍"，之前
-        那个答案不再算数。票 10 的"停下"路径靠这条 - 去重后的追问答过了，
-        但用户把 Curate 停了，得回到"要不要用 AI"重新问。"""
+        清掉 gate_answered：重新挂闸门就是"这问题又要问一遍"，之前那个答
+        案不再算数。开销告知里那条"停下"路径靠它 - 去重后的追问答过了，但
+        用户把 Curate 停了，得回到"要不要用 AI"重新问。"""
         spec = self._spec_by_name(run, stage_name)
         spec.gate_answered = False
         run.gate_state = GateState(stage_name=stage_name, setting=spec.gate)
@@ -136,14 +136,14 @@ class Driver:
         advance() 发现目标 stage 又是 PENDING 且带闸门，会重新触发一次闸
         门；rerun_stage 直接调 _run_stage，不经过 advance() 的闸门检查。
 
-        `mark_gate_answered`（票 12）把"不需要再问"从**这一次**延长到往后
+        `mark_gate_answered` 把"不需要再问"从**这一次**延长到往后
         每一次。默认关掉、由调用方 opt-in，因为判据是"这道闸门要问的东西
         已经有答案了吗"，只有调用方知道：
           - Curate 的追问问"留几张"，count 一旦确定就永远不该再问 -> True
           - Style 的闸门问"要什么风格"，描述没匹配上 preset 时**确实需要**
-            再问一次（AG-01）-> 保持默认
+            再问一次 -> 保持默认
 
-        不 opt-in 时的后果见票 12：用户之后在选片闸门上做任何一次调整，
+        不 opt-in 的后果：用户之后在选片闸门上做任何一次调整，
         apply_adjustment 把 Curate 重置成 PENDING，下一次 advance() 又拿
         `gate="required"` 把追问原样问一遍，而 Curate 根本没重跑。
         """

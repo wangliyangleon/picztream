@@ -56,10 +56,10 @@ KILLABLE_STAGES = ("Dedup", "Curate", "Style", "StyleApplyAll")
 # StyleApplyAll 每张一次 pzt recipe apply（photos），curate 的评估段每张
 # 一条评估记录（evaluations），两者取消都一定停在中间。
 #
-# 票 10 决策四把这个判据从"按 stage"改成"按 kind"：同一个 Curate，比较段
-# （锦标赛）的写库统一在最后一步，取消确实零写入，而紧接着的评估段不是。
-# 按 stage 分的话这两段只能一起说对或一起说错。分簇（groups）与比较
-# （comparisons）都不在表里，那两段的取消仍然如实报"零写入"。
+# 判据是"按 kind"而不是"按 stage"：同一个 Curate，比较段（锦标赛）的写库
+# 统一在最后一步、取消确实零写入，而紧接着的评估段不是。按 stage 分的话这
+# 两段只能一起说对或一起说错。分簇（groups）与比较（comparisons）都不在表
+# 里，那两段的取消仍然如实报"零写入"。
 PARTIAL_ON_CANCEL_KINDS = (PROGRESS_PHOTOS, PROGRESS_EVALUATIONS)
 
 
@@ -67,9 +67,9 @@ class SessionWorker:
     """双 lane：分类/编排 lane（`classify_jobs`，纯 LLM，轻）和 drive lane
     （`drive_jobs`，pzt 子进程，重）各一条线程并发跑。拆开是为了让"处理
     中"也能跑取消/进度的 LLM 分类——单 lane 时 classify 会排在几分钟的
-    drive 后面饿死。两 lane 无
-    共享可变态：classify/compose 是纯 LLM（不碰 self.client、不改 run），
-    drive 独占 run 的变更与落盘；唯一交集是线程安全的 event 队列。"""
+    drive 后面饿死。两 lane 无共享可变态：classify/compose 是纯 LLM（不碰
+    self.client、不改 run），drive 独占 run 的变更与落盘；唯一交集是线程
+    安全的 event 队列。"""
 
     def __init__(self, classify_jobs: "queue.Queue", drive_jobs: "queue.Queue",
                  events: "queue.Queue", driver: Any, store: Any,
@@ -86,7 +86,7 @@ class SessionWorker:
         self.chat_id = chat_id
         self.preview_root = Path(preview_root)
         self.compose_plan_fn = compose_plan_fn
-        # kind -> 分类函数 注册表（AG-20）。参数装配各 kind 不同，见 _execute_classify。
+        # kind -> 分类函数 注册表。参数装配各 kind 不同，见 _execute_classify。
         self.classify_fns = classify_fns
         self.killable_stages = set(killable_stages)
 
@@ -158,7 +158,7 @@ class SessionWorker:
         if fn is None:
             raise ValueError(f"unknown classify kind: {job.kind!r}")
         try:
-            # fn 从注册表查（AG-20）；参数装配各 kind 不同，仍显式分派。
+            # fn 从注册表查；参数装配各 kind 不同，仍显式分派。
             if job.kind == "collecting":
                 result = fn(job.text, job.context["photo_count"])
             elif job.kind == "gate_reply":
@@ -203,7 +203,7 @@ class SessionWorker:
         self._rewound_stage = None
         self.driver.progress_sink = lambda stage, done, total, kind: self._on_stage_progress(
             job, stage, done, total, kind)
-        # 票 10：开销跟进度同范围布防、同在 finally 里摘。理由一样 - 留着
+        # 开销跟进度同范围布防、同在 finally 里摘。理由一样 - 留着
         # 的话下一个 job 报的开销会带着上一代的 generation 进队列，被
         # consumer 当过期丢弃，比不报更难查。
         self.driver.cost_sink = lambda stage, comparisons, evaluations: self.events.put(
@@ -218,9 +218,9 @@ class SessionWorker:
 
     def _on_stage_progress(self, job: DriveJob, stage: str, done: int, total: int,
                             kind: str) -> None:
-        # 记一份最近进度：取消收尾时要靠它说清"已经落地了多少"（决策五）。
-        # kind 一起记（票 10）：留没留下东西由"数的是什么"决定，不由 stage
-        # 决定，见 PARTIAL_ON_CANCEL_KINDS。
+        # 记一份最近进度：取消收尾时要靠它说清"已经落地了多少"。kind 一起
+        # 记：留没留下东西由"数的是什么"决定，不由 stage 决定，见
+        # PARTIAL_ON_CANCEL_KINDS。
         self._last_progress = (stage, done, total, kind)
         self.events.put(StageProgress(job.generation, job.run_id, stage, done, total, kind))
 
@@ -250,7 +250,7 @@ class SessionWorker:
             # 闸门放行 = 现在才真正运行被闸门挡住的这个 stage（driver 内部经
             # _run_stage），_drive_to_stop 的循环只覆盖闸门之后的下游，所以
             # 这个 stage 的 StageStarted 要在这里补发（"正在交付..."出现在批准
-            # 之后，AG-05）。
+            # 之后）。
             gate_stage = run.gate_state.stage_name if run.gate_state is not None else None
             if gate_stage is not None:
                 self.events.put(StageStarted(job.generation, run.run_id, gate_stage))
@@ -276,20 +276,20 @@ class SessionWorker:
             style_out = run.outputs.get("Style")
             if style_out is not None and style_out.data.get("match_failed"):
                 # 描述没匹配上任何 preset：软失败，退回 Style 闸门重新问，不往下
-                # 推进（AG-01）。不走 _drive_to_stop/_report_stop。
+                # 推进。不走 _drive_to_stop/_report_stop。
                 self.driver.rearm_gate(run, "Style")
                 self.events.put(GateReached(job.generation, run.run_id, "Style",
                                             {"match_failed": True}))
                 return
         elif job.action == "rerun_curate":
             # 去重后追问的回复已经落地(留几张/不筛)，直接跑 Curate 拿答案
-            # 生效，不需要闸门再问一遍（W2026-07-21 目标三决策四；同 rerun_style
-            # 的用法）。Curate 在 KILLABLE_STAGES 里，这条路径绕开了
+            # 生效，不需要闸门再问一遍（同 rerun_style 的用法）。Curate 在
+            # KILLABLE_STAGES 里，这条路径绕开了
             # _drive_to_stop 的循环布防，这里手动布防/解防、接住取消。
             self.events.put(StageStarted(job.generation, run.run_id, "Curate"))
             with self._armed("Curate", job):
                 try:
-                    # mark_gate_answered（票 12）：这条追问问的是"留几张"，
+                    # mark_gate_answered：这条追问问的是"留几张"，
                     # 手上这个答案永久有效。不标的话，用户之后在选片确认闸
                     # 门上做任何一次调整，都会被这道闸门原样拦一遍。
                     self.driver.rerun_stage(run, "Curate", job.args["params"],
@@ -311,10 +311,9 @@ class SessionWorker:
             next_spec = self.driver.peek_next_spec(run)
             # 只为"这一轮真的会运行"的 stage 发 StageStarted。带闸门且闸门未
             # 开的 stage，advance() 只会停在闸门不运行它，此时发"正在交付..."
-            # 会紧贴闸门提问自相矛盾（AG-05）- 闸门放行后的实际运行由
-            # _execute_drive 在 resolve_gate/rerun_style 前补发。判据向
-            # driver 借（票 12）：此前这里抄了一份条件、靠注释维持同步，而
-            # 票 12 恰好往判据里加了 gate_answered。
+            # 会紧贴闸门提问自相矛盾 - 闸门放行后的实际运行由 _execute_drive
+            # 在 resolve_gate/rerun_style 前补发。判据向 driver 借、不在这里
+            # 抄一份：那个判据是会长的（gate_answered 就是后加进去的）。
             stops_at_gate = (next_spec is not None
                              and self.driver.stops_at_gate(run, next_spec))
             if next_spec is not None and not stops_at_gate:
@@ -361,7 +360,7 @@ class SessionWorker:
                                      self._partial_on_cancel(run)))
 
     def _partial_on_cancel(self, run: RunState):
-        """取消时已经落地的部分成果，没有就 None（决策五 + 票 10 决策四）。
+        """取消时已经落地的部分成果，没有就 None。
 
         只认写入逐张的那些进度类别：分簇与比较的写库统一在最后一步，报数
         字等于凭空造出用户并没有得到的东西；反过来，评估段真留下了记录却
@@ -401,7 +400,7 @@ class SessionWorker:
             selected = curate_output.data.get("selected", []) if curate_output else []
             payload = {"selected_count": len(selected), "preview_failed_count": 0,
                         "export_error": None,
-                        # T-8：退化了几簇。consumer 在选片确认闸门上说出来，
+                        # 退化了几簇。consumer 在选片确认闸门上说出来，
                         # 别让用户以为自己认可的是 AI 的判断。
                         "ai_fallback_count": (curate_output.data.get("ai_fallback_count", 0)
                                                if curate_output else 0)}
@@ -425,8 +424,8 @@ class SessionWorker:
             failed = self._send_preview_media(run, [preview_photo])
             return {"chosen_recipe": chosen, "preview_sent": failed == 0, "export_error": None}
         if stage == "Curate":
-            # 去重后追问："还剩几张，要不要再筛"（W2026-07-21 目标三决策四）。
-            # ai_enabled 一起带上：consumer 靠它判断要不要提醒"可以用 AI"（决策五）。
+            # 去重后追问："还剩几张，要不要再筛"。ai_enabled 一起带上：
+            # consumer 靠它判断要不要提醒"可以用 AI"。
             ingest_output = run.outputs.get("Ingest")
             dedup_output = run.outputs.get("Dedup")
             total = ingest_output.data.get("image_count", 0) if ingest_output else 0
@@ -453,7 +452,7 @@ class SessionWorker:
     def _send_preview_media(self, run: RunState, selected: list, numbered: bool = False) -> int:
         # 逐张 图->文件 降级重试，最后统计失败数（旧 _send_preview 的
         # "一张超标图不能带崩整个预览循环"语义原样保留）。numbered=True 时每
-        # 张带"第 N 张"caption（Deliver 的"换掉第3张"以此为锚，AG-15）。
+        # 张带"第 N 张"caption（Deliver 的"换掉第3张"以此为锚）。
         preview_dir = self.preview_root / run.run_id
         failed = 0
         for i, path in enumerate(selected, start=1):
@@ -467,7 +466,7 @@ class SessionWorker:
                 except Exception:  # noqa: BLE001
                     if numbered:
                         # 保序占位：这张发不出去也占个位，用户按"第 N 张"调整
-                        # 不会数错（AG-15）。
+                        # 不会数错。
                         try:
                             self.transport.send_text(self.chat_id, f"第 {i} 张预览发送失败")
                         except Exception:  # noqa: BLE001

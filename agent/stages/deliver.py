@@ -33,7 +33,7 @@ class DeliverStage:
     inputs: List[str] = field(default_factory=lambda: ["Curate"])
     cost_class: str = "local"
     # 交付是用户点"满意"后的明确诉求（session 恒挂 required 闸门，只在确认后执行），
-    # 失败就是失败：不能被 optional 吞成 SKIPPED 让 run 误报"这批就处理完啦"（AG-06）。
+    # 失败就是失败：不能被 optional 吞成 SKIPPED 让 run 误报"这批就处理完啦"。
     # 选片结果仍持久化在 run.outputs，run FAILED 不会抹掉它。
     criticality: str = "critical"
 
@@ -116,11 +116,11 @@ class DeliverStage:
             self._persist_sent(marker_path, sent)
 
         self.transport.send_text(self.chat_id, f"选好了 {len(selected)} 张")
-        # 票 07：文案单独一条消息、不加任何前缀。Telegram 上复制一整条消息
+        # 文案单独一条消息、不加任何前缀。Telegram 上复制一整条消息
         # 是一下的事，掺进"配文："之类的引导语就得手动挑起止，而这段字的全
         # 部用途就是被原样贴出去。
         #
-        # 没有文案时什么都不说（PRD 决策十五）：那是附赠品的缺席，不是需要
+        # 没有文案时什么都不说：那是附赠品的缺席，不是需要
         # 报告的事件。.get 不是下标 - 盘上续跑的老 run 的 Curate 输出里没
         # 有这个 key。
         caption = curate_output.data.get("caption", "") if curate_output else ""
