@@ -36,7 +36,7 @@ void log_get(ImageId id, const char* outcome, double wait_ms) {
 // current 优先，然后按距离由近到远交替向前/向后展开，直到覆盖 2*window+1
 // 张或者(列表更短时)整个 images——跟 next_image/prev_image 的循环折返语义
 // 一致。用 seen 去重，覆盖 images 很短、window 很大导致环绕重复的情形。
-// F-15：返回窗口内 ImageRef 的指针(而不是只返回 id),让 set_current 只为窗口
+// 返回窗口内 ImageRef 的指针(而不是只返回 id),让 set_current 只为窗口
 // 内这 2*window+1 张解析路径,不必再为全项目每张图拼一次绝对路径。
 std::vector<const ImageRef*> window_priority_order(const std::vector<ImageRef>& images,
                                                    std::size_t idx, std::size_t window) {
@@ -97,9 +97,9 @@ void PrefetchCache::set_current(const std::vector<ImageRef>& images,
     }
   }
 
-  // F-15：只为窗口内新加入的图片解析路径(以前对全项目每张图都拼一次绝对路
-  // 径,每个按键都跑,列表大时是纯浪费)。路径分发逻辑走 core/media 的单一来
-  // 源(F-16):kind="raw" 且预览缓存已生成时用缓存 JPEG 的绝对路径,否则退化
+  // 只为窗口内新加入的图片解析路径:对全项目每张图都拼一次绝对路径的话,
+  // 每个按键都要跑一遍,列表大时是纯浪费。路径分发逻辑走 core/media 的单
+  // 一来源:kind="raw" 且预览缓存已生成时用缓存 JPEG 的绝对路径,否则退化
   // 成原始 .dng/.raf 路径让 decode_preview_file 走内嵌预览提取兜底;
   // kind="jpeg" 行为不变。
   pending_queue_.clear();
@@ -148,7 +148,7 @@ Result<std::shared_ptr<const decode::DecodedImage>, FetchError> PrefetchCache::g
     return Ret::Err(FetchError::DecodeFailed);
   }
   log_get(id, was_pending ? "miss" : "hit", elapsed);
-  // F-14：拷贝 shared_ptr(引用计数 +1),不拷贝像素——持锁时间从"整块 96MB
+  // 拷贝 shared_ptr(引用计数 +1),不拷贝像素——持锁时间从"整块 96MB
   // memcpy"降到一次指针拷贝。
   return Ret::Ok(cur->second.image);
 }

@@ -8,10 +8,9 @@
 
 // 全局设置——静态、读一次的用户可配置行为(供应商、dedup 参数、批量操
 // 作默认排除策略、界面偏好)，跟 db::default_db_path() 是同一类"core 读
-// 自己的运行时配置"，不是业务数据。见 docs/history/Fix_It_Night_Review.md F-12
-// 一节的完整设计背景。作用域先只做全局(不建项目级覆盖)；运行时
-// `/setting` 开关不在这次范围，那是独立的未来任务(见同一节"未来任
-// 务")，这里只有一个程序启动/命令触发时读一次、不能中途改的静态配置。
+// 自己的运行时配置"，不是业务数据。作用域只做全局，没有项目级覆盖；也没
+// 有运行时 `/setting` 开关 - 这里只有一个程序启动/命令触发时读一次、不能
+// 中途改的静态配置。
 namespace pzt::core::settings {
 
 struct Settings {
@@ -26,10 +25,9 @@ struct Settings {
   std::string ollama_model = "gemma4:e2b";
   // 一次 AI 请求的墙钟上限(秒)，所有 provider、所有调用共用。默认 180。
   //
-  // 票 06 真机验收踩出来的：这个数原先写死在 perform_curl_post 里是 60，
-  // 而本地模型跑一次跨簇选择实测 45-80 秒(自报计算只有 2-6 秒，其余是加
-  // 载与排队)，正好骑在那条线上，同一个项目有时退化有时不退化。云端
-  // provider 一次就通，所以不是形状问题、是延迟问题。
+  // 之所以是 180 而不是更短：本地模型跑一次跨簇选择实测 45-80 秒(自报计
+  // 算只有 2-6 秒，其余是加载与排队)。上限压到 60 秒时同一个项目会有时退
+  // 化有时不退化，而云端 provider 一次就通 - 那是延迟问题，不是形状问题。
   //
   // 调小的正当用途是"我不想为一次卡住的请求等三分钟"；调大的正当用途是
   // 更慢的本地模型或更大的预选集。非正值在 core 侧退回默认值(0 在
@@ -44,26 +42,24 @@ struct Settings {
   // 来的数字。见 docs/history/M4_Eng_Design.md 第三节。
   int curate_time_window_seconds = 20;
   int curate_hash_threshold = 10;
-  // 票 04 的倍率 M：curate 在选片之前先把候选集按时间多样性裁成
+  // 预选倍率 M：curate 在选片之前先把候选集按时间多样性裁成
   // ceil(M · N) 张的预选集，跟上面两个 curate_* 同类，由 CLI 读出后显
   // 式传进 core(curate 本身不读 Settings)。默认 2。小于 1.5 的配置值在
   // core 侧按 1.5 生效 - M=1 时池子正好等于要选的数量，后续模型没有任何
-  // 选择余地。见 docs/history/Intent_Curation_PRD.md 决策十一。
+  // 选择余地。
   double curate_preselect_multiplier = 2.0;
-  // F-26 的批量默认排除策略用的开关——true 表示"不排除"(把这类图片当成
-  // 正常范围的一部分处理)，false(默认)是当前拍板的行为。
+  // 批量默认排除策略用的开关——true 表示"不排除"(把这类图片当成正常范围
+  // 的一部分处理)，false(默认)是排除。
   //
-  // T-16/#27：原本还有第四个 dedup_reject，已删除。它自 4cc6549 起就完全
-  // 无效 —— core 侧无条件排废片(keep 改成"留最新"之后，一张废片若
-  // captured_at 最新会当上 keeper 把好邻居全打成"重复")，cli 层据此跳过
-  // 自己那份排除之后 core 照排不误。要让它真正可用，得先把簇内 keep 选择
-  // 改成废片感知，而 F-26 当初加它只是为了跟另外三个对称，它"开启"时的语
-  // 义恰好就是 F-26 自己要防的那件事。旧 config.json 里残留这个字段会被
-  // 静默忽略(逐字段 assign_if_present)，不报错。
+  // **dedup 没有对应的开关，是刻意的**：core 侧无条件排废片。一张废片若
+  // captured_at 最新会当上 keeper、把好邻居全打成"重复"，所以"去重时不排
+  // 废片"这个选项的语义恰好就是这套排除策略要防的那件事。要让它成为一个
+  // 正当选项，得先把簇内 keep 选择改成废片感知。旧 config.json 里残留的
+  // dedup_reject 字段会被静默忽略(逐字段 assign_if_present)，不报错。
   bool eval_reject = false;
   bool export_reject = false;
   bool export_dup = false;
-  // W2026-07-21：选片评估把这张图判为 unusable(有硬伤)时，自动打上
+  // 选片评估把这张图判为 unusable(有硬伤)时，自动打上
   // "废片"标签——默认 false(不自动打)。开着的话，后续默认排除废片的路
   // 径(eval_reject/export_reject 均为 false 时)会连带把这些图挡在外面，
   // 不需要用户评估完之后手动再筛一遍逐张处理。dedup 那条路无条件排废片，
@@ -71,7 +67,7 @@ struct Settings {
   // unusable 时打标签，反过来(重新评估后可用了)不会自动摘掉——摘除已
   // 有标签是更容易造成意外的操作，这次不做。
   bool auto_ai_reject = false;
-  // T-10 (a)：终端不在 Kitty 协议白名单里时,`pzt open` 提示一句。判定是按
+  // 终端不在 Kitty 协议白名单里时,`pzt open` 提示一句。判定是按
   // 环境变量猜的(见 cli/kitty/kitty.h::kitty_support_likely),必然有假阴
   // 性 - Ghostty 起的 tmux server 换终端 attach 之后信号就是 stale 的。这
   // 个开关是给那些用户的逃生口,设成 false 就不再提示。默认 true:静默失效

@@ -50,7 +50,7 @@ using RescanSummary = project::RescanSummary;
 using ImageRef = browse::ImageRef;
 using BrowseTagError = browse::BrowseTagError;
 
-// T-16：`一批图片的作用域 + 排除规则`的唯一实现，见 core/scope/scope.h。
+// `一批图片的作用域 + 排除规则`的唯一实现，见 core/scope/scope.h。
 using Scope = scope::Scope;
 using ScopeError = scope::ScopeError;
 using ScopeFailure = scope::ScopeFailure;
@@ -95,18 +95,18 @@ using EvaluationInfo = ai::EvaluationInfo;
 using Provider = ai::Provider;
 using LocalModelConfig = ai::LocalModelConfig;
 using Language = ai::Language;
-// F-03：EvaluationWorker::take_failure_report() 把失败原因带出来给 cli
+// EvaluationWorker::take_failure_report() 把失败原因带出来给 cli
 // 展示，cli 层需要能叫出这个类型的名字。
 using EvaluationError = ai::EvaluationError;
-// T-7：库的 schema 版本比这个二进制新时开库会抛这个类型。cli 的顶层
+// 库的 schema 版本比这个二进制新时开库会抛这个类型。cli 的顶层
 // main() 要能单独 catch 它、给出"请升级 pzt"而不是笼统的"内部错误",所以
 // 跟 EvaluationError 一样需要在门面上叫得出名字。
 using SchemaTooNewError = db::SchemaTooNewError;
-// W2026-07-21：eval 不再产跨图分数，是否可用直接读 unusable flag——CLI
-// 展示/筛选统一调这个函数，见 core/ai/evaluation.h 的说明。
+// eval 不产跨图分数，是否可用直接读 unusable flag——CLI 展示/筛选统一调
+// 这个函数，见 core/ai/evaluation.h 的说明。
 using ai::is_usable;
 
-// F-12：静态全局设置(供应商/dedup 参数/批量默认排除策略/界面偏好)，见
+// 静态全局设置(供应商/dedup 参数/批量默认排除策略/界面偏好)，见
 // core/settings/settings.h 的完整设计说明。cli 需要直接引用这个类型
 // (存局部变量、传参),整个重导出。
 using Settings = settings::Settings;
@@ -133,7 +133,7 @@ std::optional<ProjectId> find_project_by_root_path(const std::string& path);
 // browse-session state lands with the browse module.
 Result<ProjectSummary, ProjectNotFoundError> open_project(ProjectId id);
 
-// F-24 会话续点：记录这个项目上次浏览到的那张图,供 cmd_open 退出时写。
+// 会话续点：记录这个项目上次浏览到的那张图,供 cmd_open 退出时写。
 void set_last_image_id(ProjectId project_id, ImageId image_id);
 
 // Cascades the project's images/tags/image_tags rows via the schema's
@@ -152,7 +152,7 @@ std::optional<ImageInfo> get_image(ImageId image_id);
 // 这些门面一样,不能拿默认库直接测)。
 std::optional<ImageId> find_image_by_path(ProjectId project_id, const std::string& relative_path);
 
-// F-07：批量版 get_image,只回答"这些图片里哪些已经有评估结果"——一条
+// 批量版 get_image,只回答"这些图片里哪些已经有评估结果"——一条
 // IN 查询,不是对每张图各开一次连接。见 core/project/project.h 的说明。
 std::unordered_set<ImageId> evaluated_image_ids(const std::vector<ImageId>& image_ids);
 
@@ -162,7 +162,7 @@ std::vector<TagSummary> list_tags(ProjectId project_id);
 std::optional<TagId> find_tag_by_name(ProjectId project_id, const std::string& name);
 std::vector<TagSummary> tags_for_image(ImageId image_id);
 
-// F-26/F-09：给定一批图片 id，返回其中打了 tag_id 的子集，一条批量查
+// 给定一批图片 id，返回其中打了 tag_id 的子集，一条批量查
 // 询——见 core/tagging/tagging.h 的说明。
 std::unordered_set<ImageId> images_with_tag(const std::vector<ImageId>& image_ids, TagId tag_id);
 
@@ -180,11 +180,11 @@ TagId ensure_reject_tag(ProjectId project_id);
 // core::dedup::find_and_tag_duplicates(db::Database&, ...)里，这里只是
 // 开默认库转调一层，方便单元测试指向临时测试库。
 using DedupSummary = dedup::DedupSummary;
-// F-08：time_window_seconds/hash_threshold 默认 10/5(等价旧行为)，
-// handle_dedup_command 显式传 Settings.dedup_time_window_seconds/
-// dedup_hash_threshold。ai_enabled/provider/local_config(W2026-07-21 目
-// 标二新增)透传给 core::dedup::find_and_tag_duplicates，默认值保证现有
-// 调用点零改动。on_ai_gate/on_ai_progress 同理，语义见
+// time_window_seconds/hash_threshold 默认 10/5，handle_dedup_command 显
+// 式传 Settings.dedup_time_window_seconds/dedup_hash_threshold。
+// ai_enabled/provider/local_config 透传给
+// core::dedup::find_and_tag_duplicates。on_ai_gate/on_ai_progress 同理，
+// 语义见
 // core/tournament/tournament.h。
 Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
     ProjectId project_id, const std::vector<ImageId>& image_ids, int time_window_seconds = 10,
@@ -201,16 +201,16 @@ Result<DedupSummary, ProjectNotFoundError> find_and_tag_duplicates(
 // 命令)从 Settings.curate_time_window_seconds/curate_hash_threshold 显
 // 式传入。
 using CurateResult = curate::CurateResult;
-// ai_enabled/ai_provider/local_config(W2026-07-21 目标二新增)透传给
-// core::curate::curate，默认值保证现有调用点零改动。on_progress/
-// on_ai_progress(T-8)同理，语义与"为什么只补这两个"见 core/curate/curate.h。
-// preselect_multiplier(票 04 的 M)跟 time_window_seconds/hash_threshold
-// 一样没有默认值：PRD 决策十一要求它由 CLI 从
-// Settings.curate_preselect_multiplier 读出后显式传入，给个默认值等于允
-// 许调用方绕过 Settings、再复制一份"2"出来。语义见 core/curate/curate.h。
-// on_ai_gate/on_eval_progress/on_cancel(票 05)同样只是透传，语义见
+// ai_enabled/ai_provider/local_config 透传给 core::curate::curate。
+// on_progress/on_ai_progress 同理，语义与"为什么只补这两个"见
+// core/curate/curate.h。
+// preselect_multiplier 跟 time_window_seconds/hash_threshold 一样**没有默
+// 认值**：它必须由 CLI 从 Settings.curate_preselect_multiplier 读出后显式
+// 传入，给个默认值等于允许调用方绕过 Settings、再复制一份"2"出来。语义见
+// core/curate/curate.h。
+// on_ai_gate/on_eval_progress/on_cancel 同样只是透传，语义见
 // core/curate/curate.h 上 CurateAiGateFn/EvalProgressFn 与 dedup::CancelFn
-// 的说明。selection_brief(票 08)同理，语义见那里。
+// 的说明。selection_brief 同理，语义见那里。
 using CurateAiGateFn = curate::CurateAiGateFn;
 using EvalProgressFn = curate::EvalProgressFn;
 CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_scope, int count,
@@ -225,20 +225,19 @@ CurateResult curate_images(ProjectId project_id, std::optional<TagId> candidate_
                             dedup::CancelFn on_cancel = nullptr,
                             const std::string& selection_brief = "");
 
-// T-17 票 E：`/pick <N>` 两图对比人工选片，见 docs 里 T-17 PRD（issue
-// #34）与 core/pick/pick.h。跟上面 dedup/curate 同一个门面模式：开默认库
+// `/pick <N>` 两图对比人工选片，见 core/pick/pick.h。跟上面 dedup/curate
+// 同一个门面模式：开默认库
 // 转调 pick::pick。门面名同样避开 pick::pick 会跟 pzt::core::pick 这个命
 // 名空间撞名的问题(跟 curate_images 避开 curate::curate 是同一个理由)。
 //
-// time_window_seconds/hash_threshold 复用 curate 那组粗参数(PRD 决策
-// D-5)，不新开旋钮 - 调用方(`/pick` 控制台命令)从
+// time_window_seconds/hash_threshold 复用 curate 那组粗参数，不新开旋钮
+// - 调用方(`/pick` 控制台命令)从
 // Settings.curate_time_window_seconds/curate_hash_threshold 显式传入，
 // core 不读 Settings。compare_fn 是人在环的比较原语(一次按键给出一个赢
 // 家)，没有默认实现 - production 与测试各自注入，语义见 pick.h。on_gate/
-// on_progress 语义同样见 pick.h；`/pick` 不接 AI(PRD D-17)，门面因此不暴
+// on_progress 语义同样见 pick.h；`/pick` 是纯人工比较、不接 AI，门面因此不暴
 // 露 CancelFn 参数 - Ctrl-C 在这个命令期间维持默认的"还原终端后干净退出
-// pzt"，取消走的是比较界面自己的 Esc 二次确认(票 D)，不是 dedup 那套信
-// 号路径。
+// pzt"，取消走的是比较界面自己的 Esc 二次确认，不是 dedup 那套信号路径。
 using PickResult = pick::PickResult;
 using PickCost = pick::PickCost;
 using PickError = pick::PickError;
@@ -271,17 +270,18 @@ std::optional<ImageId> prev_untagged(const std::vector<ImageRef>& images,
                                       std::optional<ImageId> current_id);
 Result<std::vector<ImageRef>, BrowseTagError> filter_by_tag(TagId tag_id);
 
-// T-16：`*` / `#标签名` / `#"带空格的标签名"` 的解析，交互与 headless 两个
-// 入口共用这一份。错误是结构化的，两层各自映射成 i18n 文案 / error_code。
+// `*` / `#标签名` / `#"带空格的标签名"` 的解析，交互与 headless 两个入口
+// 共用这一份。错误是结构化的，两层各自映射成 i18n 文案 / error_code。
 //
-// T-15：第四支 `.` = explicit_ids 给的那一组 id，不给而写了 `.` 报
+// 第四支 `.` = explicit_ids 给的那一组 id，不给而写了 `.` 报
 // NoExplicitSet。语法与各支的完整说明只在 core/scope/scope.h 那一处。
 Result<Scope, ScopeFailure> resolve_scope(ProjectId project_id, const std::string& scope,
                                            SystemTagPolicy system_tag_policy = SystemTagPolicy::Allow,
                                            const std::vector<ImageId>* explicit_ids = nullptr);
 
-// T-16：按标签名剔除，保持输入顺序。scope_tag 非空且在排除列表里时那个标
-// 签不参与排除（F-26 对称例外）。开关留在调用方，core 不认识 Settings。
+// 按标签名剔除，保持输入顺序。scope_tag 非空且在排除列表里时那个标签不
+// 参与排除（对称例外：范围就是废片时不能把废片排空）。开关留在调用方，
+// core 不认识 Settings。
 std::vector<ImageId> exclude_by_tags(ProjectId project_id, const std::vector<ImageId>& image_ids,
                                       const std::vector<std::string>& exclude_tag_names,
                                       std::optional<TagId> scope_tag = std::nullopt);
@@ -290,7 +290,7 @@ std::vector<ImageId> exclude_by_tags(ProjectId project_id, const std::vector<Ima
 // core/export/export.h。RawDecodeFn 不在门面层暴露——那是测试用的依赖注
 // 入点，cli 不需要覆盖真实的 raw::decode_full。
 //
-// F-26：include_reject/include_dup 默认 false(排除废片/重复)，调用方
+// include_reject/include_dup 默认 false(排除废片/重复)，调用方
 // (cmd_export、cli 应用内的 handle_export_filtered_flow)传入
 // Settings.export_reject/export_dup，语义见 core/export/export.h 的说明。
 Result<ExportResult, ExportTagError> export_tag(TagId tag_id, const std::string& output_folder,
@@ -352,13 +352,13 @@ Result<void, SetImageRecipeError> set_image_recipe(ImageId image_id,
                                                     std::optional<RecipeId> recipe_id);
 std::optional<RecipeId> get_image_recipe(ImageId image_id);
 
-// T-15:批量套配方/批量清除。整批**一次开库**(不是每张一次)、校验配方一
+// 批量套配方/批量清除。整批**一次开库**(不是每张一次)、校验配方一
 // 次、一个事务包住全部 UPDATE,契约是要么全套上、要么一张都不套。语义与
 // 那条与 agent 侧冲突的留账见 core/recipe/recipe.h。
 Result<void, SetImageRecipeError> set_images_recipe(const std::vector<ImageId>& image_ids,
                                                      std::optional<RecipeId> recipe_id);
 
-// T-15:这批 id 里有多少张已经有配方,即批量确认要报的 M。一次开库、一条
+// 这批 id 里有多少张已经有配方,即批量确认要报的 M。一次开库、一条
 // 语句复用,不是让调用方对每个 id 调一次 get_image_recipe(那是 N 次开库)。
 // nullopt = 查询失败,调用方**不能**当 0 用,见 core/recipe/recipe.h。
 std::optional<std::size_t> count_images_with_recipe(const std::vector<ImageId>& image_ids);
@@ -371,7 +371,7 @@ std::optional<RecipeDescription> describe_recipe(RecipeId recipe_id);
 Result<DecodedImage, RenderRecipeError> render(const DecodedImage& src, RecipeId recipe_id,
                                                 unsigned thread_count = 1);
 
-// T-29:拿"某个预设的底子"配上一组还没落库的草稿参数渲染,给 `r c` 向导做
+// 拿"某个预设的底子"配上一组还没落库的草稿参数渲染,给 `r c` 向导做
 // 逐字段实时预览用——那时这组参数还没有 recipe_id,中途取消也不该在库里留
 // 下任何东西。语义与等价性保证见 core/recipe/recipe.h。
 Result<DecodedImage, RenderRecipeError> render_preview(const DecodedImage& src, RecipeId preset_id,

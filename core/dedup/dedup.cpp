@@ -28,7 +28,7 @@ struct ImageMeta {
 std::vector<ImageMeta> load_metas(db::Database& db, const std::vector<project::ImageId>& image_ids) {
   if (image_ids.empty()) return {};
 
-  // F-40：按 500 一批分块绑定，跟 tagging::images_with_tag / project::
+  // 按 500 一批分块绑定，跟 tagging::images_with_tag / project::
   // evaluated_image_ids 同一个惯例（500 是 SQLITE_MAX_VARIABLE_NUMBER 之下的
   // 保守值）。3 万+ 张的项目全项目扫一次 dedup 时，单条 IN 把全部 id 绑进一
   // 条语句会超绑定变量上限直接建语句失败，这里逐块查询、累积结果，最后统
@@ -102,7 +102,7 @@ class UnionFind {
 };
 
 // members 是 cluster 内的下标集合(size >= 2)。keep 选 captured_at 最新的
-// 那张——涉及质量比较的选择统一走锦标赛(见 docs/W2026-07-21_*)，dedup 只
+// 那张——涉及质量比较的选择统一走锦标赛，dedup 只
 // 做"留最新"这个廉价的确定性基线，不再依赖选片评估分数。captured_at 也
 // 相等的极端情况兜底选最小 image_id，保证确定性。
 project::ImageId pick_keep_id(const std::vector<ImageMeta>& cluster,
@@ -124,10 +124,10 @@ project::ImageId pick_keep_id(const std::vector<ImageMeta>& cluster,
 
 std::optional<ImageHash> compute_dhash(const decode::DecodedImage& image) {
   auto resized = decode::resize_rgba(image, 9, 8);
-  // F-36：resize 失败以前返回哈希 0——一个完全合法的哈希值(全黑/全均匀图片
-  // 就是 0),会被当成"跟其它 0 哈希的图重复"错误分组。现路径不可达(9x8 目
-  // 标尺寸下 resize_rgba 只会直接返回原图拷贝,不会失败),纯防御:返回
-  // nullopt,让调用方跟解码失败同路径跳过这张,而不是伪造一个哈希。
+  // resize 失败返回 nullopt 而不是哈希 0：0 是一个完全合法的哈希值(全黑/
+  // 全均匀图片就是 0),伪造它会让这张图被当成"跟其它 0 哈希的图重复"错误
+  // 分组。这条路今天不可达(9x8 目标尺寸下 resize_rgba 只会直接返回原图拷
+  // 贝,不会失败),纯防御:让调用方跟解码失败同路径跳过这张。
   if (!resized.ok()) return std::nullopt;
   const decode::DecodedImage& small = resized.value();
 
@@ -175,7 +175,7 @@ Result<DedupSummary, project::ProjectNotFoundError> find_and_tag_duplicates(
     int time_window_seconds, int hash_threshold, DedupProgressFn on_progress, bool ai_enabled,
     ai::Provider provider, const ai::LocalModelConfig& local_config, AiGateFn on_ai_gate,
     AiProgressFn on_ai_progress, CancelFn on_cancel) {
-  // W2026-07-21 目标二：排废片、清旧重复标记、分组、给每组除 winner 外的
+  // 排废片、清旧重复标记、分组、给每组除 winner 外的
   // 成员打标签，整个委托给 tournament::cluster_and_choose
   // (exclude_tag_names={"废片"}、apply_dup_tag=true)。ai_enabled=false 时
   // 每组 winner 就是 find_duplicates 算好的 keep_id，跟这个函数改造前逐
@@ -245,8 +245,8 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
         valid[i] = false;
         continue;
       }
-      // F-36：compute_dhash 现返回 optional,resize 失败(现路径不可达,纯防
-      // 御)跟解码失败同路径跳过,不再伪造哈希 0 参与分组。
+      // compute_dhash 返回 optional:resize 失败(今天不可达,纯防御)跟解码
+      // 失败同路径跳过,不伪造哈希 0 参与分组。
       auto hash = compute_dhash(decoded.value());
       if (!hash) {
         std::fprintf(stderr, "[pzt dedup] dhash failed, skipping image_id=%lld path=%s\n",
@@ -263,7 +263,7 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
       for (std::size_t j = i + 1; j < cluster.size(); ++j) {
         if (!valid[j]) continue;
         int distance = hamming_distance(hashes[i], hashes[j]);
-        // F-08：候选簇内每一对比较都打一行明细，不管有没有结成组——调
+        // 候选簇内每一对比较都打一行明细，不管有没有结成组——调
         // 参(时间窗/哈希阈值)时唯一能看到"差多少"的地方。走跟
         // core/browse/prefetch.cpp 同一个先例：无条件写 stderr，`pzt
         // open --debug` 才会把它路由进调试面板(cli/term/debug_log.h)，
@@ -284,7 +284,7 @@ std::vector<DuplicateGroup> find_duplicates_impl(db::Database& db, const std::st
       groups_by_root[uf.find(static_cast<int>(i))].push_back(i);
     }
 
-    // F-39：groups_by_root 是 unordered_map，遍历序不稳定，直接灌进 result
+    // groups_by_root 是 unordered_map，遍历序不稳定，直接灌进 result
     // 会让 DuplicateGroup 的顺序跨进程运行不确定，违反 Dedup PRD 的确定性
     // NFR 字面（打标签集合本身一致，但输出顺序不定）。先把本簇的组收进局部
     // vector，按组内最小 id（group_ids 已升序，即 front）排序后再 append。

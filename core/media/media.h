@@ -10,7 +10,7 @@ namespace pzt::core::media {
 // RAW 预览相关的三段小逻辑的唯一归属：扩展名判断、按扩展名分发的预览解码、
 // 以及"用缓存预览还是拼原始路径"的路径解析。此前这三段在 core/api.cpp、
 // core/dedup/dedup.cpp、core/ai/evaluation_worker.cpp、core/project/project.cpp
-// 各自复制了一份，"加新 RAW 格式时多处漂移"是真实陷阱（见 Fix-it F-16）；这里
+// 各自复制了一份，"加新 RAW 格式时多处漂移"是真实陷阱；这里
 // 收成单一来源，各调用方转调。
 
 // M2：目前只认徕卡 DNG / 富士 RAF（docs/history/M2_PRD.md 明确的范围）。扩展名集合是

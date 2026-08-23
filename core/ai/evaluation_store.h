@@ -8,11 +8,10 @@
 
 // image_evaluations 的唯一写入口。
 //
-// 票 05 之前只有 EvaluationWorker 会写这张表，那条 INSERT 就直接躺在
-// process_request_impl 里。curate 现在也要写(它在一次 headless 调用内部
-// 同步评估预选集，用不了 worker 那套异步队列)，把语句复制一份意味着
-// result_json 的形状将来要在两个地方同时改 - 2026-08 加 content 字段时
-// 已经领教过一次形状散落三处的代价(见 evaluation.h 决策四的说明)。
+// 两个写入方：EvaluationWorker(异步队列)与 curate(在一次 headless 调用内
+// 部同步评估预选集，用不了那套队列)。语句只能有一份 - 复制一份意味着
+// result_json 的形状将来要在两个地方同时改，而给这张表加字段是会反复发生
+// 的事。
 namespace pzt::core::ai {
 
 // 把一次成功的评估结果写进 image_evaluations(按 image_id upsert)，并在

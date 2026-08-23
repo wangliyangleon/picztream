@@ -71,13 +71,13 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
 
     lock.lock();
     in_flight_.erase(req.image_id);
-    // F-03：记下这次是不是失败的，供 take_failure_report() 取用 - 之前
-    // 失败只打 stderr，不开 --debug 时用户完全看不到，见头文件里
-    // FailureReport 的说明。跟 generation_ 一样在这里(拿到锁之后)更新，
-    // process_request 本身不碰这些受 mu_ 保护的状态。
-    // T-23：图片与原因取最近这一次(它带着用户当下最该看到的具体原因)，
-    // 张数报累计值 - 原来那版无条件覆盖、连"之前还挂过几张"都不留，是
-    // "800 张全失败只看到零星几条"的直接成因。
+    // 记下这次是不是失败的，供 take_failure_report() 取用；只打 stderr
+    // 的话，不开 --debug 时用户完全看不到。见头文件里 FailureReport 的说
+    // 明。跟 generation_ 一样在这里(拿到锁之后)更新，process_request 本身
+    // 不碰这些受 mu_ 保护的状态。
+    //
+    // 图片与原因取最近这一次(它带着用户当下最该看到的具体原因)，张数报
+    // **累计值**：无条件覆盖的话，800 张全批失败时用户只会看到零星几条。
     if (failure) {
       ++failed_total_;
       pending_failure_ = FailureReport{req.image_id, *failure, failed_total_};
@@ -88,7 +88,7 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
   }
 }
 
-// T-7：process_request 跑在后台 jthread 上，任何逃逸的异常都是
+// process_request 跑在后台 jthread 上，任何逃逸的异常都是
 // std::terminate,整个 pzt 直接死掉，用户连"发生了什么"都看不到。这条线
 // 程上会 throw 的地方不止一处：Database::open_at(库损坏、schema 版本比
 // 程序新)、db::Stmt 的构造函数、project/tagging 里所有 DAO 风格的函数。
@@ -96,8 +96,8 @@ void EvaluationWorker::worker_loop(std::stop_token stop) {
 //
 // 捕获点放在这个边界而不是 worker_loop：worker_loop 拿到返回值之后还要在
 // mu_ 下做 in_flight_ 清理、generation_ 自增、notify_all，在这里返回一个
-// 普通的失败值就能让那些簿记全部走原有的唯一一条路径，不用改签名。这跟
-// F-17 当初把"落库失败"从 throw 改成返回 StorageFailed 是同一个手法。
+// 普通的失败值就能让那些簿记全部走原有的唯一一条路径，不用改签名。落库
+// 失败返回 StorageFailed 而不是 throw，是同一个手法。
 std::optional<EvaluationError> EvaluationWorker::process_request(const PendingRequest& req) {
   try {
     return process_request_impl(req);
@@ -122,10 +122,10 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
     return EvaluationError::ImageUnavailable;
   }
 
-  // T-23：这几行是 `--debug` 面板看到的东西。原来一律只打 image_id，而
-  // 用户手上只有文件名 - 跟状态行那条裸 ID 是同一个毛病，只是在另一条
-  // 通道上(而且 browse.cpp 的 poll 逻辑在 debug_mode 下刻意不弹状态行，
-  // 理由正是"面板里已经看得到"，于是开着 --debug 时反倒只剩裸 ID)。
+  // 这几行是 `--debug` 面板看到的东西，**要带文件名**：用户手上只有文件
+  // 名，一条裸 image_id 对他没有意义。browse.cpp 的 poll 逻辑在 debug_mode
+  // 下刻意不弹状态行(理由是"面板里已经看得到")，所以这里是开着 --debug 时
+  // 唯一的信息来源。
   // image_id 保留：它是 `/ai_eval` 去重与 in_flight_ 的键，排队问题要靠
   // 它对照。取到图片记录之后的每一行都补上 file=。
   auto project_summary = project::open_project(db, info->project_id);
@@ -160,7 +160,7 @@ std::optional<EvaluationError> EvaluationWorker::process_request_impl(const Pend
   }
 
   const auto& r = result.value();
-  // 落库 + auto_reject 打标签整个委托给 store_evaluation：票 05 起 curate
+  // 落库 + auto_reject 打标签整个委托给 store_evaluation：curate
   // 也要写这张表(它在一次 headless 调用内同步评估预选集，用不了这套异步
   // 队列)，result_json 的形状必须只有一个地方定义。req.auto_reject 是调用
   // 方提交请求时传进来的显式参数，process_request 本身不读 Settings。

@@ -264,8 +264,8 @@ std::string compact_for_debug_log(const std::string& text) {
   }
   if (flat.size() > kMaxLen) {
     flat.resize(kMaxLen);
-    // 按字节数砍容易把多字节 UTF-8 字符砍在中间(比如目标三新增的中文
-    // 预设摘要 prompt)，产生非法字节序列——agent 侧 Python 用 text=True
+    // 按字节数砍容易把多字节 UTF-8 字符砍在中间(中文 prompt 里到处都
+    // 是)，产生非法字节序列——agent 侧 Python 用 text=True
     // 读子进程 stderr 时会直接 UnicodeDecodeError 崩溃(真机复现)。往回
     // 退到一个完整的字符边界:先跳过末尾连续的续字节(0x80-0xBF)，再看
     // 剩下最后一个字节是不是一个"声明的序列长度"和"实际跟着的续字节
@@ -300,7 +300,7 @@ std::string compact_for_debug_log(const std::string& text) {
 
 namespace detail {
 
-// F-02：发送前把图片降采样到长边不超过这个上限——`decode_preview_file`
+// 发送前把图片降采样到长边不超过这个上限——`decode_preview_file`
 // 拿到的预览图在纯 JPEG 项目里经常就是原图分辨率(24MP+)，未经缩放直
 // 接 base64 编码上传，既让每次请求的 token 成本/延迟成倍膨胀，又可能
 // 直接撞上 Claude 单张图片 5MB 的上限；视觉模型本身也会在输入端把图缩
@@ -347,7 +347,7 @@ Result<HttpResponse, RequestError> perform_curl_post(
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(request_timeout_seconds()));
-  // F-21：这个函数会在 EvaluationWorker 的后台线程上被调用，不是单线
+  // 这个函数会在 EvaluationWorker 的后台线程上被调用，不是单线
   // 程场景——libcurl 默认可能用信号中断 DNS 解析超时，多线程进程里给
   // 一个不受自己管理的线程发信号是经典的崩溃/未定义行为来源，NOSIGNAL
   // 关掉这个行为(curl 自己的文档建议多线程程序始终设置这个选项)。
@@ -386,7 +386,7 @@ Result<nlohmann::json, RequestError> request_json(const std::vector<decode::Deco
   }
 
   std::string instruction_text = build_instruction_text(user_prompt, schema_instruction);
-  // F-02：编码上传之前先降采样，见 detail::downscale_for_upload 的说明。多
+  // 编码上传之前先降采样，见 detail::downscale_for_upload 的说明。多
   // 图(pairwise 比较)按顺序各编码一张——三个 provider 的请求体里图片都是
   // 按数组顺序排列的，顺序即调用方传入的顺序(compare 的 a 在前、b 在后)。
   // encode_jpeg_bytes 只在宽高非法时才会失败——upload_image 是已经解码成功

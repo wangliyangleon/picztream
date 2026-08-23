@@ -25,7 +25,7 @@ enum class CreateProjectError {
   NoImagesFound,
   // 目录里没有可用的 JPEG，但确实存在 RAW 文件、只是 support_raw=false
   // （默认）没去扫它们，跟 NoImagesFound 区分开，好让调用方提示"要不要
-  // 加 --support-raw"，而不是让用户误以为目录是空的（见 T-2 proposal）。
+  // 加 --support-raw"，而不是让用户误以为目录是空的。
   NoImagesFoundRawIgnored,
 };
 
@@ -35,7 +35,7 @@ struct ProjectSummary {
   std::string root_path;
   std::int64_t image_count;
   bool support_raw;  // 见 docs/RAW_Support.md：默认关闭的 opt-in 标记，一旦打开不会自动关闭
-  std::optional<ImageId> last_image_id;  // F-24 会话续点：上次浏览到的那张图,无则 nullopt
+  std::optional<ImageId> last_image_id;  // 会话续点：上次浏览到的那张图,无则 nullopt
 };
 
 // 每处理完一张需要生成 RAW 预览缓存的图片调用一次(done, total)。只有这次
@@ -60,8 +60,7 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db,
                                                       bool support_raw = false,
                                                       ScanProgressFn on_progress = nullptr);
 
-// 按名字排序。T-32 之前这里还有一层"未归档在前、归档排最后"的分组，随归
-// 档能力一起删了。
+// 按名字排序。项目没有归档态，所以只有这一个排序键。
 std::vector<ProjectSummary> list_projects(db::Database& db);
 
 enum class ProjectNotFoundError {
@@ -79,7 +78,7 @@ Result<ProjectSummary, ProjectNotFoundError> open_project(db::Database& db, Proj
 // 不触碰磁盘上的原始文件。
 Result<void, ProjectNotFoundError> delete_project(db::Database& db, ProjectId id);
 
-// F-24 会话续点：记住这个项目上次浏览到的那张图(cmd_open 退出时写),重开时
+// 会话续点：记住这个项目上次浏览到的那张图(cmd_open 退出时写),重开时
 // 若该 id 仍在图片列表里就从它起步。只是一条 UPDATE,不校验 image_id 是否
 // 存在——成员检查交给读取方(打开时用当前图片列表兜)。
 void set_last_image_id(db::Database& db, ProjectId id, ImageId image_id);
@@ -107,11 +106,11 @@ std::optional<ImageId> find_image_by_path(db::Database& db, ProjectId project_id
 // 给标签模块校验"这张图属于哪个项目"用。
 std::optional<ImageInfo> get_image(db::Database& db, ImageId id);
 
-// F-07：批量查询 image_ids 里哪些已经有评估结果——一条 `WHERE image_id
+// 批量查询 image_ids 里哪些已经有评估结果——一条 `WHERE image_id
 // IN (...)` 查询，不是对每张图各调一次 get_image()。`/ai_eval`/`/dedup`
 // 批量命令原来各自逐张 get_image 判断"评估过没有"，大项目(几百到几千
-// 张)按一次键就是几百到几千次数据库往返。按 500 张分块(SQLite 变量
-// 数上限保守值，同时呼应 F-40)，返回值只包含 image_ids 里真的有评估
+// 张)按一次键就是几百到几千次数据库往返。按 500 张分块(SQLite 变量数上
+// 限的保守值)，返回值只包含 image_ids 里真的有评估
 // 结果的那些 id，调用方用 `count()` 判断某张图评估过没有。
 std::unordered_set<ImageId> evaluated_image_ids(db::Database& db,
                                                  const std::vector<ImageId>& image_ids);

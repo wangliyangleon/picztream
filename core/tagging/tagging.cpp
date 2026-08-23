@@ -199,7 +199,7 @@ std::optional<TagId> find_tag_by_name(db::Database& db, ProjectId project_id,
   return sqlite3_column_int64(stmt.get(), 0);
 }
 
-// F-26/F-09 共用的底层原语：一条 `IN (...) AND tag_id = ?` 查询，跟
+// 排除规则与批量筛选共用的底层原语：一条 `IN (...) AND tag_id = ?` 查询，跟
 // project::evaluated_image_ids 同一个分块惯例（500 是 SQLite 默认
 // SQLITE_MAX_VARIABLE_NUMBER 之下的保守值，避免绑定变量数超限）。
 std::unordered_set<ImageId> images_with_tag(db::Database& db, const std::vector<ImageId>& image_ids,

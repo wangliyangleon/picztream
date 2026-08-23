@@ -49,7 +49,7 @@ std::optional<decode::DecodedImage> decode_member(db::Database& db, const std::s
 //
 // 解码是逐对惰性做的，不是开赛前把整簇一次性解码完 - 跟 dedup.cpp::
 // find_duplicates_impl 逐张解码、用完就让局部变量出作用域释放是同一个模
-// 式(T-28)。树里全程只存成员下标、不存解码结果，一对成员只在真的要送进
+// 式。树里全程只存成员下标、不存解码结果，一对成员只在真的要送进
 // compare_fn 前才解码，解码结果是 lambda 体内的局部变量，比较完这对就跟
 // 着出作用域释放，峰值内存从 O(簇大小)降到常数(同一时刻最多两张解码图片
 // 存活，不管簇有多大)。代价是晋级的赢家在后面几轮会被重新解码：每次比较
@@ -115,9 +115,9 @@ Result<ChooseSummary, project::ProjectNotFoundError> cluster_and_choose_impl(
   const std::string& root_path = project_summary.value().root_path;
 
   // 排除集合：dedup 传 {废片}、curate 传 {废片,重复}，标签不存在时按"不排
-  // 除任何东西"处理。规则本身收在 core::scope(T-16)，这里只负责把调用方给
-  // 的标签名列表递过去。不传 scope_tag —— 锦标赛这条路上没有 F-26 的对称
-  // 例外：范围本身是废片时 dedup 直接拒绝(#27 决策 D-2)，不是"照做但不排"。
+  // 除任何东西"处理。规则本身收在 core::scope，这里只负责把调用方给的标
+  // 签名列表递过去。不传 scope_tag —— 锦标赛这条路上没有对称例外：范围本
+  // 身是废片时 dedup 直接拒绝，不是"照做但不排"。
   auto candidates = scope::exclude_by_tags(db, project_id, image_ids, exclude_tag_names);
 
   if (candidates.empty()) {

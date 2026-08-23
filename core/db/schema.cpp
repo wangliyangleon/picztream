@@ -16,7 +16,7 @@ void exec(sqlite3* conn, const char* sql) {
   }
 }
 
-// T-32：archived_at 是**故意留下的死列**，不是漏删。归档能力(pzt archive /
+// archived_at 是**故意留下的死列**，不是漏删。归档能力(pzt archive /
 // unarchive)整条删掉了,它全部的效果只是让项目在 pzt list 里沉底并挂一个
 // [已归档] 后缀，两个命令换一个排序键不值这个命令面。列本身没有跟着删：
 // 删列要 bump kSchemaVersion，而版本闸门是单向的(见下面 SchemaTooNewError)，
@@ -116,9 +116,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_preset_name ON recipes(name) WHERE
 // 成功)要么整行不存在(没评估过/评估失败)，不是"整行都在、单个字段可
 // 空"的语义——所以除了两个修正建议各自四五个字段允许 NULL(模型判断不
 // 需要修正建议时不给)之外，其它列都是 NOT NULL。
-// W2026-07-21：eval 从三维技术打分改成"一段客观文字 assessment + 一个
-// unusable 硬伤 flag"，这张表整体重建成 5 列，随后又把 assessment/
-// unusable 这两列合并成一列 result_json(存模型原始返回的
+// eval 存的是"一段客观文字 assessment + 一个 unusable 硬伤 flag"，两者合
+// 在一列 result_json 里(存模型原始返回的
 // {"assessment":..,"unusable":..})——理由是这两列都是"问 AI 要的值"，以后
 // 想再加一个类似的值(比如再问一个维度)不该每次都要一次破坏性表重建；
 // extra_guidance/provider 不是模型输出、是调用方自己知道的上下文，仍然
@@ -198,8 +197,9 @@ void set_user_version(sqlite3* conn, int version) {
   exec(conn, sql.c_str());
 }
 
-// 版本 0 到 1 的一次性迁移。0 同时覆盖了全新空文件和任何 T-7 之前建的老
-// 库:每条建表都是 CREATE TABLE IF NOT EXISTS、每条加列都先查列在不在,所
+// 版本 0 到 1 的一次性迁移。版本 0 同时覆盖全新空文件和任何在版本闸门之
+// 前建的老库:每条建表都是 CREATE TABLE IF NOT EXISTS、每条加列都先查列在
+// 不在,所
 // 以两者走同一段代码,不需要区分"新装用户"和"升级用户"。
 //
 // 整段套一个事务:SQLite 的 DDL 是事务性的,PRAGMA user_version 的写入也
@@ -223,17 +223,14 @@ void migrate_v0_to_v1(sqlite3* conn) {
     exec(conn, kCreateImageTagsTagIdIndex);
     exec(conn, kCreateRecipes);
     exec(conn, kCreateRecipesPresetNameIndex);
-    // W2026-07-21 那两次 eval schema 重建(三维打分列 → assessment+unusable
-    // 两列 → 合并成一列 result_json)都是整表 drop 重建、不写迁移,依据是
-    // "库里都是迭代测试数据,无真实用户数据要保留(PRD 已拍板)"。这个前提
-    // 在 Homebrew tap 分发上线之后不再成立,而原来的实现是按列名匹配
-    // (存在 exposure_score 或 unusable 就 drop)、且常驻在每次开库的路径
-    // 上,既会误伤未来出现的同名列,也让一次破坏性操作永远挂在热路径上。
+    // image_evaluations 早期有过两种别的列形状,存的东西跟现在的读法对不
+    // 上,只能 drop 重建。判据按**结构**、不按列名:表在、但没有 result_json
+    // 列,就是那种老形态。表不存在(全新安装)或已经有 result_json(跑过现代
+    // 版本的库)都不动,评估结果原样保留。
     //
-    // 现在改成按结构判定,并且只在这条 v0→v1 迁移里跑一次:表在、但没有
-    // result_json 列,说明它是 W2026-07-21 之前的形态,存的东西跟现在的读
-    // 法对不上,drop 掉重建。表不存在(全新安装)或已经有 result_json(跑过
-    // 现代版本的库)都不动,评估结果原样保留。
+    // 这段只在 v0→v1 迁移里跑一次,不常驻开库路径。一次破坏性操作挂在热路
+    // 径上,既会误伤未来出现的同名列,也意味着每次开库都在重新决定要不要删
+    // 用户的数据。
     if (table_exists(conn, "image_evaluations") &&
         !column_exists(conn, "image_evaluations", "result_json")) {
       exec(conn, "DROP TABLE image_evaluations;");
@@ -258,19 +255,14 @@ void migrate_v0_to_v1(sqlite3* conn) {
     // 在 0（未开启），跟 M0/M1 时代"没有 RAW 概念"的项目语义一致。一旦被
     // 打开过就不会自动关闭，没有对应的取消开关。
     ensure_column(conn, "projects", "support_raw", "support_raw INTEGER NOT NULL DEFAULT 0");
-    // F-24 会话续点：记住每个项目上次浏览到的那张图,重开时回到那里。可空整
+    // 会话续点：记住每个项目上次浏览到的那张图,重开时回到那里。可空整
     // 数,旧库迁移落 NULL(等同"无续点")。不加外键约束,靠打开时"该 id 是否
     // 还在图片列表里"的成员检查兜住图被删/prune 掉的情况(见 cmd_open)。
     ensure_column(conn, "projects", "last_image_id", "last_image_id INTEGER");
-    // F-33（曾经在这里）：M3 增量一修订把"审美评分"用的四个旧列（1-100
-    // 综合分+点评）换成了上面的 image_evaluations 表，当时加了
-    // ensure_column_dropped 在每次开库时把旧列清掉。那批列上的数据只是
-    // 开发过程里的测试数据，从来没有真实用户数据要保护——这是一个单用户
-    // 个人工具，唯一的真实数据库(~/.config/pzt/pzt.db)早就在那次改动之
-    // 后打开过、迁移已经跑完，旧列已确认不存在。继续每次开库都跑 4 次
-    // PRAGMA table_info 检查一个已经不可能再发生的迁移是纯粹的浪费，删
-    // 掉这个一次性清理逻辑（连同已经没有其它调用方的 ensure_column_
-    // dropped 辅助函数）。T-7 把同一条推理推广成了版本闸门。
+    // 这里没有"删掉审美评分那批旧列"的清理逻辑,是有意的:那批列早于
+    // image_evaluations 表,而任何跑过现代版本的库都已经没有它们了。每次
+    // 开库跑几次 PRAGMA table_info 去检查一个不可能再发生的迁移是纯粹的
+    // 浪费——版本闸门就是这条推理的一般形式。
     // 目标二：预设级烘焙好的颗粒强度(0..1)，跟 base_lut/base_lut_size 一样
     // 是"预设的底子"，version 不能覆盖。默认值 0 让旧库迁移时所有已有预设
     // (包括即将被清理的占位 Warm)行为不变，见
@@ -313,8 +305,7 @@ void initialize_schema(sqlite3* conn) {
   // 已经是当前版本:库的结构由版本号自己声明是完整的,不再跑 7 条建表和
   // 11 次 PRAGMA table_info 去重复确认一个已知的答案。这是版本闸门的应
   // 有收益,也是它的代价,见 kSchemaVersion 上关于"改 schema 必须 bump"
-  // 的说明。(同样的推理见下面那段 F-33 注释:检查一个不可能再发生的迁
-  // 移是纯粹的浪费。)
+  // 的说明。
   if (version == kSchemaVersion) return;
 
   if (version > kSchemaVersion) throw SchemaTooNewError(version, kSchemaVersion);

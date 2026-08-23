@@ -30,14 +30,14 @@ Result<void, EvaluationError> store_evaluation(db::Database& db, project::ImageI
   sqlite3_bind_text(stmt.get(), 2, result_json.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 3, extra_guidance.c_str(), -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt.get(), 4, to_string(provider), -1, SQLITE_TRANSIENT);
-  // F-17：以前不检查这一步-AI 已经给出结果，但落库失败(磁盘满、库损
-  // 坏)时会静默发生。不 throw 的理由见 evaluation_store.h。
+  // 这一步必须检查：AI 已经给出结果、落库却失败(磁盘满、库损坏)时会静默
+  // 发生。不 throw 的理由见 evaluation_store.h。
   if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
     return Result<void, EvaluationError>::Err(EvaluationError::StorageFailed);
   }
 
   // auto_reject：结果落库之后，模型直接给的 unusable 为真时打废片标签
-  // (W2026-07-21：判据从原来的 passes_gate 三项阈值改成读 unusable flag)。
+  // (判据就是模型给的 unusable，没有阈值计算)。
   // 只在 unusable 时打标签，不做反向摘除(见 core/settings/settings.h 里的
   // 说明)。用已经打开的 db 连接直接调 tagging::，不经过 core/api.h 门面
   // (那边会各自开一条新连接，没必要)。

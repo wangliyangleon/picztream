@@ -77,17 +77,15 @@ Database Database::open_at(const std::string& path) {
   // M3 引入了后台线程(EvaluationWorker)在独立连接上写库,跟主线程/其它
   // 进程的写操作并发时,SQLite 默认的空 busy handler 会让锁冲突立刻返回
   // SQLITE_BUSY——core 里所有 DAO 遇到非 SQLITE_DONE 都是 throw,这会让一
-  // 次短暂的锁等待变成一次异常(在 worker 线程里未捕获就是 std::terminate,
-  // 见 F-05 的说明)。给每条打开的连接设置几秒的忙等超时,让 SQLite 自己
+  // 次短暂的锁等待变成一次异常(在 worker 线程里未捕获就是
+  // std::terminate)。给每条打开的连接设置几秒的忙等超时,让 SQLite 自己
   // 在这个时间窗口内重试,而不是立刻报错——这是 SQLite 官方推荐的多连接
   // 并发写法,不需要额外的锁或队列。
   sqlite3_busy_timeout(db, 5000);
 
   // initialize_schema 抛出时 db 还是个裸 handle,Database 的构造函数还没
-  // 跑,RAII 接管不了,直接抛就是永久泄漏。以前 initialize_schema 只在
-  // "不该发生"的场景抛(建表失败、库损坏),所以这个洞一直没被注意到;T-7
-  // 之后"库的 schema 版本比程序新"是一条常规路径(SchemaTooNewError),抛
-  // 出不再是意外,泄漏就得堵上。
+  // 跑,RAII 接管不了,直接抛就是永久泄漏。"库的 schema 版本比程序新"是一
+  // 条常规路径(SchemaTooNewError),抛出不是意外,所以这个洞必须堵上。
   try {
     // 顺序:先 initialize_schema 再切 WAL。两个理由。
     // (1) journal_mode 不能在事务内切换,而 v0 迁移整段跑在一个事务里,

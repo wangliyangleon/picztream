@@ -14,7 +14,7 @@ namespace pzt::core {
 
 namespace detail {
 
-// F-19：value()/error() 读错变体是编程错误(调用方没先查 ok()),不是运行
+// value()/error() 读错变体是编程错误(调用方没先查 ok()),不是运行
 // 时该处理的业务结果——那种情况走 ok() 分支。以前用 assert() 兜底,但
 // RelWithDebInfo(build_release/,用户实际测试用的构建)默认带 -DNDEBUG,
 // assert 在这个配置下被完全编译掉,读错变体会变成未定义行为而不是可预
@@ -29,11 +29,11 @@ namespace detail {
 
 }  // namespace detail
 
-// F-19：整个类标 [[nodiscard]] 而不是逐个函数标——这样任何返回
+// 整个类标 [[nodiscard]] 而不是逐个函数标——这样任何返回
 // Result<T,E> 的函数(core/api.h 里几十个)的调用方如果没有检查返回值就
 // 直接丢弃,都会触发编译警告,不需要在每一个消费点/每一个 core 函数签
-// 名上重复这个属性。真实触发过的问题(F-18)：dedup 忽略 add_tag 的
-// Result,导致 tagged_count 统计跟实际打标签结果对不上。
+// 名上重复这个属性。这不是理论风险:丢弃 add_tag 的 Result 会让
+// tagged_count 统计跟实际打标签结果对不上,而且一声不响。
 template <typename T, typename E>
 class [[nodiscard]] Result {
  public:

@@ -143,10 +143,10 @@ WriteExportBatchResult write_export_batch(db::Database& db, const fs::path& root
   out.result.exported_count = 0;
   out.result.created_output_folder = false;
 
-  // T-6：分母是这一批的全部图片，不再是其中的 RAW 张数。原来用 raw_total
-  // 当分母、且只在 img.kind=="raw" 时回调，意味着纯 JPEG 批次全程一次进
-  // 度都不报：导 300 张 JPEG 在终端上完全静默，界面还停在上一帧，看起来
-  // 就是死机。T-1 加了"导出全部仍保留的图"之后，这恰好是最常走的那条路。
+  // 分母是这一批的**全部图片**，不是其中的 RAW 张数,回调也不挑 kind。
+  // 拿 RAW 张数当分母的话，纯 JPEG 批次全程一次进度都不报：导 300 张 JPEG
+  // 在终端上完全静默、界面停在上一帧，看起来就是死机 - 而"导出全部仍保留
+  // 的图"恰好是最常走的那条路。
   const int progress_total = static_cast<int>(images.size());
   int progress_done = 0;
   // 进度按整数百分比节流：一批几百张、每张都重画一次 banner 是几百次终端
@@ -231,10 +231,10 @@ Result<ExportResult, ExportTagError> export_tag(db::Database& db, TagId tag_id,
   }
   auto images = std::move(filtered.value());
 
-  // F-26：默认排除废片/重复，除非调用方显式要求包含，或者这次导出的目标
+  // 默认排除废片/重复，除非调用方显式要求包含，或者这次导出的目标
   // 标签本身就是废片/重复(用户已经明确要处理它 —— 这就是 excluded_by_tags
   // 的 scope_tag 参数，这里传导出目标标签)。规则本身收在 core::scope
-  // (T-16)，这里只负责决定排哪几个标签、以及把结果套到自己手里的 ImageRef
+  // ，这里只负责决定排哪几个标签、以及把结果套到自己手里的 ImageRef
   // 上；项目里还没有对应系统标签时那边按"没有可排除的东西"处理。
   std::vector<std::string> exclude_tag_names;
   if (!include_reject) exclude_tag_names.emplace_back(tagging::kRejectTagName);
@@ -285,7 +285,7 @@ Result<ExportResult, ExportImagesError> export_images(db::Database& db, project:
                                        info->preview_cache_path});
   }
 
-  // F-26：同 export_tag，规则收在 core::scope(T-16)。这条路径没有"导出目
+  // 同 export_tag，规则收在 core::scope。这条路径没有"导出目
   // 标标签"可言(调用方直接给的 image_ids)，所以不传 scope_tag，没有对称例
   // 外 —— 跟收编之前那份 lambda 不比较 tag_id 的行为一致。
   std::vector<std::string> exclude_tag_names;

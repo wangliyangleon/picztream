@@ -20,7 +20,7 @@ std::int64_t now_unix() {
       .count();
 }
 
-// F-32：ensure_default_presets 在每次 list_presets()/list_versions() 门
+// ensure_default_presets 在每次 list_presets()/list_versions() 门
 // 面调用时都会跑一遍(每次按 `r` 键至少一次)——不检查的话，seed_preset
 // 会在真正需要它之前就先把 make_warm_lut(17) 整个算一遍(17³ 格点、每
 // 个格点几次 sin() 调用)，算完才被 INSERT OR IGNORE 直接扔掉。先查一
@@ -119,7 +119,7 @@ void seed_preset(sqlite3* conn, const std::string& name, int lut_size,
                      SQLITE_TRANSIENT);
   sqlite3_bind_double(stmt.get(), 4, grain_amount);
   sqlite3_bind_int64(stmt.get(), 5, now_unix());
-  // F-17：`INSERT OR IGNORE` 命中已存在的预设名字时也返回 SQLITE_DONE
+  // `INSERT OR IGNORE` 命中已存在的预设名字时也返回 SQLITE_DONE
   // (这是幂等播种的正常情形，不是错误)——只有真正的写入失败(磁盘满、
   // 库损坏)才会拿到别的返回值，跟 project::/tagging:: 现有的"查了就
   // throw"约定统一。
@@ -176,8 +176,7 @@ namespace {
 // 落地,不再需要"验证机制通不通"的占位符。preset_name_exists 保证第二次
 // 调用起(正常情况下每次 r 键都会跑一次这个函数)直接跳过,不会每次都发一
 // 条 DELETE。外键 ON DELETE CASCADE(parent_id)/ON DELETE SET NULL
-// (images.recipe_id)保证级联安全,见 docs/W2026-07-15_RecipeExpansion_
-// Eng_Design.md。
+// (images.recipe_id)保证级联安全。
 void remove_legacy_warm_preset(sqlite3* conn) {
   if (!preset_name_exists(conn, "Warm")) return;
   Stmt stmt(conn, "DELETE FROM recipes WHERE name = ? AND parent_id IS NULL;");
@@ -260,7 +259,7 @@ Result<RecipeId, CreateVersionError> create_version(db::Database& db, RecipeId p
   sqlite3_bind_double(stmt.get(), 9, params.blacks);
   sqlite3_bind_double(stmt.get(), 10, params.whites);
   sqlite3_bind_int64(stmt.get(), 11, now_unix());
-  // F-17：以前不检查这一步，插入真失败(磁盘满等)时 sqlite3_last_insert_
+  // 这一步必须检查：插入真失败(磁盘满等)时 sqlite3_last_insert_
   // rowid 会返回上一条无关插入的 rowid，把它当成新建的 version id 交还
   // 给调用方——是一个真实但极少触发的正确性 bug，跟 project::/
   // tagging:: 现有的"查了就 throw"约定统一，不静默吞掉写入失败。

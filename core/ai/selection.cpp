@@ -32,13 +32,13 @@ std::string build_selection_prompt(const std::vector<SelectionCandidate>& candid
             "one carries the most weight, and the sequence should read well as a set. Use "
             "only the numbers listed above, and do not repeat a number.";
 
-  // 票 07（PRD 决策十五）：文案搭在同一次调用上。三件事在这一段里被说死：
+  // 文案搭在同一次调用上。三件事在这一段里被说死：
   //
   // 1. **写的是被选中的那几张**，不是整个预选集。模型眼前列着 K 条描述而只
   //    挑了 count 条，一句含糊的"these photos"会让它顺手把落选的那几张也写
   //    进去 - 交付的照片里没有的东西出现在文案里，用户当场就能发现。
-  // 2. **材料是 content 与 assessment 两栏，但落笔写的是画面**（决策十五、
-  //    六）。这是照着风险二写的：模型手里只有描述、没有照片，不点破的话它
+  // 2. **材料是 content 与 assessment 两栏，但落笔写的是画面**。模型手里
+  //    只有描述、没有照片，不点破的话它
   //    会顺着 quality 那一栏的调子继续写摄影评语("光影层次丰富、构图考究")，
   //    那是给摄影师看的话，不是能发出去的话。所以两栏都留在上下文里(选片本
   //    来就要用 assessment)，只约束成品不许点评拍摄手法。
@@ -53,11 +53,11 @@ std::string build_selection_prompt(const std::vector<SelectionCandidate>& candid
       "mention the photography itself -- this is the user's own post, not a review. Keep it "
       "to one or two sentences, and write it in the same language as the notes above.";
 
-  // 票 08 之前恒为空：为空时整段省略，而不是留一句空的"用户要求：",那会让
-  // 模型去揣摩一个不存在的要求。
+  // 为空时整段省略，而不是留一句空的"用户要求：",那会让模型去揣摩一个不
+  // 存在的要求。
   if (!selection_brief.empty()) {
-    // 票 07：同一段简述同时驱动两件事。用途("发朋友圈"/"给家人看")已经在里
-    // 面了，文案的语气与平台适配因此不需要新的输入(PRD 决策十五)。
+    // 同一段简述同时驱动两件事。用途("发朋友圈"/"给家人看")已经在里面
+    // 了，文案的语气与平台适配因此不需要新的输入。
     prompt +=
         "\n\nThe user asked for this, in their own words -- let it drive both which photos "
         "you pick and the order you put them in, and let it set the tone of the caption: " +
@@ -78,8 +78,8 @@ std::string build_selection_schema_instruction(int count) {
 // 键名，而云端 provider 反而看不出问题，因为它们只吃前两处的自然语言。同
 // evaluation.cpp 的说明。
 //
-// 票 07：caption 进 properties 但**不进 required**，这就是决策十五说的"在返
-// 回 schema 里是可选字段"落到 schema 层的样子。进 required 会让本地模型在写
+// caption 进 properties 但**不进 required** - 它在返回 schema 里是可选字
+// 段。进 required 会让本地模型在写
 // 不出文案时被约束解码逼着编一段，或者让整个响应作废、连 picks 一起丢-两
 // 者都恰好是失败隔离要防的事。
 nlohmann::json build_selection_json_schema() {
@@ -140,16 +140,16 @@ Result<SelectionResult, SelectionError> request_selection_impl(
     return Result<SelectionResult, SelectionError>::Err(SelectionError::ParseError);
   }
 
-  // 数组里混进非整数的元素时**跳过它、留下其余的**，不整批算失败：跟 PRD
-  // 决策十三对越界序号的处置是同一个立场 - 模型返回 9 个好序号外加 1 个坏
-  // 的，把整批扔掉丢的是真信号。真正的"整体退化"分界在调用方那一层，由清
-  // 洗完还剩几个决定。
+  // 数组里混进非整数的元素时**跳过它、留下其余的**，不整批算失败：跟越界
+  // 序号的处置是同一个立场 - 模型返回 9 个好序号外加 1 个坏的，把整批扔掉
+  // 丢的是真信号。真正的"整体退化"分界在调用方那一层，由清洗完还剩几个决
+  // 定。
   SelectionResult result;
   for (const auto& entry : j["picks"]) {
     if (entry.is_number_integer()) result.picks.push_back(entry.get<int>());
   }
 
-  // 票 07（PRD 决策十五）：文案缺失或不合法**只丢文案**，不报错、不重试。
+  // 文案缺失或不合法**只丢文案**，不报错、不重试。
   // 这里刻意没有 else 分支去记一个"文案失败"的信号-对每一个下游而言"没有
   // 文案"只有一种处置(不展示)，具体是模型没给还是给歪了不改变这个决定。
   if (j.contains("caption") && j["caption"].is_string()) {

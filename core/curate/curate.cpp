@@ -16,9 +16,8 @@ namespace pzt::core::curate {
 namespace {
 
 // 范围解析:candidate_scope 有值走某个标签下的图，否则整个项目。标签排
-// 除(废片/重复)不在这里做了——W2026-07-21 目标二收进
-// tournament::cluster_and_choose 的 exclude_tag_names，dedup 和 curate
-// 现在共用同一份排除逻辑，不再各自维护一份。
+// 除(废片/重复)不在这里做，收在 tournament::cluster_and_choose 的
+// exclude_tag_names，dedup 和 curate 共用同一份排除逻辑。
 std::vector<project::ImageId> resolve_scope_ids(db::Database& db, project::ProjectId project_id,
                                                  std::optional<tagging::TagId> candidate_scope) {
   std::vector<project::ImageId> ids;
@@ -43,7 +42,7 @@ RepInfo make_rep_info(db::Database& db, project::ImageId id) {
   return RepInfo{id, info->captured_at};
 }
 
-// 一张照片给模型看的全部材料(票 06)。两个字段一起给(PRD 决策六)：只给
+// 一张照片给模型看的全部材料。两个字段一起给：只给
 // content 会丢掉质量维度，而预选集里若干张都符合题材偏好时，决定选谁的恰
 // 恰是 assessment。
 //
@@ -67,10 +66,8 @@ ai::SelectionCandidate make_selection_candidate(db::Database& db, project::Image
 // 不够而交出方向相反的两种排列。提成具名函数而不是各写一遍 lambda，是为
 // 了让这个约束是结构上的而不是靠约定。
 //
-// 开 AI 且候选够那条路径不在此列：票 06 起由模型一次调用连选带排，顺序由
-// 模型给（见 docs/history/Intent_Curation_PRD.md 决策十四）。在那之前它走
-// std::sample，顺序是簇的遍历顺序；RNG 已随票 06 从本文件移除，提案 T-26
-// 因此过期。
+// 开 AI 且候选够那条路径不在此列：模型一次调用连选带排，顺序由模型给。
+// 本文件里没有任何 RNG，两条路都是确定性的。
 bool by_captured_at_desc(const RepInfo& a, const RepInfo& b) {
   auto at = a.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
   auto bt = b.captured_at.value_or(std::numeric_limits<std::int64_t>::min());
@@ -124,7 +121,7 @@ RepInfo greedy_pick(std::vector<RepInfo>& pool, const std::vector<RepInfo>& sele
 }
 
 // 从 pool 里按 farthest-point 依次取 n 张，取走的从 pool 里移除。裁预选
-// 集和最终选片是同一个动作、只是 n 不同(票 04)，共用这一个循环。
+// 集和最终选片是同一个动作、只是 n 不同，共用这一个循环。
 std::vector<RepInfo> take_farthest_points(std::vector<RepInfo>& pool, int n) {
   std::vector<RepInfo> taken;
   for (int i = 0; i < n && !pool.empty(); ++i) taken.push_back(greedy_pick(pool, taken));
@@ -176,7 +173,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   auto ids = resolve_scope_ids(db, project_id, candidate_scope);
 
   // 空结果的三种含义各有一个构造点，刻意不共用一个"空"-它们对用户说的
-  // 话完全不同(PRD 决策十九)。
+  // 话完全不同。
   auto declined_result = [&] {
     CurateResult r{{}, count, 0, 0};
     r.ai_declined = true;
@@ -189,7 +186,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   };
 
   // 闸门要报的评估张数 = 预选集大小。候选不足 count 时没有"选"这个动作、
-  // 也就没有预选集，评估开销为 0(票 04 定的"裁剪不参与"在开销上的对应)。
+  // 也就没有预选集，评估开销为 0(裁剪整条不参与在开销上的对应)。
   auto evaluation_count_for = [&](int candidate_count) {
     if (candidate_count < count) return 0;
     return detail::preselect_size(candidate_count, preselect_multiplier, count);
@@ -202,7 +199,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   // 造前的 build_cluster_reps 输出——project_id 由调用方(pzt curate 命
   // 令)调用前已经用 resolve_project_json 验证过存在，这里不会失败，跟
   // core/api.cpp 其它门面对已验证 project_id 的处理一致，不再二次判空。
-  // 闸门转接（票 05）：报给调用方的是**合并**开销(比较多少次 + 评估多少
+  // 闸门转接：报给调用方的是**合并**开销(比较多少次 + 评估多少
   // 张)，只问一次。tournament 在本地分簇跑完、任何一次比较发出之前调这个
   // lambda，那一刻 AiCost.candidate_count 已经是准的，正好够算评估张数。
   //
@@ -239,18 +236,17 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
 
   std::vector<project::ImageId> selected;
   bool selection_fallback = false;
-  // 票 07：只有"模型的选择被采纳"那一条分支会填它，其余每条路(关 AI、候选
+  // 只有"模型的选择被采纳"那一条分支会填它，其余每条路(关 AI、候选
   // 不足 count、整批退化)都在这里留空 - 空串就是"没有文案"，见
   // CurateResult::caption。
   std::string caption;
 
   // 确定性选择：farthest-point 挑 count 张，再按 by_captured_at_desc 交
-  // 付。关 AI 那条路走它，票 06 的整批退化也走它-退化必须落在**同一套**
-  // 逻辑上，否则"AI 挑的"与"退化后挑的"会是两种排列，而用户看到的话术只
-  // 有一种(PRD 决策十三否掉"用确定性结果补齐"是同一个理由)。
+  // 付。关 AI 那条路走它，整批退化也走它-退化必须落在**同一套**逻辑上，
+  // 否则"AI 挑的"与"退化后挑的"会是两种排列，而用户看到的话术只有一种。
   auto deterministic_select = [&](std::vector<RepInfo>& pool) {
     auto selected_info = take_farthest_points(pool, count);
-    // 票 01：选中的是哪几张仍由 farthest-point 决定，但交出去的顺序不是
+    // 选中的是哪几张由 farthest-point 决定，但交出去的顺序不是
     // 它的挑选顺序-那个算法每次挑离已选集最远的一张，排列在时间上必然
     // 跳跃，而这个列表顺序一路决定 Deliver 的发送次序。
     std::sort(selected_info.begin(), selected_info.end(), by_captured_at_desc);
@@ -258,11 +254,11 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
   };
 
   if (static_cast<int>(winners.size()) >= count) {
-    // 票 04：先把候选集(每簇一张代表)按时间多样性裁成预选集，两条路都走
+    // 先把候选集(每簇一张代表)按时间多样性裁成预选集，两条路都走
     // 这一刀。裁剪用的就是 AI 关那条路的 farthest-point，所以 AI 关时选
     // 中的仍是同一批 - 贪心是增量的，"先挑 K 张再从 K 张里挑 count 张"
     // 每一步的 argmax 都落在 K 里，跟直接挑 count 张选出同一个集合;顺序
-    // 又由票 01 的 by_captured_at_desc 统一定，于是这条路上裁剪前后的输
+    // 又由 by_captured_at_desc 统一定，于是这条路上裁剪前后的输
     // 出一字不变。AI 开时这一刀是实打实的收窄：随机采样只在预选集里发
     // 生。K == winners.size() 时是空操作(候选集介于 count 与目标之间就
     // 是这种情况)。
@@ -270,7 +266,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
     bool clamps = k < static_cast<int>(winners.size());
 
     // 每张代表只读一次库：裁剪与 AI 关那条路共用同一个 pool。AI 开且不
-    // 裁剪时一次都不读(这条路只需要 id)，跟票 04 之前一样。
+    // 裁剪时一次都不读(这条路只需要 id)。
     std::vector<RepInfo> pool;
     if (clamps || !ai_enabled) {
       for (auto id : winners) pool.push_back(make_rep_info(db, id));
@@ -283,9 +279,9 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
     }
 
     if (ai_enabled) {
-      // 只评估预选集(PRD 决策十)：评估次数因此由构造保证有界，与图库大
-      // 小无关。已经有评估记录的跳过 - 缓存判据是"有记录就跳过"，不做字
-      // 段完整性检查也不加版本号(PRD 决策七)。
+      // 只评估预选集：评估次数因此由构造保证有界，与图库大小无关。已经
+      // 有评估记录的跳过 - 缓存判据就是"有记录就跳过"，不做字段完整性检
+      // 查也不加版本号。
       //
       // 算在闸门之前，是为了让补问的那一路能报**精确**张数而不是上界：这
       // 里 winners 已经是预选集本身，扣掉命中缓存的就是真正要发的请求数。
@@ -296,7 +292,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
       }
       int eval_total = static_cast<int>(to_evaluate.size());
 
-      // 票 05：补问闸门。走到这里说明 tournament 没问过 - 它只在存在
+      // 补问闸门。走到这里说明 tournament 没问过 - 它只在存在
       // size>=2 的簇时才问，而全是单例簇的项目一次比较都不发、开销却不为
       // 零(评估还在后面)。此刻仍然满足"任何视觉调用之前"：没有比较发生
       // 过，评估也还没开始。
@@ -315,7 +311,7 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
         // tournament 里 on_comparison_start 的顺序，理由一样)。
         if (on_cancel && on_cancel()) return cancelled_result();
         if (on_eval_progress) on_eval_progress(i + 1, eval_total);
-        // 单张失败不中断整批：它只是没有描述可用，由票 06 的选择那一步处
+        // 单张失败不中断整批：它只是没有描述可用，由后面的选择那一步处
         // 理，跟"某簇比较失败就那一簇退化、不中断其它簇"是同一个立场。
         (void)evaluate_fn(db, to_evaluate[i]);
       }
@@ -325,13 +321,11 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
       // 好。零写入的承诺只对闸门(ai_declined)成立，那时一张都还没评估。
       if (on_cancel && on_cancel()) return cancelled_result();
 
-      // 票 06：AI 开那条路的选择到此为止一直是 std::sample-代码自己写明
-      // 了原因"没有质量分可比"。现在预选集里每张都有描述可读了，改由模型
-      // 一次调用连**选**带**排**(PRD 决策十四：叙事要求会反过来影响选哪几
-      // 张，拆成"先选再排"会切在错误的地方)。
+      // 预选集里每张都有描述可读，于是选择由模型一次调用连**选**带**排**：
+      // 叙事要求会反过来影响选哪几张，拆成"先选再排"会切在错误的地方。
       //
-      // 候选按 winners 的顺序编号，模型只吐 1-based 序号(决策十三)，翻译
-      // 回照片靠的就是这个顺序，两者不能错位。
+      // 候选按 winners 的顺序编号，模型只吐 1-based 序号，翻译回照片靠的
+      // 就是这个顺序，两者不能错位。
       std::optional<ai::SelectionResult> model_answer;
       if (select_fn) {
         std::vector<ai::SelectionCandidate> candidates;
@@ -348,13 +342,13 @@ CurateResult detail::curate_impl(db::Database& db, project::ProjectId project_id
 
       if (!picks.empty()) {
         for (int index : picks) selected.push_back(winners[static_cast<std::size_t>(index) - 1]);
-        // 票 07：文案只在**模型的选择被采纳时**跟出去。它可能是空串(模型
-        // 没给或给歪了)，那就只是少一段附赠品，跟这里的判断无关 - 决策十五
-        // 的失败隔离在 ai::request_selection 那一层已经兑现完了。
+        // 文案只在**模型的选择被采纳时**跟出去。它可能是空串(模型没给或
+        // 给歪了)，那就只是少一段附赠品，跟这里的判断无关 - 文案的失败隔
+        // 离在 ai::request_selection 那一层已经做完了。
         caption = model_answer->caption;
       } else {
         // 整批退化：调用失败，或者清洗完的有效序号不足 count。信号独立于
-        // ai_fallback_count(决策二十一)，两者对用户说的话不一样。
+        // ai_fallback_count，两者对用户说的话不一样。
         selection_fallback = true;
         // 不裁剪那条路上 pool 还是空的(AI 开且不裁剪时前面一次库都没
         // 读)，退化到此刻才需要每张的 captured_at。
@@ -396,15 +390,15 @@ namespace {
 // 完，用不了那套异步队列。
 //
 // 三个刻意的取值：
-// - extra_guidance 传空串。用途**不**注入评估(PRD 决策五)：描述回答"这张
+// - extra_guidance 传空串。用途**不**注入评估：描述回答"这张
 //   照片是什么"，是关于照片的客观事实；用途回答"这些事实里哪些重要"，是
 //   关于这次任务的。注进去还会让缓存只对一种用途有效。
 // - auto_reject 传 false。curate 是"挑哪几张"，不该顺手改变废片标签-那
 //   会改变下一次运行的候选集，是一个用户没要求过的副作用。
 // - language 用 request_evaluation 的默认值(中文)。curate 只有 headless
 //   一个入口，core 不认识 cli 的界面语言；content 是给机器读的、不进
-//   TUI，assessment 在这条路径上也不展示给人。票 07 落地后这条仍然成立：
-//   文案确实要给人看，但它的语言是在提示词里跟着**描述**走的("write it in
+//   TUI，assessment 在这条路径上也不展示给人。文案确实要给人看，但它的语
+//   言是在提示词里跟着**描述**走的("write it in
 //   the same language as the notes above")，于是自动落在这里定的这一种上，
 //   不需要给 core 接一个语言参数。
 bool evaluate_and_store(db::Database& db, project::ImageId image_id, ai::Provider provider,
@@ -443,11 +437,11 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
       [ai_provider, &local_config](db::Database& d, project::ImageId id) {
         return evaluate_and_store(d, id, ai_provider, local_config);
       },
-      // 票 06：选择那一步的 production 实现。失败(网络/解析/没有 key)一律
+      // 选择那一步的 production 实现。失败(网络/解析/没有 key)一律
       // 折成 nullopt - 对 curate 而言"模型没给出能用的答案"只有一种处置，
       // 就是整批退化，具体是哪种失败不改变这个决定。
       //
-      // 票 08：选片简述在这里被捕获进去，而不是穿过 curate_impl 与 SelectFn
+      // 选片简述在这里被捕获进去，而不是穿过 curate_impl 与 SelectFn
       // - 它对 curate 的编排逻辑完全不透明(curate 不读它、不据它分支)，跟
       // 上面 evaluate_and_store 那条 lambda 捕获 provider/local_config 是同
       // 一个处置。SelectFn 的两个参数是 curate 真正决定的东西(给谁看、选几
@@ -458,7 +452,7 @@ CurateResult curate(db::Database& db, project::ProjectId project_id,
         auto result = ai::request_selection(candidates, n, ai_provider, selection_brief,
                                              local_config);
         if (!result.ok()) return std::nullopt;
-        // 票 07：整个结果原样交上去(序号 + 文案)。文案缺失在这一层已经是空
+        // 整个结果原样交上去(序号 + 文案)。文案缺失在这一层已经是空
         // 串而不是错误，所以这里不需要为它多一个分支。
         return result.value();
       },

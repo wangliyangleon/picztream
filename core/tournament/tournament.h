@@ -12,7 +12,7 @@
 #include "core/project/project.h"
 #include "core/result.h"
 
-// W2026-07-21 目标二：dedup 留哪张/curate 每簇选哪张，这两件"涉及比较的
+// dedup 留哪张/curate 每簇选哪张，这两件"涉及比较的
 // 选择"收口成同一个函数的两个分支——分簇本身复用 core::dedup::
 // find_duplicates 的现成算法，AI 关时选 winner 复用 dedup 已经算好的
 // keep_id(见 dedup.h pick_keep_id 的说明)，AI 开时才真的两两送进

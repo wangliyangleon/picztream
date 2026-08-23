@@ -21,11 +21,11 @@ bool equals_ascii_case_insensitive(const std::string& a, const char* b) {
 
 // 用户打的标签名 -> canonical 存储名。只有系统标签有别名，普通标签原样返
 // 回（它们照样享受 find_tag_by_name 自己的大小写不敏感匹配，只是不做语言
-// 别名）。见头文件 D-3 那段。
+// 别名）。见头文件里关于"别名是标识符、不是显示文案"那段。
 //
 // 别名的拼写来自 tagging::kRejectTagAlias/kDuplicateTagAlias，不在这里再写
-// 一遍字面量：T-25 之后 `pzt images --json` 的 system_tags 字段用的是同一
-// 组常量，两处必须逐字节一致，否则 headless 认得的词和输出的词会对不上。
+// 一遍字面量：`pzt images --json` 的 system_tags 字段用的是同一组常量，两
+// 处必须逐字节一致，否则 headless 认得的词和输出的词会对不上。
 std::string canonical_tag_name(const std::string& written) {
   if (written == tagging::kRejectTagName ||
       equals_ascii_case_insensitive(written, tagging::kRejectTagAlias)) {
@@ -54,9 +54,9 @@ Result<Scope, ScopeFailure> resolve(db::Database& db, ProjectId project_id, cons
     for (const auto& ref : browse::list_images(db, project_id)) result.image_ids.push_back(ref.id);
     return R::Ok(std::move(result));
   }
-  // T-15：`.` 原样用调用方给的那一组，不查库、不重排、不受 system_tag_
-  // policy 影响（策略管的是"范围本身是不是系统标签"，`.` 根本不是标签）。
-  // scope_tag 留空，见头文件那段与 PRD #28 决策 D-7。
+  // `.` 原样用调用方给的那一组，不查库、不重排、不受 system_tag_policy
+  // 影响（策略管的是"范围本身是不是系统标签"，`.` 根本不是标签）。
+  // scope_tag 留空，见头文件那段。
   if (scope == ".") {
     if (explicit_ids == nullptr) return R::Err(ScopeFailure{ScopeError::NoExplicitSet, ""});
     Scope result;
@@ -96,7 +96,7 @@ std::unordered_set<ImageId> excluded_by_tags(db::Database& db, ProjectId project
   for (const auto& tag_name : exclude_tag_names) {
     auto tag_id = tagging::find_tag_by_name(db, project_id, tag_name);
     if (!tag_id) continue;                            // 标签不存在 = 没有可排除的东西
-    if (scope_tag && *scope_tag == *tag_id) continue;  // F-26 对称例外
+    if (scope_tag && *scope_tag == *tag_id) continue;  // 对称例外
     auto tagged = tagging::images_with_tag(db, image_ids, *tag_id);
     excluded.insert(tagged.begin(), tagged.end());
   }

@@ -42,7 +42,7 @@ bool is_jpeg(const fs::path& p) {
   return ext == ".jpg" || ext == ".jpeg";
 }
 
-// RAW 扩展名集合的唯一归属在 core/media（见 Fix-it F-16）；这里保留 fs::path
+// RAW 扩展名集合的唯一归属在 core/media；这里保留 fs::path
 // 签名给下面的扫描调用点用，判断本身转调，避免"加新 RAW 格式时多处漂移"。
 bool is_raw(const fs::path& p) { return media::is_raw_path(p.string()); }
 
@@ -68,7 +68,7 @@ struct ScanResult {
   std::unordered_set<std::string> on_disk_paths;
   // support_raw=false 时撞见过至少一个 RAW 文件（因此被忽略、没产出记录）。
   // create_project 用这个字段区分"目录真的是空的"和"目录里全是被
-  // support_raw=false 挡在外面的 RAW 文件"，见 T-2 proposal。
+  // support_raw=false 挡在外面的 RAW 文件"。
   bool found_ignorable_raw = false;
 };
 
@@ -91,7 +91,7 @@ std::string path_stem_key(const fs::path& relative_path) {
 // 描——JPEG 不会因为文件夹里有同名 RAW 而被忽略，因为这一轮压根不知道
 // RAW 存在。这是 RAW 支持默认关闭这个设计的核心：关闭时代码路径上跟
 // M0/M1 完全一样，见 docs/RAW_Support.md。
-// F-06：递归扫描不能用抛异常的迭代器重载——目录不存在、或者中途撞上一
+// 递归扫描不能用抛异常的迭代器重载——目录不存在、或者中途撞上一
 // 个没有读权限的子目录(macOS TCC 保护的 ~/Pictures 是真实会踩到的场
 // 景,不是理论情形)会让 pzt new/pzt rescan 整个进程直接 abort。改用
 // error_code 版本 + skip_permission_denied:一整棵目录树都进不去(比如
@@ -327,7 +327,7 @@ Result<ProjectId, CreateProjectError> create_project(db::Database& db, const std
       sqlite3_reset(update_cache_stmt.get());
       sqlite3_bind_text(update_cache_stmt.get(), 1, cache_path->c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
-      // F-17：以前不检查这一步——这是主事务提交之后的 best-effort 回写
+      // 这是主事务提交之后的 best-effort 回写
       // (呼应上面"单张生成失败也不影响已经成功创建的项目和其它图片的
       // 记录"的既有设计)，真失败时不该 throw 打断整批扫描(那样反而比
       // "这张图退化到内嵌预览兜底路径"更糟)，但也不该完全沉默——打一
@@ -420,8 +420,8 @@ std::optional<ImageInfo> get_image(db::Database& db, ImageId id) {
   // image_evaluations 是一对一、可能没有匹配行的表(没评估过/评估失败)，
   // LEFT JOIN——8-10 这几列匹配不到行时全部是 NULL，用 result_json(8，
   // NOT NULL)判断"这张图有没有评估结果"就够，不用逐列判断。result_json 是
-  // 模型返回的原始 {"assessment":..,"unusable":..}(W2026-07-21：从两列合
-  // 并成一列，见 core/db/schema.cpp 的注释)，这里解析失败(损坏数据/未来
+  // 模型返回的原始 {"assessment":..,"unusable":..}(两个维度合存一列，见
+  // core/db/schema.cpp 的注释)，这里解析失败(损坏数据/未来
   // 格式不兼容)按"没评估过"处理，不阻塞，是缓存性质的 AI 结果、不是权威
   // 数据。
   Stmt stmt(db.handle(),
@@ -475,7 +475,7 @@ std::unordered_set<ImageId> evaluated_image_ids(db::Database& db,
   sqlite3* conn = db.handle();
   // 500 是 SQLite 默认 SQLITE_MAX_VARIABLE_NUMBER(通常远大于这个值,但不
   // 假设部署环境的编译期配置)之下的保守分块大小,避免单条语句绑的变量
-  // 数超限直接 prepare 失败(呼应 F-40)。
+  // 数超限直接 prepare 失败。
   constexpr std::size_t kChunkSize = 500;
   for (std::size_t offset = 0; offset < image_ids.size(); offset += kChunkSize) {
     std::size_t count = std::min(kChunkSize, image_ids.size() - offset);
@@ -588,7 +588,7 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
             sqlite3_reset(backfill_captured_at_stmt.get());
             sqlite3_bind_int64(backfill_captured_at_stmt.get(), 1, *captured_at);
             sqlite3_bind_int64(backfill_captured_at_stmt.get(), 2, existing_id);
-            // F-17：同上——best-effort 回填，失败不该打断整个 rescan(下
+            // 同上——best-effort 回填，失败不该打断整个 rescan(下
             // 一次 rescan 会自然重试)，但不该完全沉默。
             if (sqlite3_step(backfill_captured_at_stmt.get()) != SQLITE_DONE) {
               std::fprintf(stderr, "[pzt project] failed to backfill captured_at for image_id=%lld\n",
@@ -736,7 +736,7 @@ Result<RescanSummary, ProjectNotFoundError> rescan_project(db::Database& db, Pro
       sqlite3_reset(update_cache_stmt.get());
       sqlite3_bind_text(update_cache_stmt.get(), 1, cache_path->c_str(), -1, SQLITE_TRANSIENT);
       sqlite3_bind_int64(update_cache_stmt.get(), 2, image_id);
-      // F-17：同 create_project 里的同一处修复。
+      // 同 create_project 里那处 best-effort 回写，处置一样。
       if (sqlite3_step(update_cache_stmt.get()) != SQLITE_DONE) {
         std::fprintf(stderr, "[pzt project] failed to persist preview cache path for image_id=%lld\n",
                      static_cast<long long>(image_id));

@@ -27,7 +27,7 @@ using ImageHash = std::uint64_t;
 // 不需要离散余弦变换，实现和理解成本都更低，对近似重复(同一场景近乎相
 // 同的照片，不是"风格不同但语义相似"这种更弱的相似)这个场景够用。
 // resize 失败(现路径不可达,纯防御)返回 nullopt,而不是伪造一个合法哈希
-// 0(会被误判成跟其它均匀图重复),让调用方跟解码失败同路径跳过。见 F-36。
+// 0(会被误判成跟其它均匀图重复),让调用方跟解码失败同路径跳过。
 std::optional<ImageHash> compute_dhash(const decode::DecodedImage& image);
 
 // 汉明距离(两个哈希按位异或后数 1 的个数)，越小越相似，取值范围 0-64。
@@ -49,10 +49,10 @@ using DedupProgressFn = std::function<void(int done, int total)>;
 // 引进自己的命名空间，两边始终是同一个类型。
 
 // 闸门看到的开销快照。用结构体而不是几个平铺的 int，理由跟 AiProgress
-// 一样：这一组数还会长-票 05 给 curate 加评估之后，闸门要报的开销不再
-// 只有"比较多少次"，而 curate 算评估张数需要的 candidate_count 只有分簇
-// 跑完的那一刻才知道。平铺参数每加一个数就要改一遍全部 lambda 的形参
-// 表，结构体只让真正关心新字段的调用方去读它。
+// 一样：这一组数还会长 - curate 要报的开销就不只有"比较多少次"，它算评
+// 估张数需要的 candidate_count 只有分簇跑完的那一刻才知道。平铺参数每加
+// 一个数就要改一遍全部 lambda 的形参表，结构体只让真正关心新字段的调用
+// 方去读它。
 struct AiCost {
   int group_count = 0;       // size>=2、要跑锦标赛的簇数
   int comparison_count = 0;  // 这些簇的比较次数之和，精确值不是估算
@@ -117,9 +117,8 @@ using CancelFn = std::function<bool()>;
 // 4. 并查集结果里，成员数 >= 2 的集合才算一个"重复组"输出；成员数
 //    1(没有跟任何其它图片凑到一起)的不输出。
 // 5. 组内选 keep_id：留 captured_at 最新的那张(时间也相等的极端情况兜
-//    底选 image_id 最小的，保证确定性)。不再依赖选片评估分数——涉及质
-//    量比较的选择统一走锦标赛(见 docs/W2026-07-21_*)，dedup 只做"留最
-//    新"这个廉价的确定性基线。
+//    底选 image_id 最小的，保证确定性)。不依赖选片评估分数——涉及质量
+//    比较的选择统一走锦标赛，dedup 只做"留最新"这个廉价的确定性基线。
 //
 // on_progress 在每处理完一个候选簇(不论是否成簇)时回调一次，done 是已
 // 处理的候选簇数、total 是候选簇总数。
@@ -139,11 +138,11 @@ std::vector<project::ImageId> images_with_capture_time(db::Database& db,
 struct DedupSummary {
   int group_count;
   int tagged_count;  // 被打上 duplicate 标签的图片总数(不含每组里被保留的那一张)
-  // F-08：范围内 captured_at 为 NULL、完全没有参与任何分组比较的图片
-  // 数(微信图/截图/编辑过的导出件常见)。以前这批图片被静默排除，用户
-  // 分组结果不如预期时无从判断是这批图片拖累的还是参数问题。
+  // 范围内 captured_at 为 NULL、完全没有参与任何分组比较的图片数(微信
+  // 图/截图/编辑过的导出件常见)。必须报出来：静默排除的话，用户看到分组
+  // 结果不如预期时无从判断是这批图片拖累的还是参数问题。
   int skipped_no_capture_time;
-  // W2026-07-21 目标二：ai_enabled=true 时，因为某次 AI 比较失败而整簇
+  // ai_enabled=true 时，因为某次 AI 比较失败而整簇
   // 退化成"选 captured_at 最新"的簇数；ai_enabled=false 时恒为 0。见
   // core::tournament::ChooseSummary 同名字段。
   int ai_fallback_count;
@@ -158,26 +157,25 @@ struct DedupSummary {
   bool cancelled = false;
 };
 
-// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签。W2026-07-21
-// 目标二起，实际工作整个委托给 core::tournament::cluster_and_choose
-// （exclude_tag_names={"废片"}、apply_dup_tag=true）：排废片、清旧重复标
-// 记、分组、给每组除 winner 外的成员打标签都在那边完成；ai_enabled=false
-// 时 winner 就是 find_duplicates 算好的 keep_id，行为跟这个函数改造前逐
-// 字节一致。project_id 只用来定位 duplicate 标签所在的项目(标签按项目
+// 编排层——跟 find_duplicates 不同，这个函数会碰数据库/标签。实际工作整
+// 个委托给 core::tournament::cluster_and_choose（exclude_tag_names={"废
+// 片"}、apply_dup_tag=true）：排废片、清旧重复标记、分组、给每组除 winner
+// 外的成员打标签都在那边完成；ai_enabled=false 时 winner 就是
+// find_duplicates 算好的 keep_id。project_id 只用来定位 duplicate 标签所
+// 在的项目(标签按项目
 // 隔离)和取 root_path，不代表扫描范围——扫描范围是 image_ids，由调用方
 // 自己解析好(整个项目还是某个标签的子集)再传进来。core/api.h 的同名门
 // 面函数只是开默认库、转调这个函数的一层薄封装，方便单元测试指向临时测
 // 试库。
 //
-// F-08：time_window_seconds/hash_threshold 默认值维持 10/5(等价旧行
-// 为)，真正的调参入口是 F-12 的 Settings.dedup_time_window_seconds/
+// time_window_seconds/hash_threshold 默认值是 10/5，真正的调参入口是
+// Settings.dedup_time_window_seconds/
 // dedup_hash_threshold——`/dedup` 控制台命令本身不接受内联参数覆盖，
 // 想调参改配置文件，调用方(cli/commands/browse.cpp 的
 // handle_dedup_command)负责读 Settings 显式传进来。
 //
-// ai_enabled/provider/local_config（W2026-07-21 目标二新增）：默认
-// ai_enabled=false，保证现有调用点(cmd_dedup、`/dedup` 控制台命令、全部
-// 现有测试)零改动。ai_enabled=true 时簇内改走单淘汰锦标赛选 winner，见
+// ai_enabled/provider/local_config：默认 ai_enabled=false。ai_enabled=true
+// 时簇内改走单淘汰锦标赛选 winner，见
 // core::tournament::cluster_and_choose 的说明。
 //
 // on_ai_gate/on_ai_progress：原样转给 cluster_and_choose，语义见

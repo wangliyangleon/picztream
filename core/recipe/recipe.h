@@ -117,7 +117,7 @@ enum class SetImageRecipeError {
 Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId image_id,
                                                     std::optional<RecipeId> recipe_id);
 
-// T-15:批量套配方。一次校验配方(不是每张一次)+ 一个事务包住全部
+// 批量套配方。一次校验配方(不是每张一次)+ 一个事务包住全部
 // UPDATE，契约是**要么全套上、要么一张都不套**:中途遇到任何一张不存在
 // 的 image_id 就整批回滚报 ImageNotFound，不留下"前 44 张已落库"这种半
 // 截状态。recipe_id = nullopt 是批量清除，走同一条路。空 image_ids 是合
@@ -136,17 +136,17 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
 // 次 - 那会把循环语义、部分失败语义、校验时机这些业务决策推到交互层，
 // 违 SPEC §4.1。
 //
-// **留账(T-15 D-11)**:这个"全有或全无"的契约与 agent 侧
+// **留账**:这个"全有或全无"的契约与 agent 侧
 // `StyleApplyAllStage` 的语义正面冲突。那一侧是 criticality="optional"、
 // 维护 skipped 列表**逐张容错**("个别照片套用失败不该拖垮整批交付"),且
 // agent 传的是路径、这个函数吃的是 ImageId,中间那层 path→id 解析本身就
-// 逐张可失败。T-15 不解决这个冲突(agent 那侧今天工作正常,改它是无实测
-// 支撑的纯性能优化,撞 SPEC §2.4),但未来若要把 headless 批量口收编到这
-// 个函数上,**先解决它**:要么 core 放弃可陈述的契约,要么 agent 放弃软
-// 失败,两条都要付真实代价。在有真实消费者之前不要提前开那个 headless
-// 口 - SPEC §3.2 记着 eval/compare 无人调用最终被 T-22 删除的先例。
-// T-15 票 C：这批 id 里有多少张**已经**有配方。批量确认要报的 M（"会被
-// 覆盖且无法还原的张数"，见 issue #33 决策 D-9）就是它，而 N−M 那部分原本
+// 逐张可失败。这个冲突今天不必解决(agent 那侧工作正常),但未来若要把
+// headless 批量口收编到这个函数上,**先解决它**:要么 core 放弃可陈述的
+// 契约,要么 agent 放弃软失败,两条都要付真实代价。在有真实消费者之前不
+// 要提前开那个 headless 口 - 无人调用的 headless 命令最终都是被删掉的。
+
+// 这批 id 里有多少张**已经**有配方。批量确认要报的 M（"会被覆盖且无法还
+// 原的张数"）就是它，而 N−M 那部分原本
 // 无配方、套错了批量清除就精确还原了 - 这个数把"不可逆"切在了正确的位
 // 置上，是那句确认里唯一带风险量的信息。
 //
@@ -160,8 +160,8 @@ Result<void, SetImageRecipeError> set_image_recipe(db::Database& db, ImageId ima
 //
 // 但**查询本身失败要报**（返回 nullopt），不能当成"这张没有配方"接着数：
 // 那样只会让 M 偏小，而 M 偏小的表现是确认里说"其中 0 张会被覆盖"、用户
-// 放心按下 y、七张照片的配方就此没了。D-8 定了没有撤销，这个数字是唯一的
-// 防线，宁可报不出来也不能报一个偏小的。BUSY 不是理论风险：api 层每次调
+// 放心按下 y、七张照片的配方就此没了。这条路上没有撤销，这个数字是唯一
+// 的防线，宁可报不出来也不能报一个偏小的。BUSY 不是理论风险：api 层每次调
 // 用新开一个连接，而 EvaluationWorker 那个后台线程正对同一个库写评估结
 // 果。这跟上一段不矛盾：不存在的 id 是**已知答案**（那张没有配方），查询
 // 失败是**没有答案**。
@@ -226,7 +226,7 @@ Result<decode::DecodedImage, RenderRecipeError> render(db::Database& db,
                                                         RecipeId recipe_id,
                                                         unsigned thread_count = 1);
 
-// T-29:拿"某个预设的底子"配上"一组还没落库的草稿参数"渲染。`render` 只吃
+// 拿"某个预设的底子"配上"一组还没落库的草稿参数"渲染。`render` 只吃
 // 已经存在于库里的 recipe_id(参数靠 resolve_recipe 查出来),而自建 version
 // 的向导要在用户填完每一个字段之后就重渲染一次预览,那时这组参数还没有、
 // 也不该有 recipe_id:预览不是一次保存,中途取消不该在库里留下任何东西。

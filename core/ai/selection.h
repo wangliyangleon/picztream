@@ -15,13 +15,13 @@
 // 而不是"看不看像素"，取舍与被否掉的替代方案见
 // docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md。
 //
-// 唯一的消费者是 core::curate::curate（PRD 决策九：整条流程封在
-// `pzt curate` 内部，预选集这个中间产物不暴露给 agent 搬运）。
+// 唯一的消费者是 core::curate::curate：整条流程封在 `pzt curate` 内部，
+// 预选集这个中间产物不暴露给 agent 搬运。
 namespace pzt::core::ai {
 
 enum class SelectionError { MissingApiKey, NetworkError, HttpError, ParseError };
 
-// 一张候选照片给模型看的全部材料。两个字段一起给（PRD 决策六）：只给
+// 一张候选照片给模型看的全部材料。两个字段一起给：只给
 // content 会丢掉质量维度，而预选集里若干张都符合题材偏好时，决定选谁的恰
 // 恰是 assessment。字段来源是 image_evaluations 里已有的评估记录，评估失
 // 败的那几张这里是空串（模型照样能选，只是那几张没有依据）。
@@ -31,40 +31,39 @@ struct SelectionCandidate {
 };
 
 // picks 是模型返回的 1-based 序号，**原样交还、不做任何清洗**。越界剔除、
-// 去重、以及"有效序号不足 N 时整体退化"是调用方的判定(PRD 决策十三)，摘
+// 去重、以及"有效序号不足 N 时整体退化"是调用方的判定，摘
 // 在 core::curate::detail::resolve_selection 那个纯函数里，好让那块最容易
 // 写错的逻辑不需要网络就能表驱动穷举。
 struct SelectionResult {
   std::vector<int> picks;
-  // 票 07（PRD 决策十五）：一段可以直接发出去的话，与 picks 是**同一次调
+  // 一段可以直接发出去的话，与 picks 是**同一次调
   // 用**的产物 - 选片那一刻手里正好有关于这批照片的最完整信息，写文案不需
   // 要第二次调用。
   //
   // **空串 = 没有文案**，且这一层只有这一种表达方式：模型没给、给的不是字
   // 符串、给的是一串空白，三种情况在这里折叠成同一个空串，因为对调用方而言
   // 处置完全相同（少一段附赠品，选片结果照旧）。缺失或不合法**不构成
-  // SelectionError**，picks 原样返回 - 附赠品坏了不能把关键结果一起拖下水，
-  // 与 T-8 定的"进度是观测，不是结果"是同一形状的推理。
+  // SelectionError**，picks 原样返回 - 附赠品坏了不能把关键结果一起拖下
+  // 水，与"进度是观测、不是结果"是同一形状的推理。
   std::string caption;
 };
 
 // candidates 按序编成 1..K 交给模型，count 是要选几张。
 //
-// **选与排是同一次决定，不拆成两步**（PRD 决策十四）："开头结尾要呼应"这
+// **选与排是同一次决定，不拆成两步**："开头结尾要呼应"这
 // 类叙事要求会反过来影响选哪几张，拆成"先选再排"会切在错误的地方。返回顺
 // 序即交付顺序。
 //
-// **文案也搭在这一次调用上**（PRD 决策十五），材料就是这些 candidates 的
+// **文案也搭在这一次调用上**，材料就是这些 candidates 的
 // content 与 assessment；语气与平台适配由 selection_brief 里的用途驱动，不
 // 需要新的输入。它的可选性见 SelectionResult::caption。
 //
-// **模型只吐序号，不吐文件路径**（PRD 决策十三）：幻觉面从任意字符串缩成
+// **模型只吐序号，不吐文件路径**：幻觉面从任意字符串缩成
 // "整数在不在范围内"，Provider::Local 还能用约束解码直接卡住类型。
 //
 // selection_brief：用户这次想要什么(用途 / 题材偏好 / 叙事结构 提炼成的一
-// 段自由文本，PRD 决策二)。为空时整段不进提示词。当前恒为空-把它从
-// agent 的意图解析一路穿到这里是票 08 的事，这里先留出位置，免得那一票再
-// 动一次签名与提示词。
+// 段自由文本)。为空时整段不进提示词。由 agent 的意图解析产出、经
+// core::curate::curate 传进来。
 Result<SelectionResult, SelectionError> request_selection(
     const std::vector<SelectionCandidate>& candidates, int count, Provider provider,
     const std::string& selection_brief = "",

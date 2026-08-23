@@ -74,7 +74,7 @@ using RawDecodeFn = std::function<Result<decode::DecodedImage, raw::RawError>(co
 // 链，唯一还会被软链模式影响的场景("纯 JPEG + 无 recipe")覆盖面太窄，
 // 想不出实际用途，直接删掉比保留一个只在一种场景下生效的选项更简单。
 //
-// F-26：默认从导出范围里排除带"废片"/"重复"标签的图片(打了那个标签
+// 默认从导出范围里排除带"废片"/"重复"标签的图片(打了那个标签
 // 本身不代表要导出它)，除非 include_reject/include_dup 为 true，或者
 // tag_id 本身就是废片/重复标签(这种情况下用户显式要求处理废片/重复，
 // 不再排除，跟 /ai_eval、/dedup 批量范围的例外规则对称)。项目里还没

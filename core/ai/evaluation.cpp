@@ -4,9 +4,9 @@ namespace pzt::core::ai {
 
 namespace {
 
-// 发给 AI 的系统层框架指令——固定英文，不跟着 cli::i18n 走。W2026-07-21：
-// 从"曝光/构图/对焦三维技术打分"改成"一段客观文字 assessment(覆盖构图/色
-// 彩/对焦/摄影审美) + 一个 unusable 硬伤 flag"。assessment 的输出语言**始
+// 发给 AI 的系统层框架指令——固定英文，不跟着 cli::i18n 走。要的是"一段
+// 客观文字 assessment(覆盖构图/色彩/对焦/摄影审美) + 一个 unusable 硬伤
+// flag"，没有跨图可比的分数。assessment 的输出语言**始
 // 终用 language 指定的语言**(cli 按当前界面语言映射后传进来)，不跟随
 // extra_guidance——不给模型加"按输入语言切换"的负担；extra_guidance 只当额
 // 外内容提示，不影响输出语言。框架文案本身仍是英文。
