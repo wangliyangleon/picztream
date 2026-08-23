@@ -43,15 +43,14 @@ using namespace pzt::cli::menu;
 namespace pzt::cli::commands {
 namespace {
 
-// 浏览主循环里"正在看的这张图"用的 Kitty image id。T-17 票 E 之前只有
-// cmd_open 自己用得到它，是函数体内的局部变量；`/pick` 接线之后
-// handle_pick_command 也要用同一个 id(进两图比较界面之前得先把它清掉,
-// 见那里的说明),所以提到文件作用域来，两处共用同一个数字，不是各自
-// 声明一份 1。跟 cli/compare/compare_view.h 里的 kLeftImageId=2/
+// 浏览主循环里"正在看的这张图"用的 Kitty image id。放在文件作用域而不是
+// cmd_open 的局部变量里，是因为 handle_pick_command 也要用同一个 id(进两
+// 图比较界面之前得先把它清掉,见那里的说明)。两处共用同一个数字，不是各
+// 自声明一份 1。跟 cli/compare/compare_view.h 里的 kLeftImageId=2/
 // kRightImageId=3 是同一批"占住的 id"，彼此不冲突。
 constexpr int kImageId = 1;
 
-// T-10：一次性的会话提示("你的终端可能不显示图片"、"这张渲染失败了")。
+// 一次性的会话提示("你的终端可能不显示图片"、"这张渲染失败了")。
 // 跟 status_override 是平行的两套,notice 不置 showing_status、不拼"按任
 // 意键继续"、不吃按键。
 //
@@ -84,12 +83,10 @@ pzt::core::ImageId resolve_current_after_switch(const std::vector<pzt::core::Ima
   return new_images.front().id;
 }
 
-// F-10：AI 供应商固定写死 Gemini 只是因为开发时手头只有 Gemini 的
-// key，不是经过设计的选择(docs/history/M3_PRD.md"风险与待确认问题"一节的
-// TODO 原话)。2026-07-22：去掉 PZT_AI_PROVIDER 环境变量覆盖——跟 lang
-// 同样的理由(见 init_lang 的注释)，只留 F-12 的 Settings.ai_provider
-// (config.json)一个来源，config 没写就用 Settings 自己的默认值 Local，
-// 不必再猜"这次生效的是环境变量还是配置文件"。不缓存，每次调用现读——
+// AI 供应商**只有 Settings.ai_provider(config.json)一个来源**，没有环境
+// 变量覆盖 —— 跟 lang 同样的理由(见 init_lang 的注释)：两个来源意味着每
+// 次都要猜"这次生效的是环境变量还是配置文件"。config 没写就用 Settings 自
+// 己的默认值 Local。不缓存，每次调用现读——
 // 这不是热路径(只在用户真的提交一次 /ai_eval 相关命令时才会走到)，
 // config.json 是廉价操作，不值得为了省这几次调用专门传参或加个全局变
 // 量；现读还有个好处:用户中途改了 config.json 不需要重启 pzt open。
@@ -139,7 +136,7 @@ std::string handle_export_current_flow(pzt::core::ImageId image_id, const std::s
     write_stdout(pad_to(pzt::cli::i18n::msg_export_progress(done, total), content_cols));
   };
   auto result = pzt::core::export_image(image_id, resolved_path, on_progress);
-  // F-25：单张 RAW 全量解码是秒级耗时，同样可能冻结主循环——见
+  // 单张 RAW 全量解码是秒级耗时，同样可能冻结主循环——见
   // handle_dedup_command 里同一处修复的说明。
   flush_pending_input();
   if (!result.ok()) {
@@ -178,7 +175,7 @@ std::string handle_export_filtered_flow(pzt::core::ProjectId project_id,
   for (const auto& ref : images) ids.push_back(ref.id);
   auto result = pzt::core::export_images(project_id, ids, resolved_path, on_progress, include_reject,
                                           include_dup);
-  // F-25：大批量导出(尤其是带 RAW 图片的批次)可能冻结主循环几秒到几十
+  // 大批量导出(尤其是带 RAW 图片的批次)可能冻结主循环几秒到几十
   // 秒——见 handle_dedup_command 里同一处修复的说明。
   flush_pending_input();
   if (!result.ok()) {
@@ -193,7 +190,7 @@ std::string handle_export_filtered_flow(pzt::core::ProjectId project_id,
                                                      r.created_output_folder, r.skipped.size());
 }
 
-// T-16：scope 解析本身已经收进 core::scope（`*` / `#标签名` /
+// scope 解析本身收在 core::scope（`*` / `#标签名` /
 // `#"带空格的标签名"`，含系统标签的 #Reject/#Duplicate 别名），交互与
 // headless 两个入口共用那一份。留在这一层的只有"结构化错误 -> 人读文案"
 // 这一步映射——它要跟着 g_lang 走，是货真价实的展示逻辑，不是重复实现。
@@ -207,7 +204,7 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
       // 只有 `/dedup` 会传 Reject 策略，`/ai_eval` 到不了这一支。
       return pzt::cli::i18n::err_console_dedup_system_tag_scope(failure.tag_name);
     case pzt::core::ScopeError::NoExplicitSet:
-      // T-15（#30）：`.` 是合法写法，只是没给视图，所以不能落进下面那句
+      // `.` 是合法写法，只是没给视图，所以不能落进下面那句
       // "必须是 * 或 . 或 #标签名"。票 D 之后控制台带作用域的命令(今天是
       // `/dedup` 与 `/ai_eval`，票 C 再加 `/recipe`)都经
       // resolve_scope_with_view 传视图，这一支在交互侧到不了了；留着是因为
@@ -220,14 +217,12 @@ std::string scope_error_message(const pzt::core::ScopeFailure& failure) {
 }
 
 // 控制台带作用域的命令共用的作用域求值入口。**`.` 的显式 id 集合只在这一
-// 处传进 core**（T-15 票 D）：`/dedup`、`/ai_eval`（票 C 之后还有
-// `/recipe`）都从这里走，不各写一遍 - 三份各自取视图的代码正是 T-16 收
-// 编掉的那种分叉的种子。
+// 处传进 core**：`/dedup`、`/ai_eval`、`/recipe` 都从这里走，不各写一遍
+// - 三份各自取视图的代码就是分叉的种子。
 //
-// 名字**刻意避开** `resolve_console_scope`：那是 T-16 删掉的那个 cli 侧范
-// 围 DSL 解析器的名字(还留在 cli/text/text.cpp 的注释与多份 history 文档
-// 里)，重用它会让读者以为解析又搬回 cli 了。这个函数不解析任何东西,它只
-// 是把视图交给 core::scope::resolve。
+// 名字**刻意避开** `resolve_console_scope`：那是 cli 侧那个已经删掉的范围
+// DSL 解析器的名字，重用它会让读者以为解析又搬回 cli 了。这个函数不解析
+// 任何东西,它只是把视图交给 core::scope::resolve。
 //
 // 收窄成"从 ImageRef 里取 id"而不是让调用方自己转:调用方手里的浏览池本来
 // 就是 std::vector<ImageRef>(cmd_open 的 images)，把这一步留给它们等于把
@@ -326,8 +321,8 @@ class LiveDebugPanel {
 // 不需要在这里重新实现一遍。范围后面除了 `--ai` 不接受任何东西——认不出
 // 来的 token 报用法错误，不当成标签名吞掉，控制台一贯"显式标记，不猜"。
 //
-// T-15 票 D：`.` = 当前视图，与 `/ai_eval .`、`/recipe .` 同一套写法(决策
-// D-5)。`/filter dup` 之后再 `/dedup .` 是用户自找的无意义操作、但不是错
+// `.` = 当前视图，与 `/ai_eval .`、`/recipe .` 同一套写法。
+// `/filter dup` 之后再 `/dedup .` 是用户自找的无意义操作、但不是错
 // 误 - `.` 不改变 `/dedup` 本身的语义，这一层不替用户拦。
 //
 // 整个过程是阻塞的:不开 --ai 时是本地分组，几秒到几十秒;开了 --ai 之后
@@ -339,13 +334,11 @@ class LiveDebugPanel {
 //
 // provider 只读 Settings.ai_provider，控制台不暴露内联的 provider 参
 // 数:交互侧从来不在命令行里选模型(`/ai_eval` 同样如此)，要换 provider
-// 改 config.json，跟时间窗/哈希阈值走 Settings 是同一个约定(F-08)。
+// 改 config.json，跟时间窗/哈希阈值走 Settings 是同一个约定。
 //
-// M3 时期这里还有一道"N 张照片还没评估，保留判断会退化成按拍摄时间选"
-// 的 y/N 确认，W2026-07-21 目标二之后删掉了:那一轮改造把 keep_id 的选
-// 择从"比评估分数"改成了"留 captured_at 最新"这个不依赖任何评估结果的
-// 确定性基线(见 core/dedup/dedup.h 的说明)，同一轮里 overall_score/
-// passes_gate 也已从下游移除。不开 AI 时本来就恒定按拍摄时间选，不存在
+// 这里**没有**"N 张照片还没评估"那道 y/N 确认：keep_id 的选择是"留
+// captured_at 最新"这个不依赖任何评估结果的确定性基线(见
+// core/dedup/dedup.h 的说明)，评没评估都不改变保留判断，问了也没有意义。不开 AI 时本来就恒定按拍摄时间选，不存在
 // "退化"这回事，那句提示只会误导用户先去跑一遍用不上的评估。现在这个位
 // 置上的确认是另一回事:只在 --ai 时问，问的是"要不要为此发 M 次请求"，
 // 而且是在本地分组跑完、拿到精确开销之后才问的。
@@ -361,34 +354,34 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
     return pzt::cli::i18n::err_dedup_bad_args();
   }
 
-  // #27 (D-2)：范围本身是系统标签时直接拒绝。此前这里是静默 no-op ——
-  // 范围被正确解析出来，进 core 后全被排除，命令报"0 组"，用户无从分辨这
-  // 是"真没有重复"还是"范围被清空了"。
+  // 范围本身是系统标签时直接拒绝。不拒绝的话这里是静默 no-op ——范围被
+  // 正确解析出来，进 core 后全被排除，命令报"0 组"，用户无从分辨这是"真
+  // 没有重复"还是"范围被清空了"。
   //
   // 注意 Reject 只对"作用域**本身**是系统标签"生效，而 `.` 的 scope_tag 恒
   // 为 nullopt(视图不是标签)，所以 `/filter reject` 之后 `/dedup .` 不被这
   // 条策略拦下。这是正确行为不是漏洞：被拒的是"把系统标签当作用域写出来"
-  // 这个写法(#32 那条"注意")。
+  // 这个写法本身。
   //
   // 但**别把"没被拦下"读成"能出结果"**：作用域活着进了 core，dedup 自己那
   // 份无条件排废片(find_and_tag_duplicates 传 {kRejectTagName}，见
-  // dedup.cpp)会把这批全排掉，命令照样报"0 组"。落点与 #27/D-2 修掉的
-  // `/dedup #废片` 相同,但性质不同:那次错在"写法被判成空范围",这次是用户
-  // 把范围指向了一批已判死的照片 - D-5 说的"用户自找的无意义操作、但不是
-  // 错误"。真要对废片查重复,写 `/dedup #废片` 才是那条会被明确拒绝的路。
+  // dedup.cpp)会把这批全排掉，命令照样报"0 组"。落点与上面拒绝掉的
+  // `/dedup #废片` 相同,但性质不同:那条错在"写法被判成空范围",这条是用户
+  // 把范围指向了一批已判死的照片 - 自找的无意义操作、但不是错误。真要对
+  // 废片查重复,写 `/dedup #废片` 才是那条会被明确拒绝的路。
   auto scope_result =
       resolve_scope_with_view(project_id, scope, view, pzt::core::SystemTagPolicy::Reject);
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
-  // F-12/F-08：时间窗/哈希阈值来自 Settings,现读不缓存,跟
-  // resolve_ai_provider() 同一个先例。
+  // 时间窗/哈希阈值来自 Settings,现读不缓存,跟 resolve_ai_provider() 同
+  // 一个先例。
   //
-  // #27 (D-1)：这里不再排废片 —— core 那边无条件排(见
+  // **这一层不排废片** —— core 那边无条件排(见
   // dedup::find_and_tag_duplicates 传给 cluster_and_choose 的
-  // exclude_tag_names)，此前这一层再排一遍是纯粹的重复劳动，而它外面那个
-  // settings.dedup_reject 判断自 4cc6549 起就完全无效：开关打开时这一层
-  // 跳过，core 照排不误。开关已随本票删除。
+  // exclude_tag_names)。在这里再排一遍是纯粹的重复劳动，而且曾经更糟:配
+  // 一个"去重时不排废片"的开关，打开时这一层跳过、core 照排不误，开关看
+  // 起来生效实际完全无效。
   auto settings = pzt::core::load_settings();
 
   // 两段进度共用 banner 同一行,后写的覆盖先写的:分组跑完之后 AI 那段接
@@ -444,7 +437,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
 
   // 取消作用域：这一整条命令期间 Ctrl-C 表示"取消这次去重"，出了作用域
   // (不管从哪条路径出去)立刻恢复成 signal_restore 的默认语义，也就是
-  // T-9a 的"还原终端后干净退出 pzt"。析构漏跑的话 Ctrl-C 会在浏览界面里
+  // 默认的"还原终端后干净退出 pzt"。析构漏跑的话 Ctrl-C 会在浏览界面里
   // 彻底失效——既不取消也不退出，所以是 RAII。
   //
   // 回显那行字必须在这里就渲染好：按下 Ctrl-C 的那一刻主线程正阻塞在
@@ -479,7 +472,7 @@ std::string handle_dedup_command(pzt::core::ProjectId project_id, const std::str
       on_cluster_progress, ai_enabled, settings.ai_provider,
       pzt::core::LocalModelConfig{settings.ollama_base_url, settings.ollama_model},
       std::move(on_ai_gate), on_ai_progress, on_cancel);
-  // F-25：这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
+  // 这一步可能冻结了几秒到几十秒，期间用户习惯性按的键留在 tty
   // 缓冲区里——不清掉的话，接下来继续读键时会一次性回放，可能连按出
   // 误标签/误退出。见 docs/history/M3_Dedup_PRD.md"阻塞期间的输入缓冲行为"那
   // 条一直没收口的风险。开了 --ai 之后阻塞更久，这一步更要紧。
@@ -512,17 +505,17 @@ std::string handle_ai_eval_command(pzt::core::EvaluationWorker& evaluation_worke
   if (!scope_result.ok()) return scope_error_message(scope_result.error());
   auto resolved = std::move(scope_result.value());
 
-  // F-26：同上，默认排除废片，除非范围本身就是 #废片。`.` 的 scope_tag 恒
+  // 同上，默认排除废片，除非范围本身就是 #废片。`.` 的 scope_tag 恒
   // 为 nullopt，接不上这条对称例外，所以 `/filter reject` 之后 `/ai_eval .`
   // 会被排空、报"提交 0 张"。这是 `/ai_eval` 的排除策略本来就有的语义(评
   // 估要花钱和时间，不花在已判死的照片上)，`.` 只是让它多了一条到达路径；
-  // `/recipe` 那边刻意不排除(PRD #28 决策 D-7)，两者不同构是有意的。
+  // `/recipe` 那边刻意不排除，两者不同构是有意的。
   if (!pzt::core::load_settings().eval_reject) {
     resolved.image_ids = pzt::core::exclude_by_tags(
         project_id, resolved.image_ids, {pzt::core::tagging::kRejectTagName}, resolved.scope_tag);
   }
 
-  // F-07：同上，一条批量查询代替逐张 get_image()。
+  // 同上，一条批量查询代替逐张 get_image()。
   auto evaluated = pzt::core::evaluated_image_ids(resolved.image_ids);
   // M4：auto_reject 现在是 request() 的显式参数(见 evaluation_worker.h)，
   // 交互路径在这里读一次 Settings 透传，行为跟以前完全一样，只是读取
@@ -544,13 +537,13 @@ std::string handle_tasks_command(pzt::core::EvaluationWorker& evaluation_worker)
   return pzt::cli::i18n::msg_ai_tasks_status(status.queued, status.processing, status.failed);
 }
 
-// F-09：控制台 `/filter <criterion>` 二级筛选——在当前 f 筛选结果之上
+// 控制台 `/filter <criterion>` 二级筛选——在当前 f 筛选结果之上
 // (没有 f 筛选时就是全项目)再筛一层，不是 f 菜单的第三种选项，可以
 // 跟 g 标签筛选同时生效。词汇表(拍板已定):未评估/评估不达标/废片/重
 // 复，不做 `/sort`/`/reject_failed` 这类原方案里被否掉的其它变体。
 //
-// T-17 票 E 真机反馈追加第五支 `fine`：`/pick` 跑完一批之后废片占大多
-// 数,`reject` 只挑得出刚判废的那批,没有反过来"挑幸存者"的写法。语义是
+// 第五支 `fine` 的用处：`/pick` 跑完一批之后废片占大多数,`reject` 只挑得
+// 出刚判废的那批,没有反过来"挑幸存者"的写法。语义是
 // 废片和重复都不占的那些 - `reject`/`dup` 各自只问一个标签,`fine` 是两
 // 者的补集,不是又一个"只问一个标签"的第五个平级分支。命名特意避开
 // "keep"：那个词在这个项目里已经是 dedup 簇内选中项(`keep_id`)的专属叫
@@ -566,7 +559,7 @@ struct ConsoleCommandResult {
   std::string status;
   enum class FilterAction { NoChange, Clear, Apply } action = FilterAction::NoChange;
   ConsoleFilterCriterion criterion{};  // 仅 action == Apply 时有意义
-  // T-15 票 C：当前浏览的这张图的 recipe_id 被这条命令改过了，主循环要重
+  // 当前浏览的这张图的 recipe_id 被这条命令改过了，主循环要重
   // 走一遍渲染。`/recipe` 是第一条会改到"当前这张"的控制台命令 - 在它之
   // 前控制台只碰标签(`/dedup`)、只提交异步任务(`/ai_eval`)、或者只换视图
   // (`/filter`)，一条都不动 recipe_id，所以主循环那两个开关以前没有理由
@@ -600,9 +593,9 @@ const char* console_filter_criterion_keyword(ConsoleFilterCriterion criterion) {
 // `/filter` 真正的筛选计算——只在 cmd_open 收到 Apply 意图之后才调用
 // (跟 f 键"handle_f_key_prompt 只返回意图，cmd_open 自己算"同一个既
 // 有模式)，base 是当前 f 层的结果(cmd_open 的 f_filtered_images)。
-// reject/dup 复用 F-26 的 images_with_tag(一条查询)；unevaluated/fail
+// reject/dup 复用 images_with_tag(一条查询)；unevaluated/fail
 // 逐张 get_image() 判断——已知 N+1，量级跟 handle_ai_eval_command 现
-// 有实现一致，这轮不顺带优化(那是 F-07 的范围)。
+// 有实现一致，这里不顺带优化。
 std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId project_id,
                                                        const std::vector<pzt::core::ImageRef>& base,
                                                        pzt::core::TagId reject_tag_id,
@@ -652,30 +645,30 @@ std::vector<pzt::core::ImageRef> apply_console_filter(pzt::core::ProjectId proje
   return result;
 }
 
-// T-15 票 C（issue #33）：`/recipe * | . | #标签名` - 对作用域内**全部**图
+// `/recipe * | . | #标签名` - 对作用域内**全部**图
 // 片套用同一个配方，或批量清除。
 //
-// **不排除任何东西**（决策 D-7），跟 `/ai_eval`、`export` 刻意不同构：所以
-// 这里既没有 exclude 那一步，也没有对应的 settings 开关。F-26 的三个既有实
+// **不排除任何东西**，跟 `/ai_eval`、`export` 刻意不同构：所以这里既没有
+// exclude 那一步，也没有对应的 settings 开关。那三个既有实
 // 例各有具体失效模式(eval 把钱花在已判死的照片上、export 把垃圾交出去、
 // dedup 让废片当上 keeper)，套配方一个都没有 - 全部代价是一次 UPDATE，而
-// "套了会不会流出去"已经由 export 自己的排除挡住了。复制 F-26 的**策略**正
-// 是 core/scope/scope.h 头注释警告过的"统一的是机制不是策略"。
+// "套了会不会流出去"已经由 export 自己的排除挡住了。照抄那份**策略**正是
+// core/scope/scope.h 头注释警告过的"统一的是机制不是策略"。
 //
 // 系统标签也照做（SystemTagPolicy::Allow，即默认值）：`/recipe #废片` 是
 // "把废片全套上某个配方"，一个有意义、且会真的写进 N 行的操作，不像
 // `/dedup #废片` 那样必然被排空成无结果。
 //
-// 补强一条：`.` 的 scope_tag 恒为 nullopt，F-26 的对称例外机制接不上它，
-// 所以若在这里默认排除，`/filter reject` → `/recipe .` 会被排空成静默
-// no-op - 正是 T-16 刚修掉的 `/dedup #废片` 失效模式的复刻。
+// 补强一条：`.` 的 scope_tag 恒为 nullopt，对称例外机制接不上它，所以若
+// 在这里默认排除，`/filter reject` → `/recipe .` 会被排空成静默 no-op -
+// 正是 core/scope 那份收编要消灭的失效模式。
 ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
                                             const std::string& rest,
                                             const std::vector<pzt::core::ImageRef>& view,
                                             pzt::core::ImageId current_image_id, int banner_row,
                                             int start_col, int content_cols) {
   auto [scope, tail] = take_scope_token(rest);
-  // 作用域后面多写的东西不能被静默忽略:决策 D-2 否掉了
+  // 作用域后面多写的东西不能被静默忽略:这条命令没有
   // `/recipe <作用域> <配方名>` 一行式，而用户很可能照着 `/ai_eval * 指引`
   // 的形状去写 `/recipe * City Pop`。静默吞掉那半截等于让用户以为自己指定
   // 的配方生效了，然后照样弹菜单 - 那比报错更让人困惑。
@@ -686,15 +679,15 @@ ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
   if (!scope_result.ok()) return ConsoleCommandResult{scope_error_message(scope_result.error())};
   const auto image_ids = std::move(scope_result.value().image_ids);
 
-  // 空作用域直接短路，不弹菜单。这不违 D-9 那条"总是确认":D-9 反对的是
-  // "确认时有时无会训练出闭眼按 y 的习惯"，而这里根本没有要确认的东西 -
+  // 空作用域直接短路，不弹菜单。这不违"总是确认"那条:它防的是"确认时有
+  // 时无会训练出闭眼按 y 的习惯"，而这里根本没有要确认的东西 -
   // 让用户选完一个配方、再看一句"将对 0 张图片套用"，是拿两次交互换一句
   // 本来第一时间就能说清的话。
   if (image_ids.empty()) {
     return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_scope_no_images()};
   }
 
-  // 决策 D-2 的"菜单接力":作用域写在控制台、配方在菜单里选。菜单不落库，
+  // "菜单接力":作用域写在控制台、配方在菜单里选。菜单不落库，
   // 写入留到确认之后 - 见 handle_batch_recipe_menu 的说明。
   auto selection = pzt::cli::menu::handle_batch_recipe_menu(banner_row, start_col, content_cols);
   if (selection.cancelled) return ConsoleCommandResult{selection.status};
@@ -709,11 +702,11 @@ ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
                                                        described->version_name);
   }
 
-  // 决策 D-9：**总是**确认，报 N 与 M，M 是主角。M 只数这批 id(不是全库)，
-  // 一次开库一条语句 - 见 core::recipe::count_images_with_recipe。
+  // **总是**确认，报 N 与 M，M 是主角。M 只数这批 id(不是全库)，一次开库
+  // 一条语句 - 见 core::recipe::count_images_with_recipe。
   //
-  // 数不出来就**不弹确认**、直接收摊:确认里那个 M 是 D-8("没有撤销")之下
-  // 唯一的防线，拿一个不可信的数去弹确认，比不弹更坏 - 用户会照着它做决
+  // 数不出来就**不弹确认**、直接收摊:这条路上没有撤销，那个 M 是唯一的
+  // 防线，拿一个不可信的数去弹确认，比不弹更坏 - 用户会照着它做决
   // 定。此刻还一个字节都没写，所以"一张都没有改动"是实话。
   auto overwritten = pzt::core::count_images_with_recipe(image_ids);
   if (!overwritten) return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_batch_failed()};
@@ -724,15 +717,16 @@ ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
       pzt::cli::i18n::msg_recipe_batch_confirm_line2(), banner_row, start_col, content_cols);
   if (confirm != 'y' && confirm != 'Y') return ConsoleCommandResult{};  // 零写入,静默
 
-  // 一个事务包住 N 次 UPDATE，要么全套上、要么一张都不套(票 B 的契约)。
-  // 决策 D-13：不做进度、不做中途取消 - 5000 张量级也在几十毫秒，画面来不
+  // 一个事务包住 N 次 UPDATE，要么全套上、要么一张都不套(见
+  // core::set_images_recipe 的契约)。不做进度、不做中途取消 - 5000 张量级
+  // 也在几十毫秒，画面来不
   // 及静止，`/dedup --ai` 那两条(分钟级、Ctrl-C 可取消)的理由在这里一条都
   // 不成立。
   auto applied = pzt::core::set_images_recipe(image_ids, selection.recipe_id);
   if (!applied.ok()) return ConsoleCommandResult{pzt::cli::i18n::msg_recipe_batch_failed()};
 
-  // 决策 D-15：闪 800ms 的回执，不占额外按键(照抄 msg_ai_processing_submitted
-  // 的既有形态)。它不带任何 D-9 没报过的新信息 - 存在的唯一理由是"当前浏
+  // 闪 800ms 的回执，不占额外按键(照抄 msg_ai_processing_submitted 的既有
+  // 形态)。它不带任何确认里没报过的新信息 - 存在的唯一理由是"当前浏
   // 览的这张可能不在作用域内"，那时下面的 restyle 为假、画面一个像素都不
   // 会变，静默等于用户无从判断命令有没有生效。
   move_cursor(banner_row, start_col + 1);
@@ -749,13 +743,13 @@ ConsoleCommandResult handle_recipe_command(pzt::core::ProjectId project_id,
   return result;
 }
 
-// T-17 票 E（issue #39）：`/pick <N>` - 两图并排的人工两两比较锦标赛，把
+// `/pick <N>` - 两图并排的人工两两比较锦标赛，把
 // 票 C(core::pick，两级选片与批量落库)与票 D(cli::compare，比较界面)接
 // 到控制台上。
 //
 // **N 是这条命令唯一的语义参数，作用域固定为当前视图，不接受范围参数**
-// (决策 D-2) - 跟 `/dedup`/`/recipe`/`/ai_eval` 三条刻意不同构，理由见
-// PRD #34：选片是要连续按上百次键的沉浸动作，自然起点就是"我现在正在看
+// - 跟 `/dedup`/`/recipe`/`/ai_eval` 三条刻意不同构：选片是要连续按上百
+// 次键的沉浸动作，自然起点就是"我现在正在看
 // 的这批"，让用户在这个时刻再打一遍 `#标签` 是多余的一步。core 侧仍然走
 // `scope::resolve` 的 `.` 那一支(视图由 resolve_scope_with_view 传进
 // 去)，不新增解析分支 - 变的只是这个 token 由 cli 写死而不是用户输入。
@@ -770,13 +764,13 @@ ConsoleCommandResult handle_pick_command(pzt::core::ProjectId project_id, const 
   if (!scope_result.ok()) return ConsoleCommandResult{scope_error_message(scope_result.error())};
   const auto image_ids = std::move(scope_result.value().image_ids);
 
-  // D-5：分簇复用 curate 那组粗参数(时间窗口/汉明距离)，不新开旋钮 - pick
+  // 分簇复用 curate 那组粗参数(时间窗口/汉明距离)，不新开旋钮 - pick
   // 要的是"同一场景"的粒度，正是 curate 参数的既有定义。
   auto settings = pzt::core::load_settings();
 
   // 比较界面要到闸门点头之后才接管屏幕:开销确认本身画在浏览界面的
   // banner 上，跟 `/dedup --ai` 的既有约定一致(见下面 msg_pick_confirm_*
-  // 的 prompt_and_read_key_2line 调用)。候选不足那条短路(D-9)不会调到
+  // 的 prompt_and_read_key_2line 调用)。候选不足那条短路不会调到
   // 这个闸门，所以这个 optional 在那条路径上始终是空的 - 不会有多余的
   // 清屏或占位符残留。
   std::optional<pzt::cli::compare::CompareView> compare_view;
@@ -790,7 +784,7 @@ ConsoleCommandResult handle_pick_command(pzt::core::ProjectId project_id, const 
     // 接管屏幕前先清掉浏览界面自己那张图的 placement - CompareView 构造
     // 时的清屏只擦文字(见 compare_view.cpp 的说明)，Kitty 的图像
     // placement 不会跟着一起消失，不清的话它会在两张比较图旁边露出来，
-    // 违反 D-18"画面上只有两张图和进度行"。
+    // 破坏"比较期间画面上只有两张图和进度行"这条约束。
     (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
     compare_view.emplace(mode);
     return true;
@@ -841,7 +835,7 @@ ConsoleCommandResult handle_pick_command(pzt::core::ProjectId project_id, const 
   bool screen_was_taken_over = compare_view.has_value();
   compare_view.reset();
 
-  // D-20：回到浏览主循环之后整屏重绘 - 当前浏览的那张可能刚被判废，画面
+  // 回到浏览主循环之后整屏重绘 - 当前浏览的那张可能刚被判废，画面
   // 必须刷新。这里需要的不只是"重新传一次当前图片"：CompareView 铺满整
   // 个终端宽度(不套用浏览界面居中 70% 的框，见 compare_view.h)，浏览主
   // 循环每帧只在自己那个居中框内重画边框/信息栏，两侧留白之外 CompareView
@@ -941,7 +935,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
   }
   if (command == "ai_eval") {
     auto [first_token, extra_guidance] = take_scope_token(rest);
-    // T-15 票 D：批量判据认三个标记(`*` / `.` / `#标签`)，判定本身在
+    // 批量判据认三个标记(`*` / `.` / `#标签`)，判定本身在
     // cli/text 里、有测试盯着 - 漏一支的失效模式是静默走错路径而不是报
     // 错，见 is_batch_scope_token 的说明。
     if (is_batch_scope_token(first_token)) {
@@ -949,7 +943,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
                                                           view, extra_guidance)};
     }
     // 没有范围标记:整段 rest 就是对当前图片的额外指引,不需要再拆——供
-    // 应商见 resolve_ai_provider()(F-10:读 config.json 的 ai_provider，
+    // 应商见 resolve_ai_provider()(读 config.json 的 ai_provider，
     // 默认 Local)。交互式切换 UI 本来就是 docs/history/M3_PRD.md 明确留到以后
     // 的开放问题,这次不做。
     bool accepted = evaluation_worker.request(current_image_id, resolve_ai_provider(), rest,
@@ -966,7 +960,7 @@ ConsoleCommandResult handle_ai_console_command(pzt::core::EvaluationWorker& eval
     // 串,外层不会进入"按任意键继续"那个分支。
     move_cursor(banner_row, start_col + 1);
     write_stdout(pad_to(pzt::cli::i18n::msg_ai_processing_submitted(), content_cols));
-    std::this_thread::sleep_for(std::chrono::milliseconds(800));  // F-36：usleep 已弃用,统一用 sleep_for
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));  // usleep 已弃用,统一用 sleep_for
     return ConsoleCommandResult{};
   }
   return ConsoleCommandResult{pzt::cli::i18n::msg_ai_unknown_command(command)};
@@ -1022,7 +1016,7 @@ struct ImageFrameLayout {
   int cell_px_h = 0;
 };
 
-// issue #20:一组还没落库的草稿参数 + 它挂在哪个预设底下。
+// 一组还没落库的草稿参数 + 它挂在哪个预设底下。
 struct DraftStyle {
   pzt::core::RecipeId preset_id = 0;
   pzt::core::VersionParams params;
@@ -1031,13 +1025,13 @@ struct DraftStyle {
 // 这一帧的像素要套什么色彩参数:
 // - monostate  = 什么都不套(Origin,或者用户按 `r v` 切到了原图)
 // - RecipeId   = 图片自己存着的那个 recipe(主循环的常规情况)
-// - DraftStyle = 一组还没落库的草稿(issue #20,`r c` 向导的逐字段预览)
+// - DraftStyle = 一组还没落库的草稿(`r c` 向导的逐字段预览)
 using FrameStyle = std::variant<std::monostate, pzt::core::RecipeId, DraftStyle>;
 
 enum class FrameDrawResult { Drawn, DecodeFailed, RenderFailed };
 
 // "清掉上一帧的图 -> 取解码结果 -> 降采样 -> 套色彩参数 -> 交给 kitty 画"
-// 这一整套。issue #20 之前这段就长在主循环里,现在 `r c` 向导每提交一格也
+// 这一整套。摘成函数是因为 `r c` 向导每提交一格也
 // 要走同一条路(只是色彩参数换成草稿),抽出来共用而不是照抄一份——照抄的
 // 代价是"预览画得跟浏览不一样",那种偏差只能靠真机发现。
 //
@@ -1052,13 +1046,13 @@ FrameDrawResult draw_image_frame(pzt::core::PrefetchCache& prefetch, pzt::core::
   // 步,没有它,旧 placement 不会自动消失。失败(比如 WriteFailed)这里不特
   // 殊处理——下面马上要写新的 placement 覆盖同一个 id,没有比"继续往下走"
   // 更好的补救动作,显式 (void) 丢弃而不是让 [[nodiscard]] 警告挂着没人
-  // 处理(F-19)。
+  // 处理(Result 标了 [[nodiscard]])。
   (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, placement_id);
 
   auto decoded = prefetch.get(image_id);
   if (!decoded.ok()) return FrameDrawResult::DecodeFailed;
 
-  // F-14：decoded.value() 是 shared_ptr(指向缓存里那份不可变像素),decoded
+  // decoded.value() 是 shared_ptr(指向缓存里那份不可变像素),decoded
   // 在这个作用域内一直存活、持有引用,解引用得到的 img 引用在整段渲染期间
   // 有效。
   const auto& img = *decoded.value();
@@ -1149,7 +1143,7 @@ int cmd_open(const std::vector<std::string>& args) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_open_project_no_images(project.name).c_str());
     return 1;
   }
-  // F-09：f 层筛选结果的影子副本——`images` 本身继续驱动导航/渲染/
+  // f 层筛选结果的影子副本——`images` 本身继续驱动导航/渲染/
   // prefetch 不变,`f_filtered_images` 只在 f 切换筛选时同步更新,供
   // `/filter` 在它之上再筛一层、`/filter clear` 时还原用,见下面 `g`
   // 键处理和 `:` 键处理的说明。
@@ -1160,7 +1154,7 @@ int cmd_open(const std::vector<std::string>& args) {
   // 不是通过更新后的 pzt new 建的"这种边界情况,避免后面用这个 id 时崩溃。
   pzt::core::TagId reject_tag_id = pzt::core::ensure_reject_tag(*id);
 
-  // F-12：一次会话读一次就够——界面宽度比例、预取窗口这两个值一旦这个
+  // 一次会话读一次就够——界面宽度比例、预取窗口这两个值一旦这个
   // 函数开始跑起来(边框已经按某个比例画出来、PrefetchCache 已经用某个
   // 窗口大小构造完)就没法中途换,不像 resolve_ai_provider() 那样每次调
   // 用都现读也没关系。
@@ -1172,7 +1166,7 @@ int cmd_open(const std::vector<std::string>& args) {
     return 1;
   }
 
-  // T-10：本次会话攒下的一次性提示。banner 版一帧一条、显示过就出队;
+  // 本次会话攒下的一次性提示。banner 版一帧一条、显示过就出队;
   // detail 版在退出、终端还原之后统一再打一遍。
   //
   // 为什么退出后还要再打一遍:banner 那一条按第一个键就没了,容易错过;而
@@ -1187,7 +1181,7 @@ int cmd_open(const std::vector<std::string>& args) {
   bool render_failure_reported = false;
   bool decode_failure_reported = false;
 
-  // T-10 (a)：终端不在 Kitty 协议白名单里,进备用屏幕之前先说一声,等一次
+  // 终端不在 Kitty 协议白名单里,进备用屏幕之前先说一声,等一次
   // 按键再进去。
   //
   // 这里等按键是 2026-07-30 真机验收(Terminal.app)之后改的,原来是画进
@@ -1198,7 +1192,7 @@ int cmd_open(const std::vector<std::string>& args) {
   //
   // 仍然不阻止进入:按任意键就继续,判定毕竟只是按环境变量猜的。确信自己终
   // 端没问题的用户把 warn_unsupported_terminal 设成 false,提示和这道等待
-  // 一起消失。Ctrl-C 在这里是干净退出(ISIG 保留,终端还原走 T-9a 那条信号
+  // 一起消失。Ctrl-C 在这里是干净退出(ISIG 保留,终端还原走那条信号
   // 路径)。
   if (!mode.kitty_support_likely && settings.warn_unsupported_terminal) {
     std::fprintf(stderr, "%s\n\n%s\n", pzt::cli::i18n::warn_terminal_detail().c_str(),
@@ -1227,9 +1221,9 @@ int cmd_open(const std::vector<std::string>& args) {
   // 的状态机或定时器。
   std::string status_override;
 
-  // increment 6.4.7:退出时打一行 key-to-render 汇总(count/avg/p95/max)
-  // ——PRD 验收标准要求"简单的延迟日志"验证浏览大量图片全程无可感知卡
-  // 顿,盯着 debug 面板只保留最后 8 行的实时小窗口没法回头核对整个会话,
+  // 退出时打一行 key-to-render 汇总(count/avg/p95/max)——要验证浏览大量
+  // 图片全程无可感知卡顿就得有一份事后能看的数,
+  // 盯着 debug 面板只保留最后 8 行的实时小窗口没法回头核对整个会话,
   // 需要一份事后能看的汇总,不是新的 core 层能力,纯粹是这个函数自己按
   // 键处理耗时的统计,声明在下面这个块外面,这样块结束(AltScreen/
   // CbreakMode 析构、stderr 换回真实终端)之后还能在这打印。退出时打印一
@@ -1257,12 +1251,12 @@ int cmd_open(const std::vector<std::string>& args) {
     pzt::cli::term::DebugLogRedirect debug_log(debug_mode,
                                                 static_cast<std::size_t>(kDebugRows) * 4);
 
-    // window 默认值 3——PRD 里"合理默认值待真实素材测出"这个待办不受这次
-    // 影响,调优留给以后有真实使用数据再说;F-12 之后这个值可以在
+    // window 默认值 3——合理默认值还没有真实素材实测支撑,调优留给以后;
+    // 这个值可以在
     // config.json 里覆盖(prefetch_window),不用改代码重新编译。
     pzt::core::PrefetchCache prefetch(project.root_path, settings.prefetch_window,
                                        pzt::core::decode_preview_file);
-    // F-24 会话续点：这个项目上次浏览到的那张图仍在列表里就从它起步,否则
+    // 会话续点：这个项目上次浏览到的那张图仍在列表里就从它起步,否则
     // (从没浏览过、或那张图已被删/prune 掉)静默落在第一张。
     pzt::core::ImageId current_id = images.front().id;
     if (project.last_image_id) {
@@ -1320,11 +1314,11 @@ int cmd_open(const std::vector<std::string>& args) {
     // 了哪个标签——跟 current_id 一样是这个函数作用域内的纯局部状态。
     std::optional<pzt::core::TagId> active_filter_tag_id;
     std::string active_filter_tag_name;
-    // F-09：控制台二级筛选是否生效,以及是哪个条件——切 f 筛选(应用或
+    // 控制台二级筛选是否生效,以及是哪个条件——切 f 筛选(应用或
     // 清除)会自动清空这个状态,见 `g` 键处理的说明。
     std::optional<ConsoleFilterCriterion> active_console_filter;
 
-    // F-20：上一帧渲染所用的终端尺寸(cell 行列 + 单 cell 像素)。终端 resize
+    // 上一帧渲染所用的终端尺寸(cell 行列 + 单 cell 像素)。终端 resize
     // 后布局虽然每轮按最新尺寸重算,但没有整屏清除、也没有强制重画图片,旧
     // 边框会留在原位成残影;用它跟当前尺寸比对,变化时整屏清除 + 强制重画。
     // 初值 0 让首帧就当"尺寸已变"处理(首帧本就要全画,无害)。
@@ -1362,7 +1356,7 @@ int cmd_open(const std::vector<std::string>& args) {
       int cell_px_w = term_size.valid ? std::max(1, term_size.pixel_width / term_size.cols) : 8;
       int cell_px_h = term_size.valid ? std::max(1, term_size.pixel_height / term_size.rows) : 16;
 
-      // F-20：终端尺寸相对上一帧变了吗?变了就整屏清除(擦掉上一尺寸残留的
+      // 终端尺寸相对上一帧变了吗?变了就整屏清除(擦掉上一尺寸残留的
       // 边框/文字),并在下面强制重画图片(current_id 没变、navigated 为假,
       // 光靠导航检测触发不了图片重传)。last_* 记录的是"当前帧渲染所用的尺
       // 寸",也是输入循环里 poll 超时判断"要不要重画"的基准。
@@ -1374,7 +1368,7 @@ int cmd_open(const std::vector<std::string>& args) {
       last_cell_px_h = cell_px_h;
       if (size_changed) write_stdout("\x1b[2J");
 
-      // 界面默认只占终端宽度的 70%、居中显示,不铺满整个窗口——F-12 之后
+      // 界面默认只占终端宽度的 70%、居中显示,不铺满整个窗口——这个值
       // 这个比例可以在 config.json 里用 ui_width_ratio 覆盖。
       int ui_cols = std::max(20, static_cast<int>(total_cols * settings.ui_width_ratio));
       int start_col = std::max(1, (total_cols - ui_cols) / 2 + 1);
@@ -1393,7 +1387,7 @@ int cmd_open(const std::vector<std::string>& args) {
       int image_top_row = 2;  // 顶部边框占第 1 行,图片/信息内容从第 2 行开始
 
       // 画图那一格用得到的全部几何,打包一次给 draw_image_frame——主循环末
-      // 尾画当前帧要用,`r c` 向导的逐字段预览(issue #20)也要用同一份,那时
+      // 尾画当前帧要用,`r c` 向导的逐字段预览也要用同一份,那时
       // 已经在按键处理里、离这些变量的计算处隔了几百行。
       ImageFrameLayout frame_layout{start_col,  image_top_row, image_cols,
                                      top_rows,   cell_px_w,     cell_px_h};
@@ -1591,7 +1585,7 @@ int cmd_open(const std::vector<std::string>& args) {
           ++row;
         }
 
-        // W2026-07-21：`:` 触发的 AI 点评——标题行"AI 点评"+一段模型给的文
+        // `:` 触发的 AI 点评——标题行"AI 点评"+一段模型给的文
         // 字 assessment。可用时不显示可用性(避免"选片/Culling"跟 agent 功能
         // 混淆)，只有 unusable 时在 assessment 前加粗显示一行"不可用"。复用上
         // 面查过的 info。assessment 长度不可控——按显示宽度硬换行,跟标签/风格
@@ -1651,7 +1645,7 @@ int cmd_open(const std::vector<std::string>& args) {
         write_stdout(pad_to(pzt::cli::i18n::nav_bar_line1(), content_cols));
       }
       // 第二行:有没显示过的 session notice 就先让给它,一帧一条,显示过即
-      // 出队(T-10)。notice 刻意不走 status_override:那条路会置
+      // 出队。notice 刻意不走 status_override:那条路会置
       // showing_status,把下一次按键整个吃掉当"消除提示"用,而 notice 是
       // "顺带告诉你一声",不该打断选片。B.1 的渲染失败提示更要紧 - 那个每
       // 帧都会复发,走 status_override 会让每次按键都只用于消除提示,用户
@@ -1740,19 +1734,19 @@ int cmd_open(const std::vector<std::string>& args) {
       // 渲染一遍,一次误按不支持的键就能看到明显的闪烁。始终带超时 poll:
       // --debug 时超时无条件重画刷新 debug 面板;有 AI 请求在跑时超时要先查
       // consume_new_result 有没有真的拿到新结果,没有就当没发生过继续等,不
-      // 触发外层重绘("poll 重绘只在真正需要时才发生")。F-20:纯浏览态(不
+      // 触发外层重绘("poll 重绘只在真正需要时才发生")。纯浏览态(不
       // 开 debug、无 AI)以前是纯阻塞 read,resize 没有按键就永远察觉不到;
       // 现在也 poll,超时后只有终端尺寸相对上一帧变了才 break 去重画(整屏清
       // 除 + 图片重传由帧顶 size_changed 处理),尺寸没变就继续等,不无谓刷新。
       bool timed_out = false;
-      // T-3：认不出来的可打印键不再被完全静默地吃掉。原来的行为下,按一个
+      // 认不出来的可打印键不被完全静默地吃掉。全部吞掉的话,按一个
       // 不支持的键(最典型的是 g,README 与 usage 长期写着筛选是 g,实际是
       // f)得到的是零反馈,用户分不清"卡住了"还是"按错了"。二级菜单层早就
       // 有"无效按键给一句提示"的约定(filter_menu.cpp、handle_r_key),只有
       // 顶层没有。
       char unknown_key = 0;
       while (true) {
-        // T-23：这条检查刻意放在 stdin_ready 阻塞读键之前、不依赖
+        // 这条检查刻意放在 stdin_ready 阻塞读键之前、不依赖
         // has_pending()/poll_active。原因：has_pending() 只有在 worker
         // 还没处理完排队里的东西时才是 true，而"连不上本地 Ollama"这类
         // 失败是瞬时的(连接被拒绝，不会真的发出请求、不会等超时)。一
@@ -1782,7 +1776,7 @@ int cmd_open(const std::vector<std::string>& args) {
         int poll_ms = poll_active ? 300 : 250;  // 纯浏览态 250ms 仅用于察觉 resize
         if (!stdin_ready(poll_ms)) {
           if (poll_active) {
-            // F-03：确认拿到新结果(不是超时空转)才值得重画 - 上面那段
+            // 确认拿到新结果(不是超时空转)才值得重画 - 上面那段
             // 已经处理完失败的情况，这里只剩"有没有新的成功结果落地"要
             // 看(debug 模式下重画由面板日志驱动，不需要这次确认)。
             if (!debug_mode && !evaluation_worker.consume_new_result(ai_last_seen_generation)) {
@@ -1893,7 +1887,7 @@ int cmd_open(const std::vector<std::string>& args) {
       } else if (c == ' ') {
         if (current_ref) {
           highlight_active_menu_key(' ', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          // F-01：现查而不是缓存在循环外——"重复"标签可能是本次浏览会
+          // 现查而不是缓存在循环外——"重复"标签可能是本次浏览会
           // 话期间第一次跑 /dedup 才创建的,find_tag_by_name 找不到就是
           // nullopt,不会创建它(打开菜单不该有创建标签的副作用)。
           auto duplicate_tag_id =
@@ -1915,7 +1909,7 @@ int cmd_open(const std::vector<std::string>& args) {
           // 主动停一小段时间,让这次加粗有机会被看见,再继续实际的打标
           // 签/摘标签动作。
           highlight_active_menu_key('x', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          std::this_thread::sleep_for(std::chrono::milliseconds(150));  // 150ms,肉眼可感知的"闪一下",但不会让人觉得卡顿(F-36：usleep -> sleep_for)
+          std::this_thread::sleep_for(std::chrono::milliseconds(150));  // 150ms,肉眼可感知的"闪一下",但不会让人觉得卡顿
 
           auto current_tags = pzt::core::tags_for_image(current_ref->id);
           bool already_tagged = std::any_of(
@@ -1935,7 +1929,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // 字编号复用跟 space 菜单同一套 tags_for_menu。
         highlight_active_menu_key('f', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
         auto menu = tags_for_menu(*id);
-        // F-01：跟 space 分支同样的现查逻辑,见那边的说明。
+        // 跟 space 分支同样的现查逻辑,见那边的说明。
         auto duplicate_tag_id =
             pzt::core::find_tag_by_name(*id, pzt::core::tagging::kDuplicateTagName);
         auto decision =
@@ -1966,7 +1960,7 @@ int cmd_open(const std::vector<std::string>& args) {
             current_id = new_current;
             active_filter_tag_id = decision.tag_id;
             active_filter_tag_name = decision.tag_name;
-            // F-09：切到新的 f 筛选,二级筛选跟着自动清空(已跟用户确
+            // 切到新的 f 筛选,二级筛选跟着自动清空(已跟用户确
             // 认),f_filtered_images 同步成这次的结果,供 /filter 在它
             // 之上再筛。
             f_filtered_images = images;
@@ -1980,7 +1974,7 @@ int cmd_open(const std::vector<std::string>& args) {
             current_id = new_current;
             active_filter_tag_id.reset();
             active_filter_tag_name.clear();
-            // F-09：同上,清除 f 筛选也要清空二级筛选、同步 f_filtered_images。
+            // 同上,清除 f 筛选也要清空二级筛选、同步 f_filtered_images。
             f_filtered_images = images;
             active_console_filter.reset();
           }
@@ -1996,14 +1990,14 @@ int cmd_open(const std::vector<std::string>& args) {
         // increment 6:完整的 `r` 前缀键交互,见 handle_r_key。应用/清除
         // 需要重新走一遍渲染(recipe_id 变了或者切到原图预览),交给
         // style_toggled 触发;删除不影响当前图片的 recipe_id,不需要强制
-        // 重画。新建(`r c`)以前也在"不需要重画"那一类里,issue #20 之后不
+        // 重画。新建(`r c`)本来也属于"不需要重画"那一类,但逐字段预览之后不
         // 是了——见下面 preview_drawn。
         if (current_ref) {
           highlight_active_menu_key('r', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
-          // issue #20:`r c` 向导每提交一格就回调一次,把当前已知的完整草稿
+          // `r c` 向导每提交一格就回调一次,把当前已知的完整草稿
           // 套到正在浏览的这张图上重画。回调注入在这里而不是写进 cli/menu,
-          // 是因为解码结果、降采样尺寸、kitty 绘制参数全在这一层(issue #17
-          // 决策三)。这一帧纯粹是看的:不落库,也不动这张图的 recipe_id。
+          // 是因为解码结果、降采样尺寸、kitty 绘制参数全在这一层。这一帧
+          // 纯粹是看的:不落库,也不动这张图的 recipe_id。
           bool preview_drawn = false;
           pzt::cli::menu::PreviewFn preview = [&](pzt::core::RecipeId preset_id,
                                                    const pzt::core::VersionParams& draft) {
@@ -2093,7 +2087,7 @@ int cmd_open(const std::vector<std::string>& args) {
         // M3:vim 风格的额外指引输入,提交给 EvaluationWorker 异步评估。
         // current_id 不变,跟 space/x/r/e 一样只走 status_override 原地
         // 刷新——结果落地由上面的 poll 逻辑触发重绘,不是这里同步等待。
-        // F-09：`/filter` 是例外,它会改浏览池状态,返回类型从纯
+        // `/filter` 是例外,它会改浏览池状态,返回类型从纯
         // std::string 升级成 ConsoleCommandResult 之后在这里执行。
         if (current_ref) {
           highlight_active_menu_key(':', menu_lines, menu_top_row, menu_rows, info_col, info_cols);
@@ -2105,14 +2099,14 @@ int cmd_open(const std::vector<std::string>& args) {
             debug_ctx.top_row = debug_top_row;
             debug_ctx.rows = kDebugRows;
           }
-          // T-15 票 D：`images` 就是 `.` 指的那批(`f` 筛选 ∩ `/filter` 之
+          // `images` 就是 `.` 指的那批(`f` 筛选 ∩ `/filter` 之
           // 后正在浏览的)，从这里一路传到 resolve_scope_with_view - 全 cli
           // 只有这一处把视图交出去。
           auto console_result =
               handle_ai_prompt_flow(evaluation_worker, *id, current_ref->id, images, mode, banner_row,
                                     start_col, content_cols, debug_ctx);
           status_override = console_result.status;
-          // T-15 票 C：`/recipe` 改到了当前这张的 recipe_id。跟 `r` 键
+          // `/recipe` 改到了当前这张的 recipe_id。跟 `r` 键
           // Applied/Cleared 那条路径一模一样(见下面 handle_r_key 的
           // 调用点)：show_original 归位到"看风格化效果"，style_toggled 触
           // 发一次重渲染 - 光靠导航检测触发不了,current_id 并没有变。
@@ -2143,7 +2137,7 @@ int cmd_open(const std::vector<std::string>& args) {
       prefetch.set_current(images, current_id);
     }
 
-    // F-24 会话续点：退出时把当前浏览到的那张写回,下次 open 从这里续上。只
+    // 会话续点：退出时把当前浏览到的那张写回,下次 open 从这里续上。只
     // 在干净退出(q/EOF)时写一次,不在每次导航时写——守住零延迟、每键不额外
     // IO;崩溃/被 kill 丢的只是本次位置,退回上次干净退出点,可接受。
     pzt::core::set_last_image_id(*id, current_id);
@@ -2151,13 +2145,13 @@ int cmd_open(const std::vector<std::string>& args) {
     // 退出前显式删掉最后一帧的 placement——AltScreen 切回主屏幕缓冲区、
     // 甚至用户手动跑 `clear`,都清不掉 Kitty 协议画出来的图片,那是叠加在
     // 文字网格之上的独立层,只有协议自己的 delete 命令能清。程序马上就要
-    // 退出了,这一步失败没有可行的补救动作，显式 (void) 丢弃(F-19)。
+    // 退出了,这一步失败没有可行的补救动作，显式 (void) 丢弃。
     (void)pzt::cli::kitty::clear_placement(STDOUT_FILENO, mode, kImageId);
   }  // AltScreen/CbreakMode 析构,自动还原终端设置
 
   if (latency_count > 0) {
     std::sort(latency_samples.begin(), latency_samples.end());
-    // F-36：最近秩法(nearest-rank)取 p95——ceil(0.95*n)-1,而不是原来直接
+    // 最近秩法(nearest-rank)取 p95——ceil(0.95*n)-1,而不是直接
     // 截断 0.95*n。样本很少时(一次浏览只切十来张)截断会把 p95 压到偏低、
     // 甚至跟中位数区分不出;最近秩是百分位的标准定义,小样本下更有意义。夹
     // 到 [0,n-1] 纯防御。
@@ -2169,7 +2163,7 @@ int cmd_open(const std::vector<std::string>& args) {
                  latency_samples[p95_index], latency_max_ms);
   }
 
-  // T-10：把本次会话攒下的提示再打一遍。这里已经出了上面那个 block,
+  // 把本次会话攒下的提示再打一遍。这里已经出了上面那个 block,
   // DebugLogRedirect 析构过了、stderr 换回真实终端,写出去才真的看得见。放
   // 在退出文案之前:这是用户离开这个界面时最后读到的东西,比延迟汇总更该
   // 靠近视线落点。

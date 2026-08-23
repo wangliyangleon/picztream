@@ -43,7 +43,7 @@ std::string err_unknown_subcommand(const std::string& subcommand);
 // 盘满、库损坏)落到这里,打一句人话再退出,而不是让 uncaught 异常直接
 // terminate(那样 AltScreen/CbreakMode 的析构不会跑,终端会留在坏状态)。
 std::string err_internal_error(const std::string& what);
-// T-7：上面那条兜底之外唯一一个"认识的"逃逸异常。库的 schema 版本比这个
+// 上面那条兜底之外唯一一个"认识的"逃逸异常。库的 schema 版本比这个
 // 二进制新(装过更新版 pzt、又装回了旧版)时 core 拒绝打开并抛
 // SchemaTooNewError，这里给一句能照着做的话，而不是笼统的"内部错误"。
 // 不带子命令前缀：任何子命令的第一次 core 调用都可能撞上。
@@ -54,14 +54,14 @@ std::string err_new_name_exists(const std::string& name);
 std::string err_new_no_images(const std::string& folder_path);
 // 目录里没有可用的 JPEG，但确实存在 RAW 文件，区别于 err_new_no_images，
 // 明确告知用户 RAW 文件被 support_raw=false（默认）挡在外面，提示加
-// --support-raw 重试，而不是让用户误以为目录是空的（见 T-2 proposal）。
+// --support-raw 重试，而不是让用户误以为目录是空的。
 std::string err_new_no_images_raw_ignored(const std::string& folder_path);
-// F-06：`--` 开头但不是 `--support-raw` 的参数(比如拼错的
+// `--` 开头但不是 `--support-raw` 的参数(比如拼错的
 // `--supportraw`)不再被静默当成 folder_path,那样会让扫描目标变成一
 // 个不存在的"目录",容易被误解成程序坏了而不是自己打错了参数。
 std::string err_new_unknown_arg(const std::string& arg);
 std::string msg_raw_preview_progress(int done, int total);
-// T-6：分母是这一批的全部图片，不再只是其中的 RAW 张数，所以文案也不再
+// 分母是这一批的全部图片，不是其中的 RAW 张数，所以文案也不
 // 提 RAW。core 侧按整数百分比节流，一次导出最多 101 次回调。
 std::string msg_export_progress(int done, int total);
 std::string msg_project_created(const std::string& name, const std::string& root_path, long long image_count);
@@ -119,7 +119,7 @@ std::string err_recipe_unknown_subcommand(const std::string& verb);
 std::string err_open_project_not_found();
 std::string err_open_project_no_images(const std::string& name);
 std::string err_open_tmux_passthrough();
-// 终端可能不讲 Kitty 图像协议时的提示(T-10 (a))。在进备用屏幕之前打在真
+// 终端可能不讲 Kitty 图像协议时的提示。在进备用屏幕之前打在真
 // 实终端上,配合下面这句等一次按键 - 真机验收证明画进 banner 送不到人眼
 // 前(理由见 .cpp)。不带结尾换行。
 std::string warn_terminal_detail();
@@ -166,7 +166,7 @@ std::string msg_all_tagged();
 std::string err_remove_tag_failed();
 std::string err_filter_failed();
 std::string msg_filter_no_images();
-// F-09：`/filter <criterion>` 计算结果为空时显示,跟 msg_filter_no_images
+// `/filter <criterion>` 计算结果为空时显示,跟 msg_filter_no_images
 // 分开，那条是"这个标签下没有图片"(标签语义)，这条是"没有满足这个
 // 状态条件的图片"(评估/去重状态语义)。
 std::string msg_console_filter_no_images();
@@ -183,12 +183,12 @@ std::string msg_ai_prompt_placeholder();
 // 馈，不是新开一套文案。
 std::string msg_ai_processing_pending();
 std::string msg_ai_processing_submitted();
-// F-03：评估请求失败(网络/key/解析，或者请求还没真正发出去就失败,
+// 评估请求失败(网络/key/解析，或者请求还没真正发出去就失败,
 // 图片/项目找不到、预览图解码失败)之前只打 stderr，不开 --debug 时用
 // 户完全看不到。poll 逻辑检测到有新结果落地时顺带查一次
 // EvaluationWorker::take_failure_report()，非空就用这条文案当
 // status_override 显示一次，不需要用户主动去 --debug 面板里找原因。
-// T-23：两个参数是那次改动加的。file_name 优先于 image_id - 用户手上
+// file_name 优先于 image_id - 用户手上
 // 只有文件名，界面其它每一处也都用 file_name 展示(browse.cpp 的信息
 // 栏)，裸数据库 ID 无从对照；查不到记录(比如失败原因本身就是"图片记录
 // 找不到")时才回落到 ID，那总比整条提示消失强。total_failed 是本次
@@ -220,17 +220,17 @@ std::string err_console_tag_not_found(const std::string& tag_name);
 // 范围参数既不是 `*` 也不以 `#` 开头时统一提示,不静默把它当成裸标签
 // 名解析，见 docs/history/M3_PRD.md"触发入口"一节。
 std::string err_console_invalid_scope();
-// T-16/#27：`/dedup` 的范围本身是系统标签(废片/重复)时拒绝。此前是静
-// 默 no-op——范围被正确解析出来、进 core 后全被排除，命令报"0 组",用
-// 户无从分辨这是"真没有重复"还是"范围被清空了"。参数收的是库里的
+// `/dedup` 的范围本身是系统标签(废片/重复)时拒绝。不拒绝的话是静默
+// no-op——范围被正确解析出来、进 core 后全被排除，命令报"0 组",用户无
+// 从分辨这是"真没有重复"还是"范围被清空了"。参数收的是库里的
 // canonical 名,显示名由这个函数按当前语言换算。
 std::string err_console_dedup_system_tag_scope(const std::string& canonical_tag_name);
-// T-15（#30）：范围写的是 `.`（当前视图）但这条路径没有视图可传。`.` 本
-// 身是合法写法，所以不能复用 err_console_invalid_scope 那句"必须是 * 或
-// #标签名" - 那是假话。控制台的 `/dedup`/`/ai_eval` 接上视图之后（票 D）
-// 这一支在交互层不再出现，映射仍然要在，因为 core 的错误集合是穷举的。
+// 范围写的是 `.`（当前视图）但这条路径没有视图可传。`.` 本身是合法写法，
+// 所以不能复用 err_console_invalid_scope 那句"必须是 * 或 #标签名" - 那是
+// 假话。控制台那几条命令都接了视图，所以这一支在交互层不出现，映射仍然要
+// 在，因为 core 的错误集合是穷举的。
 std::string err_console_scope_no_view();
-// F-09：`/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
+// `/filter` 的 criterion 参数缺失或不是词汇表里的四个词之一时提
 // 示,控制台一贯"显式标记，不猜"的风格，不静默忽略、不模糊匹配。
 std::string err_console_invalid_filter_criterion();
 // 反馈:退出时如果还有评估任务排队/处理中，队列里还没开始处理的部分
@@ -239,7 +239,7 @@ std::string err_console_invalid_filter_criterion();
 // 其实中途被打断了一部分,加一次确认，给反悔机会。
 std::string msg_quit_confirm_pending_line1(int pending_count);
 std::string msg_quit_confirm_pending_line2();
-// F-08：skipped_no_capture_time 是范围内因为没有拍摄时间(captured_at
+// skipped_no_capture_time 是范围内因为没有拍摄时间(captured_at
 // 为 NULL)完全没参与比较的图片数,>0 时带一句提示,不静默排除。
 // ai_fallback_count 同理:>0 时说明这次有几组的保留项其实是 AI 比较失败
 // 后按拍摄时间兜底选的,不开 --ai 时恒为 0、不出现在文案里。
@@ -256,9 +256,8 @@ std::string msg_dedup_cluster_progress(int done, int total);
 std::string msg_dedup_ai_progress(int group_done, int group_total, int comparison_done,
                                    int comparison_total);
 // `/dedup` 阻塞期间挂在 banner 第二行的操作提示,整条命令期间都在(不只是
-// AI 段——分簇阶段同样可取消)。T-9b 之后 Ctrl-C 真的只取消这一次 dedup、
-// 不退出 pzt open,所以这里就写"取消";在那之前它是强杀,文案得额外说明会
-// 退出整个程序。
+// AI 段——分簇阶段同样可取消)。Ctrl-C 在这里真的只取消这一次 dedup、不
+// 退出 pzt open,所以文案就写"取消",不用额外说明会退出整个程序。
 std::string msg_dedup_ai_progress_hint();
 // 按下 Ctrl-C 的那一刻立刻回显的一行。**这行字由信号处理函数直接 write()
 // 出去**——按下时主线程正阻塞在网络请求或解码里,没人能替它重画。所以它
@@ -281,24 +280,24 @@ std::string msg_dedup_ai_confirm_line2();
 // err_console_invalid_filter_criterion 同一个理由。
 std::string err_dedup_bad_args();
 
-// T-17 票 E：`/pick <N>` 两图对比人工选片，见 GitHub issue #39（T-17 PRD
-// #34）。N 不是正整数(`/pick`、`/pick 0`、`/pick -1`、`/pick abc`)时报这
-// 句 - D-1 不设默认值，四种坏写法是同一件事的四个例子。
+// `/pick <N>` 两图对比人工选片。N 不是正整数(`/pick`、`/pick 0`、
+// `/pick -1`、`/pick abc`)时报这句 - N 没有默认值，四种坏写法是同一件事
+// 的四个例子。
 std::string err_pick_bad_args();
 // 开跑前**总是**确认，两行报四个数：C=候选、m=簇冠军池、X=比较次数上界
-// (最多)、Y=结束后会判废的张数。C/m/Y 是精确值，X 是上界(D-13) - 跟
+// (最多)、Y=结束后会判废的张数。C/m/Y 是精确值，X 是上界 - 跟
 // msg_dedup_ai_confirm_line1 报精确开销的既有口径不同，理由见 pick.h
 // PickCost::max_comparisons 的说明。
 std::string msg_pick_confirm_line1(int candidate_count, int champion_count, int max_comparisons);
 std::string msg_pick_confirm_line2(int reject_count);
-// 两级进度，分母必须跟 msg_pick_confirm_line1 报的是同一批数(D-18)：第一
+// 两级进度，分母必须跟 msg_pick_confirm_line1 报的是同一批数：第一
 // 级"第 i/m 组 · 本组第 j/k 场"，第二级"选第 p/N 张"，两级都带"已比 t
 // 次 / 最多 X 次"。
 std::string msg_pick_progress_cluster(int group_index, int group_total, int match_index,
                                        int match_total, int comparisons_done, int max_comparisons);
 std::string msg_pick_progress_final(int rank_index, int rank_total, int comparisons_done,
                                      int max_comparisons);
-// C <= N(含 C == 0)：一次比较都没发起、一个标签都没打(D-9)。
+// C <= N(含 C == 0)：一次比较都没发起、一个标签都没打。
 std::string msg_pick_insufficient_candidates(int candidate_count, int requested_count);
 // Esc 二次确认之后真正放弃：零写入，但已经花掉了时间和按键，跟"闸门被
 // 拒"分开报是同一个理由，见 msg_dedup_cancelled 的说明。
@@ -306,7 +305,7 @@ std::string msg_pick_cancelled();
 // 落库失败(core::pick::PickError::RejectTagWriteFailed)：选完了但一个标
 // 签都没打上，不能报成功。
 std::string err_pick_failed();
-// 结束回执：D-20 形如"已选 N 张，Y 张打上废片"。
+// 结束回执，形如"已选 N 张，Y 张打上废片"。
 std::string msg_pick_result(int selected_count, int rejected_count);
 
 // M3：`/ai_eval * | #标签名 [额外指引]` 批量提交，见
@@ -316,14 +315,14 @@ std::string msg_pick_result(int selected_count, int rejected_count);
 std::string msg_ai_eval_submitted(int count);
 // `/tasks`：排队中有几个、有没有正在处理中的一个，见
 // core/ai/evaluation_worker.h 的 QueueStatus。
-// T-23：failed 是这一次 `pzt open` 里累计失败的张数,0 时整句不提失败
+// failed 是这一次 `pzt open` 里累计失败的张数,0 时整句不提失败
 // (没挂过就别引入这个概念)。失败的状态行是一次性的、错过就没了，这里
 // 是唯一能事后回看"到底挂了多少张"的地方。
 std::string msg_ai_tasks_status(std::size_t queued, bool processing, std::size_t failed);
 
 // 还没评估过/评估失败时统一显示的占位。
 std::string evaluation_none_label();
-// W2026-07-21：AI 点评区块的标题行。刻意不叫"选片/Culling",那会跟 agent
+// AI 点评区块的标题行。刻意不叫"选片/Culling",那会跟 agent
 // 的选片功能混淆。assessment 文字本身由 core 直接给，不经 i18n(是模型输
 // 出，不是 UI 文案)。
 std::string evaluation_comment_label();
@@ -353,17 +352,17 @@ std::string tag_menu_delete_confirm(const std::string& name, long long count);
 std::string tag_menu_deleted(const std::string& name);
 std::string tag_menu_delete_failed();
 std::string tag_menu_add_failed();
-// T-24：动态标签数已达菜单上限时,`space c` 直接被挡住,这句话说明上限是
+// 动态标签数已达菜单上限时,`space c` 直接被挡住,这句话说明上限是
 // 多少、以及怎么才能继续建。
 std::string tag_menu_limit_reached(int limit);
 // space 顶层菜单拆成两行(见 prompt_and_read_key_2line):第一行带编号的
 // 标签选项(0:废片 + 1-8 动态标签 + 9:重复[条件性]),第二行是固定的字
 // 母操作。标签一多,单行版本会把第二行这几个操作挤到看不见的地方。
-// show_duplicate 为真时在末尾追加 `9:重复`(F-01,只在项目已经存在这
+// show_duplicate 为真时在末尾追加 `9:重复`(只在项目已经存在这
 // 个系统标签时才显示)。
 std::string tag_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,
                                    bool show_duplicate);
-// T-24：at_limit 为真时给 `c` 加一个"已满"标记,让用户在按下去之前就知道
+// at_limit 为真时给 `c` 加一个"已满"标记,让用户在按下去之前就知道
 // 建不了。选项本身不拿掉-拿掉的话,按 c 得到一句解释这条路径也没了。
 // hidden 是超出菜单上限、编号行里选不到的标签数量(老项目可能在"建到上限
 // 就挡住"之前已经建了 8 个以上),非 0 时在行尾标出来。这两条注记都挂在
@@ -383,7 +382,7 @@ std::string filter_menu_export_failed();
 std::string filter_menu_export_no_images();
 std::string filter_menu_export_success(int count, const std::string& path, bool created_folder, size_t skipped_count);
 // g 顶层菜单拆成两行,跟 tag_menu_options_line/actions_line 同样的理由。
-// show_duplicate 见 tag_menu_options_line 的说明,同一条 F-01 规则。
+// show_duplicate 见 tag_menu_options_line 的说明,同一条规则。
 std::string filter_menu_options_line(const std::vector<pzt::core::TagSummary>& tags,
                                       bool show_duplicate);
 // hidden 见 tag_menu_actions_line 的说明,两个菜单共用同一套编号、被截断的
@@ -409,7 +408,7 @@ std::string recipe_menu_input_saturation();
 std::string recipe_menu_input_blacks();
 std::string recipe_menu_input_whites();
 std::string recipe_menu_input_name();
-// issue #19：`r c` 分步向导每个字段提示的前缀:第几步/共几步，以及(非首
+// `r c` 分步向导每个字段提示的前缀:第几步/共几步，以及(非首
 // 个字段上)Backspace 能回退这件事:回退没有任何视觉痕迹,不写在提示里用
 // 户不会知道它存在。前缀之后紧跟 recipe_menu_input_* 那几条(它们各自自
 // 带前导空格)。
@@ -420,21 +419,21 @@ std::string recipe_menu_create_success(const std::string& preset_name);
 // 的 build_recipe_menu_lines 负责(要按显示宽度铺满两行、图例右对齐)，i18n
 // 只提供图例这段本地化文案。
 std::string recipe_menu_actions_line(bool has_recipe);
-// T-15 票 C：批量套配方那个菜单的操作图例。跟单张那份不同构(没有
+// 批量套配方那个菜单的操作图例。跟单张那份不同构(没有
 // has_recipe、也没有 v/c/d)，所以是独立一条而不是给上面那个加参数 - 决策
-// D-14 定的是"批量菜单是单张菜单的子集"，两份图例各自成立。
+// "批量菜单是单张菜单的子集"说的是编号寻址，不是图例，两份图例各自成立。
 std::string recipe_menu_actions_line_batch();
 // 把 describe_recipe 的 {预设名, 可选 version 名} 合成 banner 用的单行显
 // 示名。信息栏分两行显示同一件事，banner 只有一行。
 std::string recipe_display_name(const std::string& preset_name,
                                 const std::optional<std::string>& version_name);
-// T-15 票 C 决策 D-9：批量套配方/批量清除前**总是**弹的两行确认。total 是
+// 批量套配方/批量清除前**总是**弹的两行确认。total 是
 // 作用域内张数 N，overwritten 是其中原本已有配方、会被覆盖且无法还原的张数
 // M - M 是文案主角。recipe_name 为空表示这次是批量清除。
 std::string msg_recipe_batch_confirm_line1(int total, int overwritten,
                                             const std::optional<std::string>& recipe_name);
 std::string msg_recipe_batch_confirm_line2();
-// 决策 D-15：闪 800ms 的回执，不占额外按键。
+// 闪 800ms 的回执，不占额外按键。
 std::string msg_recipe_batch_applied(int total, const std::string& recipe_name);
 std::string msg_recipe_batch_cleared(int total);
 std::string msg_recipe_scope_no_images();
@@ -451,7 +450,7 @@ std::string msg_recipe_batch_failed();
 std::string recipe_menu_clear_failed();
 std::string recipe_menu_apply_failed();
 std::string recipe_menu_invalid_key();
-// T-3：顶层浏览循环按到不支持的键时的提示,带上按的是哪个键。二级菜单层
+// 顶层浏览循环按到不支持的键时的提示,带上按的是哪个键。二级菜单层
 // 早有"无效按键给提示"的约定,只有顶层是完全静默的。
 std::string msg_unknown_key(char key);
 

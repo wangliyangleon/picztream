@@ -59,12 +59,10 @@ char prompt_and_read_key_2line(const std::string& line1, const std::string& line
 // poll() stdin,timeout_ms 内有可读数据返回 true(--debug 面板刷新用)。
 bool stdin_ready(int timeout_ms);
 
-// F-25：`/dedup`、大批量导出这类长阻塞操作(几秒到几十秒)冻结主循环期
-// 间,用户习惯性按的键会一直留在 tty 的输入缓冲区里,操作结束、循环继
-// 续读键时会被一次性回放、当成正常按键处理(可能连按出误标签/误退
-// 出)——见 docs/history/M3_Dedup_PRD.md"风险与待确认问题"里"阻塞期间的输入
-// 缓冲行为"那一条,一直没收口。长阻塞调用返回之后、继续读键之前调用
-// 这个函数清空缓冲区,把冻结期间的按键当成没发生过处理。
+// `/dedup`、大批量导出这类长阻塞操作(几秒到几十秒)冻结主循环期间,用户习
+// 惯性按的键会一直留在 tty 的输入缓冲区里,操作结束、循环继续读键时会被一
+// 次性回放、当成正常按键处理(可能连按出误标签/误退出)。长阻塞调用返回之
+// 后、继续读键之前调用这个函数清空缓冲区,把冻结期间的按键当成没发生过。
 void flush_pending_input();
 
 // 从 banner 那一行读一整行 UTF-8 文本。Esc/EOF 返回 nullopt(取消);Enter
@@ -75,14 +73,14 @@ std::optional<std::string> read_text_line(const std::string& prompt, int banner_
 // 删掉光标前的一个完整 UTF-8 码点(`ICANON` 关了,内核不替我们做这件事),
 // 光标跟着回退到那个码点的起始字节。返回 true 表示这次退格落在一个空
 // buffer 上:read_text_line 里无事发生,分步向导用它当"回退到上一个字段"
-// 的信号(issue #19)。光标已经在开头但 buffer 非空时返回 false:那是既有
-// 的"没东西可删,无事发生",不是回退。
+// 的信号。光标已经在开头但 buffer 非空时返回 false:那是"没东西可删,无事
+// 发生",不是回退。
 bool apply_backspace(std::string& buffer, std::size_t& cursor);
 
 // 分步向导里读一行的结果。比 read_text_line 的 optional<string> 多一态
 // (Back),所以单开一个类型而不是给那个函数加第三态:read_text_line 的每
 // 一处调用点(标签名/标签 cap/两处导出路径)都没有"上一个字段"可回退,让
-// 它们各自多处理一个永远走不到的分支不值得(issue #17 决策一)。
+// 它们各自多处理一个永远走不到的分支不值得。
 enum class WizardLineAction { Submitted, Back, Cancelled };
 struct WizardLineResult {
   WizardLineAction action;

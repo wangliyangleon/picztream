@@ -22,10 +22,10 @@ struct RKeyOutcome {
   std::string status;
 };
 
-// issue #20：`r c` 向导每前进一步就要拿"当前已知的完整参数组合"把正在浏览
-// 的这张图重画一次。怎么画只有 browse.cpp 知道(它握着解码结果、降采样尺
-// 寸和 kitty 的绘制参数),所以这里只收一个回调,不让 cli/menu 反向依赖
-// cli/kitty 与 core/decode(issue #17 决策三)。
+// `r c` 向导每前进一步就要拿"当前已知的完整参数组合"把正在浏览的这张图重
+// 画一次。怎么画只有 browse.cpp 知道(它握着解码结果、降采样尺寸和 kitty
+// 的绘制参数),所以这里只收一个回调,不让 cli/menu 反向依赖 cli/kitty 与
+// core/decode。
 //
 // 带预设 id 是因为预览要的是"这个预设的底子 + 这组草稿",而预设是在
 // handle_r_create_flow 内部选的,调用方注入回调时还不知道是哪一个。
@@ -38,20 +38,20 @@ using PreviewFn =
 RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_col,
                          int content_cols, const PreviewFn& preview = {});
 
-// T-15 票 C（issue #33）：`/recipe <作用域>` 回车之后弹的配方菜单，决策
-// D-2 的"菜单接力"。作用域写在控制台、配方在这里选 - 不做成
+// `/recipe <作用域>` 回车之后弹的配方菜单，走的是"菜单接力"：作用域写在
+// 控制台、配方在这里选 - 不做成
 // `/recipe <作用域> <配方名>` 一行式，因为自定义配方的名字是
 // `std::optional<std::string>`、可以为空且无唯一约束，一行式会把用户自建
 // 的配方整个排除在批量之外。
 //
-// 这个菜单是 `r` 菜单的**子集**（决策 D-14）：只有 `1`-`9`（选预设 → 二
+// 这个菜单是 `r` 菜单的**子集**：只有 `1`-`9`（选预设 → 二
 // 级选具体 version）与 `0`/`r`（批量清除），`v`/`c`/`d` 不出现。它不像
 // handle_r_key 那样收 ImageId，因为批量语境下根本没有"这张图"-那正是
 // `v` 与 `c` 在这里不成立的原因。
 //
 // 也不落库：选完就返回，写入由调用方在**确认之后**用
-// core::set_images_recipe 一次做掉。菜单不写库是这一票的要害 - D-9 的确
-// 认必须夹在选择和写入中间，把写入留在菜单里就没有那个位置了。
+// core::set_images_recipe 一次做掉。**菜单不写库**是要害 - 那句报出 N/M
+// 的确认必须夹在选择和写入中间，把写入留在菜单里就没有那个位置了。
 struct BatchRecipeSelection {
   // 取消（Esc、二级菜单取消、按了个不对应任何选项的键）。为真时
   // recipe_id 没有意义，调用方零写入。
@@ -64,7 +64,7 @@ struct BatchRecipeSelection {
 };
 BatchRecipeSelection handle_batch_recipe_menu(int banner_row, int start_col, int content_cols);
 
-// issue #19：`r c` 分步向导的导航循环。按下标依次问 field_count 个字段，
+// `r c` 分步向导的导航循环。按下标依次问 field_count 个字段，
 // read_field(下标, 该字段当前值) 返回提交/回退/取消：提交前进一格，回退
 // 退一格(在第一个字段上无效，停在原地)，取消整个作废并返回 nullopt。走
 // 完最后一个字段返回全部字段的值,顺序与下标一致。
@@ -74,7 +74,7 @@ BatchRecipeSelection handle_batch_recipe_menu(int banner_row, int start_col, int
 // 这个循环里"回退到哪、回填什么值、第一个字段会不会越界"才是容易写错的
 // 部分,而它一个终端字节都不需要碰。
 //
-// issue #20：on_values_changed 交出"用户此刻该看到的那一组值",拿到的是当
+// on_values_changed 交出"用户此刻该看到的那一组值",拿到的是当
 // 前全部字段(没填的是空串)。触发点有两个:
 //   1. 问第一个字段之前一次,值全空 —— 用户填第一格时得有参照物,而且第一
 //      格填 0(语义是"不调整")按 Enter 不该突然重渲染一次,那看起来像是输
@@ -89,7 +89,7 @@ std::optional<std::vector<std::string>> run_field_wizard(
         read_field,
     const std::function<void(const std::vector<std::string>&)>& on_values_changed = {});
 
-// issue #20：把向导的字段文本映射成一组完整的调整参数。前 8 格按向导顺序
+// 把向导的字段文本映射成一组完整的调整参数。前 8 格按向导顺序
 // (高光/暗光/白平衡红/白平衡蓝/对比度/饱和度/黑色/白色)对应 VersionParams
 // 的 8 个旋钮,第 9 格是名字、不参与;空串、解析不出数字、以及尾部有残渣的
 // (如 "12abc")一律当 0——"静默归零"这条既有哲学不变(见 handle_r_create_flow)。

@@ -102,7 +102,7 @@ bool kitty_support_likely(const EnvLookupFn& lookup, bool inside_tmux) {
   // screen-256color 和 tmux,Ghostty 的身份被整个擦掉),看它们只会稳定误
   // 判,直接跳过。代价是:从 Ghostty 起的 server 后来换终端 attach 时,
   // GHOSTTY_* 是 stale 的会假阳性 - 但假阳性最坏只是退回"不提示"的现状,
-  // 而看 TERM 会在正常使用下稳定假阴性,两者不对称(见 PRD 风险 1、2)。
+  // 而看 TERM 会在正常使用下稳定假阴性,两者不对称。
   if (inside_tmux) return false;
 
   if (env_equals(lookup, "TERM_PROGRAM", "ghostty")) return true;

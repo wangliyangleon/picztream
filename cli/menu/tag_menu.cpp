@@ -57,7 +57,7 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
   for (std::size_t i = 0; i < tags.size(); ++i) {
     line += "  " + pzt::cli::i18n::menu_item(std::to_string(i + 1), tags[i].name);
   }
-  // F-01：`9:重复` 只在项目里已经存在这个系统标签时才出现在摘除菜单
+  // `9:重复` 只在项目里已经存在这个系统标签时才出现在摘除菜单
   // 里，不强迫用户面对一个从没跑过 /dedup 的项目也看到这个选项。
   if (duplicate_tag_id) {
     line += "  " + pzt::cli::i18n::menu_item("9", pzt::cli::i18n::duplicate_tag_label());
@@ -85,14 +85,14 @@ std::string handle_remove_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // 题分别用文本输入/单字节是否处理。
 std::string handle_create_tag_flow(pzt::core::ProjectId project_id, bool at_limit, int banner_row,
                                     int start_col, int content_cols) {
-  // T-24:菜单只认 kMaxMenuTags 个动态标签,建到上限还继续建的话,新标签在
-  // space/f 菜单里根本选不到:以前既不挡也不说,第 9 个标签就此成了只有
+  // 菜单只认 kMaxMenuTags 个动态标签,建到上限还继续建的话,新标签在
+  // space/f 菜单里根本选不到:不挡也不说的话,第 9 个标签就成了只有
   // `pzt tag list` 看得见、只有 `pzt export` 用得了的幽灵。跟
   // recipe_menu.cpp 里 version 的 9 个上限同样处理:在创建入口挡住并说明出
   // 路,而不是让它建成之后再被静默丢掉。挡在问名字之前,不让用户白填一遍
   // 名字/cap/排序三个问题才被拒。at_limit 由调用方传进来而不是在这里重查
-  // 一次——handle_space_key 每轮本来就查了,而门面每次调用都要开一次库(见
-  // 提案 T-30),按键路径上不必要的第二次开库能省则省。
+  // 一次——handle_space_key 每轮本来就查了,而门面每次调用都要开一次库,
+  // 按键路径上不必要的第二次开库能省则省。
   if (at_limit) {
     return pzt::cli::i18n::tag_menu_limit_reached(static_cast<int>(kMaxMenuTags));
   }
@@ -178,11 +178,10 @@ std::string handle_delete_tag_submenu(const std::vector<pzt::core::TagSummary>& 
 // 已有标签的数字悄悄错位。不改 `list_tags` 本身,这里对结果客户端重排序。
 // increment 6.4.5:系统标签("废片")固定占硬编码的 `0`,不参与这个动态序
 // 列,先过滤掉-顺带也意味着系统标签不占 kMaxMenuTags 的额度,不然跑过
-// 一次 /dedup 建出"重复"之后,能建的标签数会凭空少一个。F-01:动态标签只
-// 截断到 8 个(不是 9)——数字 `9` 现在固定留给"重复"系统标签(见
-// handle_space_key/handle_f_key_prompt 里 duplicate_tag_id 参数的用法),
-// 动态列表不能再占用它。
-// T-24:截断保留(老项目可能已经有 8 个以上标签),但截掉多少要报出去。
+// 一次 /dedup 建出"重复"之后,能建的标签数会凭空少一个。动态标签只截断到
+// 8 个(不是 9)——数字 `9` 固定留给"重复"系统标签(见 handle_space_key/
+// handle_f_key_prompt 里 duplicate_tag_id 参数的用法),动态列表不能占用
+// 它。截断保留(老项目可能已经有 8 个以上标签),但截掉多少要报出去。
 MenuTags tags_for_menu(pzt::core::ProjectId project_id) {
   auto tags = pzt::core::list_tags(project_id);
   tags.erase(std::remove_if(tags.begin(), tags.end(), [](const auto& t) { return t.is_system; }),
@@ -221,7 +220,7 @@ std::string handle_add_tag_result(pzt::core::TagId tag_id, pzt::core::ImageId im
 // cap 超限时转入 handle_cap_replace_submenu;`-`/`c`/`d` 分别转入摘除/新
 // 建/删除标签定义。`0:废片` 是硬编码的固定选项,不占用 `tags_for_menu` 的
 // 动态 1-8 序列——`废片` 从 pzt new 起就保证存在,不再有"这次按 space 完
-// 全没有东西可选"的情况,不管动态列表是不是空都无条件阻塞读一个键。F-01：
+// 全没有东西可选"的情况,不管动态列表是不是空都无条件阻塞读一个键。
 // `9:重复` 是另一个硬编码固定选项,跟 `0:废片` 对称,但只在 duplicate_
 // tag_id 有值(项目已经跑过至少一次 /dedup)时才出现——不像废片那样保证
 // 存在,调用方(cmd_open)每次按 space 前都重新查一次,不缓存。

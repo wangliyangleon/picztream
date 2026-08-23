@@ -133,8 +133,8 @@ inline void disarm_altscreen() { detail::altscreen_armed = 0; }
 //
 // 用在 `/dedup` 这种阻塞几分钟的命令上：进作用域后 SIGINT 只置位标志并
 // 立刻回显一行提示，调用方在自己的检查点上读 cancelled() 决定收手；出作
-// 用域立刻恢复成 signal_restore 的默认语义(还原终端后重新 raise，即 T-9a
-// 的"干净退出 pzt")。
+// 用域立刻恢复成 signal_restore 的默认语义(还原终端后重新 raise，也就是
+// 干净退出 pzt)。
 //
 // **析构必须无条件跑到**，否则 Ctrl-C 会在浏览界面里彻底失效：既不取消
 // (没有操作在跑)也不退出(处置被换掉了)，用户按了没反应也退不出去。所以

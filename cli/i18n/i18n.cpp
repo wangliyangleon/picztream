@@ -76,7 +76,7 @@ std::string menu_item(const std::string &key, const std::string &label) {
 
 namespace {
 
-// T-24：动态标签超出菜单能寻址的数量时,行尾这句注记说明"还有几个在这里
+// 动态标签超出菜单能寻址的数量时,行尾这句注记说明"还有几个在这里
 // 选不到"。space 和 f 两个菜单共用同一套编号、被截断的是同一批标签,所以
 // 这句话也共用一份。没有超出时返回空串,不给正常情况添噪音。
 // 分隔只用一个空格(菜单里其它项之间是两个):这是一句注记不是一个可按的
@@ -716,7 +716,7 @@ std::string err_open_tmux_passthrough() {
   }
 }
 
-// T-10 (a)：白名单没命中时的提示,分 banner 版与详情版。跟上面那条
+// 白名单没命中时的提示,分 banner 版与详情版。跟上面那条
 // passthrough 的区别是它不拦人:那条能查到 tmux 的真实设置、确定 passthrough
 // 是关的,这条只是按环境变量猜,猜错了拦人代价太大。措辞相应地是"可能",
 // 不是"不支持"。
@@ -993,11 +993,11 @@ std::string export_current_skipped(const std::string &file_name, pzt::core::Skip
 }
 
 std::string msg_ai_prompt_placeholder() {
-  // T-15 票 D：`.` 加进来之后逐条列举(`* | . | #标签` × 两条命令)会把这行
-  // 撑到把 /help 挤出屏幕，所以改成"命令列表 + 范围写法列一次"。这样这行
-  // 的长度不随作用域支数增长，而 `.` 这种没有别处可发现的写法照样露面。
+  // 逐条列举(`* | . | #标签` × 每条命令)会把这行撑到把 /help 挤出屏幕，
+  // 所以是"命令列表 + 范围写法列一次"。这样这行的长度不随作用域支数增
+  // 长，而 `.` 这种没有别处可发现的写法照样露面。
   //
-  // 真机反馈补了两条一直漏掉的命令(`/recipe`、`/pick`)：这行是用户按
+  // **每条控制台命令都要在这里露面**：这行是用户按
   // `:` 那一刻唯一能看到的东西，跟 `/help` 总览是两份独立维护的文案，加
   // 新命令时这里也要跟着改，不然命令能用、但没人知道它存在。
   if (g_lang == Lang::zh) {
@@ -1038,7 +1038,7 @@ std::string msg_ai_processing_submitted() {
   }
 }
 
-// F-03：把 EvaluationError 翻译成一句人话，不逐条列出的都归到笼统的
+// 把 EvaluationError 翻译成一句人话，不逐条列出的都归到笼统的
 // "请求失败"——这几种原因(网络/HttpError/key)对用户来说都是"这次没请
 // 求成功，再试一次"，不需要精确到协议层细节；ParseError 单独说明是"模
 // 型返回的内容不对"，跟"网络/权限"是不同性质的问题，值得区分；
@@ -1183,7 +1183,7 @@ std::string err_console_tag_not_found(const std::string &tag_name) {
 }
 
 std::string err_console_invalid_scope() {
-  // T-15 票 D：`.` 在交互侧能用了(视图由 cmd_open 一路传到
+  // `.` 在交互侧是可用的(视图由 cmd_open 一路传到
   // resolve_scope_with_view)，所以这句"合法写法有哪几种"必须把它列进来:
   // 少列一种,用户照着改也改不出他想要的那条命令。
   if (g_lang == Lang::zh) {
@@ -1203,7 +1203,7 @@ std::string err_console_scope_no_view() {
 
 std::string err_console_dedup_system_tag_scope(const std::string &canonical_tag_name) {
   // 传进来的是库里的 canonical 名(废片/重复)，显示要跟着界面语言走 —— 这
-  // 正是"标识符 vs 显示文案"那条区分(见 core/scope/scope.h 的 D-3)在展示
+  // 正是"标识符 vs 显示文案"那条区分(见 core/scope/scope.h)在展示
   // 侧的另一半。
   std::string label = canonical_tag_name == pzt::core::tagging::kDuplicateTagName
                           ? duplicate_tag_label()
@@ -1250,7 +1250,7 @@ std::string msg_ai_tasks_status(std::size_t queued, bool processing, std::size_t
   if (g_lang == Lang::zh) {
     std::string line = " 排队中: " + std::to_string(queued) + " 张";
     line += processing ? "，有一张正在处理" : "，当前没有正在处理的";
-    // T-23：一张都没挂过时整句不提失败，不引入这个概念。
+    // 一张都没挂过时整句不提失败，不引入这个概念。
     if (failed > 0) line += "，已失败 " + std::to_string(failed) + " 张";
     return line + " ";
   } else {
@@ -1441,13 +1441,13 @@ std::string msg_quit_confirm_pending_line2() {
 
 std::string msg_dedup_result(int group_count, int tagged_count, int skipped_no_capture_time,
                               int ai_fallback_count) {
-  // F-11：标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
+  // 标记数为 0 时(没有新组、或范围内已经全部标记过)不给入口提
   // 示——用户按 f 9 只会看到空列表，反而更困惑。
   // 入口键是 f 不是 g:筛选入口早就从 g 改成了 f(筛选/Filter 首字母，见
   // browse.cpp 里那个分支的说明)，这句提示当时漏改了，一直在教用户按一
   // 个不存在的键。
   std::string hint = tagged_count > 0 ? (g_lang == Lang::zh ? "，按 f 9 查看" : ", press f 9 to view") : "";
-  // F-08：以前这批图片被静默排除在比对之外，分组结果不如预期时用户无
+  // 这批图片被静默排除在比对之外的话，分组结果不如预期时用户无
   // 从判断原因——只在真的有跳过时才提一句，不干扰最常见的"全部图片都
   // 有拍摄时间"路径。
   std::string skipped_note =
@@ -1599,7 +1599,7 @@ std::string tag_menu_created(const std::string &name) {
   }
 }
 
-// T-24：跟 recipe_menu_custom_full 同一类提示-上限是交互层的输入端约
+// 跟 recipe_menu_custom_full 同一类提示-上限是交互层的输入端约
 // 束(单个数字键只能寻址这么多),core 不限标签数量,`pzt tag list` /
 // `pzt export` 也不受影响,所以话里只说菜单建不了、指向 d 这条出路。
 std::string tag_menu_limit_reached(int limit) {
@@ -2006,8 +2006,8 @@ std::string recipe_menu_actions_line(bool has_recipe) {
 }
 
 std::string recipe_menu_actions_line_batch() {
-  // T-15 票 C 决策 D-14：批量菜单是 `r` 菜单的**子集**，`v`/`c`/`d` 不出
-  // 现-不是"画上去按下给一句不可用"。理由逐条见 issue #33：`v` 是浏览态
+  // 批量菜单是 `r` 菜单的**子集**，`v`/`c`/`d` 不出现-不是"画上去按下给
+  // 一句不可用"。逐条来说：`v` 是浏览态
   // 临时预览、"对一批图临时预览"没有定义；`d` 是配方库管理、与作用域无
   // 关；`c` 新建的向导要拿"正在浏览的这张"逐格重渲染，批量语境下没有那张
   // 图。`v` 也不再有 has_recipe 这个参数-单张那份是按"这张图有没有配方"
@@ -2031,7 +2031,7 @@ std::string recipe_display_name(const std::string &preset_name,
 
 std::string msg_recipe_batch_confirm_line1(int total, int overwritten,
                                             const std::optional<std::string> &recipe_name) {
-  // T-15 票 C 决策 D-9：**总是**弹确认，且 M 是主角。只有那 M 张不可逆
+  // **总是**弹确认，且 M 是主角。只有那 M 张不可逆
   // (原 recipe_id 丢了、无处可查)，剩下 total−M 张原本无配方，套错了批量
   // 清除就精确还原了 - 文案把不可逆切在这个位置上，而不是笼统说"此操作
   // 不可撤销"。
@@ -2065,7 +2065,7 @@ std::string msg_recipe_batch_confirm_line2() {
 }
 
 std::string msg_recipe_batch_applied(int total, const std::string &recipe_name) {
-  // 决策 D-15：闪 800ms 的回执。它不带任何 D-9 没报过的新信息，存在的唯一
+  // 闪 800ms 的回执。它不带任何确认里没报过的新信息，存在的唯一
   // 理由是"当前浏览的这张可能不在作用域内"-那时画面一个像素都不会变，静
   // 默等于让用户无从判断命令有没有生效。
   if (g_lang == Lang::zh) {
@@ -2113,8 +2113,8 @@ std::string msg_pick_abandon_confirm_line2() {
 }
 
 std::string err_recipe_bad_args() {
-  // 决策 D-2 否掉了 `/recipe <作用域> <配方名>` 一行式(自定义配方的名字可
-  // 以为空且无唯一约束，一行式会把它们整个排除在批量之外)，所以作用域后面
+  // 这条命令没有 `/recipe <作用域> <配方名>` 一行式(自定义配方的名字可以
+  // 为空且无唯一约束，一行式会把它们整个排除在批量之外)，所以作用域后面
   // 多写的东西不能被静默忽略-那会让用户以为那个名字生效了。
   if (g_lang == Lang::zh) {
     return " 用法: /recipe * | . | #标签名 - 配方在回车之后的菜单里选，不写在命令里 ";
@@ -2148,7 +2148,7 @@ std::string recipe_menu_apply_failed() {
   }
 }
 
-// T-3：顶层浏览循环里按到不支持的键。跟二级菜单的 recipe_menu_invalid_key
+// 顶层浏览循环里按到不支持的键。跟二级菜单的 recipe_menu_invalid_key
 // 不同,这里带上按的是哪个键,并顺手指一下筛选是 f。`g` 是最可能被误按的
 // 那一个(README 与 usage 长期把筛选写成 g,实际是 f),给出正确的键比单说
 // 一句"无效按键"更有用。

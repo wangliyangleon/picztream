@@ -15,10 +15,10 @@ using namespace pzt::cli::text;
 
 namespace pzt::cli::ui {
 
-// F-36：write(2) 可能短写(只写了一部分字节就返回,尤其管道/慢终端下),也
-// 可能被信号打断(EINTR)。以前一次 write 拿到什么算什么,剩余字节被静默丢
-// 弃——正常路径下 stdout 是终端、量也小,基本不触发,但一旦发生就是转义序
-// 列/图片数据被截断的花屏,且无从察觉。循环写到全部字节落地,EINTR 重试;
+// write(2) 可能短写(只写了一部分字节就返回,尤其管道/慢终端下),也可能被
+// 信号打断(EINTR)。一次 write 拿到什么算什么的话,剩余字节会被静默丢弃
+// ——正常路径下 stdout 是终端、量也小,基本不触发,但一旦发生就是转义序列/
+// 图片数据被截断的花屏,且无从察觉。循环写到全部字节落地,EINTR 重试;
 // 其它错误没有可行的补救(马上就要退出或继续渲染),直接返回。
 namespace {
 void write_all(int fd, const std::string& s) {
@@ -142,10 +142,9 @@ void flush_pending_input() { tcflush(STDIN_FILENO, TCIFLUSH); }
 // 内核不会自动处理退格。以上是下面这一整块读行机制的总说明,不只是紧跟
 // 着的这一个函数。
 
-// issue #19:退格这一步从 read_line_edit_step 里抽出来单独成函数,一是让
-// 向导能区分"空 buffer 上的退格"(回退)与"删了个字符",二是这段"往回找到
-// 一个完整 UTF-8 码点的起始字节"的逻辑值得不带 tty 地测(见
-// cli/tests/ui_test.cpp)。行为跟抽出来之前逐字一致。
+// 退格单独成函数,不留在 read_line_edit_step 里:一是让向导能区分"空
+// buffer 上的退格"(回退)与"删了个字符",二是这段"往回找到一个完整 UTF-8
+// 码点的起始字节"的逻辑值得不带 tty 地测(见 cli/tests/ui_test.cpp)。
 bool apply_backspace(std::string& buffer, std::size_t& cursor) {
   if (buffer.empty()) return true;
   if (cursor == 0) return false;  // 有内容,只是光标在开头:没东西可删,不是回退
@@ -158,9 +157,9 @@ bool apply_backspace(std::string& buffer, std::size_t& cursor) {
 
 namespace {
 
-// BackspaceOnEmpty 是 issue #19 加的第四态:退格落在空 buffer 上。对
-// read_text_line/read_text_line_with_placeholder 而言它等价于 Continue
-// (原本就是无事发生),只有分步向导把它读成"回退到上一个字段"。
+// BackspaceOnEmpty:退格落在空 buffer 上。对 read_text_line/
+// read_text_line_with_placeholder 而言它等价于 Continue(无事发生),只有分
+// 步向导把它读成"回退到上一个字段"。
 enum class LineEditResult { Continue, Submit, Cancel, BackspaceOnEmpty };
 
 // 光标感知的单步编辑：读一个字节(方向键要为了跟裸 Esc 消歧再多读几
@@ -222,10 +221,9 @@ LineEditResult read_line_edit_step(std::string& buffer, std::size_t& cursor, int
   return LineEditResult::Continue;
 }
 
-// issue #19:read_text_line 与 read_text_line_for_wizard 只差两处(初值、
-// 空 buffer 退格算不算回退),渲染与循环完全一样,所以共用这一个实现,两个
-// 对外函数都是它的薄壳。allow_back=false 时 BackspaceOnEmpty 退化成
-// Continue,也就是这个函数抽出来之前的行为。
+// read_text_line 与 read_text_line_for_wizard 只差两处(初值、空 buffer 退
+// 格算不算回退),渲染与循环完全一样,所以共用这一个实现,两个对外函数都是
+// 它的薄壳。allow_back=false 时 BackspaceOnEmpty 退化成 Continue。
 WizardLineResult read_prompt_line_impl(const std::string& prompt, const std::string& initial,
                                         bool allow_back, int banner_row, int start_col,
                                         int content_cols) {
@@ -233,17 +231,17 @@ WizardLineResult read_prompt_line_impl(const std::string& prompt, const std::str
   std::size_t cursor = buffer.size();  // 回填的初值光标停在末尾,接着改
   int pending_needed = 0;  // 还差几个续字节才能凑成当前码点
 
-  // F-42：超宽内容会用到第二行(见下面 redraw 的换行处理),而 banner_row+1
+  // 超宽内容会用到第二行(见下面 redraw 的换行处理),而 banner_row+1
   // 平时可能杵着其它提示("q:[退出]"/菜单),先清干净,跟
   // read_text_line_with_placeholder 一样,不然长路径换行时会跟旧提示串行。
   move_cursor(banner_row + 1, start_col + 1);
   write_stdout(pad_to("", content_cols));
 
   auto redraw = [&] {
-    // F-42:内容(常驻 prompt + 已输入 buffer)超出第一行宽度时换到第二行,
-    // 跟 read_text_line_with_placeholder 的两行逻辑同构——区别只是这里的固定
-    // 前缀是常驻 prompt,而不是那边的一个前导空格。以前是单行 pad,长导出路
-    // 径输入时光标会越出右边框。
+    // 内容(常驻 prompt + 已输入 buffer)超出第一行宽度时换到第二行,跟
+    // read_text_line_with_placeholder 的两行逻辑同构——区别只是这里的固定
+    // 前缀是常驻 prompt,而不是那边的一个前导空格。单行 pad 是不够的:长导
+    // 出路径输入时光标会越出右边框。
     std::string content = prompt + buffer;
     std::string line1 = truncate_text(content, static_cast<std::size_t>(content_cols));
     std::string line2 =

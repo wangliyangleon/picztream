@@ -139,12 +139,12 @@ std::string handle_pick_version_to_delete_prompt(const pzt::core::PresetSummary&
 // 析失败时的处理哲学一致。创建之后不会自动应用到当前图片，对齐
 // `space c` 建标签之后也不会自动打到当前图片上这个既有约定。
 //
-// issue #19:9 个字段从一次性问完的线性问答改成可前进/后退的向导(导航循
-// 环见 run_field_wizard)。"静默归零"这条哲学不变:有了字段级回退,填错了
-// 直接退回去改,不需要再叠一层拒绝/重提示。
+// 9 个字段是可前进/后退的向导,不是一次性问完的线性问答(导航循环见
+// run_field_wizard)。"静默归零"这条哲学与它相容:有了字段级回退,填错了直
+// 接退回去改,不需要再叠一层拒绝/重提示。
 //
-// issue #20:选完预设、问第一个字段之前先调一次 preview(画出这个预设的中
-// 性状态),之后每提交一格再调一次,套的都是当前已知的完整参数组合。preview
+// 选完预设、问第一个字段之前先调一次 preview(画出这个预设的中性状态),之
+// 后每提交一格再调一次,套的都是当前已知的完整参数组合。preview
 // 可以是空的(当前图片解码失败),那时向导退化成纯文字流程、照常能建出
 // version。
 std::string handle_r_create_flow(int banner_row, int start_col, int content_cols,
@@ -188,7 +188,7 @@ std::string handle_r_create_flow(int banner_row, int start_col, int content_cols
         return read_text_line_for_wizard(prompt, current, can_go_back, banner_row, start_col,
                                           content_cols);
       },
-      // issue #20:把当前已知的完整组合套到正在浏览的这张图上重画一次。进
+      // 把当前已知的完整组合套到正在浏览的这张图上重画一次。进
       // 门先来一次(全空 = 这个预设的中性状态),之后每提交一格一次,触发点见
       // run_field_wizard 的契约。preview 为空(当前图片解码不出来)时向导照常
       // 走完,只是没有画面——预览是这个流程的辅助,不是它的前置条件。
@@ -395,8 +395,8 @@ RKeyOutcome handle_r_key(pzt::core::ImageId image_id, int banner_row, int start_
 BatchRecipeSelection handle_batch_recipe_menu(int banner_row, int start_col, int content_cols) {
   auto presets = presets_for_menu();
   // 编号选项跟单张那份**完全一样**(同一个 presets_for_menu、同一个
-  // build_recipe_menu_lines)，换掉的只有操作图例 - 决策 D-14 说的"子集"
-  // 指的正是这个:1-9 与 0/r 的寻址在两个菜单上是同一套，用户不需要重新
+  // build_recipe_menu_lines)，换掉的只有操作图例 - 这个菜单是 `r` 菜单的
+  // **子集**:1-9 与 0/r 的寻址在两个菜单上是同一套，用户不需要重新
   // 学一遍编号。不同构的那一半在图例里，所以 build_recipe_menu_lines 收
   // legend 做参数，而不是自己去查该画哪些操作。
   auto [line1, line2] = build_recipe_menu_lines(

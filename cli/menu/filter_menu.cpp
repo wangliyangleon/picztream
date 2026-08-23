@@ -35,7 +35,7 @@ FKeyDecision handle_f_key_prompt(pzt::core::TagId reject_tag_id,
   if (c == '0') {
     return {FKeyAction::ApplyFilter, reject_tag_id, pzt::cli::i18n::reject_tag_label(), ""};
   }
-  // F-01：`9:重复` 跟 `0:废片` 对称，只在 duplicate_tag_id 有值时才响应。
+  // `9:重复` 跟 `0:废片` 对称，只在 duplicate_tag_id 有值时才响应。
   if (c == '9' && duplicate_tag_id) {
     return {FKeyAction::ApplyFilter, *duplicate_tag_id, pzt::cli::i18n::duplicate_tag_label(), ""};
   }

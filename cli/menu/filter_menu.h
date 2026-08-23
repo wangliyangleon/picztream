@@ -35,9 +35,9 @@ struct FKeyDecision {
 
 // f 键入口:显示筛选/清除选项,返回一个"意图"(FKeyDecision)交给
 // cmd_open 执行。menu 由调用方(cmd_open)用 tags_for_menu 构好后整个传
-// 入,不拆成"列表 + hidden"两个参数:T-24 之后这两半必须来自同一次查询,
-// 拆开传迟早会在某个调用点对不上。
-// F-01：duplicate_tag_id 为空表示项目还没有"重复"系统标签,`9` 不出现
+// 入,不拆成"列表 + hidden"两个参数:这两半必须来自同一次查询,拆开传迟早
+// 会在某个调用点对不上。
+// duplicate_tag_id 为空表示项目还没有"重复"系统标签,`9` 不出现
 // 在菜单里、按了也不响应,跟 handle_space_key 同样的处理方式。
 FKeyDecision handle_f_key_prompt(pzt::core::TagId reject_tag_id,
                                  std::optional<pzt::core::TagId> duplicate_tag_id,

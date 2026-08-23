@@ -77,11 +77,10 @@ int emit_json_error(const char* code, const std::string& message) {
   return 1;
 }
 
-// T-8：运行期进度的带外通道。stdout 的原子性一个字节不变(跑完才写，且只
+// 运行期进度的带外通道。stdout 的原子性一个字节不变(跑完才写，且只
 // 写一个对象)，进度走 stderr、一行一个 JSON 对象——调用方 json.loads
 // (stdout) 那句话不能容忍多出任何一行，而 stderr 上本来就跑着 emit_json_
-// error 的对象，是既成的结构化通道。见 docs/history/Headless_
-// Observability_Eng_Design.md 决策一。
+// error 的对象，是既成的结构化通道。
 //
 // 外层包一个 "progress" key 而不是平铺 phase/done/total：读取方要能一眼
 // 跟错误对象分辨开，靠"有没有 progress 这个 key"比靠"有没有 error"更稳
@@ -98,7 +97,7 @@ void emit_json_progress(const char* phase, int done, int total) {
   std::fprintf(stderr, "%s\n", j.dump().c_str());
 }
 
-// 票 10：AI 真正开跑之前的**精确**开销，走跟进度同一条 stderr 带外通道，
+// AI 真正开跑之前的**精确**开销，走跟进度同一条 stderr 带外通道，
 // 一条命令最多一行。
 //
 // 独立的 "cost" key 而不是塞进 progress：开销不是"完成了几分之几"，硬塞
@@ -107,8 +106,9 @@ void emit_json_progress(const char* phase, int done, int total) {
 // "有没有 cost 这个 key"分辨，progress 的解析一个字节不用动。
 //
 // 两个数分开而不是加成一个总数：它们的单位不同（次比较 / 张评估），也走
-// 不同的耗时量级，展示层要按单位分别措辞（同 T-8 真机验收推翻"把 phase
-// 压掉"的那条理由）。dedup 只报比较、evaluations 恒为 0。
+// 不同的耗时量级，展示层要按单位分别措辞（把这个维度压掉的话，展示层只
+// 能写死一个单位，然后在另外两种情况下说错话）。dedup 只报比较、
+// evaluations 恒为 0。
 void emit_json_cost(int comparisons, int evaluations) {
   nlohmann::json j = {
       {"cost", {{"comparisons", comparisons}, {"evaluations", evaluations}}}};
@@ -130,7 +130,7 @@ std::optional<pzt::core::ProjectId> resolve_project_json(const std::string& proj
 std::optional<pzt::core::TagId> resolve_or_create_tag(pzt::core::ProjectId project_id,
                                                         const std::string& name);
 
-// T-16：scope 解析已经收进 core::scope，headless 与 `pzt open` 控制台共用
+// scope 解析收在 core::scope，headless 与 `pzt open` 控制台共用
 // 那一份（在此之前这里是有意重写的第二份，两者已经分叉：交互那份认
 // `#Reject` 英文别名、这份不认，于是 `pzt dedup --scope '#Reject'` 报
 // tag_not_found 而 `/dedup #Reject` 可用。收编之后这处分叉消失，headless
@@ -146,7 +146,7 @@ int emit_scope_error(const pzt::core::ScopeFailure& failure) {
       return emit_json_error("system_tag_scope",
                              "cannot dedup within a system tag: " + failure.tag_name);
     case pzt::core::ScopeError::NoExplicitSet:
-      // T-15（#30，PRD #28 验收 4）：`--scope .` 不能落进 invalid_scope。
+      // `--scope .` 不能落进 invalid_scope。
       // `.` 是合法写法，headless 只是没有"当前视图"这种东西可指 - 报语法
       // 错等于告诉 agent"写法不对"，让它去改一个本来就对的写法。
       return emit_json_error("no_current_view",
@@ -163,9 +163,9 @@ int emit_scope_error(const pzt::core::ScopeFailure& failure) {
 // 令本身不接受内联参数覆盖阈值，想调参改 config.json，跟交互侧的既有
 // 约定一致(见 docs/history/Fix_It_Night_Review.md F-08)。
 //
-// W2026-07-21 目标二：新增可选 --ai --provider <gemini|claude|local>——
-// 不带 --ai 时调用路径、参数、JSON 输出逐字节不变(ai_fallback_count 这
-// 个 key 都不出现，不是"出现但恒为 0")；--provider 只在 --ai 出现时才
+// 可选 --ai --provider <gemini|claude|local>——不带 --ai 时
+// ai_fallback_count 这个 key 整个不出现，不是"出现但恒为 0"；--provider
+// 只在 --ai 出现时才
 // 校验/生效，解析规则跟 cmd_curate、recipe suggest 同一套三选一。
 int cmd_dedup(const std::vector<std::string>& args) {
   bool json = false;
@@ -209,7 +209,7 @@ int cmd_dedup(const std::vector<std::string>& args) {
   auto project_id = resolve_project_json(positional[0]);
   if (!project_id) return 1;
 
-  // #27 (D-2)：跟 `pzt open` 控制台的 `/dedup` 同一条规则 —— 范围本身是系
+  // 跟 `pzt open` 控制台的 `/dedup` 同一条规则 —— 范围本身是系
   // 统标签时拒绝，而不是静默排空之后报"0 组"。
   auto scope_result =
       pzt::core::resolve_scope(*project_id, scope, pzt::core::SystemTagPolicy::Reject);
@@ -221,13 +221,13 @@ int cmd_dedup(const std::vector<std::string>& args) {
   // 两个进度回调都无条件传：on_ai_progress 只在 ai_enabled 时才会被 core
   // 调到(见 cluster_and_choose_impl)，不需要在这里判。
   //
-  // 票 10：闸门接上了，但**不阻塞** - 报完精确开销无条件返回 true 继续
+  // 闸门接上了，但**不阻塞** - 报完精确开销无条件返回 true 继续
   // 跑。headless 这一侧没有可以当场问的人（agent 那头的用户不在同一个时
   // 间轴上），而"同步阻塞式闸门 + 单次调用 + 异步聊天界面"三个只能取
   // 两个。取用户真能拒绝那一条：数字先送出去，取消走 agent 已有的 kill
   // 通路（Dedup 在 worker.KILLABLE_STAGES 里，SIGTERM 掉这个子进程）。
   // `pzt open` 控制台里那道阻塞式闸门（browse.cpp）不受影响，它有人可
-  // 问，也仍然承诺零写入。见票 10 决策一、五。
+  // 问，也仍然承诺零写入。
   auto result = pzt::core::find_and_tag_duplicates(
       *project_id, resolved.image_ids, settings.dedup_time_window_seconds,
       settings.dedup_hash_threshold,
@@ -329,8 +329,8 @@ int cmd_export_images(const std::vector<std::string>& args) {
 // 第三节 Context 里的拍板：用户想用"朋友圈"/"ins"这类自定义名字，不该
 // 被强绑成固定系统标签)。
 //
-// W2026-07-21 目标二：新增可选 --ai --provider <gemini|claude|local>，跟
-// cmd_dedup 同一套解析规则；不带 --ai 时调用路径/输出逐字节不变。
+// 可选 --ai --provider <gemini|claude|local>，跟 cmd_dedup 同一套解析规
+// 则；不带 --ai 时调用路径/输出逐字节不变。
 int cmd_curate(const std::vector<std::string>& args) {
   bool json = false;
   int count = 0;
@@ -339,7 +339,7 @@ int cmd_curate(const std::vector<std::string>& args) {
   std::string scope_tag_name;
   std::string apply_tag_name = "精选";
   std::string provider_str;
-  // 票 08：用户这次想要什么(用途/题材偏好/叙事结构)提炼成的一段话，由
+  // 用户这次想要什么(用途/题材偏好/叙事结构)提炼成的一段话，由
   // agent 从意图里抽出来传进来。只在开 AI 时有消费者 - 关 AI 的选择是确定
   // 性的，没有能读这段话的东西。
   std::string selection_brief;
@@ -404,7 +404,7 @@ int cmd_curate(const std::vector<std::string>& args) {
 
   auto settings = pzt::core::load_settings();
   pzt::core::LocalModelConfig local_config{settings.ollama_base_url, settings.ollama_model};
-  // 跟 cmd_dedup 同一套带外进度（T-8）：stdout 仍然只在最后写一个对象。
+  // 跟 cmd_dedup 同一套带外进度：stdout 仍然只在最后写一个对象。
   auto result = pzt::core::curate_images(
       *project_id, candidate_scope, count, settings.curate_time_window_seconds,
       settings.curate_hash_threshold, settings.curate_preselect_multiplier, ai_enabled, ai_provider,
@@ -413,7 +413,7 @@ int cmd_curate(const std::vector<std::string>& args) {
       [](const pzt::core::dedup::AiProgress& p) {
         emit_json_progress("compare", p.comparison_done, p.comparison_total);
       },
-      // 闸门：跟 cmd_dedup 同一个处置（票 10 决策一、五） - 报出精确开销
+      // 闸门：跟 cmd_dedup 同一个处置 - 报出精确开销
       // 就继续跑，不等任何人。curate 按 SPEC §3.2 不进 TUI，这条是它唯一
       // 的入口，所以"用户可以在 AI 开跑前拒绝"这件事在这里全靠 agent 收
       // 到这行之后立刻告知 + 给可取消入口来兑现。
@@ -425,11 +425,12 @@ int cmd_curate(const std::vector<std::string>& args) {
         emit_json_cost(comparison_count, evaluation_count);
         return true;
       },
-      // 票 05：评估阶段的第三个 phase。cluster/compare 数的是候选簇和比
-      // 较次数，这个数的是照片张数-三者单位不同，展示层必须按 phase 分
-      // 别措辞(T-8 真机验收推翻过"把 phase 压掉"的做法，见 SPEC §3.2)。
+      // 评估阶段的第三个 phase。cluster/compare 数的是候选簇和比较次
+      // 数，这个数的是照片张数 - 三者单位不同，展示层必须按 phase 分别措
+      // 辞，压掉这个维度就一定会在其中两种情况下说错话。
       [](int done, int total) { emit_json_progress("evaluate", done, total); },
-      // 票 08：排在所有回调之后是有意的，理由见 core/curate/curate.h。
+      // selection_brief 排在所有回调之后是有意的，理由见
+      // core/curate/curate.h。
       /*on_cancel=*/nullptr, selection_brief);
 
   if (!result.selected.empty()) {
@@ -455,13 +456,13 @@ int cmd_curate(const std::vector<std::string>& args) {
                       {"selected", std::move(selected_paths)}};
   if (ai_enabled) {
     out["ai_fallback_count"] = result.ai_fallback_count;
-    // 票 06（PRD 决策二十一）：整批的选择与排序退化，跟上面那个"某几个簇
+    // 整批的选择与排序退化，跟上面那个"某几个簇
     // 的比较退化了"是两个信号，刻意分开报-混进同一个数字会让 agent 那句
     // "哪几组不是 AI 挑的"直接说错。两个都只在 --ai 时出现，不带 --ai 的
     // 输出逐字节不变。
     out["ai_selection_fallback"] = result.ai_selection_fallback;
   }
-  // 票 07（PRD 决策十五）：文案。**没有文案时这个键整个不出现**，而不是出
+  // 文案。**没有文案时这个键整个不出现**，而不是出
   // 现一个空串 - "键在不在"是单一含义，agent 那边一句 .get("caption", "")
   // 就够，不用再判空。跟 ai_fallback_count 只在 --ai 时出现是同一个立场：不
   // 留死字段。core 保证关 AI 时它恒为空，所以这里不需要再判一次 ai_enabled。
@@ -471,7 +472,7 @@ int cmd_curate(const std::vector<std::string>& args) {
 }
 
 // M4：agent 读项目当前状态用——每张图的路径/评估状态/达标情况/标签，
-// 一次性给全，agent 不需要为了知道"评没评过"再单独查一遍(F-07 的
+// 一次性给全，agent 不需要为了知道"评没评过"再单独查一遍(跟
 // evaluated_image_ids 批量查询同一个精神)。
 int cmd_images(const std::vector<std::string>& args) {
   bool json = false;
@@ -509,15 +510,15 @@ int cmd_images(const std::vector<std::string>& args) {
       }
     }
     nlohmann::json tag_names = nlohmann::json::array();
-    // T-25：`tags` 是原始存储名（中文字面量），只够拿来显示。agent 要按
+    // `tags` 是原始存储名（中文字面量），只够拿来显示。agent 要按
     // "是不是废片/重复"过滤时用它就等于在 Python 里复刻一遍 core 的字面
     // 量，core 改名或未来 i18n 化系统标签名，agent 会**静默地不过滤任何东
     // 西**——不报错，只是结果变错。所以额外给一列机读标记：稳定 ASCII 别
     // 名（`Reject`/`Duplicate`），跟 `--scope '#Reject'` 认的是同一组常量
     // （tagging::kRejectTagAlias）。
     //
-    // 只标记、不替 agent 做过滤：排哪些标签是**策略**、归调用方，这是 PRD
-    // #23 立的那条界（"统一的是机制不是策略"）。`pzt images` 是一个读命
+    // 只标记、不替 agent 做过滤：排哪些标签是**策略**、归调用方 - 统一
+    // 的是机制不是策略。`pzt images` 是一个读命
     // 令，给它一个"顺便按某套规则筛一遍"的开关就是把策略搬进 core。
     //
     // `tags` 原样保留：它今天没有生产消费者按名字过滤，但删掉是无收益的破
@@ -598,7 +599,7 @@ int cmd_new(const std::vector<std::string>& args) {
     } else if (args[i] == "--json") {
       json = true;
     } else if (args[i].rfind("--", 0) == 0) {
-      // F-06：`--` 开头但不认识的参数(比如拼错的 --supportraw)不能静默
+      // `--` 开头但不认识的参数(比如拼错的 --supportraw)不能静默
       // 落进 positional、被当成 folder_path——那样扫描目标会变成一个不
       // 存在的"目录",容易被误解成程序出问题而不是自己打错了参数。
       std::fprintf(stderr, "%s", pzt::cli::i18n::err_new_unknown_arg(args[i]).c_str());
@@ -685,7 +686,7 @@ int cmd_list(const std::vector<std::string>& args) {
 
 int cmd_delete(const std::vector<std::string>& args) {
   // 先分离出 flag：--json/--force 走 agent 用的 headless 路径，跳过交互式
-  // stdin 确认（AG-14：agent 清扫超龄终态 run 的 pzt 项目需要能 headless
+  // stdin 确认（agent 清扫超龄终态 run 的 pzt 项目需要能 headless
   // 删除；交互确认在子进程里会挂死）。positional[0] 是项目名（=run_id）。
   bool json = false;
   bool force = false;
@@ -947,7 +948,7 @@ int cmd_export(const std::vector<std::string>& args) {
   // --all-keep 走 flag 摘取而不是"第二个位置参数刚好等于这个字面量"——
   // 后者会把 flag 和 tag_name 挤进同一个命名空间:拼错的 --all-keeps 会
   // 静默变成一个标签名,报出来的是"找不到标签",把 flag 打错说成标签问
-  // 题(F-06 在 cmd_new 记的是同一个失败模式)。摘出来之后剩下的位置参数
+  // 题(cmd_new 里那处未知参数检查记的是同一个失败模式)。摘出来之后剩下的位置参数
   // 才是 tag_name/output_folder,flag 出现在第几个位置都认。
   bool all_keep = false;
   std::vector<std::string> positional;
@@ -974,7 +975,7 @@ int cmd_export(const std::vector<std::string>& args) {
   // --all-keep 时 positional[0] 就是 output_folder(没有 tag_name)。
   std::string output_folder = expand_home_path(all_keep ? positional[0] : positional[1]);
 
-  // F-26：默认排除废片/重复，除非目标标签本身就是废片/重复(--all-keep
+  // 默认排除废片/重复，除非目标标签本身就是废片/重复(--all-keep
   // 没有单一目标标签,这条例外不适用),或者用户在 Settings 里显式打开
   // 了 export_reject/export_dup。
   auto settings = pzt::core::load_settings();
@@ -1212,7 +1213,7 @@ std::optional<pzt::core::RecipeId> resolve_recipe_address(const std::string& pre
 // 跟 `r` 菜单看到的编号一致,也是 pzt recipe rename/delete 寻址语法里
 // <version_number> 的定义);已删除的不给编号(不再是能被寻址的目标),
 // 单独标"[已删除]"。这个"行尾挂一个方括号状态后缀"的写法当初是照着 M0
-// pzt list 标注归档项目来的,那个标注已随 T-32 删掉,这里是仅存的一处。
+// pzt list 标注归档项目来的,项目已经没有归档态,这里是仅存的一处。
 int recipe_list(const std::vector<std::string>& args) {
   if (!args.empty()) {
     std::fprintf(stderr, "%s", pzt::cli::i18n::err_recipe_list_no_args().c_str());

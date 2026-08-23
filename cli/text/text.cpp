@@ -17,7 +17,7 @@ bool is_wide_codepoint(char32_t cp) {
          (cp >= 0xF900 && cp <= 0xFAFF) ||    // CJK 兼容表意文字
          (cp >= 0xFF00 && cp <= 0xFF60) ||    // 全角字符
          (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-         (cp >= 0x1F300 && cp <= 0x1FAFF) ||  // F-35：emoji(符号与象形、补充符号等),终端按宽字符渲染
+         (cp >= 0x1F300 && cp <= 0x1FAFF) ||  // emoji(符号与象形、补充符号等),终端按宽字符渲染
          (cp >= 0x20000 && cp <= 0x3FFFD);    // CJK 扩展区(增补平面)
 }
 
@@ -200,7 +200,7 @@ std::pair<std::string, std::string> split_console_command(const std::string& inp
 // 引号的标签名整体当一个 token,引号内的空格不算分界——输入语法照抄 tag_token
 // (browse.cpp 顶部,信息栏展示标签用的那个)的输出语法,用户不需要为"怎么打带
 // 空格的标签名"另外学一套写法。返回值保留开头的 `#` 和引号,解引号交给
-// core::scope::resolve(T-16 之前是 browse.cpp 的 resolve_console_scope)。没有
+// core::scope::resolve。没有
 // 找到闭合引号时(用户漏打了后一个引号)放弃引号语义,退化成普通按空格切,交给
 // core::scope::resolve 报"范围写法不对",不是这个函数的职责。
 //
@@ -224,11 +224,11 @@ std::pair<std::string, std::string> take_scope_token(const std::string& s) {
 }
 
 // 三个标记与 core::scope 的四种写法一一对应(`#标签名` 与 `#"带空格的标签
-// 名"` 同一个前缀)。抽成具名函数而不是留在 browse.cpp 那一行条件里,是因
-// 为 T-15 票 D 给它加第三支时,那一行的原始形态
-// (`t == "*" || (!t.empty() && t[0] == '#')`)已经是"漏一支就静默走错路径"
-// 的形状:漏掉 `.` 的话 `/ai_eval .` 不报错,只是安静地把那个点当成额外指
-// 引发给当前这一张。这种失效模式要有测试盯着(cli/tests/text_test.cpp)。
+// 名"` 同一个前缀)。抽成具名函数而不是留在 browse.cpp 那一行内联条件里,
+// 是因为内联的那个形态(`t == "*" || (!t.empty() && t[0] == '#')`)是"漏一
+// 支就静默走错路径"的形状:漏掉 `.` 的话 `/ai_eval .` 不报错,只是安静地把
+// 那个点当成额外指引发给当前这一张。这种失效模式要有测试盯着
+// (cli/tests/text_test.cpp)。
 //
 // `.` 要求整个 token 相等,不是前缀匹配 - `.jpg`、`..` 都不是作用域。
 bool is_batch_scope_token(const std::string& token) {
