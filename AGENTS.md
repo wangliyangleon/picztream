@@ -37,15 +37,18 @@ PicZTream（简称 PZT）是终端内全键盘的图片筛选与色彩处理工�
 
 ## 文档
 
-- `docs/SPEC.md` 是长期 ground truth，**每个 session 唯一必读、且先读它**。现状与路线只在那里维护，不要在别处复制一份。
-- 其余文档按当前 session 的意图**按需读，不预读**：`docs/Task_Pool.md`（中长期低优先级活儿池）、`docs/RAW_Support.md`（碰 RAW 前必读）、`docs/proposal-2026-07-25.md`（33 条提案与逐条完成状态）、`docs/history/`（已归档的里程碑与周目标，只在倒查"当初怎么设计的"时进）。
+- 本文件是唯一 always-load 的东西，分层与工程契约在这里就是全的，**不必为了拿契约去读别的文档**。
+- `docs/SPEC.md` 是长期 ground truth，承载本文件放不下的那两类内容：**现状与路线**（已完成什么、当前的 P0 缺口、已拍板但没有第二份记录的决定）与**对外接口轮廓**（两个命令面各有什么、批量作用域与排除规则的四处刻意不对称）。碰接口、碰架构、或要判断某件事做没做过时读它，**不预读**。现状与路线只在那里维护，不要在别处复制一份。
+- `docs/architecture.md` 是导航图，只记搜索会答错的东西：命名骗人的模块、散在多个文件里的流程、以及会咬人的陷阱（schema 版本、死列、两份白名单、零覆盖区）。**动陌生代码之前扫一眼**，很短。
+- 其余文档同样**按需读**：`docs/Task_Pool.md`（中长期低优先级活儿池）、`docs/RAW_Support.md`（碰 RAW 前必读）、`docs/RELEASE.md`（发版、schema 版本、数据兼容，**改 `initialize_schema` 前必读**）、`docs/proposal-2026-07-25.md`（33 条提案与逐条完成状态）、`docs/history/`（已归档的里程碑与周目标，只在倒查"当初怎么设计的"时进；每份顶部的归档说明记着它被什么推翻）。
 - **票与 PRD 在 GitHub Issues**（`wangliyangleon/picztream`，用 `gh` CLI），存量 PRD 渐进迁移中、两处并存是正常状态，找 PRD 前先查已迁清单：`docs/agents/issue-tracker.md`。triage 沿用五个规范 label，见 `docs/agents/triage-labels.md`。
 - **ADR 永远留在仓库**（`docs/adr/`），术语表是根 `CONTEXT.md`（只定义概念，不记实现决策），见 `docs/agents/domain.md`。
+- 一份 PRD / Eng Design **收口之后移进 `docs/history/`**，并在顶部写一段归档说明：落地形态与文档的偏离、以及它推翻了此前哪条已归档决策。那段说明是"当初为什么这么定"的唯一出处，比文档正文更值钱。
 - 代码实现与权威文档冲突时以文档为准，要偏离必须先提出并等待确认。尚未产出对应文档的目标，不臆测细节自行实现。
 
 ## 工程契约
 
-`docs/SPEC.md` 第四节是同一套契约的完整版（含依据与展开），两者一致。
+以下是契约的唯一出处，`docs/SPEC.md` 不再留第二份。
 
 **分层**：新增代码前先判归属 - 业务逻辑一律进 `core`，交互展示一律进 `cli`，编排一律进 `agent`。
 

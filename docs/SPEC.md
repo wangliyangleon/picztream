@@ -1,10 +1,12 @@
 # PicZTream (PZT) 项目规格（Spec）
 
-这份文档是 PZT 长期稳定的 ground truth，每个开发 session 都以它 + 当前周的 `W{日期}_PRD.md`/`W{日期}_Eng_Design.md` 为基准。它只承载不随单个功能来回变动的东西：项目定位、模块划分、设计哲学、对外接口轮廓、技术契约。
+这份文档是 PZT 长期稳定的 ground truth，**按需读，不预读** - 碰对外接口、碰架构、或要判断某件事做没做过时进来。分层与工程契约不在这里，在每个 session 自动加载的 `AGENTS.md` 里。
 
-**深度边界（写这份文档时的判据）**：凡是更适合出现在某一周 PRD/Eng Design 里的细节，在这里就太细了。具体的 schema 字段、参数取值范围、算法阈值、某个命令的完整 flag、某次选型的实测数据，都不进这份文档，它们属于对应的周文档或 `docs/history/` 里的里程碑 Eng Design。这里描述"有什么、为什么这么分、边界在哪"，不描述"具体怎么实现"。
+它承载三样东西：**项目定位与设计哲学**（第一、二节）、**现状与路线**（第一节末，当前的 P0 缺口与已拍板的决定）、**对外接口轮廓**（第三节，两个命令面各有什么、批量作用域的四处刻意不对称）。
 
-相关文档分工：已完成里程碑的设计留档在 `docs/history/`（见其 `README.md` 索引，含已收口的 2026-07 Fix-it Night 评审快照 `Fix_It_Night_Review.md`）；RAW 支持的当前基线与已知风险见 `docs/RAW_Support.md`（涉及 RAW 改动前必读）；中长期低优先级、闲时取用的活儿池见 `docs/Task_Pool.md`。
+**深度边界（写这份文档时的判据）**：具体的 schema 字段、参数取值范围、算法阈值、某个命令的完整 flag、某次选型的实测数据，都不进这份文档 - 它们属于对应的 PRD / Eng Design。这里描述"有什么、为什么这么分、边界在哪"，不描述"具体怎么实现"。
+
+相关文档分工：已收口的设计留档在 `docs/history/`（见其 `README.md` 索引，每份顶部的归档说明记着它被什么推翻）；RAW 支持的当前基线与已知风险见 `docs/RAW_Support.md`（涉及 RAW 改动前必读）；发版、schema 版本与数据兼容见 `docs/RELEASE.md`（改 `initialize_schema` 前必读）；中长期低优先级、闲时取用的活儿池见 `docs/Task_Pool.md`。
 
 ---
 
@@ -26,20 +28,20 @@ PicZTream（简称 PZT）是一个基于终端、全键盘的图片筛选与色�
 
 ### 现状与路线（紧凑版）
 
-- **已完成**：M0（MVP 选图核心）、M1（风格化色彩配方）、M2（RAW 支持）、M3 的两个增量（选片辅助评分、近似重复检测）、M4 增量一（Telegram 选片-交付闭环，含 agent Style）；`W2026-07-15` 周目标（本地模型 Ollama、recipe/滤镜扩展、agent Style、agent 运行时双线程重构、部署与分发——Homebrew tap 分发 `pzt`/`pzt-agent` + README + 静态主页 + 一键 release 自动化）；`W2026-07-21` 周目标——把"客观评价单张"与"照片间比较"解耦：eval 改产"文字描述 + 硬伤 flag"（不再产跨图可比分数，`overall_score`/`passes_gate` 已移除下游），dedup/curate 涉及比较的选择改成 AI 锦标赛（整个锦标赛——分簇、场次推进、判定胜者——都在 core 的 `tournament` 模块里一次调用做完；PRD 最初设想的"bracket 推进放 agent"在规划阶段就被推翻了，见 `docs/history/W2026-07-21_Tournament_Eng_Design.md` 决策一），加一个选片流程的全局 AI 开关，并让 dedup/curate 两步是否要跑改由这次意图判断（不再固定全跑）。真机反馈之后又追加了一次架构调整：选片确认闸门从 Deliver 前挪到 Style（套滤镜）前，Deliver 不再挂闸门。`2026-07-28` 真机反馈追加的一刀：控制台补上 `/dedup <范围> --ai`（此前锦标赛只有 agent 层通过 headless `pzt dedup --ai` 接得上，坐在终端前反而没有入口），同时给 AI 阶段加了开跑前的开销闸门与分组/比较两段进度反馈，并删掉 dedup 那道随锦标赛改造一起失效的"未评估"确认（见 `docs/history/Dedup_AI_Console_PRD.md`）。`2026-07-29` 沿同一条路径又收了三件：进度细到每一次比较（只报组号时，单个大簇期间画面照样静止几分钟）、Ctrl-C 在信号路径上还原终端（默认信号处置不做栈回退，RAII 析构跑不到，此前会把用户留在备用屏幕里）、以及 Ctrl-C 中途取消这一次去重而不是杀掉整个 `pzt open`（零写入，明确推翻了上一份 PRD 的非目标"不做中途可中断"，见 `docs/history/Dedup_Cancel_PRD.md`）。`2026-07-30` 又收了一条（提案 T-10，PRD/Eng Design 归档在 `docs/history/Env_Preflight_*`）：三个运行环境前提（讲 Kitty 协议的终端、Telegram 凭证、Ollama 可达）不满足时都会失败，但没有一处告知原因 - 最恶劣的是非 Kitty 终端下渲染是"静默成功"的（`write()` 返回值等于长度、`RenderError` 不涵盖这种情况），核心卖点表现为一个只是不显示照片的完整界面。现在终端按环境变量白名单探测（`cli/kitty::kitty_support_likely`，tmux 内只认 `GHOSTTY_*`/`KITTY_WINDOW_ID`，因为 tmux 会把终端身份从 `TERM`/`TERM_PROGRAM` 里擦掉），没命中就在进备用屏幕之前打出提示并等一次按键，仍不阻止进入，`warn_unsupported_terminal=false` 可关；Telegram 凭证缺失给人话 + 退出码 2；Ollama 与云端 API key 在 agent 启动时预检，只告警不拦启动。这一条的真机验收推翻了原方案"把提示画进 banner"的做法：banner 画在图片序列之前，而不认识 Kitty 协议的终端会把紧随其后的 APC 序列当普通文本打出来、把画面顶掉，**恰恰在提示最该出现的终端里 banner 最不可能被看见**。
+- **已完成**：M0（MVP 选图核心）、M1（风格化色彩配方）、M2（RAW 支持）、M3 的两个增量（选片辅助评分、近似重复检测）、M4 增量一（Telegram 选片-交付闭环，含 agent Style）；`W2026-07-15` 与 `W2026-07-21` 两个周目标；以及此后一串单点增量：控制台 `/dedup <范围> --ai`、去重中途取消、环境前提预检、headless 可观测性、意图驱动的跨簇选片、recipe 自建向导、scope 解析与排除规则收进 core、交互层批量作用域、两图对比选片。
 
-`2026-07-31` 再收一条（提案 T-8，归档在 `docs/history/Headless_Observability_*`）：`--ai` 把一次 headless 调用推到分钟级之后，坐在终端前的人那一侧已经连收四刀，Telegram 那一侧一次都没收过 - 确认方案后一句"正在筛选..."然后分钟级沉默，期间不知道跑到哪、能不能停，结束后也分不出结果是 AI 真跑通的还是超时退化的。现在进度走 stderr 的带外通道送到 agent（stdout 的原子性一字节不变，见 §3.2），`pzt_client` 从轮询 `communicate` 改成两个读取线程边跑边读（`communicate` 不流式，不改的话进度全变事后回放；两条线程都无条件排水，只读一条会被管道背压卡死子进程）；`ai_fallback_count` 不再在 Curate 路径上蒸发并进入用户话术；`Style`/`StyleApplyAll` 补进可取消集合，带部分完成回执。真机验收推翻了 PRD"把 phase 压掉、进度只留 (done,total)"的决策：三个来源数的分别是候选簇/比较次数/照片张数，压掉维度之后展示层只能写死一个单位，然后在另外两种情况下说错话（实测原话"已完成 1/1 张"，那其实是 1 个候选簇）。
+  **每一条"当初为什么这么定、后来被什么推翻"写在 `docs/history/` 对应文档顶部的归档说明里**（`docs/history/README.md` 是索引，逐条带一句话背景）。倒查某个能力的来历从那里进 - 本节只报进度，不复述来历，否则同一段叙事会有三份。
 
-这一批的来源是 `docs/proposal-2026-07-25.md` 的三视角评审——该文档记录了全部 33 条提案条目与逐条完成状态，当前没有活跃周目标时它就是唯一的待办清单。
+- **当前唯一的 P0 缺口：HEIC 完全不被支持。**`core/project/project.cpp` 的扩展名白名单只认 `.jpg`/`.jpeg`（第二份拷贝在 `agent/transport/watchfolder.py`），而 iPhone 的出厂默认格式就是 HEIC，撞上的正是 U-3 那条撒谎的错误文案。隔离库实测已证解码、色彩流水线、EXIF 三条**零改动即通**，唯一闸门就是那份白名单。但支持 HEIC **不止是加两个后缀**：`export` 在无 recipe 时是字节拷贝、且只对 `kind="raw"` 改扩展名，于是 HEIC 会原样导出成 `.heic`（名实相符，不是错标），而**发布目的地未必认这个格式** - 导出该忠实保留还是无条件转成 `.jpg`（通用但多一次有损重编码）是对外行为契约，必须进 PRD。PRD 见 GitHub issue [#16](https://github.com/wangliyangleon/picztream/issues/16)。**Photos 图库入口是同一缺口的另一半**（`pzt new` 只吃普通文件夹、不认识 `.photoslibrary`，而从图库导出的方式本身就决定拿到 HEIC 还是 JPEG），已顺延进 `docs/Task_Pool.md`。
 
-`2026-08-03` 收口一次**不属于上述 33 条提案的独立立项**：意图驱动的跨簇选片（PRD 与 13 张票归档在 `docs/history/Intent_Curation_PRD.md` 与 `docs/history/issues/intent-curation/`）。`pzt curate` 的两步里第二步一直是空白 - 开 AI 时选择是字面意义的 `std::sample` 随机抽样（W2026-07-21 的 eval 解耦拿掉 `overall_score` 之后跨簇比较失去了唯一的可比标量，而锦标赛只解决簇内），关 AI 时只按 `captured_at` 散开，而用户意图里最有信息量的"用途"那一维流到 Curate 只被当字符串打了个标签。现在这一步真正吃意图：单张描述加 `content` 字段（画面里发生了什么、有谁、在哪、什么氛围，与 `assessment` 的摄影评语分开），多样性预筛先裁出预选集（`min(ceil(max(1.5, M) · N), 候选集大小)`，M 经 settings 配置、默认 2，于是评估次数与图库大小无关），curate 内部只评估预选集，再由模型读着这些描述、按选片简述一次调用连**选**带**排**（叙事要求会反过来影响选哪几张，拆成"先选再排"会切在错误的地方），顺带产出一条文案随结果送到 Deliver；模型不可用或答案不合法时整批退化到与关 AI 完全同一条确定性路径（关 AI 的交付顺序同时从 farthest-point 的挑选序改成拍摄时间序）。选片简述在方案确认与选片确认两个阶段都能改。开销闸门与两级进度按**入口**接线：TUI 那一侧是阻塞式确认、拒绝零写入，headless 那一侧因为没有可以当场问的人，改成报出精确开销后继续跑、由 agent 立刻转达并给可撤入口。这一刀推翻两处已归档决策：`W2026-07-21_PRD.md` 的"agent 不再整批跑评估"（现在的评估只跑预选集，规模与图库无关，不是把删掉的东西加回来），以及"视觉推理归 core / 语言推理归 agent"那条轴（跨簇选片不看像素只读描述，按旧表述该归 agent，但它推理的对象自始至终是照片；轴已改述为"关于照片的推理归 core"，见 §2.3 与 `docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md`）。实现期还顺手修掉一个共用缺陷：AI 请求的超时此前写死 60 秒，本地跑一次跨簇选择墙钟 45-80 秒、正好骑在上面，同一个项目时好时坏；现改为 settings 旋钮 `ai_request_timeout_seconds`，默认 180，`CONNECTTIMEOUT` 保持 10 秒不跟着变大。
-`2026-08-08` 收口提案 **T-4**（"核心用户是谁"，自 `docs/history/M4_Brainstorm.md:190` 起悬置 26 天），核心用户定义见上。它的三个下游实际收敛 **2/3**，不是提案预期的 3/3。**T-27**（公开叙事）改为以"选片成本 = 单次决策延迟 × 决策次数"这条 thesis 统领：终端秒切打第一个因子、AI 打第二个，RAW 旁路降为第一因子的极端案例放第三段 - 原条目主张的"该主打 RAW 旁路"随 JPEG P0 失效，同时公开面还漏着 2026-08-03 刚落地的意图驱动跨簇选片。**T-31** 拆成两半：Caption **已落地**，只是形态与 `M4_Agent_Workflow_Design.md:34` 的设计不同 - 不是第七个 Stage，而是 Curate 的副产品（`core/curate/curate.h` 的 `caption` 字段 → `agent/stages/curate.py` → `agent/stages/deliver.py` 单独发一条消息），条目写于 2026-07-25、被 2026-08-03 的意图驱动选片实现推翻而无人回头改它；Profile **决定不做**（"目的地模板"这个抽象已被"用途"进入用户意图所取代，两份表示冲突时谁赢没有定义，且它是为"多目的地 × 多用户"设计的，对单个个人用户属 §2.4 点名要避免的超范围抽象）；`last_config` 该做但不是现在（进 `docs/Task_Pool.md`。它与 Profile 是两件事：Profile 是"我有几个目的地"，last_config 是"上次那样"，后者是"多几张""跟上次一样但发 ins"这类**相对表述**能被解读的前提 - 没有它，这类话不会报错，而是静默地做成另一件事）。**T-20 没有被关掉，只是转为远期开放**：多用户托管是比 T-4 更远更大的决定，三个锁点记进 `Task_Pool.md`（注意 A-10 原文的第三层"未开 WAL"已被 T-7 修掉，不要照抄）。**T-5** 维持原判：下一周期至少一半 deliverable 落回人工选片路径，且 **HEIC 入口不计入那一半** - 它让核心用户的照片进得来，但不让选片这件事变好，拿入口工作去填这个配额等于篡改度量。
+- **三条只在这里有记录的拍板**（2026-08-08，随核心用户定义一并收口）：
+  - **`Profile`（目的地模板）决定不做**：这个抽象已被"用途"进入用户意图所取代，两份表示冲突时谁赢没有定义；且它是为"多目的地 × 多用户"设计的，对单个个人用户属 §2.4 点名要避免的超范围抽象。`last_config`（让"跟上次一样""多几张"这类**相对表述**可被解读）是另一件事，该做但不是现在，已进 `docs/Task_Pool.md`。
+  - **多用户托管转为远期开放**，不是关闭：它是比核心用户定义更远更大的决定，三个锁点记在 `docs/Task_Pool.md`。它与"多人协作"是两件事，后者已明确排除，见 `CONTEXT.md`。
+  - **下一周期至少一半 deliverable 落回人工选片路径**，且 **HEIC 入口不计入那一半** - 它让核心用户的照片进得来，但不让选片这件事变好，拿入口工作去填这个配额等于篡改度量。
 
-这次拍板炸出一个**不在任何清单上的 P0 缺口：HEIC 完全不被支持**。`core/project/project.cpp` 的扩展名白名单只认 `.jpg`/`.jpeg`（第二份拷贝在 `agent/transport/watchfolder.py`，又一例 T-16 那类同一规则多份实现），而 iPhone 的出厂默认格式是 HEIC，撞上的正是 U-3 那条撒谎的错误文案。隔离库实测已证解码、色彩流水线、EXIF 三条**零改动即通**（ImageIO 那条路本来就吃 HEIC，把 HEIC 原样改名成 `.jpg` 后导入、读 `captured_at`、套 recipe 导出全部成功），唯一闸门就是那份白名单。但支持 HEIC **不止是加两个后缀**：`export` 在无 recipe 时是字节拷贝、且只对 `kind="raw"` 改扩展名，于是 HEIC 会原样导出成 `.heic`（名实相符，不是错标），而**发布目的地未必认这个格式** - 导出该忠实保留还是无条件转成 `.jpg`（通用但多一次有损重编码）是对外行为契约，必须进 PRD。另有一个健壮性条目：`core/decode/decode.cpp` 写死 `CreateImageAtIndex(src, 0)`，正确 API 是 `CGImageSourceGetPrimaryImageIndex()`；实测已确认**辅助图（深度图 / 增益图）不进图像列表**（`GetCount()` 仍为 1、primary 仍为 0，辅助数据走 `CopyAuxiliaryDataInfoAtIndex` 带外取），所以真正会让 primary 偏离 0 的是 HEIC 图像序列这类多 item 容器，风险低于最初估计，改用正确 API 是免费的健壮性改进而非上线阻塞项。**Photos 图库入口是同一缺口的另一半**（`pzt new` 只吃普通文件夹、不认识 `.photoslibrary`，而从图库导出的方式本身就决定拿到 HEIC 还是 JPEG），按 T-5 的范围裁剪顺延进 `Task_Pool.md`。HEIC 本身的 PRD 见 GitHub issue [#16](https://github.com/wangliyangleon/picztream/issues/16)（八条实现决策，其中导出契约与同名优先级两条是对外行为、不是实现选择）。**它是第一份迁到 GitHub Issues 的 PRD** - 本仓库自 2026-08-09 起把票与 PRD 放在 GitHub，ADR 与存量 PRD 仍在仓库内，迁移政策与已迁清单见 `docs/agents/issue-tracker.md`。
+- **未来/搁置**：M3 剩余能力（自动粗修、自动打标签、AI 自动介入触发）、几何变换（裁切/水平矫正，从 `W2026-07-15` 目标二顺延，见 `docs/Task_Pool.md`）、Apple Vision 语义聚类评估、锦标赛双输判定（两两比较都有硬伤时双输、簇 winner 可空，供 agent 选图用）、（手动选片模式已不在此列 - 它就是 T-17，2026-08-22 以控制台 `/pick <N>` 收口）recipe.json 导入导出与 LLM 辅助生成配方、bottle 预编译与多用户 agent 托管、M5 全托管自动化。
 
-`2026-08-12` 收口提案 **T-29**（PRD 与两张实现票在 GitHub issues [#17](https://github.com/wangliyangleon/picztream/issues/17)/[#19](https://github.com/wangliyangleon/picztream/issues/19)/[#20](https://github.com/wangliyangleon/picztream/issues/20)，继 HEIC 之后**第二份直接开在 GitHub Issues 的 PRD**）：`r c` 自建 recipe version 原本是 9 个盲填数字的线性问答、无任何预览，填完才知道调成什么样。现在改成可前进后退的分步向导（当前输入为空时按 Backspace 回到上一个字段并回填该字段上次提交的值），每提交一格就用当前已知的完整参数组合把正在浏览的这张图重渲染一次。这条路上的关键约束是"照着预览调出来的参数，存下来必须还是那张图"，实现上把等价性做成**构造上成立**而不是靠两处实现保持同步：新增的 `core::recipe::render_preview`（吃不落库的草稿参数）与既有 `render()` 共用抽出来的 `apply_resolved`，字段文本到 `VersionParams` 的映射也只有 `params_from_wizard_fields` 一份、预览与最终 `create_version` 共用（各写一遍的话顺序错一格就会破坏这个等价性）。**共享编辑状态机的对外契约没有被改动**：`read_line_edit_step` 加了第四态 `BackspaceOnEmpty`，但 `read_text_line` 与 `read_text_line_with_placeholder` 都把它当 `Continue`（原本就是无事发生），只有向导专用的薄壳 `read_text_line_for_wizard` 把它读成"回退"，10+ 处既有调用点零改动。真机反馈追加了一处超出 PRD 范围的改动：**向导进门先渲染一次预设的中性状态**，否则第一格填 0（语义是"不调整"）按 Enter 时画面会突然变一次，看起来像是输入 0 产生了效果，实际变的是从这张图原来的风格切到了这个预设的底子。留了一笔账：预览走 `core/api` 门面，而门面每次调用 `Database::open_default()` 开一次库、预览是每填一格跑一次 - 这正是 **T-30**，T-7 的快路径优化之后单次约省 104µs，本次决定先接受这个开销。
-
-- **未来/搁置**：M3 剩余能力（自动粗修、自动打标签、AI 自动介入触发）、几何变换（裁切/水平矫正，从 `W2026-07-15` 目标二顺延，见 `docs/Task_Pool.md`）、Apple Vision 语义聚类评估、锦标赛双输判定（两两比较都有硬伤时双输、簇 winner 可空，供 agent 选图用）、手动选片模式（`W2026-07-21` 明确移出范围，未立项）（`docs/Task_Pool.md`）、recipe.json 导入导出与 LLM 辅助生成配方、bottle 预编译与多用户 agent 托管、M5 全托管自动化。
+- **待办从哪来**：当前没有活跃周目标时，`docs/proposal-2026-07-25.md`（33 条提案与逐条完成状态）与 `docs/Task_Pool.md`（中长期低优先级活儿池）合起来就是唯一的待办来源。票与 PRD 自 2026-08-09 起开在 GitHub Issues，存量渐进迁移、两处并存是正常状态，迁移政策与已迁清单见 `docs/agents/issue-tracker.md`。
 
 里程碑的完整设计与阶段依赖见 `docs/history/Roadmap.md` 及各里程碑文档；已归档的周目标细节见 `docs/history/W2026-07-15_*` 与 `docs/history/W2026-07-21_*`。
 
@@ -55,7 +57,7 @@ PicZTream（简称 PZT）是一个基于终端、全键盘的图片筛选与色�
 
 依赖方向严格单向：`agent` → `pzt`（cli 二进制）→ `core`。这个分层从项目第一天就确立，目的是让 AI 辅助与 agent 能力直接复用同一套被验证过的核心引擎，只新增可插拔旁路或编排层，而不重写底层算法。新增代码前先判断归属：业务逻辑进 `core`，交互展示进 `cli`，编排进 `agent`，三者不互相渗透。
 
-`core/` 内部按能力域进一步分模块（`project`/`db`/`decode`/`raw`/`color`/`recipe`/`dedup`/`curate`/`tagging`/`export`/`ai`/`settings`/`browse` 等），`cli/` 按交互职责分模块（`commands`/`menu`/`ui`/`term`/`kitty`/`text`/`i18n`/`compare`），`agent/` 按编排职责分模块（`session` 多线程运行时/`stages`/`orchestrator`/`compose`/`transport`/`store`/`router` 仅剩纯函数 `collecting`）。模块粒度与依赖细节以代码现状为准。
+三层各自的子模块清单在 `AGENTS.md` 的「项目地图」表里，那份是唯一维护的一份；模块粒度与依赖细节以代码现状为准。
 
 ### 2.2 双层流水线：culling / processing
 
@@ -131,36 +133,8 @@ opt-in 与 §1 定的"RAW 是 P1"之间存在一处未收口的张力：`--suppo
 
 ## 四、技术契约
 
-以下是不随具体业务功能变化的全局约束，是每个 session 都要遵守的硬边界。
+**契约的唯一出处是 `AGENTS.md` 的「工程契约」一节**（分层归属、代码规范、AI 使用边界、提交与测试，外加两个 worktree 专属的坑）。那份文件每个 session 都自动加载，所以契约不需要、也不应该在这里留第二份 - 两份并存时没人知道哪份是新的。
 
-### 4.1 架构分层
+早先的文档按 §4.1（分层）/ §4.2（代码规范）/ §4.3（AI 边界）/ §4.4（提交与测试）引用过这里的子节，条文原样搬到了 `AGENTS.md`，按同名主题去那边找。
 
-`core`/`cli`/`agent` 的边界不互相渗透（见第二节）。`core` 不得引入终端渲染或按键交互依赖；`cli` 只调用 `core` 接口、不承载业务逻辑；`agent` 只通过 headless 命令驱动 `core`、不直接链接 C++。业务逻辑一律进 `core`，交互展示一律进 `cli`，编排一律进 `agent`。
-
-### 4.2 代码规范
-
-- C++20 及以上标准，禁止引入运行时开销较大的框架或脚本语言依赖。
-- 并发统一用 `std::jthread`，禁止裸 `std::thread` 且不管理生命周期。
-- 不做过早优化，SIMD 等底层优化仅在有实测数据支撑时引入。
-- `core` 层禁止阻塞 IO 到主线程，涉及磁盘读取的路径需评估是否异步。
-
-### 4.3 AI 使用边界
-
-LLM 只做算法推导、生成结构化配方/配置、代码撰写与审查，不进任何需要确定性和实时性能的核心执行路径，不在性能关键代码里依赖运行时 LLM 决策。关于照片的推理归 core（C++）、关于用户的推理归 agent（Python），判据是输入里有没有照片信息（含照片的衍生描述）（见 2.3 与 `docs/adr/0001-core-hosts-photo-reasoning-even-when-text-only.md`）。
-
-### 4.4 提交与测试
-
-- 每个功能提交前自查是否覆盖对应 PRD 的验收标准。
-- 核心逻辑需要基本单元测试覆盖；遵循 TDD 节奏（先 RED 后 GREEN，一个可提交单元一次 commit）。
-- 涉及延迟敏感路径的改动，需要配套的延迟日志或基准数据。
-- 不手动修改 CHANGELOG.md 或任何标记为自动生成的文件。
-
-### 4.5 文档节奏
-
-- 里程碑规划之上叠加周开发目标节奏：每周一份 `W{日期}_PRD.md`（需求/deliverable）+ 对应的 `W{日期}_Eng_Design.md`（工程实现/模块划分/tradeoff，进入实现前产出），可按子系统拆多份 Eng Design。
-- PRD 先于 Eng Design：先把需求写成独立一步，再做 schema/类/依赖级别的实现计划。
-- 完成的里程碑/周文档归档到 `docs/history/`，不再每个 session 加载；本 Spec 是长期 ground truth，随架构级变化更新。
-
-### 4.6 行为准则
-
-回应保持客观、严格、简洁、逻辑导向，不做无依据的功能扩展，不引入超出当前范围的抽象设计。遇到需求不明确或与文档冲突的情况先提出问题、等待确认，不擅自假设。任何代码实现与权威文档冲突时以文档为准，如需偏离必须先提出并等待确认。
+周开发目标节奏（`W{日期}_PRD.md` + 按子系统拆的 `W{日期}_Eng_Design.md`）自 `W2026-07-21` 之后没有再起过新的一轮，此后的增量都是单份 PRD 直接开在 GitHub Issues 上。这条节奏是暂停还是已经被 Issues 取代，尚未拍板。
